@@ -23,7 +23,7 @@ module.exports = async function verifyDeployEngine({ page, script, out }) {
   const confirmBox = () => page.locator('input[aria-label^="確認用の対象アプリ"]');
   const rowsOf = () => page.locator('.kus-lp__apptable tbody tr');
   const appInput = i => rowsOf().nth(i).locator('input[aria-label="アプリID"]');
-  const guestInput = i => rowsOf().nth(i).locator('input[aria-label="ゲストID"]');
+  const guestInput = i => rowsOf().nth(i).locator('input[aria-label="ゲストスペースID"]');
   const reviewRow = id => page.locator(`tr.kus-dp-row[data-deploy-app="${id}"]`);
   const resultItem = id => page.locator(`.kus-dp-result-item[data-deploy-app="${id}"]`);
   const facts = key => page.locator(`[data-confirm="${key}"]`);
@@ -331,7 +331,7 @@ module.exports = async function verifyDeployEngine({ page, script, out }) {
   assert.match(await statusText(), /^1 アプリを本番へ反映しました。$/);
   assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'ok');
   assert.match(await resultItem('101').innerText(), /成功/);
-  assert.match(await resultItem('101').innerText(), /本番のrevision: 12 → 15（プレビュー 15）[\s\S]*反映後の確認: 本番とプレビューが一致/, '本番とプレビューの revision が一致した旨');
+  assert.match(await resultItem('101').innerText(), /本番の設定の更新番号: 12 → 15（プレビュー 15）[\s\S]*反映後の確認: 本番とプレビューが一致/, '本番とプレビューの revision が一致した旨');
   assert.match(await page.locator('[data-deploy-backup="saved"]').innerText(), /バックアップ: 本番反映前バックアップ_営業管理\(app101\)_\d{8}_\d{6}\.json（1 アプリ分・反映前の本番設定）/);
   assert.equal(await page.locator('[data-deploy-unverified]').count(), 0);
   await shot('result-1app');
@@ -399,7 +399,7 @@ module.exports = async function verifyDeployEngine({ page, script, out }) {
   }
   assert.match(await statusText(), /^反映前の確認で止めました。まだ本番へは反映していません。確認した後に設定が更新されたアプリがあります（App 301（更新される））。何も反映していません。差分を確認し直してください。$/);
   assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'warn');
-  assert.match(await resultItem('301').innerText(), /確認後に更新[\s\S]*プレビュー（revision 12 → 13）の設定が更新されました/);
+  assert.match(await resultItem('301').innerText(), /確認後に更新[\s\S]*プレビュー（設定の更新番号 revision 12 → 13）の設定が更新されました/);
   assert.match(await resultItem('302').innerText(), /未実行[\s\S]*まだ何も反映していません/);
   assert.match(await page.locator('[data-deploy-backup="none"]').innerText(), /バックアップは保存していません。/);
   await shot('result-updated-after-review');
@@ -416,9 +416,9 @@ module.exports = async function verifyDeployEngine({ page, script, out }) {
     assert.equal(run.apps['322'].prodRevision, '10');
   }
   assert.match(await resultItem('321').innerText(), /成功/);
-  assert.match(await resultItem('322').innerText(), /確認後に更新[\s\S]*プレビュー（revision 12 → 13）の設定が更新されました/);
+  assert.match(await resultItem('322').innerText(), /確認後に更新[\s\S]*プレビュー（設定の更新番号 revision 12 → 13）の設定が更新されました/);
   assert.match(await resultItem('323').innerText(), /未実行/);
-  assert.match(await statusText(), /^3 アプリ中 1 アプリを反映しました。確認後に更新 1 アプリ、未実行 1 アプリ（App 322: 確認した後にプレビュー（revision 12 → 13）の設定が更新されました。差分を確認し直してください。）。/);
+  assert.match(await statusText(), /^3 アプリ中 1 アプリを反映しました。確認後に更新 1 アプリ、未実行 1 アプリ（App 322: 確認した後にプレビュー（設定の更新番号 revision 12 → 13）の設定が更新されました。差分を確認し直してください。）。/);
   ok('engine: preview updated during the run');
 
   // =========================================================================

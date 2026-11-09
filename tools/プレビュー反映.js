@@ -652,6 +652,63 @@
     return legacyCopy(text);
   }
 
+  // src/kintone-query.ts
+  function querySyntaxText(query) {
+    const text = String(query || "");
+    let syntax = "";
+    let quoted = false;
+    for (let index = 0; index < text.length; index++) {
+      const char = text[index];
+      if (quoted) {
+        if (char === "\\" && index + 1 < text.length) index++;
+        else if (char === '"') quoted = false;
+        syntax += " ";
+        continue;
+      }
+      if (char === '"') {
+        quoted = true;
+        syntax += " ";
+      } else {
+        syntax += char;
+      }
+    }
+    return syntax;
+  }
+  var QUERY_KEYWORDS = /* @__PURE__ */ new Set(["and", "or", "not", "in", "like", "order", "by", "asc", "desc", "limit", "offset"]);
+  var NUMBER_TOKEN = /^[+-]?\d+(?:\.\d+)?$/;
+  var CALL_PATTERN = /([^\s()=!<>,+\-*/&^;:%]+)\s*\(([^()]*)\)/g;
+  var QUERY_SPLIT = /[^\s()=!<>,]+/g;
+  var EXPRESSION_SPLIT = /[^\s()=!<>,+\-*/&^;:%]+/g;
+  function uniqueKnownTokens(text, split, known) {
+    const found = /* @__PURE__ */ new Set();
+    for (const token of text.match(split) || []) {
+      if (NUMBER_TOKEN.test(token) || QUERY_KEYWORDS.has(token.toLowerCase())) continue;
+      if (known.has(token)) found.add(token);
+    }
+    return [...found];
+  }
+  function withoutFunctionCalls(syntax) {
+    let current = syntax;
+    for (let pass = 0; pass < 8; pass++) {
+      const next = current.replace(CALL_PATTERN, (match, name) => QUERY_KEYWORDS.has(name.toLowerCase()) ? match.replace(/\(/g, " ").replace(/\)/g, " ") : " ".repeat(match.length));
+      if (next === current) break;
+      current = next;
+    }
+    return current;
+  }
+  function extractQueryFieldCodes(query, knownCodes) {
+    const known = knownCodes instanceof Set ? knownCodes : new Set(knownCodes);
+    if (!known.size) return [];
+    return uniqueKnownTokens(withoutFunctionCalls(querySyntaxText(query)), QUERY_SPLIT, known);
+  }
+  function extractExpressionFieldCodes(expression, knownCodes) {
+    const known = knownCodes instanceof Set ? knownCodes : new Set(knownCodes);
+    if (!known.size) return [];
+    const syntax = querySyntaxText(expression);
+    const withoutNames = syntax.replace(/([^\s()=!<>,+\-*/&^;:%]+)(\s*\()/g, (_match, name, paren) => " ".repeat(name.length) + paren);
+    return uniqueKnownTokens(withoutNames, EXPRESSION_SPLIT, known);
+  }
+
   // src/runControl.ts
   var RUN_CANCELLED_MESSAGE = "利用者の操作で中止しました";
   var RunCancelledError = class extends Error {
@@ -811,6 +868,7 @@
   var RECORD_CURSOR_PATH = "/records/cursor.json";
   var FILE_UPLOAD_PATH = "/file.json";
   var APP_DEPLOY_PATH = "/app/deploy.json";
+  var DEPLOY_APPS_PER_REQUEST = 300;
   var apiGetMetrics = {
     calls: 0,
     retries: 0,
@@ -990,6 +1048,27 @@ ${base}`
     const value = res?.revision;
     if (value == null || value === "") return "";
     return String(value);
+  }
+  var APP_ID_PATTERN = /^[1-9]\d*$/;
+  function assertDeployGuestId(guestId) {
+    const g = String(guestId || "").trim();
+    if (g && !APP_ID_PATTERN.test(g)) throw new Error("ゲストスペースIDは正の整数で指定してください。");
+  }
+  async function fetchAppDeployStatus(guestId, appIds) {
+    assertDeployGuestId(guestId);
+    if (!Array.isArray(appIds) || !appIds.length) return [];
+    if (appIds.length > DEPLOY_APPS_PER_REQUEST) throw new Error(`一度に確認できるアプリは ${DEPLOY_APPS_PER_REQUEST} 件までです（${appIds.length} 件指定されました）。`);
+    const ids = appIds.map((id) => String(id ?? "").trim());
+    const invalid = ids.find((id) => !APP_ID_PATTERN.test(id));
+    if (invalid !== void 0) throw new Error(`アプリIDは正の整数で指定してください（${invalid || "空"}）。`);
+    const res = await apiGet(buildApiPrefix(guestId, true), APP_DEPLOY_PATH, { apps: ids });
+    if (!res || !Array.isArray(res.apps)) throw new Error("反映状況の応答形式が不正です（apps がありません）。");
+    return res.apps.map((row) => {
+      const app = String(row?.app ?? "").trim();
+      const status = typeof row?.status === "string" ? row.status : "";
+      if (!app || !status) throw new Error("反映状況の応答形式が不正です（app または status がありません）。");
+      return { app, status };
+    });
   }
   function sanitizeBundleMeta(meta) {
     const out = { sectionRevisions: {} };
@@ -3295,7 +3374,7 @@ ${base}`
     appendMissing(target, result);
     return result;
   }
-  var FIELD_DEPENDENT_SECTIONS = ["layoutSettings", "viewSettings", "reportSettings", "actionSettings", "appSettings", "fieldAcl", "reminderNotifications", "processSettings"];
+  var FIELD_DEPENDENT_SECTIONS = ["layoutSettings", "viewSettings", "reportSettings", "actionSettings", "appSettings", "fieldAcl", "reminderNotifications", "processSettings", "recordPermissions", "perRecordNotifications"];
   function reflectInspectionScopes(scopes) {
     return [.../* @__PURE__ */ new Set([...scopes, ...scopes.some((key) => FIELD_DEPENDENT_SECTIONS.includes(key)) ? ["fieldSettings"] : []])];
   }
@@ -3313,18 +3392,34 @@ ${base}`
     }
     return [...new Set(issues)];
   }
-  function reflectRequiredFields(key, after) {
+  function reflectRequiredFields(key, after, knownFieldCodes) {
+    const known = knownFieldCodes ? knownFieldCodes instanceof Set ? knownFieldCodes : new Set(knownFieldCodes) : void 0;
+    const queryCodes = (...queries) => known ? queries.flatMap((query) => extractQueryFieldCodes(query, known)) : [];
+    const unique = (codes) => [...new Set(codes)];
     if (key === "viewSettings") {
       if (!object(after?.views)) return [];
-      return [...new Set(Object.values(after.views).flatMap((view) => view?.type === "LIST" ? view.fields || [] : view?.type === "CALENDAR" ? [view.date, view.title].filter(Boolean) : []).filter((code) => !["$id", "$revision"].includes(code)))];
+      return unique(Object.values(after.views).flatMap((view) => [
+        ...view?.type === "LIST" ? view.fields || [] : view?.type === "CALENDAR" ? [view.date, view.title].filter(Boolean) : [],
+        ...queryCodes(view?.filterCond, view?.sort)
+      ]).filter((code) => !["$id", "$revision"].includes(code)));
     }
-    if (key === "actionSettings") return extractActionRequiredFields(after?.actions);
-    if (key === "reportSettings") return extractReportRequiredFields(after?.reports);
+    if (key === "actionSettings") return unique([...extractActionRequiredFields(after?.actions), ...queryCodes(...Object.values(object(after?.actions) ? after.actions : {}).map((action) => action?.filterCond))]);
+    if (key === "reportSettings") return unique([...extractReportRequiredFields(after?.reports), ...queryCodes(...Object.values(object(after?.reports) ? after.reports : {}).map((report) => report?.filterCond))]);
+    if (key === "recordPermissions" || key === "perRecordNotifications") {
+      const list2 = key === "recordPermissions" ? after?.rights : after?.notifications;
+      return unique(queryCodes(...(Array.isArray(list2) ? list2 : []).map((item) => item?.filterCond)));
+    }
     if (key === "fieldAcl") return [...new Set((after?.rights || []).map((right) => String(right?.code || "")).filter((code) => code && !["$id", "$revision"].includes(code)))];
-    if (key === "reminderNotifications") return [...new Set((after?.notifications || []).flatMap((item) => [item?.timing?.code, ...(item?.targets || []).filter((target) => target?.entity?.type === "FIELD_ENTITY").map((target) => target.entity.code)]).map((code) => String(code || "")).filter((code) => !!code))];
+    if (key === "reminderNotifications") return unique([
+      ...(after?.notifications || []).flatMap((item) => [item?.timing?.code, ...(item?.targets || []).filter((target) => target?.entity?.type === "FIELD_ENTITY").map((target) => target.entity.code)]).map((code) => String(code || "")).filter((code) => !!code),
+      ...queryCodes(...(Array.isArray(after?.notifications) ? after.notifications : []).map((item) => item?.filterCond))
+    ]);
     if (key === "processSettings") {
       if (!object(after?.states)) return void 0;
-      return [...new Set(Object.values(after.states).flatMap((state3) => (state3?.assignee?.entities || []).filter((item) => item?.entity?.type === "FIELD_ENTITY").map((item) => String(item.entity.code || ""))).filter((code) => !!code))];
+      return unique([
+        ...Object.values(after.states).flatMap((state3) => (state3?.assignee?.entities || []).filter((item) => item?.entity?.type === "FIELD_ENTITY").map((item) => String(item.entity.code || ""))).filter((code) => !!code),
+        ...queryCodes(...(Array.isArray(after?.actions) ? after.actions : []).map((action) => action?.filterCond))
+      ]);
     }
     if (key === "layoutSettings") {
       const codes = [];
@@ -3471,7 +3566,7 @@ ${base}`
         after = { [property]: combined };
         plan.behavior = preserve ? "追加・更新（反映先だけの設定は保持）" : "全置換（反映元にない設定を削除）";
         if (preserve) for (const name of Object.keys(to).filter((name2) => !own2(from, name2))) plan.changes.push({ kind: "保持", path: `${diffPathLabels[property]} / ${name}`, before: valueText(to[name]), after: "内容を保持（表示順は反映元の後）" });
-        plan.requiredFields = reflectRequiredFields(key, after);
+        plan.requiredFields = reflectRequiredFields(key, after, options.knownFieldCodes);
       } else if (key === "pluginSettings") {
         if (!Array.isArray(source.plugins) || !Array.isArray(target.plugins)) throw new Error("プラグイン一覧の形式が不正です。");
         const existing = new Set(target.plugins.map((item) => item.id));
@@ -3533,8 +3628,8 @@ ${base}`
           if (uploads.length) plan.warnings.push(`${uploads.length} 件のファイル（合計 ${formatBytes(uploads.reduce((sum, upload) => sum + upload.byteSize, 0))}）を反映先へアップロードしてから設定します。`);
           if (uploads.length && resolution?.targetUnavailable.length) plan.warnings.push(`反映先の ${resolution.targetUnavailable.map((item) => `「${item.name}」（${item.reason}）`).join("、")} の本体を確認できなかったため、同じ内容のファイルがあっても再利用せずアップロードします。`);
         }
-        if (key === "fieldAcl" || key === "reminderNotifications" || key === "processSettings") {
-          const required = reflectRequiredFields(key, after);
+        if (key === "fieldAcl" || key === "reminderNotifications" || key === "processSettings" || key === "recordPermissions" || key === "perRecordNotifications") {
+          const required = reflectRequiredFields(key, after, options.knownFieldCodes);
           if (required) plan.requiredFields = required;
         }
         if (key === "layoutSettings") {
@@ -3852,7 +3947,22 @@ ${base}`
   var KINDS2 = ["js", "css"];
   var UPLOAD_WARNING = /^\d+ 件のファイル（合計 .+）を反映先へアップロードしてから設定します。$/;
   var isNonEmptyString = (value) => typeof value === "string" && value !== "";
-  function checkFieldSettings(before, after, fieldLabels) {
+  var CHOICE_FIELD_TYPES = /* @__PURE__ */ new Set(["DROP_DOWN", "RADIO_BUTTON", "CHECK_BOX", "MULTI_SELECT"]);
+  function checkChoiceDefault(label, definition) {
+    if (!CHOICE_FIELD_TYPES.has(definition.type) || !isPlainObject(definition.options)) return [];
+    const options = definition.options;
+    const defaults = definition.defaultValue;
+    const hint = "初期値は、送る設定の選択肢のどれかにしてください。";
+    if (definition.type === "DROP_DOWN" || definition.type === "RADIO_BUTTON") {
+      if (defaults === void 0 || defaults === "" || defaults === null) return definition.type === "RADIO_BUTTON" ? [`${label}の初期値がありません。ラジオボタンは、初期値を選択肢のどれかにする必要があります。`] : [];
+      if (typeof defaults !== "string") return [`${label}の初期値の形式が不正です。${hint}`];
+      return own3(options, defaults) ? [] : [`${label}の初期値「${defaults}」が選択肢にありません。${hint}`];
+    }
+    if (defaults === void 0 || defaults === null) return [];
+    if (!Array.isArray(defaults)) return [`${label}の初期値の形式が不正です（選択肢の配列にしてください）。`];
+    return defaults.filter((value) => typeof value !== "string" || !own3(options, value)).map((value) => `${label}の初期値「${String(value)}」が選択肢にありません。${hint}`);
+  }
+  function checkFieldSettings(before, after, fieldLabels, knownFieldCodes) {
     const issues = [];
     const name = (code, parent) => `フィールド「${parent ? `${fieldDisplayName(parent, fieldLabels)} › ` : ""}${fieldDisplayName(code, fieldLabels)}」`;
     const compare = (beforeFields, afterFields, parent) => {
@@ -3864,6 +3974,7 @@ ${base}`
         if (definition.code !== void 0 && definition.code !== code) issues.push(`${name(code, parent)}のフィールドコードは変更できません（${code} → ${String(definition.code)}）。`);
         const current = own3(beforeFields, code) ? beforeFields[code] : void 0;
         if (isPlainObject(current) && current.type !== definition.type) issues.push(`${name(code, parent)}の種類は変更できません（${String(current.type)} → ${definition.type}）。`);
+        issues.push(...checkChoiceDefault(name(code, parent), definition));
         if (definition.type === "SUBTABLE") {
           if (!isPlainObject(definition.fields)) issues.push(`${name(code, parent)}のテーブル内のフィールド定義（fields）がありません。`);
           else compare(isPlainObject(current?.fields) ? current.fields : {}, definition.fields, code);
@@ -3875,14 +3986,36 @@ ${base}`
     };
     if (!isPlainObject(after?.properties)) return ["フィールド設定の properties がありません。"];
     compare(isPlainObject(before?.properties) ? before.properties : {}, after.properties);
+    if (knownFieldCodes) {
+      const known = knownFieldCodes instanceof Set ? knownFieldCodes : new Set(knownFieldCodes);
+      const present = /* @__PURE__ */ new Set();
+      const collect = (fields) => {
+        for (const [code, definition] of Object.entries(fields)) {
+          present.add(code);
+          if (isPlainObject(definition) && definition.type === "SUBTABLE" && isPlainObject(definition.fields)) collect(definition.fields);
+        }
+      };
+      collect(after.properties);
+      const checkExpressions = (fields, parent) => {
+        for (const [code, definition] of Object.entries(fields)) {
+          if (!isPlainObject(definition)) continue;
+          if (isNonEmptyString(definition.expression)) {
+            const missing = extractExpressionFieldCodes(definition.expression, known).filter((ref) => ref !== code && !present.has(ref));
+            if (missing.length) issues.push(`${name(code, parent)}の計算式が、反映先に無いフィールド${missing.map((ref) => `「${fieldDisplayName(ref, fieldLabels)}」`).join("、")}を参照しています。${missing.length > 1 ? "これらの追加" : "その追加"}も一緒に選ぶか、計算式を反映しないでください。`);
+          }
+          if (definition.type === "SUBTABLE" && isPlainObject(definition.fields)) checkExpressions(definition.fields, code);
+        }
+      };
+      checkExpressions(after.properties);
+    }
     return issues;
   }
-  function checkComposedAfter(sectionKey, before, after, fieldLabels = {}) {
+  function checkComposedAfter(sectionKey, before, after, fieldLabels = {}, knownFieldCodes) {
     const fail = (message) => [message];
     if (!isPlainObject(after)) return fail("反映後の設定はオブジェクトである必要があります。");
     switch (sectionKey) {
       case "fieldSettings":
-        return checkFieldSettings(before, after, fieldLabels);
+        return checkFieldSettings(before, after, fieldLabels, knownFieldCodes);
       case "layoutSettings":
         return Array.isArray(after.layout) && after.layout.every(isPlainObject) ? [] : fail("レイアウトの形式が不正です（layout は行の配列である必要があります）。");
       case "viewSettings":
@@ -3938,9 +4071,9 @@ ${base}`
         return [];
     }
   }
-  function checkComposedAgainstPlan(plan, after, fieldLabels = {}) {
+  function checkComposedAgainstPlan(plan, after, fieldLabels = {}, knownFieldCodes) {
     if (!plan.values) return ["設定値を取得できていないため、選択・修正した内容から書き込み内容を作れません。"];
-    const issues = checkComposedAfter(plan.sectionKey, plan.values.before, after, fieldLabels);
+    const issues = checkComposedAfter(plan.sectionKey, plan.values.before, after, fieldLabels, knownFieldCodes);
     if (issues.length || plan.sectionKey !== "customizeSettings") return issues;
     for (const platform of PLATFORMS2) for (const kind of KINDS2) {
       const list2 = after[platform][kind];
@@ -3969,7 +4102,7 @@ ${base}`
     if (update) operations.push({ method: "PUT", endpoint, body: { properties: updates }, label: "フィールド更新" });
     return { operations, add, update };
   }
-  function buildPlanFromComposedAfter(plan, after, fieldLabels = {}) {
+  function buildPlanFromComposedAfter(plan, after, fieldLabels = {}, knownFieldCodes) {
     const key = plan.sectionKey;
     const result = {
       sectionKey: key,
@@ -3994,7 +4127,7 @@ ${base}`
     };
     if (!plan.values) return fail(["設定値を取得できていないため、選択・修正した内容から書き込み内容を作れません。"]);
     const before = plan.values.before;
-    const issues = checkComposedAgainstPlan(plan, after, fieldLabels);
+    const issues = checkComposedAgainstPlan(plan, after, fieldLabels, knownFieldCodes);
     if (issues.length) return fail(issues);
     const def = SECTION_DEFS.find((item) => item.key === key);
     const endpoint = key === "appSettings" ? SECTION_DEFS.find((item) => item.key === "appSettings")?.endpoint || "/app/settings.json" : def?.endpoint;
@@ -4046,7 +4179,7 @@ ${base}`
       result.removalCount = changes.filter((change) => change.kind === "削除").length;
       if (putAfter && result.changeCount) result.operations.push({ method: "PUT", endpoint, body: after, label: key === "appSettings" ? plan.label : def.label, ...uploads.length ? { uploads } : {} });
       if (uploads.length && result.changeCount) result.fileUploads = uploads;
-      const required = reflectRequiredFields(key, after);
+      const required = reflectRequiredFields(key, after, knownFieldCodes);
       if (required !== void 0) result.requiredFields = required;
       if (result.blockers.length) result.status = "error";
       else result.status = result.operations.length ? "change" : "same";
@@ -4157,7 +4290,22 @@ ${base}`
     const sourceGuestId = opts.sourceBundle ? String(opts.sourceBundle?.guestId || "") : opts.sourceGuestId || "";
     return resolveCustomizeFiles(sourceSection, targetSection, { sourceGuestId, targetGuestId: opts.targetGuestId || "" });
   }
-  async function previewReflectStandalone(opts, setStatus) {
+  function knownFieldCodesOf(source, target) {
+    return [.../* @__PURE__ */ new Set([...listReflectFieldCodes(source), ...listReflectFieldCodes(target)])];
+  }
+  async function inspectTargetDeployStatus(opts) {
+    try {
+      const rows = await fetchAppDeployStatus(opts.targetGuestId || "", [opts.targetAppId]);
+      const row = rows.find((item) => item.app === String(opts.targetAppId));
+      if (!row) return { state: "unknown", message: "反映先が反映処理中か確認できませんでした（反映状況に反映先がありません）。" };
+      if (row.status === "PROCESSING") return { state: "processing", message: "反映先は前回の反映を kintone が処理中です。完了してから抽出し直してください。" };
+      return { state: "idle", message: "反映先は反映処理中ではありません。" };
+    } catch (error) {
+      if (isRunCancelledError(error)) throw error;
+      return { state: "unknown", message: `反映先が反映処理中か確認できませんでした（${error?.message != null ? String(error.message).split("\n")[0] : String(error)}）。` };
+    }
+  }
+  async function previewReflectStandalone(opts, setStatus, options = {}) {
     const invalid = reflectConnectionError(opts);
     if (invalid) throw new Error(invalid);
     const scopes = orderedScopes(opts.scopes);
@@ -4165,8 +4313,14 @@ ${base}`
     setStatus("反映先の未公開の変更を確認中…");
     const targetPending = await inspectTargetPendingChanges({ targetAppId: opts.targetAppId, targetGuestId: opts.targetGuestId, scopes: reflectInspectionScopes(scopes) }, target);
     const customizeFiles = await resolveReflectCustomizeFiles(opts, scopes, source, target, setStatus);
+    let targetDeployStatus;
+    if (options.checkTargetDeployStatus) {
+      setStatus("反映先の反映状況を確認中…");
+      targetDeployStatus = await inspectTargetDeployStatus(opts);
+    }
     const fieldLabels = reflectFieldLabels(target, source);
-    const entries = scopes.map((key) => buildReflectSectionPlan(key, source.sections?.[key], target.sections?.[key], { ...opts, customizeFiles, fieldLabels }));
+    const knownFieldCodes = knownFieldCodesOf(source, target);
+    const entries = scopes.map((key) => buildReflectSectionPlan(key, source.sections?.[key], target.sections?.[key], { ...opts, customizeFiles, fieldLabels, knownFieldCodes }));
     const baseline = captureReflectBaseline({ ...opts, scopes: reflectInspectionScopes(scopes) }, source, target);
     for (const entry of entries.filter((entry2) => !entry2.blockers.length)) {
       try {
@@ -4201,7 +4355,8 @@ ${base}`
       sourceSystemFieldCodes: listReflectSystemFieldCodes(source),
       baseline,
       targetPending,
-      fieldLabels
+      fieldLabels,
+      ...targetDeployStatus ? { targetDeployStatus } : {}
     };
   }
   function composedFieldCodes(after) {
@@ -4224,9 +4379,10 @@ ${base}`
     let revision = assertReflectBaselineMatches(opts.reviewBaseline, { ...opts, scopes }, source, target);
     const customizeFiles = await resolveReflectCustomizeFiles(opts, scopes, source, target, setStatus);
     const fieldLabels = reflectFieldLabels(target, source);
-    const defaultPlans = scopes.map((key) => buildReflectSectionPlan(key, source.sections?.[key], target.sections?.[key], { ...opts, customizeFiles, fieldLabels }));
+    const knownFieldCodes = knownFieldCodesOf(source, target);
+    const defaultPlans = scopes.map((key) => buildReflectSectionPlan(key, source.sections?.[key], target.sections?.[key], { ...opts, customizeFiles, fieldLabels, knownFieldCodes }));
     const composed = opts.composed;
-    const plans = composed ? defaultPlans.map((plan) => Object.prototype.hasOwnProperty.call(composed, plan.sectionKey) ? buildPlanFromComposedAfter(plan, composed[plan.sectionKey], fieldLabels) : plan) : defaultPlans;
+    const plans = composed ? defaultPlans.map((plan) => Object.prototype.hasOwnProperty.call(composed, plan.sectionKey) ? buildPlanFromComposedAfter(plan, composed[plan.sectionKey], fieldLabels, knownFieldCodes) : plan) : defaultPlans;
     const sourceFields = composed && Object.prototype.hasOwnProperty.call(composed, "fieldSettings") ? composedFieldCodes(composed.fieldSettings) : listReflectFieldCodes(source, true);
     const issues = reflectSelectionBlockers(plans, scopes, sourceFields, listReflectFieldCodes(target), listReflectSystemFieldCodes(source), addableFieldCodes(defaultPlans));
     if (issues.length) throw new Error(`反映前の検査で停止しました。まだ書き込んでいません。
@@ -4364,7 +4520,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         }
         const message = `${error.message || String(error)}${written.length ? `
 （この項目では ${written.join("・")} まで書き込み済みです。差分を取得し直して現在の状態を確認してください）` : ""}`;
-        sections.push({ ...outcome, status: "ng", message });
+        sections.push({ ...outcome, status: "ng", message, ...written.length ? { partiallyWritten: true } : {} });
         notify(plan, "ng", message);
         pushReflectErrorLog(logs, `NG ${plan.label}: ${message}`, message);
         if (opts.stopOnError !== false || error.stopReflection || isRevisionConflictError(error)) {

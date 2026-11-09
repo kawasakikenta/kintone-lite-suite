@@ -11,6 +11,7 @@
 import type { SourceDeployOptions, SourceDeployResult, SourceApplyResult } from '../deploy/sourceTypes.js';
 import type { DeployAppInspection } from '../deploy/types.js';
 import { isRunCancelledError, RUN_CANCELLED_MESSAGE } from '../runControl.js';
+import { previewWriteState } from '../reflect/applyOutcome.js';
 import { runApplyPreviewStandalone } from './reflect-standalone.js';
 import { inspectDeployTargetsStandalone, runDeployStandalone } from './deploy-standalone.js';
 
@@ -42,11 +43,15 @@ export async function runSourceToProductionStandalone(opts: SourceDeployOptions)
   };
 
   // 1. 書き込みの中止・失敗・未実行が 1 項目でもあれば本番へは反映しない。
-  if (apply.cancelled) return skip('中止したため、本番へは反映していません。反映先プレビューは一部だけ更新されている可能性があります。差分を取得し直して現在の状態を確認してください。');
+  // 反映先プレビューが変わったかは、書き込めた件数で言い分ける（1 件も書き込めていないのに「書き込み済み」「一部更新」と言わない）。
+  const writeState = previewWriteState(apply.sections);
+  const UNCHANGED_NOTE = '反映先プレビューは変わっていません。';
+  const PARTIAL_NOTE = '反映先プレビューには一部だけ書き込まれています。差分を取得し直して現在の状態を確認してください。';
+  if (apply.cancelled) return skip(`中止したため、本番へは反映していません。${writeState === 'none' ? UNCHANGED_NOTE : '反映先プレビューは一部だけ更新されている可能性があります。差分を取得し直して現在の状態を確認してください。'}`);
   const incomplete = apply.sections.filter(section => section.status === 'ng' || section.status === 'pending');
   if (incomplete.length) {
     const list = incomplete.map(section => `${section.label}: ${section.status === 'ng' ? '失敗' : '未実行'}`).join('、');
-    return skip(`反映先プレビューへの書き込みが完了しなかった項目があるため（${list}）、本番へは反映していません。反映先プレビューは一部だけ更新されている可能性があります。差分を取得し直して現在の状態を確認してください。`);
+    return skip(`反映先プレビューへの書き込みが完了しなかった項目があるため（${list}）、本番へは反映していません。${writeState === 'none' ? UNCHANGED_NOTE : PARTIAL_NOTE}`);
   }
 
   // 2. 以前からの未公開の変更がある、または有無を確認できなかったときは、利用者の了承がなければ本番へ反映しない
@@ -75,11 +80,11 @@ export async function runSourceToProductionStandalone(opts: SourceDeployOptions)
     return skip(`${WRITTEN_NOTE}${reason}${inspection.state === 'clean' ? '' : PUBLISH_GUIDE}`, inspection);
   }
   if (apply.finalRevision && inspection.previewRevision !== apply.finalRevision) {
-    return skip(`${WRITTEN_NOTE}ただし、書き込みの後にほかの更新が入ったため、本番へは反映していません（プレビューの revision ${apply.finalRevision} → ${inspection.previewRevision}）。内容を確認してから反映してください。${PUBLISH_GUIDE}`, inspection);
+    return skip(`${WRITTEN_NOTE}ただし、書き込みの後にほかの更新が入ったため、本番へは反映していません（プレビューの設定の更新番号 revision ${apply.finalRevision} → ${inspection.previewRevision}）。内容を確認してから反映してください。${PUBLISH_GUIDE}`, inspection);
   }
   const expectedProduction = pending?.productionRevision;
   if (expectedProduction && /^\d+$/.test(expectedProduction) && inspection.productionRevision !== expectedProduction) {
-    return skip(`${WRITTEN_NOTE}ただし、差分を抽出した後に本番が更新されたため、本番へは反映していません（本番の revision ${expectedProduction} → ${inspection.productionRevision}）。内容を確認してから反映してください。${PUBLISH_GUIDE}`, inspection);
+    return skip(`${WRITTEN_NOTE}ただし、差分を抽出した後に本番が更新されたため、本番へは反映していません（本番の設定の更新番号 revision ${expectedProduction} → ${inspection.productionRevision}）。内容を確認してから反映してください。${PUBLISH_GUIDE}`, inspection);
   }
 
   // 4. 本番へ反映する。

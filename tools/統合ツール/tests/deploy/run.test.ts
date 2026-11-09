@@ -129,7 +129,7 @@ describe('runDeployStandalone: 1 件ずつ反映', () => {
     expect(statuses).toEqual(['pending', 'conflict', 'pending']);
     expect(result.blocked).toContain('App 2');
     expect(result.blocked).toContain('何も反映していません');
-    expect(result.apps[1].message).toContain('プレビュー（revision 12 → 99）');
+    expect(result.apps[1].message).toContain('プレビュー（設定の更新番号 revision 12 → 99）');
     expect(result.apps[0].message).toContain('まだ何も反映していません');
     expect(env.requests).toEqual([]);
     expect(env.writes()).toEqual([]);
@@ -140,7 +140,7 @@ describe('runDeployStandalone: 1 件ずつ反映', () => {
     env.apps['3'].prodRevision = '11';
     const second = await run(targets);
     expect(second.statuses).toEqual(['pending', 'pending', 'conflict']);
-    expect(second.result.apps[2].message).toContain('本番（revision 10 → 11）');
+    expect(second.result.apps[2].message).toContain('本番（設定の更新番号 revision 10 → 11）');
   });
 
   it('開始時の再確認で設定を取得できないアプリがあっても、何も依頼せず pending にする', async () => {

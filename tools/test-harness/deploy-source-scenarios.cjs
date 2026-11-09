@@ -112,6 +112,8 @@ const selectionModule = `
   export function defaultSelectionState(model) { return { selected: model.changes.map(function (c) { return c.id; }), overrides: {} }; }
   export function composeSectionSelection() { throw new Error('画面は composeReflectSelectionStandalone を使う'); }
   export function buildPlanFromComposedAfter() { throw new Error('画面からは呼ばない'); }
+  // 項目をまたぐ requires は、固定のモデルに最初から含める（単体テストで検証済み）
+  export function attachFieldAdditionRequires() {}
 `;
 
 const sourceDeployModule = `
@@ -872,7 +874,7 @@ module.exports = {
     assert.match(await statusText(), /^2 項目を反映先プレビューへ反映し、1 アプリを本番へ反映しました。$/, '完了メッセージは結果の動詞で終える');
     assert.deepEqual(await page.locator('[data-progress-section]').evaluateAll(list => list.map(el => el.dataset.progressSection)), ['fieldSettings', 'viewSettings'], '書き込みの進捗は項目ごと');
     assert.match(await page.locator('[data-progress-section="fieldSettings"]').innerText(), /成功/);
-    assert.match(await page.locator('.kus-dp-result-item[data-deploy-app="20"]').innerText(), /成功[\s\S]*営業管理[\s\S]*本番のrevision: 12 → 16[\s\S]*本番とプレビューが一致/, '本番への反映の状態は本番反映と同じ表示');
+    assert.match(await page.locator('.kus-dp-result-item[data-deploy-app="20"]').innerText(), /成功[\s\S]*営業管理[\s\S]*本番の設定の更新番号: 12 → 16[\s\S]*本番とプレビューが一致/, '本番への反映の状態は本番反映と同じ表示');
     assert.match(await page.locator('[data-backup-preview]').innerText(), /バックアップ（反映前のプレビュー）: 保存しました/);
     assert.match(await page.locator('[data-backup-production]').innerText(), /バックアップ（本番へ反映する前の本番）: 本番反映前バックアップ_営業管理\(app20\)/);
     assert.match(await page.locator('#kus-ds-stage-result').innerText(), /本番への反映は取り消せません/);
@@ -930,7 +932,7 @@ module.exports = {
     await runButton().click(); await idle();
     assert.match(await statusText(), /^3 項目を反映先プレビューへ反映しましたが、本番へは反映していません。本番の revision が確認後に変わったため/);
     assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'warn', 'deploySkipped は警告で示す');
-    assert.match(await page.locator('[data-deploy-skipped-note]').innerText(), /本番へは反映していません[\s\S]*確認した内容と食い違うため[\s\S]*反映先プレビューには書き込み済みです。「プレビューの変更を公開」から、続けて本番へ反映できます。/);
+    assert.match(await page.locator('[data-deploy-skipped-note]').innerText(), /本番へは反映していません[\s\S]*確認した内容と食い違うため[\s\S]*反映先プレビューには書き込み済みです。理由を解消したあと、パネル上部の「プレビューの変更を公開」から続けて本番へ反映できます。/);
     assert.match(await page.locator('[data-deploy-skipped]').innerText(), /本番へは反映していません/);
     const skippedMd = await downloadOf('記録をMarkdownで保存');
     assert.match(skippedMd.text, /- 本番へは反映していません。本番の revision が確認後に変わった/);

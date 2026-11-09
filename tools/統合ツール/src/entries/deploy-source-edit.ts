@@ -396,7 +396,8 @@ export function createEditView(host: EditViewHost): EditView {
       for (const row of view.rows.values()) paintRow(row);
     }
     // 問題は画面下にもまとめる（段階 3 の下部）
-    const lines = [...new Set([...session.composed.sections.flatMap((section) => (host.activeScopes().includes(section.sectionKey) ? section.errors.map((error) => `${section.label}: ${error}`) : [])), ...session.composed.blockers])];
+    const processing = session.preview.targetDeployStatus?.state === 'processing' ? [session.preview.targetDeployStatus.message] : [];
+    const lines = [...new Set([...processing, ...session.composed.sections.flatMap((section) => (host.activeScopes().includes(section.sectionKey) ? section.errors.map((error) => `${section.label}: ${error}`) : [])), ...session.composed.blockers])];
     blockers.replaceChildren();
     blockers.hidden = !lines.length;
     if (lines.length) {

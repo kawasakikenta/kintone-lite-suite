@@ -9,6 +9,7 @@
 import {
   clipText,
   countExtraction,
+  EXTRACTION_COUNT_HELP,
   describePath,
   describeExtractionSummary,
   describeRequires,
@@ -24,7 +25,8 @@ import {
 import { hasJsonOverride, isChangeSelected, selectedCount, type SelectionResult, type SourceSession } from '../deploy/sourceSession.js';
 import type { SelectableChange } from '../reflect/selectionTypes.js';
 import type { ReflectTargetPending } from '../reflect/targetPending.js';
-import { makeButton, makeInput, makeSelect } from './litePanelTheme.js';
+import type { ReflectTargetDeployStatus } from '../tabs/reflect-standalone.js';
+import { attachCardHelp, makeButton, makeCard, makeInput, makeNote, makeSelect } from './litePanelTheme.js';
 import { el, firstLines, setButtonText } from './deployProgressView.js';
 
 /** この件数以下の項目は、最初から開いて描画する。 */
@@ -70,6 +72,20 @@ export function renderTargetPending(host: HTMLElement, pending: ReflectTargetPen
     const title = pending.state === 'clean' ? '✓ 未公開の変更なし' : pending.state === 'own' ? '✓ 未公開の変更はこのツールの反映分だけ' : 'ⓘ 未公開の変更は未確認';
     box.append(el('strong', '', title), text);
   }
+  host.appendChild(box);
+  return box;
+}
+
+/**
+ * 反映先の反映状況（kintone が前回の反映を処理中か）。処理中は警告で示し、先へ進めない。
+ * 確認できなかったとき（unknown）は注意だけで、止めない。処理中でないとき（idle）は何も出さない。
+ */
+export function renderTargetDeployStatus(host: HTMLElement, status: ReflectTargetDeployStatus | undefined): HTMLElement | null {
+  if (!status || status.state === 'idle') return null;
+  const box = el('div', status.state === 'processing' ? 'kus-ds-note kus-ds-note--warn' : 'kus-ds-note kus-ds-note--info');
+  box.dataset.targetDeployStatus = status.state;
+  if (status.state === 'processing') box.setAttribute('role', 'alert');
+  box.append(el('strong', '', status.state === 'processing' ? '反映先は反映処理中です' : 'ⓘ 反映処理中かは未確認'), el('span', '', status.message));
   host.appendChild(box);
   return box;
 }
@@ -315,7 +331,8 @@ export function createSelectView(host: SelectViewHost): SelectView {
   // -------------------------------------------------------------------------
   function renderSummary(session: SourceSession) {
     summaryHost.replaceChildren();
-    const counts = countExtraction(session.preview.entries, host.activeScopes());
+    const counts = countExtraction(session.preview.entries, host.activeScopes(), session.models);
+    const summaryCard = makeCard({ title: '抽出結果', soft: true });
     const pills = el('div', 'kus-dp-pills');
     pills.append(
       el('span', 'kus-dp-pill kus-dp-pill--change', `差分のある項目 ${counts.change}`),
@@ -324,14 +341,18 @@ export function createSelectView(host: SelectViewHost): SelectView {
     );
     const info = el('div', 'kus-ds-note kus-ds-note--info', describeExtractionSummary(counts));
     info.dataset.extractSummary = 'true';
-    summaryHost.append(pills, info);
+    summaryCard.body.append(pills, info, makeNote(EXTRACTION_COUNT_HELP, 'help'));
+    attachCardHelp(summaryCard.card);
+    summaryHost.append(summaryCard.card);
     renderTargetPending(summaryHost, session.preview.targetPending);
+    renderTargetDeployStatus(summaryHost, session.preview.targetDeployStatus);
   }
 
   function paintBlockers(session: SourceSession) {
     const result = host.blockers();
     blockersHost.replaceChildren();
     const lines = [
+      ...(result.processing ? [result.processing] : []),
       ...result.failed.map((item) => `${item.label}: 取得失敗（${item.message}）。この項目を反映しない項目から外すか、差分を抽出し直してください。`),
       ...result.problems
     ];

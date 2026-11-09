@@ -24,6 +24,8 @@ import {
   describeRemovedSettings,
   describeRunProgress,
   describeRunResult,
+  describeSerialDuration,
+  SERIAL_ESTIMATE_THRESHOLD,
   formatDeployApp,
   formatRevisionPair,
   inspectStateLabel,
@@ -218,7 +220,7 @@ describe('実行中・実行後の状態', () => {
   it('反映後の確認が一致しなければ注意にする', () => {
     const result = describeRunResult({ mode: 'deploy', apps: [outcome('1', 'success', { verified: false }), outcome('2', 'success', { verified: true })] });
     expect(result.tone).toBe('warn');
-    expect(result.text).toContain('1 アプリは反映後の状態（revision）が本番とプレビューで一致しませんでした');
+    expect(result.text).toContain('1 アプリは反映後の設定の更新番号（revision）が本番とプレビューで一致しませんでした');
   });
 
   it('部分成功: 成功数・失敗数・理由の順', () => {
@@ -261,5 +263,19 @@ describe('設定画面の URL', () => {
   it('通常スペースとゲストスペース', () => {
     expect(appSettingsPath({ appId: '12', guestId: '' })).toBe('/k/admin/app/flow?app=12');
     expect(appSettingsPath({ appId: '12', guestId: '3' })).toBe('/k/guest/3/admin/app/flow?app=12');
+  });
+});
+
+describe('1 アプリずつ反映するときの所要時間の目安', () => {
+  it('件数が多いとき（20 件以上）だけ、1 件あたり数秒と全体の目安を示す', () => {
+    expect(SERIAL_ESTIMATE_THRESHOLD).toBe(20);
+    expect(describeSerialDuration('sequential', 19)).toBe('');
+    expect(describeSerialDuration('sequential', 20)).toBe('1 アプリずつ反映すると、1 件あたり数秒、全体で約 1 分かかる見込みです。画面を開いたままお待ちください。');
+    expect(describeSerialDuration('sequential', 100)).toContain('全体で約 5 分');
+    expect(describeSerialDuration('sequential', 1000)).toContain('全体で約 50 分');
+  });
+
+  it('まとめて反映のときは示さない', () => {
+    expect(describeSerialDuration('atomic', 300)).toBe('');
   });
 });

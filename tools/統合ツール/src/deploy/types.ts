@@ -175,7 +175,9 @@ export interface DeployBackupFile {
 }
 
 export interface DeployPollOptions {
-  /** 最初の状態確認までの待ち時間（既定 1000ms） */
+  /** 最初の状態確認までの待ち時間（既定 300ms。initialMs が小さいときはそれに合わせる）。小さいアプリの反映は数百 ms で終わるため、最初だけ短くして 1 件あたりの待ちを減らす */
+  firstMs?: number;
+  /** 2 回目以降の状態確認の間隔の起点（既定 1000ms）。ここから 1.5 倍ずつ増やす */
   initialMs?: number;
   /** 状態確認の間隔の上限（既定 5000ms） */
   maxMs?: number;

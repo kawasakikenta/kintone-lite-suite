@@ -234,7 +234,7 @@ async function main() {
   const confirmBox = () => page.locator('input[aria-label^="確認用の対象アプリ"]');
   const rowsOf = () => page.locator('.kus-lp__apptable tbody tr');
   const appInput = i => rowsOf().nth(i).locator('input[aria-label="アプリID"]');
-  const guestInput = i => rowsOf().nth(i).locator('input[aria-label="ゲストID"]');
+  const guestInput = i => rowsOf().nth(i).locator('input[aria-label="ゲストスペースID"]');
   async function setTargets(ids) {
     await page.evaluate(() => { document.querySelectorAll('.kus-lp__apptable tbody tr button').forEach(b => { if (b.textContent === '×') b.click(); }); });
     const first = appInput(0);
@@ -405,7 +405,7 @@ async function main() {
     assert.match(await reviewRow('101').innerText(), /フィールド設定、ビュー設定/, '変更のある項目名');
     assert.match(await reviewRow('101').innerText(), /1 件 \/ フィールド 2 件（値も削除）/, '削除の件数（フィールドは別に示す）');
     assert.match(await reviewRow('101').innerText(), /本番 12 → プレビュー 15/, 'revision');
-    assert.match(await reviewRow('106').innerText(), /設定の内容は同じです（revision だけが異なります）/);
+    assert.match(await reviewRow('106').innerText(), /設定の内容は同じです（更新番号だけが異なります）/);
     assert.equal(await button('最終確認に進む').isDisabled(), true, '取得失敗・処理中を選んだままでは進めない');
     assert.match(await page.locator('.kus-dp-issues').innerText(), /取得失敗のアプリが 1 件選択されています[\s\S]*反映処理中のアプリが 1 件選択されています/);
     assert.match(await dockText(), /次に進むには：取得失敗のアプリが 1 件選択されています/);
@@ -597,7 +597,7 @@ async function main() {
     assert.match(await page.locator('.kus-dp-result-head').innerText(), /2 アプリを本番へ反映しました。/);
     assert.match(await page.locator('[data-deploy-backup="saved"]').innerText(), /バックアップ: 本番反映前バックアップ_2アプリ_20260101_000000\.json（2 アプリ分・反映前の本番設定）/);
     assert.match(await page.locator('#kus-dp-stage-result').innerText(), /本番への反映は取り消せません。/);
-    assert.match(await resultItem('101').innerText(), /本番のrevision: 12 → 16（プレビュー 15）[\s\S]*反映後の確認: 本番とプレビューが一致/);
+    assert.match(await resultItem('101').innerText(), /本番の設定の更新番号: 12 → 16（プレビュー 15）[\s\S]*反映後の確認: 本番とプレビューが一致/);
     assert.equal(await button('失敗・未実行だけ選び直す').count(), 0, '全件成功なら選び直しを出さない');
     assert.equal(await button('アプリの設定画面を開く').count() === 0 || await button('アプリの設定画面を開く').isHidden(), true, '複数件では設定画面を開く操作を出さない');
     assert.equal(await page.evaluate(() => window.__deployMock.runs[0].stopOnError), true);
@@ -693,10 +693,10 @@ async function main() {
     await setTargets(['101', '102']);
     await inspect(); await toConfirm(); await confirmAndRun(2);
     assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'warn');
-    assert.match(await statusText(), /1 アプリは反映後の状態（revision）が本番とプレビューで一致しませんでした/);
-    assert.match(await page.locator('[data-deploy-unverified]').innerText(), /注意: 1 アプリは反映後の状態（revision）が本番とプレビューで一致しませんでした（App 102）/);
+    assert.match(await statusText(), /1 アプリは反映後の設定の更新番号（revision）が本番とプレビューで一致しませんでした/);
+    assert.match(await page.locator('[data-deploy-unverified]').innerText(), /注意: 1 アプリは反映後の設定の更新番号（revision）が本番とプレビューで一致しませんでした（App 102）/);
     assert.match(await page.locator('[data-deploy-backup-files]').innerText(), /本体を保存できなかったファイル（1 件）[\s\S]*App 101 \/ app\.js（取得できませんでした）/);
-    assert.match(await resultItem('102').innerText(), /本番とプレビューのrevisionが一致しません/);
+    assert.match(await resultItem('102').innerText(), /本番とプレビューの設定の更新番号が一致しません/);
     ok('unverified and unavailable files');
 
     // 1 件: 設定画面を開く

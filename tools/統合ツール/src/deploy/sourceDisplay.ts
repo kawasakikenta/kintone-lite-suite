@@ -5,12 +5,13 @@
  * 変更の絞り込み・グループ化・選択の連動（requires）、進めない理由、最終確認と結果の文言を置く。
  */
 
-import { summarizeApplyOutcome, type ApplySectionOutcome } from '../reflect/applyOutcome.js';
+import { previewWriteState, summarizeApplyOutcome, type ApplySectionOutcome, type PreviewWriteState } from '../reflect/applyOutcome.js';
 import { REFLECT_ITEM_KIND_ORDER, describeRemovedItem, describeUndoGuidance } from '../reflect/applyProgress.js';
 import type { ReflectItemSummary } from '../reflect/changeSummary.js';
 import type { ReflectTargetPending } from '../reflect/targetPending.js';
 import type { ComposedReflectSelection, ComposedSection, SectionSelectionModel, SectionSelectionState, SelectableChange, SelectableKind } from '../reflect/selectionTypes.js';
 import type { ReflectSectionPlan } from '../reflect/standalonePlan.js';
+import type { ReflectTargetDeployStatus } from '../tabs/reflect-standalone.js';
 import { undoGuidance } from './display.js';
 import type { SourceDeployGoal } from './sourceTypes.js';
 
@@ -154,16 +155,40 @@ export function entryTone(entry: Pick<ReflectSectionPlan, 'status'>): EntryTone 
 
 export interface ExtractionCounts { change: number; same: number; error: number; changes: number }
 
-/** 項目ごとの状態の件数と、変更の合計。scopes を渡すと、その項目だけを数える。 */
-export function countExtraction(entries: readonly Pick<ReflectSectionPlan, 'status' | 'sectionKey' | 'changeCount'>[], scopes?: readonly string[]): ExtractionCounts {
+/**
+ * 項目ごとの状態の件数と、変更の合計。scopes を渡すと、その項目だけを数える。
+ * models（項目ごとの選択モデル）を渡すと、変更の合計は「選べる変更の数」（各項目の「選んだ変更 x/y」の y の合計）にそろえる。
+ * 差分の計画の変更件数（changeCount）は、レイアウト・配列を要素ごとに数えるなど、選ぶ単位と違うため。モデルを作れなかった項目は changeCount で数える。
+ */
+export function countExtraction(
+  entries: readonly Pick<ReflectSectionPlan, 'status' | 'sectionKey' | 'changeCount'>[],
+  scopes?: readonly string[],
+  models?: Readonly<Record<string, Pick<SectionSelectionModel, 'changes'> | undefined>>
+): ExtractionCounts {
   const counts: ExtractionCounts = { change: 0, same: 0, error: 0, changes: 0 };
   for (const entry of entries) {
     if (scopes && !scopes.includes(entry.sectionKey)) continue;
     counts[entryTone(entry)] += 1;
-    if (entry.status === 'change') counts.changes += entry.changeCount || 0;
+    if (entry.status === 'change') counts.changes += models?.[entry.sectionKey]?.changes.length ?? (entry.changeCount || 0);
   }
   return counts;
 }
+
+/**
+ * 段階を移ったときの状態欄の文言（抽出直後の「反映する変更を選んでください」のままにしない）。
+ * 結果の段階は実行の結果を示すため含めない。
+ */
+export function describeStageStatus(stage: 'setup' | 'select' | 'edit' | 'confirm'): string {
+  switch (stage) {
+    case 'setup': return '反映元と反映先の差分を抽出します。まだ書き込んでいません。';
+    case 'select': return '反映する変更を選んでください。まだ書き込んでいません。';
+    case 'edit': return '内容を確認し、必要なら直してください。まだ書き込んでいません。';
+    default: return '最終確認です。内容を確認して、実行するとここから書き込みます。';
+  }
+}
+
+/** 抽出結果の「変更 N 件」の数え方の説明（「?」の吹き出し）。 */
+export const EXTRACTION_COUNT_HELP = '「変更 N 件」は、下の項目で選べる変更の数です。レイアウト・アクセス権・通知・JS/CSS の一覧などは、配置や一覧の全体を 1 件と数えます。';
 
 export function describeExtractionSummary(counts: ExtractionCounts): string {
   if (!counts.change && !counts.error) return '差分はありません。反映先は反映元と同じ設定です。';
@@ -177,9 +202,13 @@ export interface SelectionBlockerInput {
   activeScopes: readonly string[];
   models: Readonly<Record<string, SectionSelectionModel | undefined>>;
   composed: ComposedReflectSelection | null;
+  /** 差分の抽出時に確認した反映先の反映状況。processing のときは先へ進めない */
+  targetDeployStatus?: ReflectTargetDeployStatus;
 }
 
 export interface SelectionBlockerResult {
+  /** 反映先が前回の反映を kintone が処理中のときの理由（空なら処理中ではない）。処理が終わるまで書き込めないため、抽出し直すまで進めない */
+  processing: string;
   /** 項目の取得失敗・書き込めない項目（外すか、抽出し直す） */
   failed: Array<{ sectionKey: string; label: string; message: string }>;
   /** 選んだ内容の問題（参照するフィールドの不足など。composed.blockers と各項目の errors） */
@@ -210,11 +239,15 @@ export function collectSelectionBlockers(input: SelectionBlockerInput): Selectio
     for (const error of section.errors || []) problems.push(`${section.label}: ${error}`);
   }
   for (const blocker of input.composed?.blockers || []) problems.push(blocker);
-  return { failed, problems: [...new Set(problems)], references: [...new Set(input.composed?.blockers || [])], empty: !!input.composed && selectedTotal === 0 };
+  return {
+    processing: input.targetDeployStatus?.state === 'processing' ? input.targetDeployStatus.message : '',
+    failed, problems: [...new Set(problems)], references: [...new Set(input.composed?.blockers || [])], empty: !!input.composed && selectedTotal === 0
+  };
 }
 
 /** 「内容の修正」へ進めない理由（取得失敗・選択の組み合わせの問題・何も選んでいない）。JSON の形式などの修正内容の問題は、修正の画面で直せるので含めない。 */
 export function firstEditEntryBlockerText(result: SelectionBlockerResult): string {
+  if (result.processing) return result.processing;
   if (result.failed.length) return firstBlockerText({ ...result, problems: [] });
   if (result.references.length) return result.references[0];
   if (result.empty) return '反映する差分を選んでください。';
@@ -223,6 +256,7 @@ export function firstEditEntryBlockerText(result: SelectionBlockerResult): strin
 
 /** 次へ進めない理由を 1 つの文にする（空なら進める）。 */
 export function firstBlockerText(result: SelectionBlockerResult): string {
+  if (result.processing) return result.processing;
   if (result.failed.length) return `取得失敗の項目（${result.failed.map((item) => item.label).join('、')}）は、反映しない項目から外すか、差分を抽出し直してください。`;
   if (result.problems.length) return result.problems[0];
   if (result.empty) return '反映する差分を選んでください。';
@@ -359,7 +393,12 @@ export function describeSourceResult(input: SourceResultInput): SourceResultMess
   return { text: `${written} 項目を反映先プレビューへ反映しました。`, tone: 'ok' };
 }
 
-/** 本番へ反映しなかったときの案内（プレビューには書き込み済みで、「プレビューの変更を公開」で続きができる）。 */
-export function describeDeploySkippedFollowUp(): string {
+/**
+ * 本番へ反映しなかったときの案内。反映先プレビューの書き込みの状況（previewWriteState）で言い分ける。
+ * all のときだけ、「プレビューの変更を公開」で続けて本番へ反映できると案内する。
+ * none・partial の状況は deploySkipped（エンジンの理由）が言うため、ここでは重ねない（空文字）。
+ */
+export function describeDeploySkippedFollowUp(state: PreviewWriteState = 'all'): string {
+  if (state !== 'all') return '';
   return '反映先プレビューには書き込み済みです。理由を解消したあと、パネル上部の「プレビューの変更を公開」から続けて本番へ反映できます。';
 }

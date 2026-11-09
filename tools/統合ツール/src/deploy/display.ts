@@ -102,6 +102,21 @@ export function describeStopPolicy(batchMode: DeployBatchMode, stopOnError: bool
   return stopOnError ? '失敗したら残りを実行しない' : '失敗しても残りを続ける';
 }
 
+/** 1 アプリずつ反映する件数が多いとき、所要時間の目安を最終確認に示す件数（この件数以上） */
+export const SERIAL_ESTIMATE_THRESHOLD = 20;
+/** 1 アプリずつ反映するときの 1 件あたりの所要時間の目安（秒）。依頼と完了の確認（最初の確認 0.3 秒＋処理）を含む、小さなアプリでの目安 */
+export const SERIAL_SECONDS_PER_APP = 3;
+
+/**
+ * 1 アプリずつ反映する件数が多いときの所要時間の目安（最終確認に示す）。まとめて反映・件数が少ないときは空文字。
+ * 1 件あたり数秒の目安で、アプリの大きさや kintone の混み具合で変わる。
+ */
+export function describeSerialDuration(batchMode: DeployBatchMode, count: number): string {
+  if (batchMode !== 'sequential' || count < SERIAL_ESTIMATE_THRESHOLD) return '';
+  const minutes = Math.max(1, Math.round((count * SERIAL_SECONDS_PER_APP) / 60));
+  return `1 アプリずつ反映すると、1 件あたり数秒、全体で約 ${minutes} 分かかる見込みです。画面を開いたままお待ちください。`;
+}
+
 /** 表面に出す詳細設定の現在値（1 行）。warn は既定から外れた設定（残りも続ける、まとめて反映）。 */
 export function describeDeployOptions(batchMode: DeployBatchMode, stopOnError: boolean): { text: string; warn: boolean } {
   const text = batchMode === 'atomic'
@@ -424,7 +439,7 @@ export function describeRunResult(result: Pick<DeployRunResult, 'mode' | 'apps' 
   if (counts.success === counts.total && counts.total > 0) {
     if (counts.unverified) {
       return {
-        text: `${counts.total} アプリで${done}の依頼が成功しましたが、${counts.unverified} アプリは${done}後の状態（revision）が本番とプレビューで一致しませんでした。アプリの設定画面で確認してください。`,
+        text: `${counts.total} アプリで${done}の依頼が成功しましたが、${counts.unverified} アプリは${done}後の設定の更新番号（revision）が本番とプレビューで一致しませんでした。アプリの設定画面で確認してください。`,
         tone: 'warn'
       };
     }

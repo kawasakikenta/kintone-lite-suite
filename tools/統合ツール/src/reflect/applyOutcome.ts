@@ -16,6 +16,8 @@ export interface ApplySectionOutcome {
   message?: string;
   /** 利用者の「中止」で途中で止まった項目（status は ng のまま。失敗ではなく「途中で停止」と表示し、失敗に数えない）。 */
   stopped?: boolean;
+  /** 失敗した項目で、その前に書き込みが済んだ操作がある（項目の途中で止まった。反映先プレビューに一部が残る）。 */
+  partiallyWritten?: boolean;
 }
 
 interface ErrorHintRule {
@@ -114,4 +116,18 @@ export function summarizeApplyOutcome(sections: ApplySectionOutcome[]): {
     else out.skip += 1;
   }
   return out;
+}
+
+/** 反映先プレビューへの書き込みの状況。none: 1 件も書き込めていない（プレビューは変わっていない）/ partial: 一部だけ書き込まれた / all: 書き込みが終わった。 */
+export type PreviewWriteState = 'none' | 'partial' | 'all';
+
+/**
+ * 項目ごとの結果から、反映先プレビューへの書き込みの状況を求める。
+ * 書き込めたのは、成功した項目と、失敗・中止で止まる前に書き込みが済んだ操作がある項目。失敗・未実行が残っていれば partial か none。
+ */
+export function previewWriteState(sections: readonly ApplySectionOutcome[]): PreviewWriteState {
+  const list = sections || [];
+  const written = list.some((section) => section.status === 'ok' || (section.status === 'ng' && (section.stopped === true || section.partiallyWritten === true)));
+  if (!written) return 'none';
+  return list.some((section) => section.status === 'ng' || section.status === 'pending') ? 'partial' : 'all';
 }

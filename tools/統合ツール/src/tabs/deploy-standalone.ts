@@ -256,8 +256,8 @@ interface RevisionPair { production: string; preview: string }
 /** 確認時の revision と現在の revision が食い違うときの説明。同じなら空文字。 */
 function revisionMismatch(target: DeployAppInspection, current: RevisionPair): string {
   const parts: string[] = [];
-  if (current.production !== target.productionRevision) parts.push(`本番（revision ${target.productionRevision} → ${current.production}）`);
-  if (current.preview !== target.previewRevision) parts.push(`プレビュー（revision ${target.previewRevision} → ${current.preview}）`);
+  if (current.production !== target.productionRevision) parts.push(`本番（設定の更新番号 revision ${target.productionRevision} → ${current.production}）`);
+  if (current.preview !== target.previewRevision) parts.push(`プレビュー（設定の更新番号 revision ${target.previewRevision} → ${current.preview}）`);
   return parts.length ? `確認した後に${parts.join('と')}の設定が更新されました。差分を確認し直してください。` : '';
 }
 
@@ -341,7 +341,7 @@ export async function runDeployStandalone(opts: DeployRunOptions): Promise<Deplo
       if (!after.pair) { log(`${titleOf(index)}: 反映後の確認ができませんでした（${after.reason}）`); return; }
       outcomes[index].productionRevisionAfter = after.pair.production;
       outcomes[index].verified = after.pair.production === after.pair.preview;
-      log(`${titleOf(index)}: 反映後の revision は 本番 ${after.pair.production} / プレビュー ${after.pair.preview}`);
+      log(`${titleOf(index)}: 反映後の設定の更新番号（revision）は 本番 ${after.pair.production} / プレビュー ${after.pair.preview}`);
     } catch (error) {
       if (!isRunCancelledError(error)) throw error;
       log(`${titleOf(index)}: 反映後の確認の前に中止されました`);

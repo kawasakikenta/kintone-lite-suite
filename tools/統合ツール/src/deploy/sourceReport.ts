@@ -6,7 +6,7 @@
  */
 
 import type { ApplySectionOutcome } from '../reflect/applyOutcome.js';
-import { summarizeApplyOutcome } from '../reflect/applyOutcome.js';
+import { previewWriteState, summarizeApplyOutcome } from '../reflect/applyOutcome.js';
 import type { ReflectItemSummary } from '../reflect/changeSummary.js';
 import { escapeReflectMarkdown } from '../reflect/planReport.js';
 import type { ReflectTargetPending } from '../reflect/targetPending.js';
@@ -136,13 +136,14 @@ export function buildSourceDeployRecordMarkdown(input: SourceRecordInput): strin
   if (result.deploy) {
     lines.push(`- ${esc(describeRunResult(result.deploy).text)}`);
     for (const app of result.deploy.apps) {
-      lines.push(`- ${esc(formatDeployApp(app))}: ${esc(describeDeployStatus(app.status, 'deploy').text)}${app.message ? `（${esc(describeDeployMessage(app.message).split('\n')[0])}）` : ''}。本番の revision ${esc(app.productionRevisionBefore || '－')} → ${esc(app.productionRevisionAfter || '－')}`);
+      lines.push(`- ${esc(formatDeployApp(app))}: ${esc(describeDeployStatus(app.status, 'deploy').text)}${app.message ? `（${esc(describeDeployMessage(app.message).split('\n')[0])}）` : ''}。本番の設定の更新番号（revision） ${esc(app.productionRevisionBefore || '－')} → ${esc(app.productionRevisionAfter || '－')}`);
     }
   } else if (input.goal === 'preview') {
     lines.push('- 目標がプレビューまでのため、本番へは反映していません。');
   } else {
     lines.push(`- 本番へは反映していません。${esc(result.deploySkipped || '')}`);
-    lines.push(`- ${esc(describeDeploySkippedFollowUp())}`);
+    const followUp = describeDeploySkippedFollowUp(previewWriteState(result.apply.sections));
+    if (followUp) lines.push(`- ${esc(followUp)}`);
   }
   lines.push('');
 

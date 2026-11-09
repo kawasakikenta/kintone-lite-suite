@@ -1,5 +1,6 @@
 import { SECTION_DEFS, SYSTEM_FIELD_TYPES } from '../constants.js';
 import { deepClone } from '../utils.js';
+import { extractQueryFieldCodes } from '../kintone-query.js';
 import { isRunCancelledError } from '../runControl.js';
 import { APP_SETTINGS_LABELS, APP_SETTINGS_REFLECT_KEYS, reflectSectionLabel } from './sections.js';
 import { comparableCustomizePayload, customizeFileNames, customizeSlotKey, type CustomizeFileResolution } from './customizeFiles.js';
@@ -26,7 +27,11 @@ export interface ReflectSectionPlan {
   /** 反映先の現在（before）と既定の反映後（after）。どちらも PUT 形。差分の選択・修正（reflect/selection.ts）に使う */
   values?: { before: any; after: any; /** JS/CSS 設定のみ: fileKey → ファイル名（反映元・反映先） */ fileNames?: Record<string, string>; /** JS/CSS 設定のみ: fileKey → 内容ハッシュ（差分の比較用） */ fileHashes?: Record<string, string> };
 }
-export interface ReflectPlanOptions { lookupMap?: Record<string, string>; preserveTargetOnly?: boolean; customizeFiles?: CustomizeFileResolution; fieldLabels?: Record<string, string> }
+export interface ReflectPlanOptions {
+  lookupMap?: Record<string, string>; preserveTargetOnly?: boolean; customizeFiles?: CustomizeFileResolution; fieldLabels?: Record<string, string>;
+  /** 反映元・反映先のどちらかに実在するフィールドコード（システムフィールドを含む）。クエリ（絞り込み条件・並び順）が参照するフィールドの判定に使う。無ければ、クエリからは参照を求めない */
+  knownFieldCodes?: readonly string[];
+}
 export const formatBytes = (bytes: number) => bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.ceil(bytes / 1024))} KB`;
 const namedSections: Record<string, string> = { viewSettings: 'views', reportSettings: 'reports', actionSettings: 'actions' };
 const own = (object: object, key: string) => Object.prototype.hasOwnProperty.call(object, key);
@@ -149,7 +154,7 @@ function mergeLayout(source: any[], target: any[], plan: ReflectSectionPlan): an
 }
 
 /** フィールドを参照する項目。requiredFields を持ち、反映前にフィールド設定との照合が必要になる。 */
-const FIELD_DEPENDENT_SECTIONS = ['layoutSettings', 'viewSettings', 'reportSettings', 'actionSettings', 'appSettings', 'fieldAcl', 'reminderNotifications', 'processSettings'];
+const FIELD_DEPENDENT_SECTIONS = ['layoutSettings', 'viewSettings', 'reportSettings', 'actionSettings', 'appSettings', 'fieldAcl', 'reminderNotifications', 'processSettings', 'recordPermissions', 'perRecordNotifications'];
 
 export function reflectInspectionScopes(scopes: string[]): string[] {
   return [...new Set([...scopes, ...(scopes.some(key => FIELD_DEPENDENT_SECTIONS.includes(key)) ? ['fieldSettings'] : [])])];
@@ -180,19 +185,39 @@ export function reflectSelectionBlockers(entries: ReflectSectionPlan[], scopes: 
 /**
  * 反映後の設定（PUT 形）から、反映先に存在が必要なフィールドコードを求める。対象外の項目・求められない形は undefined。
  * 既定の計画と、選択・修正後の計画（reflect/selection.ts）で同じ規則を使う。
+ *
+ * knownFieldCodes は、反映元・反映先のどちらかに実在するフィールドコード。クエリ（絞り込み条件・並び順など）からの参照は、
+ * これと一致した語だけを数える（引用符の中の値や関数を読み違えて、正しい反映を止めないため）。省略するとクエリからは参照を求めない。
  */
-export function reflectRequiredFields(key: string, after: any): string[] | undefined {
+export function reflectRequiredFields(key: string, after: any, knownFieldCodes?: ReadonlySet<string> | readonly string[]): string[] | undefined {
+  const known = knownFieldCodes ? (knownFieldCodes instanceof Set ? knownFieldCodes : new Set(knownFieldCodes)) : undefined;
+  /** 項目の条件（クエリ）が参照するフィールドコード */
+  const queryCodes = (...queries: unknown[]): string[] => known ? queries.flatMap(query => extractQueryFieldCodes(query, known)) : [];
+  const unique = (codes: string[]) => [...new Set(codes)];
   if (key === 'viewSettings') {
     if (!object(after?.views)) return [];
-    return [...new Set<string>(Object.values<any>(after.views).flatMap(view => view?.type === 'LIST' ? (view.fields || []) : view?.type === 'CALENDAR' ? [view.date, view.title].filter(Boolean) : []).filter(code => !['$id', '$revision'].includes(code)))];
+    return unique(Object.values<any>(after.views).flatMap(view => [
+      ...(view?.type === 'LIST' ? (view.fields || []) : view?.type === 'CALENDAR' ? [view.date, view.title].filter(Boolean) : []),
+      ...queryCodes(view?.filterCond, view?.sort)
+    ]).filter(code => !['$id', '$revision'].includes(code)));
   }
-  if (key === 'actionSettings') return extractActionRequiredFields(after?.actions);
-  if (key === 'reportSettings') return extractReportRequiredFields(after?.reports);
+  if (key === 'actionSettings') return unique([...extractActionRequiredFields(after?.actions), ...queryCodes(...Object.values<any>(object(after?.actions) ? after.actions : {}).map(action => action?.filterCond))]);
+  if (key === 'reportSettings') return unique([...extractReportRequiredFields(after?.reports), ...queryCodes(...Object.values<any>(object(after?.reports) ? after.reports : {}).map(report => report?.filterCond))]);
+  if (key === 'recordPermissions' || key === 'perRecordNotifications') {
+    const list = key === 'recordPermissions' ? after?.rights : after?.notifications;
+    return unique(queryCodes(...(Array.isArray(list) ? list : []).map((item: any) => item?.filterCond)));
+  }
   if (key === 'fieldAcl') return [...new Set<string>((after?.rights || []).map((right: any) => String(right?.code || '')).filter((code: string) => code && !['$id', '$revision'].includes(code)))];
-  if (key === 'reminderNotifications') return [...new Set<string>((after?.notifications || []).flatMap((item: any) => [item?.timing?.code, ...(item?.targets || []).filter((target: any) => target?.entity?.type === 'FIELD_ENTITY').map((target: any) => target.entity.code)]).map((code: any) => String(code || '')).filter((code: string) => !!code))];
+  if (key === 'reminderNotifications') return unique([
+    ...(after?.notifications || []).flatMap((item: any) => [item?.timing?.code, ...(item?.targets || []).filter((target: any) => target?.entity?.type === 'FIELD_ENTITY').map((target: any) => target.entity.code)]).map((code: any) => String(code || '')).filter((code: string) => !!code),
+    ...queryCodes(...(Array.isArray(after?.notifications) ? after.notifications : []).map((item: any) => item?.filterCond))
+  ]);
   if (key === 'processSettings') {
     if (!object(after?.states)) return undefined;
-    return [...new Set<string>(Object.values(after.states).flatMap((state: any) => (state?.assignee?.entities || []).filter((item: any) => item?.entity?.type === 'FIELD_ENTITY').map((item: any) => String(item.entity.code || ''))).filter((code: string) => !!code))];
+    return unique([
+      ...Object.values(after.states).flatMap((state: any) => (state?.assignee?.entities || []).filter((item: any) => item?.entity?.type === 'FIELD_ENTITY').map((item: any) => String(item.entity.code || ''))).filter((code: string) => !!code),
+      ...queryCodes(...(Array.isArray(after?.actions) ? after.actions : []).map((action: any) => action?.filterCond))
+    ]);
   }
   if (key === 'layoutSettings') {
     const codes: string[] = [];
@@ -313,7 +338,7 @@ export function buildReflectSectionPlan(key: string, source: any, target: any, o
       before = { [property]: to }; after = { [property]: combined };
       plan.behavior = preserve ? '追加・更新（反映先だけの設定は保持）' : '全置換（反映元にない設定を削除）';
       if (preserve) for (const name of Object.keys(to).filter(name => !own(from, name))) plan.changes.push({ kind: '保持', path: `${diffPathLabels[property]} / ${name}`, before: valueText(to[name]), after: '内容を保持（表示順は反映元の後）' });
-      plan.requiredFields = reflectRequiredFields(key, after);
+      plan.requiredFields = reflectRequiredFields(key, after, options.knownFieldCodes);
     } else if (key === 'pluginSettings') {
       if (!Array.isArray(source.plugins) || !Array.isArray(target.plugins)) throw new Error('プラグイン一覧の形式が不正です。');
       const existing = new Set(target.plugins.map(item => item.id));
@@ -375,8 +400,8 @@ export function buildReflectSectionPlan(key: string, source: any, target: any, o
         if (uploads.length) plan.warnings.push(`${uploads.length} 件のファイル（合計 ${formatBytes(uploads.reduce((sum, upload) => sum + upload.byteSize, 0))}）を反映先へアップロードしてから設定します。`);
         if (uploads.length && resolution?.targetUnavailable.length) plan.warnings.push(`反映先の ${resolution.targetUnavailable.map(item => `「${item.name}」（${item.reason}）`).join('、')} の本体を確認できなかったため、同じ内容のファイルがあっても再利用せずアップロードします。`);
       }
-      if (key === 'fieldAcl' || key === 'reminderNotifications' || key === 'processSettings') {
-        const required = reflectRequiredFields(key, after);
+      if (key === 'fieldAcl' || key === 'reminderNotifications' || key === 'processSettings' || key === 'recordPermissions' || key === 'perRecordNotifications') {
+        const required = reflectRequiredFields(key, after, options.knownFieldCodes);
         if (required) plan.requiredFields = required;
       }
       if (key === 'layoutSettings') {

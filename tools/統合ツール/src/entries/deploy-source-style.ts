@@ -9,6 +9,8 @@ const P = '#kus-deploy-lite';
 const STYLE_ID = 'kus-deploy-source-styles';
 
 const CSS = `
+${P} .kus-ds-skip{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+${P} .kus-ds-skip:focus{outline:3px solid #2563eb;outline-offset:2px;position:static;width:auto;height:auto;margin:0 0 8px;padding:6px 12px;overflow:visible;clip:auto;border:2px solid #2563eb;border-radius:8px;background:#fff;color:#1e3a8a;font-size:13px;font-weight:700;cursor:pointer}
 ${P} .kus-ds-flowbar{flex-shrink:0;display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:8px 24px;background:#fff;border-bottom:1px solid #e2e8f0}
 ${P} .kus-ds-flowbar__label{font-size:12.5px;font-weight:700;color:#64748b}
 ${P} .kus-ds-flowbar__group{display:flex;flex-wrap:wrap;gap:6px}
@@ -126,8 +128,8 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
   ${P} .kus-dp-nav--five .kus-dp-nav__btn{font-size:11.5px;padding:8px 2px}
 }
 @media(max-width:420px){
-  ${P} .kus-ds-flowbar__group{flex-wrap:nowrap;width:100%}
-  ${P} .kus-ds-flow{font-size:12px;padding:6px 8px;gap:4px;white-space:nowrap}
+  ${P} .kus-ds-flowbar__group{flex-wrap:wrap;width:100%}
+  ${P} .kus-ds-flow{font-size:12px;padding:6px 8px;gap:4px;min-width:0;white-space:normal;overflow-wrap:anywhere}
 }
 @media(max-height:720px){
   ${P} .kus-ds-flowbar{padding:4px 12px}

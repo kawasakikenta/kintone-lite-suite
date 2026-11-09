@@ -26,7 +26,9 @@ import {
   collectSelectionBlockers,
   composedAfterMap,
   countExtraction,
+  describeDeploySkippedFollowUp,
   describeExtractionSummary,
+  describeStageStatus,
   describeRoute,
   firstBlockerText,
   firstEditEntryBlockerText,
@@ -69,6 +71,7 @@ import {
   type SourceRestorePlan,
   type SourceRestoreRequest
 } from '../deploy/sourceRestore.js';
+import { previewWriteState } from '../reflect/applyOutcome.js';
 import { appSettingsPath } from '../deploy/display.js';
 import type { DeployAppStatus } from '../deploy/types.js';
 import { createApplyProgressRows, type ApplyProgressRow, type ApplyProgressStatus } from '../reflect/applyProgress.js';
@@ -89,8 +92,9 @@ import { createReflectAppLookupCache, formatReflectAppName, isLookupableReflectA
 import { pickAllSettingsBundles } from '../settingsBundleImport.js';
 import { buildAppFilenameLabel, buildExportFilename, downloadText, extractAppNameFromBundle } from '../utils.js';
 import { createAppSearchControl } from './appSearchControl.js';
-import { createProgressView, el, firstLines, setButtonText, type ProgressView } from './deployProgressView.js';
+import { createProgressView, el, firstLines, makeSkipLink, setButtonText, type ProgressView } from './deployProgressView.js';
 import { createEditView } from './deploy-source-edit.js';
+import { sharedMemory } from './deployMemory.js';
 import { createSelectView, renderTargetPending } from './deploy-source-select.js';
 import { ensureSourceStyles } from './deploy-source-style.js';
 import {
@@ -181,7 +185,8 @@ interface SourceMemory {
   lastRun: SourceRunSnapshot | null;
 }
 
-const memory: SourceMemory = { kind: 'production', sourceApp: '', sourceGuest: '', targetApp: '', targetGuest: '', scopes: [...DEFAULT_SCOPES], preserve: true, lookupText: '', goal: 'production', lastRun: null };
+const sharedSource = sharedMemory<SourceMemory>('source', { kind: 'production', sourceApp: '', sourceGuest: '', targetApp: '', targetGuest: '', scopes: [...DEFAULT_SCOPES], preserve: true, lookupText: '', goal: 'production', lastRun: null });
+const memory = sharedSource.state;
 
 export interface SourceFlow {
   /** 段階の移動と本文（切り替え時にパネルへ差し込む） */
@@ -226,6 +231,10 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
   /** この流れが画面に出ているか（出ていない間は、アプリ名の確認の通信をしない） */
   let shown = false;
   let showStage: (stage: SourceStage) => void = () => {};
+  /** 初期表示を終えたか（初期表示では状態欄を段階の文言に替えない） */
+  let stageAnnounced = false;
+  /** 開き直しの案内を出したか（最初に表示したときの 1 回だけ） */
+  let reopenNoted = false;
   let refreshWorkflow: () => void = () => {};
   /** 書き込み前の検査で止まったため、抽出結果を古いものとして扱っている（差分を抽出し直すまで、段階 2〜4 の主ボタンは使えない） */
   let extractionStale = false;
@@ -817,8 +826,8 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
   }
 
   function selectionBlockers(): SelectionBlockerResult {
-    if (!session || !isFresh()) return { failed: [], problems: [], references: [], empty: false };
-    return collectSelectionBlockers({ entries: session.preview.entries, activeScopes: activeScopes(), models: session.models, composed: session.composed });
+    if (!session || !isFresh()) return { processing: '', failed: [], problems: [], references: [], empty: false };
+    return collectSelectionBlockers({ entries: session.preview.entries, activeScopes: activeScopes(), models: session.models, composed: session.composed, targetDeployStatus: session.preview.targetDeployStatus });
   }
   /** 「内容の修正」へ進めない理由（空なら進める）。修正内容の問題（JSON の形式など）は修正の画面で直す。 */
   function editEntryBlocker(): string {
@@ -890,7 +899,7 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
       const identities = await resolveReflectAppsStandalone(options);
       if (kind !== 'json') sourceNote.adopt({ ok: true, appId: identities.source.appId, name: identities.source.name, code: identities.source.code });
       targetNote.adopt({ ok: true, appId: identities.target.appId, name: identities.target.name, code: identities.target.code });
-      const preview = await previewReflectStandalone(options, (message) => panel.setStatus(message, 'busy'));
+      const preview = await previewReflectStandalone(options, (message) => panel.setStatus(message, 'busy'), { checkTargetDeployStatus: true });
       // 書き込み前の検査で止まった後の抽出し直し（同じ入力）は、前回の選択と入力欄の修正をできるだけ引き継ぐ。
       const previous = extractionStale && session && session.signature === signature ? session : null;
       session = createSourceSession({ signature, opts: options, identities, sourceEnvironment: kind, preview });
@@ -903,12 +912,16 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
       recompose();
       viewsFresh = true;
       showStage('select');
-      const counts = countExtraction(preview.entries);
+      const counts = countExtraction(preview.entries, undefined, session.models);
       const summary = describeExtractionSummary(counts);
       const carried = carryNote ? ` ${carryNote}` : '';
-      if (counts.error) panel.setStatus(`${summary}取得失敗の項目は、反映しない項目から外すか、抽出し直してください。まだ書き込んでいません。${carried}`, 'warn');
-      else if (!counts.change) panel.setStatus(`${summary}まだ書き込んでいません。${carried}`, 'info');
-      else panel.setStatus(`${summary}反映する変更を選んでください。まだ書き込んでいません。${carried}`, 'ok');
+      const deployStatus = preview.targetDeployStatus;
+      // 反映先が処理中なら先へ進めない（警告）。処理中かを確認できなかったときは、止めずに注意だけ添える。
+      const caution = deployStatus?.state === 'unknown' ? ` 注意: ${deployStatus.message}` : '';
+      if (deployStatus?.state === 'processing') panel.setStatus(`${summary}${deployStatus.message}まだ書き込んでいません。`, 'warn');
+      else if (counts.error) panel.setStatus(`${summary}取得失敗の項目は、反映しない項目から外すか、抽出し直してください。まだ書き込んでいません。${carried}${caution}`, 'warn');
+      else if (!counts.change) panel.setStatus(`${summary}まだ書き込んでいません。${carried}${caution}`, 'info');
+      else panel.setStatus(`${summary}反映する変更を選んでください。まだ書き込んでいません。${carried}${caution}`, caution ? 'info' : 'ok');
     });
   }
 
@@ -1151,12 +1164,14 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
     if (result.deploySkipped && !result.apply.cancelled) {
       const note = el('div', 'kus-ds-note kus-ds-note--warn');
       note.dataset.deploySkippedNote = 'true';
-      note.append(el('strong', '', '本番へは反映していません'), el('span', '', result.deploySkipped), el('span', '', '反映先プレビューには書き込み済みです。「プレビューの変更を公開」から、続けて本番へ反映できます。'));
+      const followUp = describeDeploySkippedFollowUp(previewWriteState(result.apply.sections));
+      note.dataset.previewWrite = previewWriteState(result.apply.sections);
+      note.append(el('strong', '', '本番へは反映していません'), el('span', '', result.deploySkipped), ...(followUp ? [el('span', '', followUp)] : []));
       resultNotes.appendChild(note);
     }
     const unverified = (result.deploy?.apps || []).filter((app) => app.status === 'success' && app.verified === false);
     if (unverified.length) {
-      const note = el('div', 'kus-dp-warn', `注意: 反映後の状態（revision）が本番とプレビューで一致しませんでした。アプリの設定画面で確認してください。`);
+      const note = el('div', 'kus-dp-warn', `注意: 反映後の設定の更新番号（revision）が本番とプレビューで一致しませんでした。アプリの設定画面で確認してください。`);
       note.dataset.deployUnverified = String(unverified.length);
       resultNotes.appendChild(note);
     }
@@ -1451,6 +1466,13 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
   dockRow.append(dockCopy, dockActions);
   dock.append(dockRow);
 
+  // 各段階の先頭に「主な操作へ移動」（キーボードで、下部の固定フッターの主な操作へ移る）
+  const skipTargets: Record<SourceStage, () => HTMLElement | null> = {
+    setup: () => extractBtn, select: () => toEditBtn, edit: () => confirmBtn,
+    confirm: () => (runBtn.disabled ? (ack.checkbox.checked ? confirmInput : ack.checkbox) : runBtn), result: () => dockActions.querySelector<HTMLElement>('button:not([disabled]):not([hidden])')
+  };
+  for (const stageId of ['setup', 'select', 'edit', 'confirm'] as const) stages[stageId].prepend(makeSkipLink(skipTargets[stageId], () => dockActions));
+
   const workspace = el('div', 'kus-dp-workspace');
   const canvas = el('main', 'kus-dp-canvas');
   workspace.append(nav, canvas);
@@ -1523,7 +1545,11 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
     if (activeStage === 'confirm' && active !== 'confirm') clearConfirmation();
     if (active === 'select') selectView.render();
     if (active === 'edit') { flushRecompose(); editView.render(); }
+    const moved = active !== activeStage;
     activeStage = active;
+    // 段階を移ったら、状態欄もその段階に合った文言にする（抽出直後の文言を残さない）。初期表示・実行中・古い抽出結果のときは変えない。
+    if (moved && stageAnnounced && !busy && !running && !extractionStale && active !== 'result') panel.setStatus(describeStageStatus(active), 'info');
+    stageAnnounced = true;
     for (const def of stageDefs) {
       const selectedStage = def.id === active;
       stages[def.id].hidden = !selectedStage;
@@ -1588,6 +1614,11 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
       targetNote.refresh();
       refreshWorkflow();
       const last = memory.lastRun;
+      // 閉じて開き直したとき: 入力は残るが、差分の抽出結果は引き継がない（古い差分で書き込まないため）。
+      if (!reopenNoted) {
+        reopenNoted = true;
+        if (sharedSource.restored && !last && (memory.sourceApp.trim() || (memory.targetApp.trim() && memory.targetApp.trim() !== DEFAULT_APP_ID))) panel.setStatus('前回の入力を残しています。抽出した差分は引き継がないため、「差分を抽出する」で抽出し直してください。まだ書き込んでいません。', 'info');
+      }
       if (last && activeStage === 'result') {
         if (last.result.apply.logs?.length) panel.setResult(last.result.apply.logs.join('\n'));
         const message = describeSourceDeployResult(last.result);

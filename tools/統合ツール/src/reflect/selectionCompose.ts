@@ -70,8 +70,11 @@ function renumberOrdered(root: any, ctx: RenumberContext): void {
   visit(root, [], false);
 }
 
-/** 選んだ変更と修正から、送る設定と計画を作り直す（純粋関数）。plan は抽出時の既定の計画。 */
-export function composeSectionSelection(model: SectionSelectionModel, state: SectionSelectionState, plan: ReflectSectionPlan, fieldLabels: Record<string, string> = {}): ComposedSection {
+/**
+ * 選んだ変更と修正から、送る設定と計画を作り直す（純粋関数）。plan は抽出時の既定の計画。
+ * knownFieldCodes は反映元・反映先のどちらかに実在するフィールドコード（計算式・クエリが参照するフィールドの判定に使う）。
+ */
+export function composeSectionSelection(model: SectionSelectionModel, state: SectionSelectionState, plan: ReflectSectionPlan, fieldLabels: Record<string, string> = {}, knownFieldCodes?: ReadonlySet<string> | readonly string[]): ComposedSection {
   const errors: string[] = [];
   const changeById = new Map(model.changes.map(change => [change.id, change]));
   const selectedIds = new Set((state.selected || []).filter(id => changeById.has(id)));
@@ -121,8 +124,8 @@ export function composeSectionSelection(model: SectionSelectionModel, state: Sec
     }
   }
   renumberOrdered(after, { model, selectedPointers: selected.map(change => change.pointer), jsonMode });
-  for (const issue of checkComposedAgainstPlan(plan, after, fieldLabels)) if (!errors.includes(issue)) errors.push(issue);
-  const composedPlan = buildPlanFromComposedAfter(plan, after, fieldLabels);
+  for (const issue of checkComposedAgainstPlan(plan, after, fieldLabels, knownFieldCodes)) if (!errors.includes(issue)) errors.push(issue);
+  const composedPlan = buildPlanFromComposedAfter(plan, after, fieldLabels, knownFieldCodes);
   // JSON で、変更の一覧にない場所を直した（選択の単位に対応しない）ときも、書き込みがあるなら選んだ変更として数える。
   if (jsonMode && selectedCount === 0 && composedPlan.operations.length) selectedCount = 1;
   return { sectionKey: model.sectionKey, label: model.label, after, plan: composedPlan, selectedCount, totalCount: model.changes.length, editedCount, errors };

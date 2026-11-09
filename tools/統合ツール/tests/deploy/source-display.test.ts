@@ -16,6 +16,10 @@ import {
   dependentsToDeselect,
   filterChanges,
   firstBlockerText,
+  firstEditEntryBlockerText,
+  describeStageStatus,
+  describeDeploySkippedFollowUp,
+  EXTRACTION_COUNT_HELP,
   groupChanges,
   groupCheckState,
   requiredToSelect,
@@ -129,6 +133,30 @@ describe('抽出結果の要約と進めない理由', () => {
     expect(describeExtractionSummary({ change: 0, same: 2, error: 0, changes: 0 })).toContain('差分はありません');
   });
 
+  it('変更の合計は、モデルがあればその項目で選べる変更の数にそろえる（レイアウト・配列は全体で 1 件）', () => {
+    const models = { fieldSettings: model([change('a'), change('b')]) };
+    const counts = countExtraction(entries, undefined, models);
+    expect(counts).toEqual({ change: 1, same: 1, error: 1, changes: 2 });
+    expect(describeExtractionSummary(counts)).toBe('差分のある項目 1・差分なし 1・取得失敗 1（変更 2 件）。');
+    // モデルを作れなかった項目は、差分の計画の件数で数える
+    expect(countExtraction(entries, undefined, {}).changes).toBe(3);
+    expect(EXTRACTION_COUNT_HELP).toContain('選べる変更の数');
+  });
+
+  it('反映先が前回の反映を処理中なら、抽出し直すまで進めない（確認できなかったときは止めない）', () => {
+    const composed: ComposedReflectSelection = { sections: [composedSection('fieldSettings')], blockers: [] };
+    const base = { entries: [entries[0]], activeScopes: ['fieldSettings'], models: { fieldSettings: model([change('a')]) }, composed };
+    const processing = collectSelectionBlockers({ ...base, targetDeployStatus: { state: 'processing', message: '反映先は前回の反映を kintone が処理中です。完了してから抽出し直してください。' } });
+    expect(processing.processing).toContain('処理中です');
+    expect(firstBlockerText(processing)).toBe('反映先は前回の反映を kintone が処理中です。完了してから抽出し直してください。');
+    expect(firstEditEntryBlockerText(processing)).toBe(firstBlockerText(processing));
+    for (const targetDeployStatus of [undefined, { state: 'idle' as const, message: '' }, { state: 'unknown' as const, message: '確認できませんでした。' }]) {
+      const result = collectSelectionBlockers({ ...base, targetDeployStatus });
+      expect(result.processing).toBe('');
+      expect(firstBlockerText(result)).toBe('');
+    }
+  });
+
   it('取得失敗の項目を選んだままでは進めない。外すと進める', () => {
     const models = { fieldSettings: model([change('a')]) };
     const composed: ComposedReflectSelection = { sections: [composedSection('fieldSettings')], blockers: [] };
@@ -153,7 +181,7 @@ describe('抽出結果の要約と進めない理由', () => {
     const result = collectSelectionBlockers({ entries: [plan('viewSettings')], activeScopes: ['viewSettings'], models: { viewSettings: model([change('v')], 'viewSettings') }, composed });
     expect(result.problems).toEqual(['一覧: JSONの形式が正しくありません。', '一覧: 参照するフィールド「memo」が反映先にありません。']);
     expect(result.empty).toBe(true);
-    expect(firstBlockerText({ failed: [], problems: [], empty: true })).toBe('反映する差分を選んでください。');
+    expect(firstBlockerText({ processing: '', failed: [], problems: [], references: [], empty: true })).toBe('反映する差分を選んでください。');
   });
 
   it('外した項目の問題は数えない', () => {
@@ -252,5 +280,23 @@ describe('describeSourceResult', () => {
     const result = describeSourceResult({ goal: 'production', cancelled: true, sections: [ok('fieldSettings'), { sectionKey: 'viewSettings', label: '一覧', status: 'pending' }, { sectionKey: 'layoutSettings', label: 'レイアウト', status: 'pending' }] });
     expect(result.tone).toBe('warn');
     expect(result.text).toBe('中止しました（1/3 項目を反映先プレビューへ反映、残り 2 項目は未実行）。書き込み済みの分は反映先プレビューに残っています。本番へは反映していません。');
+  });
+});
+
+describe('段階を移ったときの状態欄', () => {
+  it('段階に合った文言を返す（抽出直後の文言のままにしない）', () => {
+    expect(describeStageStatus('select')).toBe('反映する変更を選んでください。まだ書き込んでいません。');
+    expect(describeStageStatus('edit')).toBe('内容を確認し、必要なら直してください。まだ書き込んでいません。');
+    expect(describeStageStatus('confirm')).toContain('最終確認です');
+    expect(describeStageStatus('setup')).toContain('差分を抽出します');
+  });
+});
+
+describe('本番へ反映しなかったときの、反映先プレビューの案内', () => {
+  it('書き込み済みのときだけ「プレビューの変更を公開」から続けられると案内する（1 件も書き込めていない・一部だけのときは重ねない）', () => {
+    expect(describeDeploySkippedFollowUp()).toContain('反映先プレビューには書き込み済みです');
+    expect(describeDeploySkippedFollowUp('all')).toContain('「プレビューの変更を公開」');
+    expect(describeDeploySkippedFollowUp('none')).toBe('');
+    expect(describeDeploySkippedFollowUp('partial')).toBe('');
   });
 });
