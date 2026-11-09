@@ -1,8 +1,9 @@
 'use strict';
 
 import { buildCustomizeSettingsPutPayload } from '../constants.js';
-import { normalize, nowStamp, downloadText, downloadBlob, esc, kusConfirm, buildExportFilename, summarizeList } from '../utils.js';
-import { FILE_DOWNLOAD_TIMEOUT_MS, apiGet, apiPut, buildApiPrefix, decorateRevisionConflict, pickRevision } from '../api.js';
+import { normalize, nowStamp, downloadText, downloadBlob, esc, kusConfirm, buildExportFilename, summarizeList, deepClone } from '../utils.js';
+import { FILE_DOWNLOAD_TIMEOUT_MS, apiGet, apiPut, buildApiPrefix, decorateRevisionConflict, pickRevision, uploadKintoneFile } from '../api.js';
+import { customizeSlotKey, downloadCustomizeFile, resolveCustomizeFiles, type CustomizeFileDownloader } from '../reflect/customizeFiles.js';
 import { loadJSZipLite } from '../jszipLoader.js';
 import { RunCancelledError, createRequestSignal, isRunCancelledError, sleepUnlessCancelled, throwIfCancelled } from '../runControl.js';
 import { uniqueZipEntryName } from './record-query.js';
@@ -158,6 +159,23 @@ export interface JsConfigApplyPlan {
   counts: { desktopJs: number; desktopCss: number; mobileJs: number; mobileCss: number; file: number; url: number };
   /** type/url/fileKey 不備で送信対象から外れた件数 */
   dropped: number;
+  /** payload の FILE 項目（payload 内の位置つき）。ファイル名・本体は反映先へのアップロードに使う */
+  files: JsConfigPlanFile[];
+}
+
+export type JsConfigPlatform = 'desktop' | 'mobile';
+export type JsConfigKind = 'js' | 'css';
+
+export interface JsConfigPlanFile {
+  platform: JsConfigPlatform;
+  kind: JsConfigKind;
+  /** payload[platform][kind] の中の位置 */
+  index: number;
+  fileKey: string;
+  name: string;
+  contentType: string;
+  /** JSON に本体が埋め込まれている場合（本番反映・プレビュー反映のバックアップ）。取得元に問い合わせずに使える */
+  embedded?: { base64: string; contentType: string };
 }
 
 /**
@@ -193,6 +211,7 @@ export function buildJsConfigApplyPlan(parsed: any): JsConfigApplyPlan {
     return sum + ['js', 'css'].reduce((s, kind) => s + (Array.isArray(parsed?.[platform]?.[kind]) ? parsed[platform][kind].length : 0), 0);
   }, 0);
   const scopeRaw = String(parsed.scope || '').trim().toUpperCase();
+  const files = collectPlanFiles(parsed, payload);
   if (inputTotal > 0 && all.length === 0) {
     throw new Error('JS/CSS設定の全項目で type/url/fileKey が不足しています。現在設定の全削除を防ぐため反映を中止しました');
   }
@@ -207,8 +226,44 @@ export function buildJsConfigApplyPlan(parsed: any): JsConfigApplyPlan {
       file: all.filter((r) => r.type === 'FILE').length,
       url: all.filter((r) => r.type === 'URL').length
     },
-    dropped: Math.max(0, inputTotal - all.length)
+    dropped: Math.max(0, inputTotal - all.length),
+    files
   };
+}
+
+/**
+ * payload（buildCustomizeSettingsPutPayload の結果）の FILE 項目ごとに、入力 JSON の file.name などを対応づける。
+ * payload は不備のある項目を除いているため、入力と同じ規則で数えて位置をそろえる。
+ */
+function collectPlanFiles(parsed: any, payload: any): JsConfigPlanFile[] {
+  const files: JsConfigPlanFile[] = [];
+  for (const platform of ['desktop', 'mobile'] as const) {
+    for (const kind of ['js', 'css'] as const) {
+      const input = Array.isArray(parsed?.[platform]?.[kind]) ? parsed[platform][kind] : [];
+      const kept = input.filter((item: any) => {
+        if (!item || typeof item !== 'object') return false;
+        const type = String(item.type || '').toUpperCase();
+        if (type === 'FILE') return item?.file?.fileKey != null && String(item.file.fileKey) !== '';
+        return type === 'URL' && item.url != null && String(item.url) !== '';
+      });
+      const out: any[] = payload?.[platform]?.[kind] || [];
+      out.forEach((resource, index) => {
+        if (resource?.type !== 'FILE') return;
+        const file = kept[index]?.file || {};
+        const embedded = file._content;
+        files.push({
+          platform, kind, index,
+          fileKey: resource.file.fileKey,
+          name: typeof file.name === 'string' ? file.name : '',
+          contentType: typeof file.contentType === 'string' ? file.contentType : '',
+          ...(embedded && typeof embedded === 'object' && typeof embedded.base64 === 'string'
+            ? { embedded: { base64: embedded.base64, contentType: typeof embedded.contentType === 'string' ? embedded.contentType : '' } }
+            : {})
+        });
+      });
+    }
+  }
+  return files;
 }
 
 export interface JsConfigCurrentSummary {
@@ -240,7 +295,7 @@ export function summarizeJsConfigCurrent(current: any, plan: JsConfigApplyPlan):
   };
 }
 
-export function buildJsConfigApplyConfirmText(targetAppId: string, targetGuestId: string, plan: JsConfigApplyPlan, current?: JsConfigCurrentSummary): string {
+export function buildJsConfigApplyConfirmText(targetAppId: string, targetGuestId: string, plan: JsConfigApplyPlan, current?: JsConfigCurrentSummary, filePlan?: JsConfigFilePlan, source?: JsConfigFileSource | null): string {
   const c = plan.counts;
   const nextTotal = c.desktopJs + c.desktopCss + c.mobileJs + c.mobileCss;
   const nowTotal = current ? current.desktopJs + current.desktopCss + current.mobileJs + current.mobileCss : 0;
@@ -252,9 +307,7 @@ export function buildJsConfigApplyConfirmText(targetAppId: string, targetGuestId
     '反映先の JS/CSS 一覧はこの内容にすべて置き換わり、反映先だけにあるファイルは外れます。',
     current ? `この反映で外れる現在の設定: ${current.removed}件${current.removed && nowTotal && !nextTotal ? '（すべて外れます）' : ''}` : '',
     plan.dropped ? `type/url/fileKey が不足している ${plan.dropped}件は送信しません。` : '',
-    c.file
-      ? 'FILE タイプは反映先で有効なアップロード済み fileKey が必要です。他アプリの取得結果にある fileKey（ダウンロード用）をそのまま流用すると kintone に拒否されます。'
-      : '',
+    ...(c.file ? describeJsConfigFilePlan(filePlan, source ?? null) : []),
     '本番には反映されません（管理画面から手動デプロイ）。実行しますか？'
   ].filter(Boolean).join('\n');
 }
@@ -272,6 +325,210 @@ export function parseJsConfigApplyText(jsonText: unknown): JsConfigApplyPlan {
   return buildJsConfigApplyPlan(parsed);
 }
 
+// ===== FILE 形式（アップロード済みファイル）を別のアプリへ渡す =====
+// fileKey は取得したアプリの外では使えない。プレビュー反映と同じ規則（reflect/customizeFiles.ts）で、
+// 取得元から本体を取得し、反映先の同じ枠に同名・同内容のファイルがあれば再利用、無ければ反映先へアップロードして新しいキーで設定する。
+
+/** JSON を取得したアプリ。JSON の fileKey がどこのものかを示す（取得時に覚えておく）。 */
+export interface JsConfigFileSource {
+  /** 取得元のゲストスペースID（通常スペースは空） */
+  guestId: string;
+  /** 利用者向けの表示（例: 「App 12 / 本番」） */
+  label: string;
+  /** 取得した JSON に含まれていた fileKey。これ以外の fileKey は、どのアプリのものか分からない */
+  knownFileKeys: ReadonlyArray<string>;
+}
+
+/** JSON（解析済み）に含まれる FILE 形式の fileKey。取得元を覚えるときに使う。 */
+export function collectJsConfigFileKeys(data: any): string[] {
+  const keys = new Set<string>();
+  for (const platform of ['desktop', 'mobile'] as const) {
+    for (const kind of ['js', 'css'] as const) {
+      const list = data?.[platform]?.[kind];
+      if (!Array.isArray(list)) continue;
+      for (const item of list) {
+        const fileKey = String(item?.type || '').toUpperCase() === 'FILE' ? item?.file?.fileKey : undefined;
+        if (fileKey != null && String(fileKey) !== '') keys.add(String(fileKey));
+      }
+    }
+  }
+  return [...keys];
+}
+
+export type JsConfigFileAction = 'keep' | 'reuse' | 'upload';
+
+export interface JsConfigFilePlanItem {
+  platform: JsConfigPlatform;
+  kind: JsConfigKind;
+  index: number;
+  name: string;
+  sourceFileKey: string;
+  /** keep: 反映先で同じ枠にすでに使われているキーをそのまま使う / reuse: 反映先の同名・同内容のファイルのキーを使う / upload: 反映先へアップロードして新しいキーを使う */
+  action: JsConfigFileAction;
+  targetFileKey?: string;
+  size: number;
+}
+
+export interface JsConfigFilePlan {
+  items: JsConfigFilePlanItem[];
+  /** 取得元の fileKey → 本体（アップロード用） */
+  blobs: Map<string, Blob>;
+  /** 反映先へ渡せないファイルの理由（1件でもあれば書き込まない） */
+  problems: string[];
+  /** problems がすべて「取得元が分からない」ことによる */
+  onlyUnknownOrigin: boolean;
+  /** 反映先のファイル本体を確認できず、同じ内容でも再利用しないもの（利用者に示す） */
+  targetUnavailable: string[];
+}
+
+const UNKNOWN_ORIGIN_REASON = '__unknown-file-origin__';
+const NEXT_STEP_FETCH = '取得元アプリで「取得」してから反映してください。';
+
+export function jsConfigSlotLabel(platform: JsConfigPlatform, kind: JsConfigKind): string {
+  return `${platform === 'desktop' ? 'PC' : 'モバイル'} ${kind.toUpperCase()}`;
+}
+
+const sizeText = (bytes: number) => formatFileSize(bytes) || '0 B';
+
+/**
+ * 反映先の現在の設定（GET 応答）と照らして、FILE 形式のファイルの扱い（そのまま・再利用・アップロード）を決める。
+ * 取得元・反映先からの読み取りだけを行い、書き込みはしない。取得元が分からないファイルは推測で取得せず、problems に理由を残す。
+ */
+export async function planJsConfigFiles(
+  plan: JsConfigApplyPlan,
+  current: any,
+  opts: { source: JsConfigFileSource | null; targetGuestId: string; download?: CustomizeFileDownloader; /** 複数の反映先で取得元の本体を取得し直さないための入れ物 */ cache?: Map<string, Promise<Blob>> }
+): Promise<JsConfigFilePlan> {
+  const result: JsConfigFilePlan = { items: [], blobs: new Map(), problems: [], onlyUnknownOrigin: false, targetUnavailable: [] };
+  if (!plan.files.length) return result;
+  const known = new Set(opts.source?.knownFileKeys || []);
+  const targetKeys = new Set<string>();
+  for (const platform of ['desktop', 'mobile'] as const) for (const kind of ['js', 'css'] as const) {
+    for (const item of (Array.isArray(current?.[platform]?.[kind]) ? current[platform][kind] : [])) {
+      const fileKey = item?.type === 'FILE' ? item?.file?.fileKey : undefined;
+      if (typeof fileKey === 'string' && fileKey) targetKeys.add(fileKey);
+    }
+  }
+  const sourceGuestId = opts.source ? opts.source.guestId : opts.targetGuestId;
+  const base = opts.download || downloadCustomizeFile;
+  // 取得元が分かっている fileKey（取得した JSON にあったもの）と、反映先に実在する fileKey だけ本体を取得する。
+  const download: CustomizeFileDownloader = (guestId, fileKey) => {
+    const fromSource = known.has(fileKey);
+    if (!fromSource && !targetKeys.has(fileKey)) return Promise.reject(new Error(UNKNOWN_ORIGIN_REASON));
+    const guest = fromSource ? guestId : opts.targetGuestId;
+    if (!fromSource || !opts.cache) return base(guest, fileKey);
+    const cacheKey = `${guest}/${fileKey}`;
+    let pending = opts.cache.get(cacheKey);
+    if (!pending) {
+      pending = base(guest, fileKey);
+      opts.cache.set(cacheKey, pending);
+      pending.catch(error => { if (isRunCancelledError(error)) opts.cache!.delete(cacheKey); });
+    }
+    return pending;
+  };
+
+  const metaOf = new Map(plan.files.map(file => [`${file.platform}/${file.kind}/${file.index}`, file]));
+  const sourceSection: any = { desktop: { js: [], css: [] }, mobile: { js: [], css: [] } };
+  for (const platform of ['desktop', 'mobile'] as const) for (const kind of ['js', 'css'] as const) {
+    sourceSection[platform][kind] = ((plan.payload as any)[platform]?.[kind] || []).map((resource: any, index: number) => {
+      const meta = metaOf.get(`${platform}/${kind}/${index}`);
+      if (resource?.type !== 'FILE' || !meta) return resource;
+      return { type: 'FILE', file: { fileKey: meta.fileKey, name: meta.name, contentType: meta.contentType, ...(meta.embedded ? { _content: meta.embedded } : {}) } };
+    });
+  }
+  const resolution = await resolveCustomizeFiles(sourceSection, current, { sourceGuestId, targetGuestId: opts.targetGuestId, download });
+
+  let unknownOrigin = 0, otherProblems = 0;
+  for (const file of plan.files) {
+    const state = resolution.files[customizeSlotKey(file.platform, file.kind, file.fileKey)];
+    const where = `「${file.name || file.fileKey}」（${jsConfigSlotLabel(file.platform, file.kind)}）`;
+    const item = { platform: file.platform, kind: file.kind, index: file.index, name: file.name, sourceFileKey: file.fileKey, size: 0 };
+    if (state?.status === 'existing') result.items.push({ ...item, action: 'keep', targetFileKey: file.fileKey });
+    else if (state?.status === 'reuse') result.items.push({ ...item, action: 'reuse', targetFileKey: state.targetFileKey, size: state.byteSize });
+    else if (state?.status === 'upload') {
+      // kintone はファイル名の拡張子で JS/CSS を判定するため、名前の無いファイルはアップロードしても設定できない。
+      if (!file.name) { otherProblems++; result.problems.push(`${where}: ファイル名がありません。JSON の file.name を確認してください。`); continue; }
+      result.items.push({ ...item, action: 'upload', size: state.byteSize });
+      const blob = resolution.blobs.get(file.fileKey);
+      if (blob) result.blobs.set(file.fileKey, blob);
+    } else if (state?.status === 'unavailable' && state.reason === UNKNOWN_ORIGIN_REASON) {
+      unknownOrigin++;
+      result.problems.push(`${where}: 取得元のアプリが分かりません。`);
+    } else {
+      otherProblems++;
+      const reason = state?.status === 'unavailable' ? state.reason : '反映方法を判断できません';
+      result.problems.push(`${where}: ${opts.source ? `取得元（${opts.source.label}）` : '取得元'}からファイルを取得できません（${reason}）。`);
+    }
+  }
+  result.onlyUnknownOrigin = unknownOrigin > 0 && otherProblems === 0;
+  result.targetUnavailable = resolution.targetUnavailable.map(item => `「${item.name}」（${item.reason}）`);
+  return result;
+}
+
+/** 反映先へ渡せないファイルがあるときのエラー文。1 行目に原因と次にすること、続けて対象のファイルを示す。 */
+export function formatJsConfigFileProblems(filePlan: JsConfigFilePlan, targetLabel?: string): string {
+  const count = filePlan.problems.length;
+  const to = targetLabel ? `${targetLabel}へ` : '反映先へ';
+  const head = filePlan.onlyUnknownOrigin
+    ? `取得元が分からないファイルが ${count}件あるため、${to}渡せません。${NEXT_STEP_FETCH}`
+    : `ファイル ${count}件を${to}渡せません。${NEXT_STEP_FETCH}`;
+  return [head, ...filePlan.problems.map(line => `・${line}`), '反映先の設定は書き込んでいません。'].join('\n');
+}
+
+/** 最終確認に示す、FILE 形式のファイルの扱い。 */
+export function describeJsConfigFilePlan(filePlan: JsConfigFilePlan | undefined, source: JsConfigFileSource | null): string[] {
+  if (!filePlan || !filePlan.items.length) return [];
+  const by = (action: JsConfigFileAction) => filePlan.items.filter(item => item.action === action);
+  const uploads = by('upload'), reuse = by('reuse'), keep = by('keep');
+  const line = (item: JsConfigFilePlanItem) => `  ・${jsConfigSlotLabel(item.platform, item.kind)}: ${item.name || item.sourceFileKey}${item.size ? `（${sizeText(item.size)}）` : ''}`;
+  const lines = [`FILE 形式のファイル ${filePlan.items.length}件の扱い:`];
+  if (uploads.length) lines.push(`・反映先へアップロードする: ${uploads.length}件（合計 ${sizeText(uploads.reduce((sum, item) => sum + item.size, 0))}。${source ? `取得元（${source.label}）` : '取得元'}から取得し、新しいキーで設定します）`, ...uploads.map(line));
+  if (reuse.length) lines.push(`・反映先の同じ枠にある同名・同内容のファイルを使う: ${reuse.length}件`, ...reuse.map(line));
+  if (keep.length) lines.push(`・反映先ですでに使われているファイルをそのまま使う: ${keep.length}件`);
+  if (filePlan.targetUnavailable.length) lines.push(`・反映先の${filePlan.targetUnavailable.join('、')}の本体を確認できなかったため、同じ内容のファイルがあっても再利用せずアップロードします。`);
+  if (uploads.length) lines.push('アップロードは確認後、設定を書き込む直前に行います。アップロードに失敗したときは設定を書き込みません。');
+  return lines;
+}
+
+/**
+ * アップロードが必要なファイルを反映先へアップロードする（書き込みの直前に呼ぶ）。
+ * アップロードしたキーは1回しか使えないため、同じファイルでも枠ごとにアップロードする。
+ * 途中で失敗・中止しても、アップロード済みの分は uploaded に残る（使われない一時ファイルとして残るだけで、設定には影響しない）。
+ */
+export async function uploadJsConfigFiles(filePlan: JsConfigFilePlan, targetGuestId: string, uploaded: Map<JsConfigFilePlanItem, string> = new Map()): Promise<Map<JsConfigFilePlanItem, string>> {
+  for (const item of filePlan.items) {
+    if (item.action !== 'upload') continue;
+    const blob = filePlan.blobs.get(item.sourceFileKey);
+    const where = `「${item.name}」（${jsConfigSlotLabel(item.platform, item.kind)}）`;
+    if (!blob) throw new Error(`${where}のファイル本体がないためアップロードできません。`);
+    try {
+      uploaded.set(item, await uploadKintoneFile(targetGuestId, blob, item.name));
+    } catch (error: any) {
+      if (isRunCancelledError(error)) throw error;
+      throw new Error(`${where}のアップロードに失敗しました（${firstLine(error)}）。`);
+    }
+  }
+  return uploaded;
+}
+
+const countAction = (filePlan: JsConfigFilePlan, action: JsConfigFileAction) => filePlan.items.filter(item => item.action === action).length;
+
+/** 計画に従って、FILE 項目の fileKey を反映先で使えるキーに置き換えた payload を返す。元の payload は変更しない。 */
+export function jsConfigPayloadWithFiles(payload: Record<string, unknown>, filePlan: JsConfigFilePlan, uploaded: Map<JsConfigFilePlanItem, string>): Record<string, unknown> {
+  const body = deepClone(payload) as any;
+  for (const item of filePlan.items) {
+    const entry = body[item.platform]?.[item.kind]?.[item.index];
+    if (entry?.file?.fileKey !== item.sourceFileKey) throw new Error(`「${item.name}」の反映位置を特定できません。`);
+    const fileKey = item.action === 'upload' ? uploaded.get(item) : item.action === 'reuse' ? item.targetFileKey : item.sourceFileKey;
+    if (!fileKey) throw new Error(`「${item.name}」の反映先のキーを決められません。`);
+    entry.file.fileKey = fileKey;
+  }
+  return body;
+}
+
+/**
+ * @param p.fileSource JSON を取得したアプリ。FILE 形式のファイルを別のアプリへ渡すとき、本体の取得元になる（無ければ取得元は分からない）
+ */
 export async function runApplyJsConfigStandalone(p, setStatus, setLogHtml) {
   const targetAppId = String(p.targetAppId || '').trim();
   if (!targetAppId) throw new Error('反映先アプリIDを入力してください');
@@ -297,12 +554,39 @@ export async function runApplyJsConfigStandalone(p, setStatus, setLogHtml) {
     throw decorateRevisionConflict(stale, 'JS/CSS設定の反映');
   }
 
-  if (!p.skipConfirm && !kusConfirm(buildJsConfigApplyConfirmText(targetAppId, guestId, plan, currentSummary))) {
+  // FILE 形式のファイルは、反映先の同じ枠で使われているものはそのまま、無ければ取得元から本体を取得して再利用かアップロードを決める（読み取りのみ）。
+  const fileSource: JsConfigFileSource | null = p.fileSource || null;
+  let filePlan: JsConfigFilePlan | undefined;
+  if (plan.files.length) {
+    setStatus('JS/CSSファイルを確認中...');
+    filePlan = await planJsConfigFiles(plan, current, { source: fileSource, targetGuestId: guestId });
+    if (filePlan.problems.length) throw new Error(formatJsConfigFileProblems(filePlan));
+  }
+
+  if (!p.skipConfirm && !kusConfirm(buildJsConfigApplyConfirmText(targetAppId, guestId, plan, currentSummary, filePlan, fileSource))) {
     setStatus('JS/CSS設定反映をキャンセルしました');
     return;
   }
 
-  const body: Record<string, unknown> = { app: targetAppId, ...plan.payload };
+  // 別アプリのファイルは、最初の書き込み（設定の更新）より前に反映先へアップロードする。失敗・中止したら設定は書き込まない。
+  let payload = plan.payload;
+  if (filePlan) {
+    const uploaded = new Map<JsConfigFilePlanItem, string>();
+    const uploadCount = filePlan.items.filter(item => item.action === 'upload').length;
+    if (uploadCount) setStatus(`JS/CSSファイルを反映先へアップロード中...（${uploadCount}件）`);
+    try {
+      await uploadJsConfigFiles(filePlan, guestId, uploaded);
+    } catch (e: any) {
+      if (isRunCancelledError(e)) {
+        if (uploaded.size) setLogHtml(`<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(`アップロードの途中で中止しました。反映先の設定は書き込んでいません。アップロード済みの ${uploaded.size}件は使われずに残りますが、設定には影響しません。`)}</pre>`);
+        throw e;
+      }
+      throw new Error(`${e?.message || String(e)}反映先の設定は書き込んでいません。${uploaded.size ? `\nアップロード済みの ${uploaded.size}件は使われずに残りますが、設定には影響しません。` : ''}`);
+    }
+    payload = jsConfigPayloadWithFiles(plan.payload, filePlan, uploaded);
+  }
+
+  const body: Record<string, unknown> = { app: targetAppId, ...payload };
   if (plan.scope) body.scope = plan.scope;
   if (revision) body.revision = revision;
   setStatus('JS/CSS設定を反映中...');
@@ -317,7 +601,8 @@ export async function runApplyJsConfigStandalone(p, setStatus, setLogHtml) {
     `OK JS/CSS設定反映（アプリ: ${targetAppId}${guestId ? ` / ゲスト ${guestId}` : ''}）${pickRevision(res) ? ` revision ${pickRevision(res)}` : ''}`,
     `Desktop JS ${c.desktopJs} / CSS ${c.desktopCss}、Mobile JS ${c.mobileJs} / CSS ${c.mobileCss}${plan.scope ? ` / 適用範囲 ${plan.scope}` : ''}`,
     `置き換えにより外れた現在の設定 ${currentSummary.removed}件`,
-    plan.dropped ? `送信対象外 ${plan.dropped}件（type/url/fileKey 不足）` : ''
+    plan.dropped ? `送信対象外 ${plan.dropped}件（type/url/fileKey 不足）` : '',
+    ...(filePlan?.items.length ? [`ファイル: アップロード ${countAction(filePlan, 'upload')}件 / 再利用 ${countAction(filePlan, 'reuse')}件 / そのまま ${countAction(filePlan, 'keep')}件`] : [])
   ].filter(Boolean);
 
   setLogHtml(`<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join('\n'))}</pre>`);
@@ -336,14 +621,16 @@ export interface JsConfigMultiTargetResult {
   guestId: string;
   appName: string;
   status: JsConfigMultiStatus;
-  /** 事前確認（現在の設定の取得）で止まった場合 true。この反映先には何も書き込んでいない */
+  /** 事前確認（現在の設定の取得・ファイルの確認）で止まった場合 true。この反映先には何も書き込んでいない */
   precheck?: boolean;
   /** 反映後の revision（成功時） */
   revision?: string;
-  /** 失敗・競合の理由 */
+  /** 失敗・競合・中止の理由 */
   message?: string;
   /** この反映で外れた現在の設定の件数（成功時） */
   removed?: number;
+  /** FILE 形式のファイルの扱い（成功時。FILE を含む場合のみ） */
+  files?: { uploaded: number; reused: number; kept: number };
 }
 
 export interface JsConfigMultiApplyResult {
@@ -356,6 +643,8 @@ export interface JsConfigMultiApplyResult {
   /** 完了時のステータス行と色。declined の場合は空 */
   headline: string;
   tone: 'ok' | 'warn' | 'err' | 'info';
+  /** 補足（中止でアップロード済みのファイルが使われずに残った場合など） */
+  note?: string;
 }
 
 export const JS_CONFIG_MULTI_STATUS_LABEL: Record<JsConfigMultiStatus, string> = {
@@ -364,17 +653,6 @@ export const JS_CONFIG_MULTI_STATUS_LABEL: Record<JsConfigMultiStatus, string> =
   conflict: '競合',
   notExecuted: '未実行（中止）'
 };
-
-/**
- * 複数の反映先へ同じ JSON を反映できない理由。FILE タイプの fileKey は取得元アプリの中でしか使えず、
- * 別アプリへ流用すると kintone に拒否される。空文字なら反映できる。
- */
-export function jsConfigMultiTargetProblem(plan: JsConfigApplyPlan): string {
-  if (!plan.counts.file) return '';
-  return `JSON にアップロード済みファイル（FILE タイプ）の JS / CSS が ${plan.counts.file}件含まれているため、複数の反映先へはまとめて反映できません。` +
-    'FILE タイプの fileKey は取得元のアプリでしか使えず、別のアプリへ反映すると kintone に拒否されます。' +
-    'URL で指定した JS / CSS だけの JSON にするか、ファイルは「プレビュー反映」の別アプリの JS/CSS 転送で反映してください。';
-}
 
 function multiTargetLabel(t: { appId: string; guestId: string; appName?: string }): string {
   return `App ${t.appId}${t.appName ? `（${t.appName}）` : ''}${t.guestId ? ` / ゲストスペース ${t.guestId}` : ''}`;
@@ -387,28 +665,37 @@ function firstLine(message: unknown): string {
 export function renderJsConfigMultiResultHtml(res: JsConfigMultiApplyResult): string {
   const color: Record<JsConfigMultiStatus, string> = { success: '#15803d', failed: '#b91c1c', conflict: '#b45309', notExecuted: '#64748b' };
   const rows = res.results.map((r) => {
+    const fileNote = r.files && r.files.uploaded + r.files.reused + r.files.kept > 0 ? ` / ファイル: アップロード ${r.files.uploaded}件・再利用 ${r.files.reused}件・そのまま ${r.files.kept}件` : '';
     const detail = r.status === 'success'
-      ? `revision ${r.revision || '-'} / 外れた現在の設定 ${r.removed ?? 0}件`
+      ? `revision ${r.revision || '-'} / 外れた現在の設定 ${r.removed ?? 0}件${fileNote}`
       : (r.precheck && r.status === 'failed' ? '事前確認で失敗（書き込みなし）: ' : '') + (r.message || '');
     return `<tr><td style="padding:4px 6px;white-space:nowrap">${esc(multiTargetLabel(r))}</td>`
       + `<td style="padding:4px 6px;white-space:nowrap;font-weight:700;color:${color[r.status]}">${esc(JS_CONFIG_MULTI_STATUS_LABEL[r.status])}</td>`
       + `<td style="padding:4px 6px;word-break:break-all">${esc(detail)}</td></tr>`;
   }).join('');
   return `<div style="padding:8px 10px;font-size:12px;font-weight:700">${esc(res.headline)}</div>`
+    + (res.note ? `<div style="padding:0 10px 8px;font-size:11px;color:#64748b">${esc(res.note)}</div>` : '')
     + `<table style="width:100%;font-size:11px;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 6px">反映先</th><th style="text-align:left;padding:4px 6px">結果</th><th style="text-align:left;padding:4px 6px">内容</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+/** 事前確認で反映先ごとのファイルの確認が止まったことを、取得元が分からない場合と見分けるためのエラー。 */
+class FileProblemError extends Error {
+  constructor(message: string, readonly plan: JsConfigFilePlan) { super(message); }
 }
 
 /**
  * 同じ JS/CSS 設定を、複数の反映先アプリのプレビューへ順に反映する（本番には反映しない）。
  *
- * 1. すべての反映先の現在の設定と revision を取得する（失敗した反映先は理由を残し、反映しない）。
- * 2. 件数・置き換わる内容・事前確認の失敗をまとめて 1 回だけ確認する。「いいえ」なら何も書き込まない。
- * 3. 事前確認で得た revision を送って 1 件ずつ反映する。競合・失敗は記録して次へ進み、中止されたら残りを「未実行（中止）」にする。
+ * 1. すべての反映先の現在の設定と revision を取得する。FILE 形式のファイルがあれば、反映先ごとに再利用かアップロードかを決める
+ *    （読み取りのみ。失敗した反映先は理由を残し、反映しない）。
+ * 2. 件数・置き換わる内容・アップロードするファイル・事前確認の失敗をまとめて 1 回だけ確認する。「いいえ」なら何も書き込まない。
+ * 3. 事前確認で得た revision を送って 1 件ずつ反映する（FILE があれば、その反映先の書き込みの直前にアップロードする。
+ *    アップロードに失敗した反映先には書き込まない）。競合・失敗は記録して次へ進み、中止されたら残りを「未実行（中止）」にする。
  *
- * @param p { targets: [{ appId, guestId?, appName? }], jsonText, skipConfirm? }
+ * @param p { targets: [{ appId, guestId?, appName? }], jsonText, skipConfirm?, fileSource? }
  */
 export async function runApplyJsConfigMultiStandalone(
-  p: { targets: JsConfigMultiTarget[]; jsonText: string; skipConfirm?: boolean },
+  p: { targets: JsConfigMultiTarget[]; jsonText: string; skipConfirm?: boolean; /** JSON を取得したアプリ。FILE 形式のファイルの本体の取得元 */ fileSource?: JsConfigFileSource | null },
   setStatus: (msg: string, err?: boolean) => void,
   setLogHtml: (html: string) => void
 ): Promise<JsConfigMultiApplyResult> {
@@ -427,14 +714,17 @@ export async function runApplyJsConfigMultiStandalone(
   }
   if (!targets.length) throw new Error('まとめて反映する反映先を1件以上指定してください');
   const plan = parseJsConfigApplyText(p.jsonText);
-  const problem = jsConfigMultiTargetProblem(plan);
-  if (problem) throw new Error(problem);
+  const fileSource = p.fileSource || null;
 
   const total = targets.length;
   const results: JsConfigMultiTargetResult[] = [];
-  const prechecked: Array<{ target: (typeof targets)[number]; revision: string; removed: number; nowTotal: number }> = [];
+  const prechecked: Array<{ target: (typeof targets)[number]; revision: string; removed: number; nowTotal: number; filePlan?: JsConfigFilePlan }> = [];
+  // 取得元の本体は反映先ごとに取得し直さない
+  const sourceCache = new Map<string, Promise<Blob>>();
+  let originBlocked = 0;
+  let originSample: JsConfigFilePlan | undefined;
 
-  // 1. 事前確認: 現在の設定と revision（書き込みは行わない。中止はそのまま呼び出し元へ）
+  // 1. 事前確認: 現在の設定と revision、FILE 形式のファイルの扱い（書き込みは行わない。中止はそのまま呼び出し元へ）
   for (let i = 0; i < total; i++) {
     const target = targets[i];
     setStatus(`[${i + 1}/${total}] 反映先の現在設定を確認中: ${multiTargetLabel(target)}`);
@@ -443,17 +733,27 @@ export async function runApplyJsConfigMultiStandalone(
       const revision = pickRevision(current);
       if (!/^\d+$/.test(revision)) throw new Error('JS/CSS 設定の revision を確認できません');
       const summary = summarizeJsConfigCurrent(current, plan);
-      prechecked.push({ target, revision, removed: summary.removed, nowTotal: summary.desktopJs + summary.desktopCss + summary.mobileJs + summary.mobileCss });
+      let filePlan: JsConfigFilePlan | undefined;
+      if (plan.files.length) {
+        setStatus(`[${i + 1}/${total}] JS/CSSファイルを確認中: ${multiTargetLabel(target)}`);
+        filePlan = await planJsConfigFiles(plan, current, { source: fileSource, targetGuestId: target.guestId, cache: sourceCache });
+        if (filePlan.problems.length) throw new FileProblemError(formatJsConfigFileProblems(filePlan, multiTargetLabel(target)), filePlan);
+      }
+      prechecked.push({ target, revision, removed: summary.removed, nowTotal: summary.desktopJs + summary.desktopCss + summary.mobileJs + summary.mobileCss, filePlan });
     } catch (e: any) {
       if (isCancelStop(e)) throw e;
+      if (e instanceof FileProblemError && e.plan.onlyUnknownOrigin) { originBlocked++; originSample = e.plan; }
       results.push({ ...target, status: 'failed', precheck: true, message: firstLine(e) });
     }
   }
+  // どの反映先にも渡せない原因が「取得元が分からない」ことだけなら、同じ理由の行を並べず、次にすることを 1 回だけ示して止める。
+  if (originBlocked === total && originSample) throw new Error(`${formatJsConfigFileProblems(originSample)}\n全${total}件の反映先で同じ理由です。`);
   const precheckFailures = results.filter((r) => r.precheck);
 
   // 結果は入力順に並べる（全アプリを対象にしても並べ替えで全件を走査し直さない）
   const position = new Map(targets.map((t, i) => [`${t.appId}::${t.guestId}`, i]));
   const order = (r: { appId: string; guestId: string }) => position.get(`${r.appId}::${r.guestId}`) ?? -1;
+  let note = '';
   const finish = (declined: boolean, cancelled: boolean): JsConfigMultiApplyResult => {
     const counts = {
       total,
@@ -483,7 +783,7 @@ export async function runApplyJsConfigMultiStandalone(
       tone = 'err';
     }
     results.sort((x, y) => order(x) - order(y));
-    return { declined, cancelled, results, counts, headline, tone };
+    return { declined, cancelled, results, counts, headline, tone, ...(note ? { note } : {}) };
   };
 
   if (!prechecked.length) {
@@ -498,16 +798,19 @@ export async function runApplyJsConfigMultiStandalone(
     const c = plan.counts;
     const removedTotal = prechecked.reduce((sum, t) => sum + t.removed, 0);
     const none = c.desktopJs + c.desktopCss + c.mobileJs + c.mobileCss === 0;
+    const countOf = (t: (typeof prechecked)[number], action: JsConfigFileAction) => t.filePlan ? countAction(t.filePlan, action) : 0;
+    const fileLines = plan.files.length ? describeJsConfigMultiFiles(prechecked.map(t => t.filePlan), fileSource) : [];
     const text = [
       `${prechecked.length}件の反映先プレビューへ、同じ JS/CSS 設定を反映します。`,
-      `反映する内容: Desktop JS ${c.desktopJs} / CSS ${c.desktopCss}、Mobile JS ${c.mobileJs} / CSS ${c.mobileCss}（URL ${c.url}件）${plan.scope ? ` / 適用範囲 ${plan.scope}` : ' / 適用範囲は各反映先の現状維持'}`,
+      `反映する内容: Desktop JS ${c.desktopJs} / CSS ${c.desktopCss}、Mobile JS ${c.mobileJs} / CSS ${c.mobileCss}（URL ${c.url}件 / FILE ${c.file}件）${plan.scope ? ` / 適用範囲 ${plan.scope}` : ' / 適用範囲は各反映先の現状維持'}`,
       none ? '⚠ 有効な JS/CSS 設定が 0 件のため、各反映先の JS/CSS 設定はすべて外れます（0 件になります）。' : null,
       '各反映先の JS/CSS 一覧はこの内容にすべて置き換わり、反映先だけにあるファイルは外れます。',
       `この反映で外れる現在の設定: 合計 ${removedTotal}件`,
       plan.dropped ? `type/url/fileKey が不足している ${plan.dropped}件は送信しません。` : null,
+      ...fileLines,
       '',
       `反映先（${prechecked.length}件）:`,
-      summarizeList(prechecked.map((t) => `・${multiTargetLabel(t.target)}（現在 ${t.nowTotal}件 → 外れる ${t.removed}件）`)),
+      summarizeList(prechecked.map((t) => `・${multiTargetLabel(t.target)}（現在 ${t.nowTotal}件 → 外れる ${t.removed}件${plan.files.length ? `、ファイルはアップロード ${countOf(t, 'upload')}件・再利用 ${countOf(t, 'reuse')}件・そのまま ${countOf(t, 'keep')}件` : ''}）`)),
       precheckFailures.length ? '' : null,
       precheckFailures.length ? `現在の設定を確認できなかった ${precheckFailures.length}件は反映しません:` : null,
       precheckFailures.length ? summarizeList(precheckFailures.map((r) => `・${multiTargetLabel(r)}: ${r.message}`)) : null,
@@ -522,19 +825,43 @@ export async function runApplyJsConfigMultiStandalone(
 
   // 3. 1 件ずつ反映（プレビューのみ。事前確認の revision を送り、外部の更新を上書きしない）
   let cancelled = false;
+  let unusedUploads = 0;
   for (let i = 0; i < prechecked.length; i++) {
-    const { target, revision, removed } = prechecked[i];
+    const { target, revision, removed, filePlan } = prechecked[i];
     if (cancelled) {
       results.push({ ...target, status: 'notExecuted' });
       continue;
     }
     setStatus(`[${i + 1}/${prechecked.length}] 反映中: ${multiTargetLabel(target)}`);
-    const body: Record<string, unknown> = { app: target.appId, ...plan.payload, revision };
-    if (plan.scope) body.scope = plan.scope;
     try {
       throwIfCancelled();
+      // この反映先で使う FILE 形式のファイルは、書き込みの直前にこの反映先へアップロードする（失敗したらこの反映先には書き込まない）
+      let payload = plan.payload;
+      if (filePlan) {
+        const uploaded = new Map<JsConfigFilePlanItem, string>();
+        const uploadCount = countAction(filePlan, 'upload');
+        if (uploadCount) setStatus(`[${i + 1}/${prechecked.length}] ファイルをアップロード中（${uploadCount}件）: ${multiTargetLabel(target)}`);
+        try {
+          await uploadJsConfigFiles(filePlan, target.guestId, uploaded);
+        } catch (e: any) {
+          unusedUploads += uploaded.size;
+          if (isCancelStop(e)) {
+            cancelled = true;
+            results.push({ ...target, status: 'notExecuted', message: 'アップロード中に中止したため、この反映先には書き込んでいません' });
+            continue;
+          }
+          results.push({ ...target, status: 'failed', message: `${firstLine(e)} この反映先には書き込んでいません` });
+          continue;
+        }
+        payload = jsConfigPayloadWithFiles(plan.payload, filePlan, uploaded);
+      }
+      const body: Record<string, unknown> = { app: target.appId, ...payload, revision };
+      if (plan.scope) body.scope = plan.scope;
       const res = await apiPut(buildApiPrefix(target.guestId, true), '/app/customize.json', body);
-      results.push({ ...target, status: 'success', revision: pickRevision(res), removed });
+      results.push({
+        ...target, status: 'success', revision: pickRevision(res), removed,
+        ...(filePlan?.items.length ? { files: { uploaded: countAction(filePlan, 'upload'), reused: countAction(filePlan, 'reuse'), kept: countAction(filePlan, 'keep') } } : {})
+      });
     } catch (e: any) {
       if (isCancelStop(e)) {
         cancelled = true;
@@ -545,11 +872,40 @@ export async function runApplyJsConfigMultiStandalone(
       results.push({ ...target, status: decorated?.revisionConflict ? 'conflict' : 'failed', message: firstLine(decorated) });
     }
   }
+  if (cancelled && unusedUploads) note = `中止した反映先でアップロード済みの ${unusedUploads}件のファイルは、使われずに残ります（反映先の設定には影響しません）。`;
 
   const res = finish(false, cancelled);
   setLogHtml(renderJsConfigMultiResultHtml(res));
   setStatus(res.headline, res.tone === 'err' || res.tone === 'warn');
   return res;
+}
+
+/** 複数の反映先に共通の、FILE 形式のファイルの扱い（最終確認用）。 */
+function describeJsConfigMultiFiles(filePlans: Array<JsConfigFilePlan | undefined>, source: JsConfigFileSource | null): string[] {
+  const plans = filePlans.filter((item): item is JsConfigFilePlan => !!item);
+  const uploads = new Map<string, { item: JsConfigFilePlanItem; targets: number }>();
+  let uploadCount = 0, uploadBytes = 0, reuseCount = 0, keepCount = 0;
+  const unavailable = new Set<string>();
+  for (const filePlan of plans) {
+    for (const item of filePlan.items) {
+      if (item.action === 'upload') {
+        uploadCount++; uploadBytes += item.size;
+        const key = `${item.platform}/${item.kind}/${item.name}/${item.size}`;
+        const entry = uploads.get(key);
+        if (entry) entry.targets++; else uploads.set(key, { item, targets: 1 });
+      } else if (item.action === 'reuse') reuseCount++;
+      else keepCount++;
+    }
+    for (const text of filePlan.targetUnavailable) unavailable.add(text);
+  }
+  const lines = ['FILE 形式のファイルは、反映先ごとに次のとおり扱います:'];
+  lines.push(`・反映先へアップロードする: 合計 ${uploadCount}件（${sizeText(uploadBytes)}）${uploadCount ? `。${source ? `取得元（${source.label}）` : '取得元'}から取得し、反映先ごとに新しいキーで設定します` : ''}`);
+  if (uploads.size) lines.push(summarizeList([...uploads.values()].map(({ item, targets }) => `  ・${jsConfigSlotLabel(item.platform, item.kind)}: ${item.name}（${sizeText(item.size)}）→ ${targets}件の反映先`)));
+  lines.push(`・反映先の同じ枠にある同名・同内容のファイルを使う: ${reuseCount}件`);
+  lines.push(`・反映先ですでに使われているファイルをそのまま使う: ${keepCount}件`);
+  if (unavailable.size) lines.push(`・反映先の${[...unavailable].join('、')}の本体を確認できなかったため、同じ内容のファイルがあっても再利用せずアップロードします。`);
+  if (uploadCount) lines.push('アップロードは確認後、反映先ごとの書き込みの直前に行います。アップロードに失敗した反映先には書き込まず、残りを続けます。');
+  return lines;
 }
 
 export interface BatchJsConfigManifestFileEntry {

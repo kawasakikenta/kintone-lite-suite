@@ -77,6 +77,14 @@ describe('field apply to many targets', () => {
     expect(report.headline).toContain('権限がありません');
   });
 
+  it('does not put the internal request line ([API] GET …) into a target failure message', async () => {
+    mockTargetFields({ '12': new Error('指定したアプリ（id: 12）が見つかりません。\n[API] GET /k/guest/3/v1/preview/app/form/fields.json app=12 payload={"app":"12"}') });
+    const report = await run();
+    expect(report.results[1]).toMatchObject({ appId: '12', status: 'failed', message: '指定したアプリ（id: 12）が見つかりません。' });
+    expect(report.lines.join('\n')).not.toContain('[API]');
+    expect(vi.mocked(kusConfirm).mock.calls[0][0]).not.toContain('[API]');
+  });
+
   it('reports a revision conflict on one target without overwriting and continues with the next', async () => {
     vi.mocked(apiPost).mockImplementation(async (_prefix: string, _path: string, body: any) => {
       if (String(body.app) === '12') throw Object.assign(new Error('GAIA_CO02: revision mismatch'), { code: 'GAIA_CO02' });

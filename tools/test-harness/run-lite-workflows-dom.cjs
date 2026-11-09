@@ -41,7 +41,9 @@ function fixtures() {
       await new Promise(resolve => setTimeout(resolve, 130));
       if (this.fail) throw new Error('サンプル取得失敗');
       if (name === 'runFetchJsConfigStandalone') {
-        args[2].setJson(JSON.stringify(config, null, 2));
+        // withFile: 取得した JSON にアップロード済みファイル（FILE 形式）が含まれる場合
+        const fetched = this.withFile ? { ...config, desktop: { js: [...config.desktop.js, { type: 'FILE', file: { fileKey: 'src-1', name: 'app.js', contentType: 'text/javascript', size: '120' } }], css: [] } } : config;
+        args[2].setJson(JSON.stringify(fetched, null, 2));
         args[2].setCustomizeHtml('<p>サンプルのJSファイルが1件あります。</p>');
       }
       if (name === 'runRenderProcessFlowStandalone') {
@@ -362,14 +364,38 @@ async function main() {
           const before = await page.evaluate(() => window.__workflowFixture.calls.length);
           await page.getByRole('button', {name:'反映先プレビューへ反映',exact:true}).click(); await idle();
           assert.equal(await page.evaluate(() => window.__workflowFixture.calls.length), before+1);
-          // 同じ JSON を複数の反映先プレビューへ反映する（FILE 形式を含む JSON は止める）
+          const singleCall = await page.evaluate(() => window.__workflowFixture.calls.at(-1));
+          assert.deepEqual(singleCall.input.fileSource.knownFileKeys, [], 'JS/CSS: 取得した JSON のファイルの取得元（なし）を反映に渡す');
+          // 同じ JSON を複数の反映先プレビューへ反映する。FILE 形式を含む JSON も反映できるが、取得元が分からないファイルは確認画面で警告する
           await button('対象・条件を変更').click();
           await chooseAction('複数の反映先プレビューへ反映');
           const multiApp = page.locator('.kus-lp__apptable input[aria-label="アプリID"]:visible').first();
           await multiApp.fill('401, 402');
           await multiApp.dispatchEvent('change');
           await jsonInput.fill(JSON.stringify({ desktop: { js: [{ type: 'FILE', file: { fileKey: 'k1', name: 'a.js' } }], css: [] }, mobile: { js: [], css: [] } }));
-          assert.equal(await button('内容を確認する').isDisabled(), true, 'JS/CSS: 複数の反映先へは FILE 形式を含む JSON を反映しない');
+          assert.equal(await button('内容を確認する').isEnabled(), true, 'JS/CSS: 複数の反映先へ FILE 形式を含む JSON も反映できる');
+          await button('内容を確認する').click();
+          assert.match(await stage(1).innerText(), /ファイル（FILE）[\s\S]*1件[\s\S]*アップロード/, 'JS/CSS: FILE 形式の扱いを確認画面に示す');
+          assert.match(await stage(1).innerText(), /取得元が分からないファイル[\s\S]*「a\.js」[\s\S]*取得元アプリで「取得」してから反映してください/, 'JS/CSS: 取得元が分からないファイルは確認画面で警告する');
+          assert.doesNotMatch(await stage(1).innerText(), /FILE タイプを含む JSON は反映できません/);
+          await page.screenshot({ path: path.join(OUT, 'jsconfig-multi-file-unknown-review.png') });
+          await button('対象・条件を変更').click();
+          // 取得したときの JSON にあるファイルは取得元が分かる。取得元と fileKey を実行に渡す
+          await page.evaluate(() => { window.__workflowFixture.withFile = true; });
+          await jsonInput.fill(validJson);
+          await chooseAction('JS/CSS設定を取得');
+          await button('内容を確認する').click();
+          await button('JS/CSS設定を取得').click(); await idle();
+          await button('対象・条件を変更').click();
+          await chooseAction('複数の反映先プレビューへ反映');
+          assert.match(await jsonInput.inputValue(), /"fileKey": "src-1"/, 'JS/CSS: 取得した JSON に FILE 形式が含まれる');
+          await button('内容を確認する').click();
+          const fileReview = await stage(1).innerText();
+          assert.match(fileReview, /ファイル（FILE）[\s\S]*1件[\s\S]*取得元（[^）]*）から取得して反映先へアップロード/, 'JS/CSS: 取得元からアップロードする旨を示す');
+          assert.doesNotMatch(fileReview, /取得元が分からないファイル/, 'JS/CSS: 取得した JSON のファイルは取得元が分かる');
+          await page.screenshot({ path: path.join(OUT, 'jsconfig-multi-file-review.png') });
+          await button('対象・条件を変更').click();
+          await page.evaluate(() => { window.__workflowFixture.withFile = false; });
           await jsonInput.fill(validJson);
           await button('内容を確認する').click();
           assert.match(await stage(1).innerText(), /#401[\s\S]*#402/, 'JS/CSS: 反映先の一覧を確認画面に示す');
@@ -379,6 +405,7 @@ async function main() {
           assert.equal(await page.evaluate(() => window.__workflowFixture.calls.length), multiBefore + 1);
           assert.equal(multiCall.name, 'runApplyJsConfigMultiStandalone');
           assert.deepEqual(multiCall.input.targets.map(t => t.appId), ['401', '402']);
+          assert.deepEqual(multiCall.input.fileSource.knownFileKeys, ['src-1'], 'JS/CSS: 取得元のファイル（fileKey）を複数反映に渡す');
           assert.match(await stage(2).innerText(), /2 件の反映先への反映が完了/);
         }
         if (id === 'settings-export') {
