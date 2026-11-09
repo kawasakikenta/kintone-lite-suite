@@ -131,6 +131,19 @@ function scopedEnumLabel(sectionKey: string, propKey: string, value: string): st
   return null;
 }
 
+const AGGREGATION_TYPES = new Set(['COUNT', 'SUM', 'AVERAGE', 'AVG', 'MAX', 'MIN']);
+
+/** グラフの集計（{ type: 'SUM', code: 'amount' }）。エンティティ（種類とコード）の形に似ているため、先に見分ける。 */
+function isAggregationItem(value: any, sectionKey: string): boolean {
+  return sectionKey === 'reportSettings' && !!value && typeof value === 'object' && !Array.isArray(value)
+    && typeof value.type === 'string' && AGGREGATION_TYPES.has(value.type) && !value.entity;
+}
+
+function describeAggregation(value: any): string {
+  const typeLabel = labelOfValue('aggregation.type', value.type) || String(value.type);
+  return value.code ? `${typeLabel}（${value.code}）` : typeLabel;
+}
+
 /** propKey の文脈で primitive / object / array を表示テキスト化する */
 function valueToText(value: any, propKey: string, depth = 0, sectionKey = ''): string {
   if (value === undefined) return '（未設定）';
@@ -158,6 +171,9 @@ function valueToText(value: any, propKey: string, depth = 0, sectionKey = ''): s
   }
   if (Array.isArray(value)) {
     if (!value.length) return '（空）';
+    if (value.every((item: any) => isAggregationItem(item, sectionKey))) {
+      return value.map((item: any) => describeAggregation(item)).join(', ');
+    }
     // recipients/targets/entities 配列 → エンティティ列
     if (value[0] && typeof value[0] === 'object' && (value[0].entity || value[0].type)) {
       const compact = value.length > 4;
@@ -181,6 +197,7 @@ function valueToText(value: any, propKey: string, depth = 0, sectionKey = ''): s
       const summary = describePeriodicReport(value);
       if (summary) return summary;
     }
+    if (isAggregationItem(value, sectionKey)) return describeAggregation(value);
     // entity ラッパ
     if (value.entity && typeof value.entity === 'object') {
       const base = formatEntityText(value.entity);

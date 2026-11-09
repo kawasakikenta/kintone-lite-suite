@@ -2,7 +2,7 @@
 
 import { installWorkflowNavigation } from './liteWorkflow.js';
 
-import { DIFF_NORMALIZATION_PRESETS, SECTION_DEFS } from '../constants.js';
+import { DEFAULT_APP_ID, DEFAULT_GUEST_ID, DIFF_NORMALIZATION_PRESETS, SECTION_DEFS } from '../constants.js';
 import {
   buildDiffComparisonProfile,
   parseDiffComparisonProfile,
@@ -47,6 +47,7 @@ import {
   planMultiTargetFill
 } from '../diff/multi-targets.js';
 import { readSettingsBundleFile } from '../settingsBundleImport.js';
+import { stripComparisonScratchForRetention } from '../diff/retention.js';
 import { isCancelRequested, isRunCancelledError, RunCancelledError } from '../runControl.js';
 import { needsAppReferenceParse, parseAppReference } from '../reflect/appReference.js';
 import {
@@ -455,6 +456,8 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-app-card .kus-lp__input{flex:1;min-width:100px;width:auto;box-sizing:border-box}
 .kus-dl-app-card .kus-dl-target-field{min-width:140px}
 .kus-dl-swap{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;align-self:center;justify-self:center;width:auto;min-width:104px;padding:8px 12px!important;white-space:nowrap;line-height:1.3}
+.kus-dl-compare-preview-row{margin:10px 0 0!important}
+.kus-dl-compare-preview-row .kus-lp__btn{max-width:100%;white-space:normal;text-align:center;line-height:1.35}
 .kus-dl-target-list{display:grid;grid-template-columns:minmax(0,1fr);gap:7px;max-height:340px;margin-top:8px;padding-right:2px;overflow-y:auto;background:linear-gradient(#eff6ff 30%,rgba(239,246,255,0)) top/100% 24px no-repeat local,linear-gradient(rgba(239,246,255,0),#eff6ff 70%) bottom/100% 24px no-repeat local,radial-gradient(farthest-side at 50% 0,rgba(15,23,42,.28),rgba(15,23,42,0)) top/100% 9px no-repeat scroll,radial-gradient(farthest-side at 50% 100%,rgba(15,23,42,.28),rgba(15,23,42,0)) bottom/100% 9px no-repeat scroll}
 .kus-dl-target-list-hint{margin:6px 0 0;color:#475569;font-size:12.5px;font-weight:700}
 .kus-dl-multi-controls{margin-top:12px!important;padding-top:10px;border-top:1px solid #e2e8f0}
@@ -1210,6 +1213,12 @@ export function renderLiteDiffOverviewHtml(cache: DiffCache, options: { announce
     matchingNoticesHtml = `<div class="kus-dl-alert" role="note"><strong>対応付けの注意 ${totalNoticeCount}件</strong>${noticeLines}${omittedLine}</div>`;
   }
 
+  // 旧フォーム設定は、フィールド設定・レイアウト設定の再掲。件数には含めるが、Excel の変更一覧には含めない。
+  const formReprintCount = (bySection.get('formSettings') || []).filter((row) => !row._displayOnly && row.type !== 'same').length;
+  const comparedWithOrigin = (cache.scopes || []).some((key) => key === 'fieldSettings' || key === 'layoutSettings');
+  const formReprintNote = formReprintCount > 0 && comparedWithOrigin
+    ? `<span>フォーム設定の ${formReprintCount} 件は、フィールド設定・レイアウト設定の変更の再掲です（Excelの変更一覧には含めません）。</span>`
+    : '';
   const announceAttrs = options.announce === false ? '' : ' role="status"';
   const alertAttrs = options.announce === false ? '' : ' role="alert"';
   const completeness = incomplete ? 'incomplete' : 'complete';
@@ -1232,7 +1241,7 @@ export function renderLiteDiffOverviewHtml(cache: DiffCache, options: { announce
     (sectionButtons ? `<div class="kus-dl-section-nav"><span class="kus-dl-section-nav__label">セクションで絞り込む</span>${sectionButtons}</div>` : '') +
     matchingNoticesHtml +
     `<div class="kus-dl-alert kus-dl-conditions" role="note"><strong>適用した比較条件</strong><span>${esc(ignoreCondition)} ${esc(normalizationCondition)}</span></div>` +
-    '<div class="kus-dl-legend"><span>「比較先のみ」は追加、「比較元のみ」は削除として検出しています。</span><span>比較方向は上の矢印で確認できます。</span></div></section>';
+    `<div class="kus-dl-legend"><span>「比較先のみ」は追加、「比較元のみ」は削除として検出しています。</span><span>比較方向は上の矢印で確認できます。</span>${formReprintNote}</div></section>`;
 }
 
 export interface LiteRowsRenderOptions {
@@ -1456,6 +1465,13 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   swapBtn.dataset.kusDlSwap = '';
   directionGrid.append(sourceCard, swapBtn, targetCard);
   cardApp.body.appendChild(directionGrid);
+  // 同じアプリの「本番（変更前）→ プレビュー（変更後）」を 1 回の操作で設定する（未公開の変更の確認用）。
+  const comparePreviewBtn = makeButton('本番とプレビューを比較（未公開の変更を確認）', 'ghost');
+  comparePreviewBtn.dataset.kusDlComparePreview = '';
+  comparePreviewBtn.title = '比較元を本番、比較先を同じアプリのプレビューに設定します（比較元の入力欄が空のときは、開いているアプリを使います）';
+  const comparePreviewRow = makeRow(comparePreviewBtn);
+  comparePreviewRow.classList.add('kus-dl-compare-preview-row');
+  cardApp.body.appendChild(comparePreviewRow);
   const targetList = document.createElement('div');
   targetList.className = 'kus-dl-target-list';
   const targetRows: TargetRowEntry[] = [{ app: tgtApp, guest: tgtGuest, row: firstTargetRow, name: tgtName, appName: '' }];
@@ -2858,6 +2874,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     targetList.hidden = mode !== 'multi';
     updateTargetListHint();
     directionGrid.hidden = mode === 'pairs';
+    comparePreviewRow.hidden = mode !== 'single';
     singleAppSearch.hidden = mode === 'pairs';
     pairEditor.hidden = mode !== 'pairs';
     cardImport.card.hidden = mode === 'pairs';
@@ -3231,6 +3248,57 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     setTargetName(targetRows[0], source.appName);
     const invalidated = invalidateResultAfterAppSelectionChange();
     if (!invalidated) panel.setStatus('比較元と比較先を入れ替えました。矢印の向きを確認して比較してください', 'info');
+  });
+
+  comparePreviewBtn.addEventListener('click', () => {
+    if (comparisonMode !== 'single') return;
+    if (diffRunActive || profileIoActive || pairFolderLoadActive()) {
+      panel.setStatus('比較を実行中です。完了してから設定してください', 'warn');
+      return;
+    }
+    if (importedSourceBundle || importedTargetBundle || jsonImporter.isLoading()) {
+      panel.setStatus('設定JSONを読み込んでいる間は設定できません。読込を解除してから実行してください', 'warn');
+      return;
+    }
+    // 比較元の入力（URL の貼り付け可）を優先し、空なら開いているアプリを使う。
+    let appId = srcApp.value.trim();
+    let guestId = srcGuest.value.trim();
+    const reference = needsAppReferenceParse(appId) ? parseAppReference(appId) : null;
+    if (reference) { appId = reference.appId; guestId = reference.guestId || guestId; }
+    if (!appId) {
+      appId = String(DEFAULT_APP_ID || '').trim();
+      guestId = appId ? String(DEFAULT_GUEST_ID || '').trim() : guestId;
+    }
+    if (!appId) {
+      panel.setStatus('比較元にアプリIDを入力してください（kintone のアプリの画面で開くと、そのアプリを使えます）', 'warn');
+      srcApp.focus();
+      return;
+    }
+    if (!/^[1-9]\d*$/.test(appId)) {
+      panel.setStatus('比較元アプリIDには正の整数を入力してください', 'warn');
+      srcApp.focus();
+      return;
+    }
+    if (guestId && !/^[1-9]\d*$/.test(guestId)) {
+      panel.setStatus('比較元のゲストスペースIDは半角数字の正の整数で入力してください', 'warn');
+      srcGuest.focus();
+      return;
+    }
+    const keepName = appId === srcApp.value.trim() && guestId === srcGuest.value.trim() ? sourceAppName : '';
+    srcApp.value = appId;
+    srcGuest.value = guestId;
+    srcPrev.checkbox.checked = false;
+    setSourceName(keepName);
+    tgtApp.value = appId;
+    tgtGuest.value = guestId;
+    tgtPrev.checkbox.checked = true;
+    setTargetName(targetRows[0], keepName);
+    const invalidated = invalidateResultAfterAppSelectionChange();
+    panel.setStatus(
+      `App ${appId}${guestId ? `（ゲストスペース ${guestId}）` : ''} の本番を比較元、同じアプリのプレビューを比較先に設定しました${invalidated ? '（前回の結果は無効にしました）' : ''}。「差分比較を実行」で、未公開の変更を確認できます`,
+      invalidated ? 'warn' : 'ok'
+    );
+    runBtn.focus();
   });
 
   async function loadImportedBundle(side: LiteDiffJsonSide) {
@@ -4230,8 +4298,8 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
             rows: out.rows || [],
             fetchIssues: out.fetchIssues || [],
             partialIssues: out.partialIssues || [],
-            sourceBundle: out.sourceBundle,
-            targetBundle: out.targetBundle,
+            sourceBundle: stripComparisonScratchForRetention(out.sourceBundle),
+            targetBundle: stripComparisonScratchForRetention(out.targetBundle),
             scopes: base.scopes,
             ignoreKeys: base.ignoreKeys,
             normalizationPresetState: base.normalizationPresetState,
@@ -4354,7 +4422,11 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
           if (!sharedSourceBundle) sharedSourceBundle = out.sourceBundle;
           attachKnownAppName(out.sourceBundle, base.source.appName);
           attachKnownAppName(out.targetBundle, t.appName);
-          const sourceForResult = reusedSource ? (retainedSourceBundle ??= out.sourceBundle) : out.sourceBundle;
+          // 結果を保持する前に、出力で使わない作業用の値（JS/CSS の本文など）を取り除く。
+          // 比較元は再利用する 1 つ（sharedSourceBundle とは別の複製）だけを保持する。
+          if (reusedSource && !retainedSourceBundle) retainedSourceBundle = stripComparisonScratchForRetention(out.sourceBundle);
+          const sourceForResult = reusedSource ? retainedSourceBundle : stripComparisonScratchForRetention(out.sourceBundle);
+          stripComparisonScratchForRetention(out.targetBundle);
           succeeded += 1;
           const counts = summarizeLiteDiffRows(out.rows || []);
           const contentChanged = contentChangedCount(counts);

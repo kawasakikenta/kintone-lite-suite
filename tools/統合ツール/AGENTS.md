@@ -79,6 +79,9 @@ tools/統合ツール/
 - `entries/litePanelTheme.ts` の `createLitePanel`／`makeRow` 等は全 lite 系パネルの共通 UI 基盤。変更時は軽量バンドル全体に影響する。
 - `kintoneGuard.ts` の `isKintonePage`／`runOnKintonePage` は全 lite エントリ共通の kintone 画面ガード。文言・判定を変えると全エントリに波及する。
 - `diff/export.ts` の `bundleToMarkdown` は設計書 lite（`tabs/design-standalone.ts`）から参照される。
+- 1対多・ペア一括の結果は保存のためにメモリへ保持する。保持する前に `diff/retention.ts` の `stripComparisonScratchForRetention` で、JS/CSS の本文（`_bodyText`・`_bodyHash`）とプラグイン設定の取得結果（`_config`）を取り除く（出力は読まない。比較先が数百件で保持量の大半だった）。一部未検証の判定（`collectPartialComparisonIssues`）は本文の有無を見るため、必ず取り除く前に行う。
+- 「並び順を無視」の正規化を適用したセクションの差分行は `_orderNormalized` を持つ。path の添字が並べ替え後の位置を指すため、元の設定の同じ添字から要素を引いて名前を付けない（`enrich.ts` の `layoutFieldCaption`、`xlsx-export.ts` の `customerLayoutItemParts`）。入れ子の配列の行は外側の識別子を `parentArrayKey` / `parentArrayKeyValue` に持つ（フィールド権限の宛先ごとの行が対象のフィールドを示す）。
+- 業務アプリに近い合成設定での通し検証は `tools/test-harness/diff-explore.cjs`（`npm run test:diff-explore`）。合成設定は `diff-explore-world.cjs`。差分比較の判定・見出し・出力を変えたら実行する。
 - フィールドの設定項目名は `diff/label-dict.ts` の `FIELD_SETTING_LABELS`、path からの項目名の解決は `diff/enrich.ts` の `fieldSettingIdentity` に統一する（差分の画面・Excel・Markdown が共用）。フィールドの表示名は `buildFieldLabelResolver` で比較元・比較先の設定から引く。差分行の値（`left` / `right`）がフィールド定義なのはフィールド全体の行だけで、選択肢の行の `label` は選択肢名。
 - レコード取得は `api.ts` の `fetchRecordsByQuery`（order by 無し: `$id` シーク / あり: cursor API）に統一する。
 - 利用者向けの文言（タイトル・ヒント・注記・操作の説明・ステータス）は `docs/ui-writing-guide.md` に従う。見出しのバッジは影響範囲（`tone: 'read' | 'preview' | 'production'`）を 1 つだけ付ける。

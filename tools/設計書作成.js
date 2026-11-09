@@ -13125,6 +13125,7 @@
   var MD_AGGREGATION_TYPE_LABELS = {
     COUNT: "件数",
     SUM: "合計",
+    AVERAGE: "平均",
     AVG: "平均",
     MAX: "最大値",
     MIN: "最小値"

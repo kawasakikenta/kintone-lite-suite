@@ -156,6 +156,7 @@ export async function runDiffStandalone(opts) {
   const fetchIssues = diffResult.fetchIssues || [];
   const partialIssues = collectPartialComparisonIssues(sourceBundle, targetBundle);
 
+  // summarizeRows の changed は移動（moved）を含む。画面の概要と同じく、内容変更と移動は重ならない数で示す。
   const s = summarizeRows(rows);
   const warning = warningInfoForStandalone(rows, fetchIssues, partialIssues);
   const truncation = diffResult.truncation?.truncated ? diffResult.truncation : null;
@@ -172,7 +173,7 @@ export async function runDiffStandalone(opts) {
     ? ` / 同一証跡 ${droppedSame}件を上限により省略${actualDiffTruncated ? '' : '（実差分の走査は完了）'}`
     : '';
   const noticeNote = noticeCount > 0 ? ` / 対応付けの注意 ${noticeCount}件` : '';
-  const statusLine = `差分比較完了: 差分 ${countActualDiffRows(rows)}件 / 同一 ${s.same}件 / 取得失敗 ${fetchIssues.length}件 / 一部未検証 ${partialIssues.length}件${warning.exceeded ? ` / 警告 ${warning.total}>=${warning.threshold}` : ''}${incompleteNote}${sameOmissionNote}${noticeNote} (追加:${s.added} / 削除:${s.removed} / 変更:${s.changed} / 移動:${s.moved})`;
+  const statusLine = `差分比較完了: 差分 ${countActualDiffRows(rows)}件 / 同一 ${s.same}件 / 取得失敗 ${fetchIssues.length}件 / 一部未検証 ${partialIssues.length}件${warning.exceeded ? ` / 警告 ${warning.total}>=${warning.threshold}` : ''}${incompleteNote}${sameOmissionNote}${noticeNote} (追加:${s.added} / 削除:${s.removed} / 内容変更:${s.changed - s.moved} / 移動:${s.moved})`;
   onStatus(statusLine);
 
   return {

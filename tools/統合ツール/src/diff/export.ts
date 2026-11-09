@@ -1300,6 +1300,7 @@ const MD_REPORT_CHART_MODE_LABELS = {
 const MD_AGGREGATION_TYPE_LABELS = {
   COUNT: '件数',
   SUM: '合計',
+  AVERAGE: '平均',
   AVG: '平均',
   MAX: '最大値',
   MIN: '最小値'
@@ -5147,7 +5148,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         BAR: '横棒グラフ', COLUMN: '縦棒グラフ', LINE: '折れ線グラフ', PIE: '円グラフ',
         PIVOT_TABLE: 'クロス集計表', AREA: '面グラフ', SPLINE: 'スプライン',
         SPLINE_AREA: 'スプライン面', SCATTER: '散布図',
-        COUNT: '件数', SUM: '合計', AVG: '平均', MAX: '最大値', MIN: '最小値',
+        COUNT: '件数', SUM: '合計', AVERAGE: '平均', AVG: '平均', MAX: '最大値', MIN: '最小値',
         NORMAL: '通常', STACKED: '積み上げ', PERCENTAGE: '100%積み上げ',
         // Process assignee
         ONE: '1人選出', ANYONE: '候補の誰でも',

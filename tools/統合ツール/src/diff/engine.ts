@@ -596,7 +596,7 @@ export function collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules, compa
     const leftSig = makeArrayItemSignature(left.item, ignoreRules, itemPath, itemComparisonPath);
     const rightSig = makeArrayItemSignature(right.item, ignoreRules, itemPath, itemComparisonPath);
     if (leftSig === rightSig) {
-      if (reordered.has(sig) && !isUnorderedArrayPath(path)) {
+      if (reordered.has(sig) && !isUnorderedArrayPath(path) && !isOrderInsensitiveSection(out)) {
         pushDiffRow(out, {
           type: 'changed',
           path: `${path}[${right.idx}]`,
@@ -626,6 +626,7 @@ export function collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules, compa
     for (let oi = start; oi < out.length; oi++) {
       if (!out[oi].arrayKey) out[oi].arrayKey = key;
       if (out[oi].arrayKeyValue === undefined) out[oi].arrayKeyValue = keyVal;
+      tagParentArrayKey(out[oi], key, keyVal);
     }
     if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
   }
@@ -713,6 +714,15 @@ const COMPOSITE_ARRAY_RULES: ReadonlyArray<CompositeArrayRule> = [
 
 export function isUnorderedArrayPath(path): boolean {
   return ACTION_MAPPINGS_ARRAY_PATH.test(String(path || ''));
+}
+
+/**
+ * 「並び順を無視」の正規化を適用したセクションか。
+ * 正規化は配列を内容で並べ替えるため、並べ替え後の位置は元の並びを表さない。
+ * 内容が同じ要素の位置がずれても「並び順が異なる」と報告してはならない。
+ */
+function isOrderInsensitiveSection(out): boolean {
+  return !!out && (out as any).__orderInsensitive === true;
 }
 
 /** 関連付けのコピー元を表す値（フィールドコード。レコードURLなら種類）。 */
@@ -906,6 +916,17 @@ function buildNotificationMapsIgnoringTitle(a, b, path, ignoreRules, comparisonP
   };
 }
 
+/**
+ * 入れ子の配列の行に、外側の配列で対応付けに使った識別子（フィールド権限の `code` など）を残す。
+ * 行の arrayKey は内側の配列の識別子（`entity`）になるため、外側のものは別に持たせる（最も内側の外側 1 つだけ）。
+ * 行の値がアクセス権のような単独の値だと、どのフィールドの行かを値や path から読み取れなくなるのを防ぐ。
+ */
+function tagParentArrayKey(row, arrayKey: string, keyValue: unknown): void {
+  if (!row || row.arrayKey === arrayKey || row.parentArrayKey !== undefined) return;
+  row.parentArrayKey = arrayKey;
+  row.parentArrayKeyValue = keyValue;
+}
+
 export function collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules, comparisonPath = path) {
   const rule = findCompositeArrayRule(path);
   if (!rule) return false;
@@ -987,7 +1008,7 @@ export function collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules, co
     const leftSig = makeArrayItemSignature(left.item, ignoreRules, itemPath, itemComparisonPath);
     const rightSig = makeArrayItemSignature(right.item, ignoreRules, itemPath, itemComparisonPath);
     if (leftSig === rightSig) {
-      if (reordered.has(sig) && !isUnorderedArrayPath(path)) {
+      if (reordered.has(sig) && !isUnorderedArrayPath(path) && !isOrderInsensitiveSection(out)) {
         pushDiffRow(out, {
           type: 'changed',
           path: `${path}[${right.idx}]`,
@@ -1017,6 +1038,7 @@ export function collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules, co
     for (let oi = start; oi < out.length; oi++) {
       if (!out[oi].arrayKey) out[oi].arrayKey = rule.arrayKey;
       if (out[oi].arrayKeyValue === undefined) out[oi].arrayKeyValue = keyVal;
+      tagParentArrayKey(out[oi], rule.arrayKey, keyVal);
     }
     if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
   }
@@ -1045,7 +1067,7 @@ export function collectArrayDiffsByPureReorder(a, b, path, out, ignoreRules, com
     }
     if (from < 0) continue; // 多重集合一致済みのため理論上到達しない
     used[from] = true;
-    if (from === j || isUnorderedArrayPath(path)) {
+    if (from === j || isUnorderedArrayPath(path) || isOrderInsensitiveSection(out)) {
       pushSameDiffRow(out, { path: `${path}[${j}]`, left: a[from], right: b[j], severity: 'low' }, ignoreRules, `${comparisonPath}[${j}]`);
       continue;
     }
@@ -1075,7 +1097,7 @@ function escapeRegExpLiteral(s) {
 // ---------------------------------------------------------------------------
 export function mergeAddRemovePairsAsMoved(out, startIdx, path, ignoreRules, comparisonPath = path) {
   const childRe = new RegExp(`^${escapeRegExpLiteral(path)}\\[(\\d+)\\]$`);
-  const unordered = isUnorderedArrayPath(path);
+  const unordered = isUnorderedArrayPath(path) || isOrderInsensitiveSection(out);
   const removedBySig = new Map<string, number[]>();
   for (let i = startIdx; i < out.length; i++) {
     const row = out[i];
@@ -1579,6 +1601,99 @@ function pushProcessStateRenameNotices(rows, sectionKey, sectionLabel, stateRena
   });
 }
 
+// ---------------------------------------------------------------------------
+// 名前付きマップの表示順（index）
+// ---------------------------------------------------------------------------
+// 一覧・グラフ・ステータス・カテゴリ・アプリアクションは、名前をキーにしたオブジェクトで、各要素が表示順 `index` を持つ。
+// 途中に 1 件追加（削除）すると、後続のすべての index が 1 つずつずれ、「表示順 N → N+1」の行が後続の件数分だけ出てしまう。
+// 両側にある要素どうしの相対順位が同じなら、index の違いは追加・削除による繰り下がりだけなので、差にしない。
+// 相対順位が変わった要素（本当に並べ替えられたもの）は、index の実際の値のまま差として残す。
+// ---------------------------------------------------------------------------
+const NAMED_INDEX_MAPS: Record<string, string> = {
+  viewSettings: 'views',
+  reportSettings: 'reports',
+  processSettings: 'states',
+  categories: 'categories',
+  actionSettings: 'actions'
+};
+
+function relativizeNamedIndexesForSection(sectionKey: string, source: any, target: any): { source: any; target: any; rewritten: boolean } {
+  const untouched = { source, target, rewritten: false };
+  const mapKey = NAMED_INDEX_MAPS[sectionKey];
+  const a = mapKey ? source?.[mapKey] : null;
+  const b = mapKey ? target?.[mapKey] : null;
+  if (!mapKey || !isPlainObject(a) || !isPlainObject(b)) return untouched;
+  const common = Object.keys(a).filter((name) => Object.prototype.hasOwnProperty.call(b, name));
+  if (common.length < 2) return untouched;
+  const indexOf = (map: any, name: string): number | null => {
+    const raw = map?.[name]?.index;
+    if (raw === undefined || raw === null || raw === '') return null;
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : null;
+  };
+  // 数値として読めない index がある配置は、判断せず従来どおり比べる。
+  if (common.some((name) => indexOf(a, name) === null || indexOf(b, name) === null)) return untouched;
+  const rankOf = (map: any): Map<string, number> => new Map(
+    [...common]
+      .sort((x, y) => (indexOf(map, x)! - indexOf(map, y)!) || (x < y ? -1 : (x > y ? 1 : 0)))
+      .map((name, rank) => [name, rank] as [string, number])
+  );
+  const rankA = rankOf(a);
+  const rankB = rankOf(b);
+  const unchanged = common.filter((name) => rankA.get(name) === rankB.get(name));
+  if (!unchanged.length) return untouched;
+  const rewrite = (map: any, ranks: Map<string, number>) => {
+    const out = { ...map };
+    for (const name of unchanged) out[name] = { ...map[name], index: String(ranks.get(name)) };
+    return out;
+  };
+  return {
+    source: { ...source, [mapKey]: rewrite(a, rankA) },
+    target: { ...target, [mapKey]: rewrite(b, rankB) },
+    rewritten: true
+  };
+}
+
+/** path（キーに「.」を含んでもよい）が指す値を、正規化後の設定から引く。引けなければ undefined。 */
+function valueAtDiffPath(node: any, rest: string): { found: boolean; value?: any } {
+  if (!rest) return { found: true, value: node };
+  if (Array.isArray(node)) {
+    const match = /^\[(\d+)\]/.exec(rest);
+    return match && Number(match[1]) < node.length ? valueAtDiffPath(node[Number(match[1])], rest.slice(match[0].length)) : { found: false };
+  }
+  if (!node || typeof node !== 'object' || !rest.startsWith('.')) return { found: false };
+  const keys = Object.keys(node).filter((key) => rest.startsWith(`.${key}`) && /^(?:$|[.[])/.test(rest.slice(key.length + 1)));
+  for (const key of keys.sort((x, y) => y.length - x.length)) {
+    const result = valueAtDiffPath(node[key], rest.slice(key.length + 1));
+    if (result.found) return result;
+  }
+  return { found: false };
+}
+
+/**
+ * 表示順（index）を順位に書き換えて比べた結果の同一行を、実際の設定値に戻す。
+ * 書き換えは「差分行を作らない」判定のためだけで、行に出す値は実在する値でなければならない。
+ * 実際の値が左右で違う同一行（繰り下がりだけの違い）は、「同一」と示す値が食い違うため出さない。
+ */
+function restoreActualValuesInSameRows(rows: any[], start: number, sec: string, sourceReal: any, targetReal: any): void {
+  for (let index = rows.length - 1; index >= start; index -= 1) {
+    const row = rows[index];
+    if (row.type !== 'same' || row._displayOnly) continue;
+    const path = String(row.path || '');
+    if (path !== sec && !path.startsWith(`${sec}.`) && !path.startsWith(`${sec}[`)) continue;
+    const left = valueAtDiffPath(sourceReal, path.slice(sec.length));
+    const right = valueAtDiffPath(targetReal, path.slice(sec.length));
+    if (!left.found || !right.found) continue;
+    if (stableStringify(left.value) === stableStringify(right.value)) {
+      row.left = left.value;
+      row.right = right.value;
+    } else {
+      rows.splice(index, 1);
+      (rows as any).__sameCount = Math.max(0, Number((rows as any).__sameCount || 0) - 1);
+    }
+  }
+}
+
 export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeysText, options: any = {}) {
   const ignoreRules = parseIgnoreRules(ignoreKeysText);
   const presetState = options.normalizationPresetState || ({} as any);
@@ -1673,10 +1788,22 @@ export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeys
       sourceForSection = preprocessActionSettingsForDiff(s);
       targetForSection = preprocessActionSettingsForDiff(t);
     }
+    // 名前付きマップの「表示順（index）」は、追加・削除で後続が繰り下がっただけなら差にしない。
+    const rankedPair = relativizeNamedIndexesForSection(sec, sourceForSection, targetForSection);
+    // 判定にだけ使う書き換え。行に出す値は、書き換える前の（通常の正規化だけをした）値に戻す。
+    const sourceActual = rankedPair.rewritten ? normalizeSectionForCompare(sec, sourceForSection, presetState) : null;
+    const targetActual = rankedPair.rewritten ? normalizeSectionForCompare(sec, targetForSection, presetState) : null;
+    sourceForSection = rankedPair.source;
+    targetForSection = rankedPair.target;
     const sourceForDiff = normalizeSectionForCompare(sec, sourceForSection, presetState);
     const targetForDiff = normalizeSectionForCompare(sec, targetForSection, presetState);
     if (makeArrayItemSignature(sourceForDiff, ignoreRules, sec) === makeArrayItemSignature(targetForDiff, ignoreRules, sec)) {
-      pushSameDiffRow(rows, { sectionKey: sec, section: label, path: sec, left: sourceForDiff, right: targetForDiff, severity: 'low' }, ignoreRules);
+      // 書き換えた比較で、実際の値が左右で違う（繰り下がりだけの違い）ときは、同一の行を出さない。
+      const sameLeft = sourceActual ?? sourceForDiff;
+      const sameRight = targetActual ?? targetForDiff;
+      if (!sourceActual || stableStringify(sameLeft) === stableStringify(sameRight)) {
+        pushSameDiffRow(rows, { sectionKey: sec, section: label, path: sec, left: sameLeft, right: sameRight, severity: 'low' }, ignoreRules);
+      }
       // 仮想改名で両側が一致した場合も、改名そのものの通知は必ず残す。
       if (sec === 'processSettings') {
         pushProcessStateRenameNotices(rows, sec, label, stateRenames, ignoreRules);
@@ -1684,8 +1811,15 @@ export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeys
       continue;
     }
     const start = rows.length;
+    // 並び順を無視するセクションでは、並べ替え後の位置ずれを「並び順が異なる」行にしない。
+    const orderInsensitive = getActiveDiffNormalizationConfig(sec, presetState)?.unorderedArrays === true;
+    (rows as any).__orderInsensitive = orderInsensitive;
     collectDeepDiffs(sourceForDiff, targetForDiff, sec, rows, ignoreRules);
+    (rows as any).__orderInsensitive = false;
+    if (sourceActual) restoreActualValuesInSameRows(rows as any[], start, sec, sourceActual, targetActual);
     for (let i = start; i < rows.length; i++) {
+      // 行の path の添字は、内容で並べ替えた後の配列の位置を指す。元の設定の同じ添字を引いて名前を付けると別の要素になる。
+      if (orderInsensitive) rows[i]._orderNormalized = true;
       if (!rows[i].section) rows[i].section = label;
       if (!rows[i].sectionKey) rows[i].sectionKey = sec;
       if (!rows[i].severity) rows[i].severity = detectRowSeverity(rows[i]);

@@ -306,6 +306,17 @@ describe('diff lite result presentation', () => {
     expect(rowMatchesFilters(movedRow, { section: '', type: 'moved', keyword: '' })).toBe(true);
   });
 
+  it('says that the legacy form settings only repeat the field and layout changes (only when they are compared together)', () => {
+    const formRow = (path: string) => ({ sectionKey: 'formSettings', section: 'フォーム設定', path, type: 'changed', left: 'a', right: 'b' }) as any;
+    const fieldRow = { sectionKey: 'fieldSettings', section: 'フィールド設定', path: 'fieldSettings.properties.a.label', type: 'changed', left: 'a', right: 'b' } as any;
+    const rows = [fieldRow, formRow('formSettings.properties[0].label'), formRow('formSettings.properties[1].label')];
+    const together = renderLiteDiffOverviewHtml(cache(rows, { scopes: ['fieldSettings', 'formSettings'] }));
+    expect(together).toContain('フォーム設定の 2 件は、フィールド設定・レイアウト設定の変更の再掲です（Excelの変更一覧には含めません）。');
+    // フォーム設定だけを比較したときは、再掲元が無いので注記しない
+    expect(renderLiteDiffOverviewHtml(cache(rows.slice(1), { scopes: ['formSettings'] }))).not.toContain('再掲');
+    expect(renderLiteDiffOverviewHtml(cache([fieldRow], { scopes: ['fieldSettings'] }))).not.toContain('再掲');
+  });
+
   it('makes comparison direction, app identity, and added/removed meaning explicit', () => {
     const html = renderLiteDiffOverviewHtml(cache([
       { sectionKey: 'appAcl', section: 'アプリ権限', path: 'appAcl.rights[0]', type: 'added', right: {} },
