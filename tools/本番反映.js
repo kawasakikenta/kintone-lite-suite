@@ -3755,7 +3755,7 @@ ${base}`
         block(`バックアップを保存できなかったため、反映を依頼していません（${reasonOf(error)}）。`);
         return finish2();
       }
-      backup = { fileName, appCount: targets.length, generatedAt: built.file.generatedAt, environment: built.file.environment, unavailableFiles: built.unavailableFiles };
+      backup = { fileName, appCount: targets.length, generatedAt: built.file.generatedAt, environment: built.file.environment, unavailableFiles: built.unavailableFiles, content: built.file };
       log(`バックアップを保存しました（${fileName}、${targets.length} アプリ、${revert ? "中止前のプレビュー" : "反映前の本番"}）`);
       if (batchMode === "atomic") {
         const guestId = outcomes[0].guestId;
@@ -4093,7 +4093,7 @@ ${base}`
     return apps.filter((app) => app.status !== "success");
   }
   function undoGuidance(mode) {
-    return mode === "revert" ? "破棄した変更は、バックアップJSONをプレビュー反映で読み込むと戻せます。" : "本番への反映は取り消せません。戻すときは、バックアップJSONをプレビュー反映の反映元（設定JSON）に読み込んでプレビューへ戻し、このツールで本番へ反映します。削除したフィールドの値は戻りません。";
+    return mode === "revert" ? "破棄した変更は、結果画面の「バックアップから戻す」で、プレビューに戻せます。" : "本番への反映は取り消せません。戻すときは、結果画面の「バックアップから戻す」で、反映前のバックアップとの差分を確認してから、本番へ反映します。削除したフィールドの値は戻りません。";
   }
   function backupDescription(mode, appCount) {
     return mode === "revert" ? `中止前のプレビューの設定（${appCount} アプリ分）をJSONで保存してから、変更を中止します。` : `反映前の本番設定（${appCount} アプリ分。変更のあるJS/CSSはファイル本体も含む）をJSONで保存してから反映します。`;
@@ -4323,6 +4323,10 @@ ${base}`
   function finish(lines) {
     return lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
   }
+  function omitBackupContent(backup) {
+    const { content: _content, ...rest } = backup;
+    return { ...rest, unavailableFiles: [...rest.unavailableFiles || []] };
+  }
   function buildDeployResultJson(result) {
     return {
       kind: "kintone-deploy-result",
@@ -4335,13 +4339,440 @@ ${base}`
       ...result.blocked ? { blocked: result.blocked } : {},
       summary: countOutcomes(result.apps),
       message: describeRunResult(result).text,
-      ...result.backup ? { backup: result.backup } : {},
+      // バックアップ JSON の本体（content）は結果 JSON に含めない（JS/CSS の本文を含み得る。ファイル名と件数だけ残す）。
+      ...result.backup ? { backup: omitBackupContent(result.backup) } : {},
       apps: result.apps.map((app) => ({ ...app })),
       logs: [...result.logs || []]
     };
   }
   function stringifyDeployResultJson(result) {
     return JSON.stringify(buildDeployResultJson(result), null, 2);
+  }
+
+  // src/reflect/standalonePlan.ts
+  var formatBytes = (bytes) => bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.ceil(bytes / 1024))} KB`;
+  var namedSections = { viewSettings: "views", reportSettings: "reports", actionSettings: "actions" };
+  var own2 = (object2, key) => Object.prototype.hasOwnProperty.call(object2, key);
+  var object = (value) => !!value && typeof value === "object" && !Array.isArray(value);
+  var equal = (a, b) => stableReflectStringify(a) === stableReflectStringify(b);
+  var valueText = (value) => value === void 0 ? "（なし）" : typeof value === "string" ? value : JSON.stringify(value);
+  var diffPathLabels = { properties: "フィールド", layout: "配置", views: "一覧", reports: "グラフ", actions: "アクション", rights: "アクセス権", notifications: "通知", categories: "カテゴリー", label: "表示名", required: "必須", unique: "重複禁止", options: "選択肢", defaultValue: "初期値", type: "種類", index: "表示順", filterCond: "絞り込み", sort: "並び順", enable: "有効", states: "状態", scope: "適用範囲", fields: "フィールド", desktop: "PC", mobile: "モバイル" };
+  var nameKeyedContainers = /* @__PURE__ */ new Set(["properties", "fields", "views", "reports", "actions", "states", "categories", "options"]);
+  function diffValues(before, after, path, output, keysAreNames = false) {
+    if (equal(before, after)) return;
+    if (object(before) && object(after)) {
+      for (const key of /* @__PURE__ */ new Set([...Object.keys(before), ...Object.keys(after)])) diffValues(own2(before, key) ? before[key] : void 0, own2(after, key) ? after[key] : void 0, [...path, !keysAreNames && own2(diffPathLabels, key) ? diffPathLabels[key] : key], output, !keysAreNames && nameKeyedContainers.has(key));
+    } else if (Array.isArray(before) && Array.isArray(after)) {
+      const queues = /* @__PURE__ */ new Map(), taken = /* @__PURE__ */ new Set();
+      after.forEach((value, index) => {
+        const key = stableReflectStringify(value);
+        const queue = queues.get(key);
+        if (queue) queue.push(index);
+        else queues.set(key, [index]);
+      });
+      const beforeKeys = before.map((value) => stableReflectStringify(value));
+      for (const [index, value] of before.entries()) {
+        const found = queues.get(beforeKeys[index])?.shift();
+        if (found !== void 0) taken.add(found);
+        else output.push({ kind: "削除", path: [...path, `${index + 1}件目`].join(" / "), before: valueText(value), after: "（なし）" });
+      }
+      const remaining = after.filter((_value, index) => !taken.has(index));
+      for (const value of remaining) output.push({ kind: "追加", path: path.join(" / "), before: "（なし）", after: valueText(value) });
+      if (!remaining.length && before.length === after.length && beforeKeys.every((key) => queues.has(key))) {
+        output.push({ kind: "変更", path: path.join(" / ") + " / 順序", before: valueText(before), after: valueText(after) });
+      }
+    } else output.push({ kind: before === void 0 ? "追加" : after === void 0 ? "削除" : "変更", path: path.join(" / "), before: valueText(before), after: valueText(after) });
+  }
+  function fieldDefinitions(section) {
+    const properties = section?.properties;
+    if (!object(properties)) throw new Error("フィールド設定の properties を取得できません。");
+    return properties;
+  }
+  function mergeFields(source, target, lookupMap, path, plan) {
+    const after = Object.assign(/* @__PURE__ */ Object.create(null), deepClone(target));
+    for (const [code, def] of Object.entries(source)) {
+      if (!object(def) || !def.type) {
+        plan.blockers.push(`${[...path, code].join(" / ")}: フィールドの種類がありません。`);
+        continue;
+      }
+      if (SYSTEM_FIELD_TYPES.has(def.type)) continue;
+      const current = own2(target, code) ? target[code] : void 0;
+      if (current && current.type !== def.type) {
+        plan.blockers.push(`${[...path, code].join(" / ")}: 種類が異なります（${current.type} → ${def.type}）。既存項目の種類はこの反映では変更できません。`);
+        continue;
+      }
+      const next = { code, ...deepClone(current || {}), ...deepClone(def) };
+      if (!current && next.label === void 0) next.label = code;
+      if (next.code && next.code !== code) plan.blockers.push(`${code}: フィールドコードの変更を含みます。フィールド追加ツールで確認してください。`);
+      for (const holder of ["lookup", "referenceTable"]) {
+        const mapped = next[holder]?.relatedApp?.app && lookupMap[String(next[holder].relatedApp.app)];
+        if (!mapped) continue;
+        const currentRelated = current?.[holder]?.relatedApp;
+        if (object(currentRelated) && String(currentRelated.app) === String(mapped)) next[holder].relatedApp = deepClone(currentRelated);
+        else {
+          next[holder].relatedApp.app = mapped;
+          delete next[holder].relatedApp.code;
+        }
+      }
+      for (const holder of ["lookup", "referenceTable"]) {
+        if (current && object(current[holder]) && !own2(def, holder)) plan.warnings.push(`${[...path, code].join(" / ")}: 反映先では${holder === "lookup" ? "ルックアップ" : "関連レコード一覧"}の設定がありますが、反映元にはありません。この反映では設定を外さず、反映先の設定を残します。`);
+      }
+      if (def.type === "SUBTABLE") {
+        if (!object(def.fields)) throw new Error(`${code}: テーブル内のフィールド定義がありません。`);
+        next.fields = mergeFields(def.fields, current?.fields || {}, lookupMap, [...path, code], plan);
+      }
+      after[code] = next;
+    }
+    for (const [code, def] of Object.entries(target)) if (!own2(source, code) && !SYSTEM_FIELD_TYPES.has(def?.type)) {
+      plan.changes.push({ kind: "保持", path: [...path, code].join(" / "), before: valueText(def), after: "反映先の設定を保持" });
+    }
+    return after;
+  }
+  function namedPayload(section, property) {
+    if (!object(section?.[property])) throw new Error(`${property} の設定を取得できません。`);
+    return Object.fromEntries(Object.entries(section[property]).map(([key, raw]) => {
+      if (!object(raw)) throw new Error(`${key}: 設定の形式が不正です。`);
+      const value = deepClone(raw);
+      delete value.id;
+      return [key, value];
+    }));
+  }
+  function mergeLayout(source, target, plan) {
+    const result = deepClone(source), locations = /* @__PURE__ */ new Map();
+    const collect = (nodes) => {
+      for (const node of nodes) {
+        if (!object(node)) throw new Error("レイアウトに不正な項目があります。");
+        if (node.code) {
+          if (locations.has(node.code)) throw new Error(`配置が重複しています: ${node.code}`);
+          locations.set(node.code, node);
+        }
+        if (Array.isArray(node.fields)) collect(node.fields);
+        if (Array.isArray(node.layout)) collect(node.layout);
+      }
+    };
+    collect(result);
+    const retain = (field) => {
+      if (!field.code || locations.has(field.code)) return false;
+      locations.set(field.code, field);
+      plan.changes.push({ kind: "保持", path: `配置 / ${field.code}`, before: valueText(field), after: "既存の配置を末尾に保持" });
+      return true;
+    };
+    const appendMissing = (nodes, destination) => {
+      for (const node of deepClone(nodes)) {
+        if (node.type === "ROW") {
+          node.fields = (node.fields || []).filter(retain);
+          if (node.fields.length) destination.push(node);
+        } else if (node.type === "GROUP") {
+          const existing = locations.get(node.code);
+          if (existing) appendMissing(node.layout || [], existing.layout || (existing.layout = []));
+          else {
+            retain(node);
+            const children = node.layout || [];
+            node.layout = [];
+            appendMissing(children, node.layout);
+            destination.push(node);
+          }
+        } else if (node.type === "SUBTABLE") {
+          const existing = locations.get(node.code);
+          const fields = (node.fields || []).filter(retain);
+          if (existing) existing.fields.push(...fields);
+          else {
+            retain(node);
+            node.fields = fields;
+            destination.push(node);
+          }
+        }
+      }
+    };
+    appendMissing(target, result);
+    return result;
+  }
+  var FIELD_DEPENDENT_SECTIONS = ["layoutSettings", "viewSettings", "reportSettings", "actionSettings", "appSettings", "fieldAcl", "reminderNotifications", "processSettings"];
+  function reflectInspectionScopes(scopes) {
+    return [.../* @__PURE__ */ new Set([...scopes, ...scopes.some((key) => FIELD_DEPENDENT_SECTIONS.includes(key)) ? ["fieldSettings"] : []])];
+  }
+  function reflectSelectionBlockers(entries, scopes, sourceFields, targetFields, sourceSystemFields = [], addableSourceFields = []) {
+    const selected = entries.filter((entry) => scopes.includes(entry.sectionKey));
+    const available = /* @__PURE__ */ new Set([...targetFields, ...scopes.includes("fieldSettings") && !selected.find((entry) => entry.sectionKey === "fieldSettings")?.blockers.length ? sourceFields : []]);
+    const system = new Set(sourceSystemFields);
+    const addable = new Set(addableSourceFields);
+    const issues = selected.flatMap((entry) => entry.blockers.map((message) => `${entry.label}: ${message}`));
+    for (const entry of selected) for (const code of entry.requiredFields || []) {
+      if (available.has(code)) continue;
+      if (system.has(code)) issues.push(`${entry.label}: 参照するフィールド「${code}」は反映元のシステムフィールド（レコード番号・ステータス・カテゴリーなど）ですが、反映先に同じコードがありません。反映先でフィールドコードを合わせる、またはプロセス管理・カテゴリーを有効にしてから再取得するか、この項目を除外してください。`);
+      else if (scopes.includes("fieldSettings") && addable.has(code)) issues.push(`${entry.label}: 参照するフィールド「${code}」が反映先にありません。反映元にあるフィールドなので、フィールド設定で「${code}」の追加も選ぶか、この項目を除外してください。`);
+      else issues.push(`${entry.label}: 参照するフィールド「${code}」が反映先にありません。フィールド設定も反映対象に含めるか、この項目を除外してください。`);
+    }
+    return [...new Set(issues)];
+  }
+  function reflectRequiredFields(key, after) {
+    if (key === "viewSettings") {
+      if (!object(after?.views)) return [];
+      return [...new Set(Object.values(after.views).flatMap((view) => view?.type === "LIST" ? view.fields || [] : view?.type === "CALENDAR" ? [view.date, view.title].filter(Boolean) : []).filter((code) => !["$id", "$revision"].includes(code)))];
+    }
+    if (key === "actionSettings") return extractActionRequiredFields(after?.actions);
+    if (key === "reportSettings") return extractReportRequiredFields(after?.reports);
+    if (key === "fieldAcl") return [...new Set((after?.rights || []).map((right) => String(right?.code || "")).filter((code) => code && !["$id", "$revision"].includes(code)))];
+    if (key === "reminderNotifications") return [...new Set((after?.notifications || []).flatMap((item) => [item?.timing?.code, ...(item?.targets || []).filter((target) => target?.entity?.type === "FIELD_ENTITY").map((target) => target.entity.code)]).map((code) => String(code || "")).filter((code) => !!code))];
+    if (key === "processSettings") {
+      if (!object(after?.states)) return void 0;
+      return [...new Set(Object.values(after.states).flatMap((state3) => (state3?.assignee?.entities || []).filter((item) => item?.entity?.type === "FIELD_ENTITY").map((item) => String(item.entity.code || ""))).filter((code) => !!code))];
+    }
+    if (key === "layoutSettings") {
+      const codes = [];
+      const walk = (nodes) => {
+        for (const node of nodes) {
+          if (node.code) codes.push(String(node.code));
+          if (Array.isArray(node.fields)) walk(node.fields);
+          if (Array.isArray(node.layout)) walk(node.layout);
+        }
+      };
+      walk(Array.isArray(after?.layout) ? after.layout : []);
+      return [...new Set(codes)];
+    }
+    if (key === "appSettings") return after?.titleField?.selectionMode === "MANUAL" && typeof after.titleField.code === "string" && after.titleField.code ? [after.titleField.code] : void 0;
+    return void 0;
+  }
+  var settingValue = (value) => typeof value === "number" ? String(value) : Array.isArray(value) ? value.map(settingValue) : object(value) ? Object.fromEntries(Object.entries(value).map(([name, item]) => [name, settingValue(item)])) : value;
+  function buildAppSettingsPlan(plan, source, target, options) {
+    try {
+      if (own2(source, "titleField") && !object(source.titleField)) throw new Error("レコードのタイトルの設定形式が不正です。");
+      plan.behavior = "動作・表示の設定を更新（アプリ名・説明・アイコンは対象外）";
+      const pick = (section) => Object.fromEntries(APP_SETTINGS_REFLECT_KEYS.filter((name) => own2(source, name) && own2(section, name)).map((name) => [name, name === "titleField" && object(section[name]) && section[name].selectionMode === "AUTO" ? { selectionMode: "AUTO" } : settingValue(section[name])]));
+      const before = pick(target), after = pick(source);
+      if (!Object.keys(after).length) throw new Error("反映元に比較できる一般設定がありません（古い設定JSONの可能性があります）。");
+      if (after.titleField?.selectionMode === "MANUAL") {
+        if (typeof after.titleField.code !== "string" || !after.titleField.code) throw new Error("レコードのタイトルに使うフィールドが指定されていません。");
+        plan.requiredFields = reflectRequiredFields("appSettings", after);
+      }
+      diffValues(before, after, [], plan.changes);
+      for (const change of plan.changes) if (change.kind === "削除") change.kind = "変更";
+      try {
+        plan.items = summarizeReflectItems("appSettings", before, after, { fieldLabels: options.fieldLabels });
+      } catch {
+        plan.items = [];
+      }
+      for (const change of plan.changes) {
+        const [head, ...rest] = change.path.split(" / ");
+        change.path = [APP_SETTINGS_LABELS[head] || head, ...rest].join(" / ");
+      }
+      plan.changeCount = plan.changes.filter((change) => change.kind !== "保持").length;
+      plan.removalCount = plan.changes.filter((change) => change.kind === "削除").length;
+      if (plan.changeCount) plan.operations.push({ method: "PUT", endpoint: SECTION_DEFS.find((item) => item.key === "appSettings")?.endpoint || "/app/settings.json", body: after, label: plan.label });
+      plan.status = plan.operations.length ? "change" : "same";
+      plan.message = plan.operations.length ? `変更 ${plan.changeCount}件 / 削除 ${plan.removalCount}件 / ${plan.behavior}` : "書き込み不要（一致）";
+      plan.values = { before: deepClone(before), after: deepClone(after) };
+    } catch (error) {
+      if (isRunCancelledError(error)) throw error;
+      plan.status = "error";
+      plan.blockers.push(error.message || String(error));
+      plan.message = plan.blockers.join("\n");
+    }
+    return plan;
+  }
+  function buildReflectSectionPlan(key, source, target, options = {}) {
+    const def = SECTION_DEFS.find((item) => item.key === key);
+    const plan = { sectionKey: key, label: reflectSectionLabel(key), status: "same", message: "", behavior: "全置換", changes: [], changeCount: 0, removalCount: 0, warnings: [], blockers: [], operations: [] };
+    const fail = (side, section) => {
+      plan.status = side === "src" ? "src-missing" : "tgt-missing";
+      const partial = section?._partial?.kind === "customizeBody" ? "JS/CSSファイルの本文が一部取得できていない設定JSONです。設定取得をやり直すか、アプリから取得してください" : section?._partial?.message;
+      plan.message = `${side === "src" ? "反映元" : "反映先"}を完全に取得できません: ${section?._fetchError || partial || "設定がありません"}`;
+      plan.blockers.push(plan.message);
+      return plan;
+    };
+    if (!isCompleteReflectSection(source)) return fail("src", source);
+    if (!isCompleteReflectSection(target)) return fail("tgt", target);
+    if (key === "appSettings") return buildAppSettingsPlan(plan, source, target, options);
+    if (!def?.put || !def.putBuilder) {
+      plan.status = "error";
+      plan.blockers.push("この項目は反映に対応していません。");
+      return plan;
+    }
+    try {
+      let before, after, comparable3;
+      const uploads = [];
+      if (key === "fieldSettings") {
+        plan.behavior = "追加・更新（反映先だけの項目は保持）";
+        const sourceProps = fieldDefinitions(source), targetProps = fieldDefinitions(target);
+        const positions = (props) => {
+          const map = /* @__PURE__ */ new Map();
+          const add = (code, parent) => {
+            if (map.has(code)) throw new Error(`フィールドコードが重複しています: ${code}`);
+            map.set(code, parent);
+          };
+          for (const [code, field] of Object.entries(props)) {
+            add(code, "フォーム");
+            if (field?.type === "SUBTABLE") for (const child of Object.keys(field.fields || {})) add(child, code);
+          }
+          return map;
+        };
+        const sourcePositions = positions(sourceProps), targetPositions = positions(targetProps);
+        for (const [code, parent] of sourcePositions) if (targetPositions.has(code) && parent !== targetPositions.get(code)) plan.blockers.push(`${code}: フォームとテーブル間、またはテーブル間の移動には対応していません。`);
+        const merged = mergeFields(sourceProps, targetProps, options.lookupMap || {}, ["フィールド"], plan);
+        const adds = /* @__PURE__ */ Object.create(null), updates = /* @__PURE__ */ Object.create(null);
+        for (const [code, value] of Object.entries(merged)) {
+          if (!own2(sourceProps, code) || SYSTEM_FIELD_TYPES.has(value?.type)) continue;
+          if (!own2(targetProps, code)) adds[code] = value;
+          else if (value.type === "SUBTABLE") {
+            const current = targetProps[code], addedFields = Object.fromEntries(Object.entries(value.fields).filter(([child]) => !own2(current.fields || {}, child)));
+            if (Object.keys(addedFields).length) adds[code] = { type: "SUBTABLE", code, fields: addedFields };
+            const updatedFields = Object.fromEntries(Object.entries(value.fields).filter(([child, childDef]) => own2(current.fields || {}, child) && !equal(childDef, current.fields[child])));
+            const { fields: _nextFields, ...nextTable } = value, { fields: _currentFields, ...currentTable } = current;
+            if (Object.keys(updatedFields).length || !equal(nextTable, currentTable)) updates[code] = { ...nextTable, fields: updatedFields };
+          } else if (!equal(value, targetProps[code])) updates[code] = value;
+        }
+        const fieldCounts = { add: Object.keys(adds).length, update: Object.keys(updates).length, tgtOnly: Object.keys(targetProps).filter((code) => !own2(sourceProps, code) && !SYSTEM_FIELD_TYPES.has(targetProps[code]?.type)).length };
+        plan.fieldStats = fieldCounts;
+        if (fieldCounts.add) plan.operations.push({ method: "POST", endpoint: def.endpoint, body: { properties: adds }, label: "フィールド追加" });
+        if (fieldCounts.update) plan.operations.push({ method: "PUT", endpoint: def.endpoint, body: { properties: updates }, label: "フィールド更新" });
+        before = { properties: targetProps };
+        after = { properties: merged };
+      } else if (namedSections[key]) {
+        const property = namedSections[key];
+        const from = namedPayload(source, property), to = namedPayload(target, property);
+        if (key === "actionSettings") {
+          for (const unmapped of findUnmappedActionDestApps(from, options.lookupMap, to)) {
+            plan.warnings.push(`アクション「${unmapped.actionName}」のコピー先アプリID (${unmapped.destAppId}) が参照先変換に未指定のため、そのままのIDで反映します。`);
+          }
+        }
+        for (const name of Object.keys(from)) {
+          if (own2(to, name) && (!from[name].type || !to[name].type || from[name].type === to[name].type)) from[name] = { ...to[name], ...from[name] };
+          if (key === "actionSettings" && from[name]?.destApp?.app != null) {
+            const mappedApp = options.lookupMap?.[String(from[name].destApp.app)];
+            if (mappedApp) {
+              const currentDest = to[name]?.destApp;
+              if (object(currentDest) && String(currentDest.app) === String(mappedApp)) from[name].destApp = { ...currentDest };
+              else {
+                from[name].destApp = { ...from[name].destApp, app: mappedApp };
+                delete from[name].destApp.code;
+              }
+            }
+          }
+        }
+        const preserve = options.preserveTargetOnly !== false;
+        const combined = preserve ? { ...to, ...from } : from;
+        const ordered = [...Object.keys(from).sort((a, b) => Number(from[a].index || 0) - Number(from[b].index || 0)), ...preserve ? Object.keys(to).filter((name) => !own2(from, name)).sort((a, b) => Number(to[a].index || 0) - Number(to[b].index || 0)) : []];
+        for (const [index, name] of ordered.entries()) combined[name] = { ...combined[name], index: String(index) };
+        if (key === "viewSettings") for (const [name, view] of Object.entries(combined)) {
+          if (!["LIST", "CALENDAR", "CUSTOM"].includes(view.type)) throw new Error(`${name}: 一覧の種類を取得できません。`);
+          if (view.type === "LIST" && (!Array.isArray(view.fields) || view.fields.some((code) => typeof code !== "string"))) throw new Error(`${name}: 一覧のフィールド定義が不完全です。`);
+          if (view.type === "CUSTOM" && typeof view.html !== "string") throw new Error(`${name}: カスタマイズ一覧のHTMLを取得できません。`);
+        }
+        for (const item of Object.values(to)) if (item.index !== void 0) item.index = String(item.index);
+        before = { [property]: to };
+        after = { [property]: combined };
+        plan.behavior = preserve ? "追加・更新（反映先だけの設定は保持）" : "全置換（反映元にない設定を削除）";
+        if (preserve) for (const name of Object.keys(to).filter((name2) => !own2(from, name2))) plan.changes.push({ kind: "保持", path: `${diffPathLabels[property]} / ${name}`, before: valueText(to[name]), after: "内容を保持（表示順は反映元の後）" });
+        plan.requiredFields = reflectRequiredFields(key, after);
+      } else if (key === "pluginSettings") {
+        if (!Array.isArray(source.plugins) || !Array.isArray(target.plugins)) throw new Error("プラグイン一覧の形式が不正です。");
+        const existing = new Set(target.plugins.map((item) => item.id));
+        const additions = source.plugins.filter((item) => !existing.has(item.id));
+        if (additions.some((item) => typeof item.id !== "string" || !item.id)) throw new Error("プラグインIDがありません。");
+        plan.behavior = "未追加のプラグインを追加（設定値は対象外）";
+        plan.warnings.push("プラグイン本体はkintoneシステム管理に導入済みである必要があります。プラグイン固有の設定はコピーしません。");
+        before = { plugins: target.plugins.map((item) => item.id) };
+        after = { plugins: [...before.plugins, ...additions.map((item) => item.id)] };
+        if (additions.length) plan.operations.push({ method: "POST", endpoint: def.endpoint, body: { ids: additions.map((item) => item.id) }, label: "プラグイン追加" });
+      } else {
+        for (const section of [source, target]) {
+          const arrayKey = ["appAcl", "fieldAcl", "recordPermissions"].includes(key) ? "rights" : ["notifications", "perRecordNotifications", "reminderNotifications"].includes(key) ? "notifications" : "";
+          if (arrayKey && !Array.isArray(section[arrayKey])) throw new Error(`${arrayKey} の設定がありません。空の設定で上書きしないため、反映を停止します。`);
+          if (key === "reminderNotifications" && section === source && section.notifications.length && (typeof section.timezone !== "string" || !section.timezone)) throw new Error("リマインダー通知のタイムゾーンを取得できません。");
+          if (key === "categories" && (typeof section.enabled !== "boolean" || !object(section.categories))) throw new Error("カテゴリーの enabled / categories を取得できません。");
+          if (key === "processSettings" && (typeof section.enable !== "boolean" || section.enable && (!object(section.states) || !Array.isArray(section.actions)))) throw new Error("プロセス管理の enable / states / actions を取得できません。");
+          if (key === "customizeSettings") {
+            if (!["ALL", "ADMIN", "NONE"].includes(section.scope)) throw new Error("JS/CSSの適用範囲を取得できません。");
+            for (const platform of ["desktop", "mobile"]) for (const kind of ["js", "css"]) {
+              const list2 = section[platform]?.[kind];
+              if (!Array.isArray(list2) || list2.some((item) => !item || (item.type === "URL" ? typeof item.url !== "string" || !item.url : item.type === "FILE" ? typeof item.file?.fileKey !== "string" || !item.file.fileKey : true))) throw new Error(`${platform}/${kind}: JS/CSS一覧が不完全です。`);
+            }
+          }
+        }
+        before = def.putBuilder(target);
+        after = def.putBuilder(source);
+        if (key === "categories") {
+          before.enabled = target.enabled;
+          after.enabled = source.enabled;
+        }
+        if (key === "reminderNotifications" && !after.timezone) after.timezone = before.timezone;
+        if (key === "processSettings") {
+          const firstState = (states) => object(states) ? String(Object.values(states).sort((a, b) => Number(a?.index) - Number(b?.index))[0]?.name || "") : "";
+          const sourceFirst = firstState(source.states), targetFirst = firstState(target.states);
+          if (sourceFirst && targetFirst && sourceFirst !== targetFirst) plan.warnings.push(`先頭のステータスが異なります（反映先「${targetFirst}」→ 反映元「${sourceFirst}」）。kintone は先頭のステータスの入れ替えを拒否することがあります。拒否された場合は、反映先の管理画面で先頭のステータスを合わせてから再実行してください。`);
+        }
+        if (key === "notifications") {
+          if (typeof target.notifyToCommenter === "boolean") before.notifyToCommenter = after.notifyToCommenter = target.notifyToCommenter;
+          if (typeof source.notifyToCommenter === "boolean") after.notifyToCommenter = source.notifyToCommenter;
+        }
+        if (key === "customizeSettings") {
+          if (source.scope !== void 0) after.scope = source.scope;
+          if (target.scope !== void 0) before.scope = target.scope;
+          const resolution = options.customizeFiles, names = customizeFileNames(source, target);
+          comparable3 = (value) => comparableCustomizePayload(value, resolution, names);
+          const currentKeys = new Set(["desktop", "mobile"].flatMap((platform) => ["js", "css"].flatMap((kind) => (target[platform]?.[kind] || []).map((item) => item.file?.fileKey).filter(Boolean))));
+          for (const platform of ["desktop", "mobile"]) for (const kind of ["js", "css"]) for (const [index, item] of after[platform][kind].entries()) {
+            if (item.type !== "FILE") continue;
+            const fileKey = item.file.fileKey, name = names[fileKey] || "", state3 = resolution?.files[customizeSlotKey(platform, kind, fileKey)];
+            const shown = name || "アップロードファイル";
+            if (state3?.status === "reuse") item.file.fileKey = state3.targetFileKey;
+            else if (state3?.status === "upload") {
+              if (!name) plan.blockers.push(`${platform}/${kind}: 反映元のファイル（${fileKey}）にファイル名がありません。反映元のJS/CSS設定を確認してください。`);
+              else uploads.push({ platform, kind, index, sourceFileKey: fileKey, name, byteSize: state3.byteSize });
+            } else if (state3?.status === "unavailable") plan.blockers.push(`${platform}/${kind}: 「${shown}」を反映元から取得できません（${state3.reason}）。反映元でファイルを確認してください。`);
+            else if (!state3 && !currentKeys.has(fileKey)) plan.blockers.push(`${platform}/${kind}: 「${shown}」は反映先に存在せず、反映元のファイル本体を確認できません。`);
+          }
+          if (uploads.length) plan.warnings.push(`${uploads.length} 件のファイル（合計 ${formatBytes(uploads.reduce((sum, upload) => sum + upload.byteSize, 0))}）を反映先へアップロードしてから設定します。`);
+          if (uploads.length && resolution?.targetUnavailable.length) plan.warnings.push(`反映先の ${resolution.targetUnavailable.map((item) => `「${item.name}」（${item.reason}）`).join("、")} の本体を確認できなかったため、同じ内容のファイルがあっても再利用せずアップロードします。`);
+        }
+        if (key === "fieldAcl" || key === "reminderNotifications" || key === "processSettings") {
+          const required = reflectRequiredFields(key, after);
+          if (required) plan.requiredFields = required;
+        }
+        if (key === "layoutSettings") {
+          if (!Array.isArray(source.layout) || !Array.isArray(target.layout)) throw new Error("レイアウトの形式が不正です。");
+          after.layout = mergeLayout(source.layout, target.layout, plan);
+          plan.behavior = "配置を更新（反映先だけのフィールド配置は保持）";
+          plan.requiredFields = reflectRequiredFields("layoutSettings", after);
+        }
+      }
+      const shownBefore = comparable3 ? comparable3(before) : before, shownAfter = comparable3 ? comparable3(after) : after;
+      diffValues(shownBefore, shownAfter, [], plan.changes);
+      if (key === "layoutSettings") reclassifyLayoutRemovals(plan.changes, shownBefore?.layout, shownAfter?.layout, options.fieldLabels);
+      try {
+        plan.items = summarizeReflectItems(key, shownBefore, shownAfter, { fieldLabels: options.fieldLabels, retained: retainedItemNames(key, plan.changes, options.fieldLabels) });
+      } catch {
+        plan.items = [];
+      }
+      plan.changeCount = plan.changes.filter((change) => change.kind !== "保持").length;
+      plan.removalCount = plan.changes.filter((change) => change.kind === "削除").length;
+      if (key !== "fieldSettings" && key !== "pluginSettings" && plan.changeCount) plan.operations.push({ method: "PUT", endpoint: def.endpoint, body: after, label: def.label, ...uploads.length ? { uploads } : {} });
+      if (uploads.length && plan.changeCount) plan.fileUploads = uploads;
+      plan.values = { before: deepClone(before), after: deepClone(after) };
+      if (key === "customizeSettings") {
+        plan.values.fileNames = { ...customizeFileNames(source, target) };
+        plan.values.fileHashes = { ...options.customizeFiles?.hashes || {} };
+      }
+      if (plan.blockers.length) plan.status = "error";
+      else plan.status = plan.operations.length ? "change" : "same";
+      plan.message = plan.blockers.length ? plan.blockers.join("\n") : plan.operations.length ? `変更 ${plan.changeCount}件 / 削除 ${plan.removalCount}件 / ${plan.behavior}` : `書き込み不要${plan.changes.some((change) => change.kind === "保持") ? "（反映先だけの設定は保持）" : "（一致）"}`;
+    } catch (error) {
+      if (isRunCancelledError(error)) throw error;
+      plan.status = "error";
+      plan.blockers.push(error.message || String(error));
+      plan.message = plan.blockers.join("\n");
+    }
+    return plan;
+  }
+  function listReflectSystemFieldCodes(bundle) {
+    const props = bundle?.sections?.fieldSettings?.properties;
+    if (!object(props)) return [];
+    return Object.entries(props).filter(([, def]) => SYSTEM_FIELD_TYPES.has(def?.type)).map(([code]) => code);
+  }
+  function listReflectFieldCodes(bundle, writableOnly = false) {
+    const props = bundle?.sections?.fieldSettings?.properties;
+    if (!object(props)) return [];
+    return Object.entries(props).filter(([, def]) => !writableOnly || !SYSTEM_FIELD_TYPES.has(def?.type)).flatMap(([code, def]) => [code, ...Object.keys(def?.type === "SUBTABLE" ? def.fields || {} : {})]);
   }
 
   // src/state.ts
@@ -4476,6 +4907,321 @@ ${base}`
     }
     const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
     return guestPathMatch ? guestPathMatch[1] : "";
+  }
+
+  // src/reflect/appReference.ts
+  function parseAppReference(text) {
+    const raw = String(text || "").trim();
+    if (!raw) return null;
+    if (/^[1-9]\d*$/.test(raw)) return { appId: raw, guestId: "" };
+    const appId = extractAppIdFromInput(raw);
+    if (!/^[1-9]\d*$/.test(appId)) return null;
+    return { appId, guestId: extractGuestIdFromInput(raw) };
+  }
+  function guestIdFromPagePath(pathname) {
+    return extractGuestIdFromInput(String(pathname || ""));
+  }
+  function needsAppReferenceParse(text) {
+    const raw = String(text || "").trim();
+    return !!raw && !/^\d+$/.test(raw);
+  }
+
+  // src/reflect/liteSetup.ts
+  var LOOKUP_PAIR_SEPARATOR = /\s*(?:→|->|=>|=|:|,|\t)\s*|\s+/;
+  function parseLookupMapText(text) {
+    const trimmed = String(text || "").trim();
+    if (!trimmed) return { ok: true, value: {}, count: 0 };
+    const pairs = [];
+    if (trimmed.startsWith("{")) {
+      let parsed;
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch {
+        return { ok: false, error: '参照先変換の JSON が壊れています。{"旧AppID":"新AppID"} 形式か、1 行ずつ「旧ID → 新ID」で入力してください。' };
+      }
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { ok: false, error: '参照先変換は {"旧AppID":"新AppID"} 形式のJSONを入力してください。' };
+      for (const [key, value] of Object.entries(parsed)) pairs.push([key, String(value)]);
+    } else {
+      for (const [index, line] of trimmed.split(/\r?\n/).entries()) {
+        const body = line.trim();
+        if (!body || body.startsWith("#")) continue;
+        const parts = body.split(LOOKUP_PAIR_SEPARATOR).filter(Boolean);
+        if (parts.length !== 2) return { ok: false, error: `参照先変換の ${index + 1} 行目を読み取れません。「旧ID → 新ID」の形式で入力してください。` };
+        pairs.push([parts[0], parts[1]]);
+      }
+    }
+    const out = /* @__PURE__ */ Object.create(null);
+    for (const [from, to] of pairs) {
+      if (!/^[1-9]\d*$/.test(from) || !/^[1-9]\d*$/.test(to)) return { ok: false, error: `参照先変換のアプリIDには正の整数を指定してください（${from} → ${to}）。` };
+      if (out[from] !== void 0 && out[from] !== to) return { ok: false, error: `参照先変換で旧ID ${from} が複数の変換先（${out[from]}, ${to}）に指定されています。` };
+      out[from] = to;
+    }
+    return { ok: true, value: out, count: Object.keys(out).length };
+  }
+  function lookupMapError(result) {
+    return "error" in result ? result.error : "";
+  }
+  function lookupMapValue(result) {
+    return "value" in result ? result.value : {};
+  }
+  var REFLECT_SCOPE_GROUPS = [
+    { id: "form", label: "フォーム・表示", keys: ["fieldSettings", "layoutSettings", "viewSettings", "reportSettings", "categories"] },
+    { id: "behavior", label: "動作・カスタマイズ", keys: ["appSettings", "processSettings", "actionSettings", "pluginSettings", "customizeSettings"] },
+    { id: "access", label: "権限・通知", keys: ["appAcl", "fieldAcl", "recordPermissions", "notifications", "perRecordNotifications", "reminderNotifications"] }
+  ];
+  var REFLECT_OTHER_SCOPE_GROUP = { id: "other", label: "その他", keys: [] };
+  var REFLECT_SCOPE_HINTS = {
+    appSettings: "テーマ、レコードのタイトル、サムネイル表示、一括削除、コメント機能、レコードの再利用、一覧でのインライン編集、数値の桁数と丸め、年度の開始月を反映元に合わせます。アプリ名・説明・アイコンは変えません。",
+    fieldSettings: "不足しているフィールドを追加し、変更のある定義だけ更新します。反映先だけのフィールドは保持します。",
+    layoutSettings: "配置を反映元に合わせます。反映先だけのフィールドは、フォーム・グループ・テーブルの末尾に保持します。",
+    viewSettings: "一覧を追加・更新します。反映先だけの一覧は「保持」の設定に従います。",
+    reportSettings: "グラフを追加・更新します。反映先だけのグラフは「保持」の設定に従います。",
+    actionSettings: "アクションを追加・更新します。反映先だけのアクションは「保持」の設定に従います。",
+    pluginSettings: "反映先にまだ無いプラグインだけ追加します。プラグインの設定値はコピーしません。",
+    customizeSettings: "適用範囲と、PC・モバイルのJS/CSSファイル一覧を反映元の内容に置き換えます。反映先だけのファイル・URLは外れます。別アプリのファイルは反映先へアップロードして設定します。",
+    processSettings: "反映元の内容で置き換えます。状態・アクション・作業者が変わり、運用中の申請に影響することがあります。",
+    appAcl: "反映元の内容で置き換えます。反映先だけの権限は削除されます。",
+    fieldAcl: "反映元の内容で置き換えます。反映先だけの権限は削除されます。",
+    recordPermissions: "反映元の内容で置き換えます。反映先だけの権限は削除されます。",
+    notifications: "反映元の内容で置き換えます。反映先だけの通知は削除されます。",
+    perRecordNotifications: "反映元の内容で置き換えます。反映先だけの通知は削除されます。",
+    reminderNotifications: "反映元の内容で置き換えます。タイムゾーンも反映元に合わせます。",
+    categories: "反映元の内容で置き換えます。カテゴリーの有効状態も反映元に合わせます。"
+  };
+  function describeReflectScope(key) {
+    return REFLECT_SCOPE_HINTS[key] || "";
+  }
+  function groupReflectScopes(availableKeys) {
+    const available = new Set(availableKeys);
+    const placed = /* @__PURE__ */ new Set();
+    const groups = REFLECT_SCOPE_GROUPS.map((group) => {
+      const keys = group.keys.filter((key) => available.has(key));
+      keys.forEach((key) => placed.add(key));
+      return { ...group, keys };
+    });
+    const rest = availableKeys.filter((key) => !placed.has(key));
+    if (rest.length) groups.push({ ...REFLECT_OTHER_SCOPE_GROUP, keys: [...rest] });
+    return groups.filter((group) => group.keys.length > 0);
+  }
+  function shouldWarnMissingFieldSettings(scopes) {
+    if (scopes.includes("fieldSettings")) return false;
+    return reflectInspectionScopes([...scopes]).includes("fieldSettings");
+  }
+  var FIELD_SETTINGS_OMITTED_NOTICE = "フィールド設定を含めない場合、反映先に無いフィールドを参照していると差分確認で停止します。";
+  var REFLECT_UNDO_GUIDANCE = "取り消す場合: 反映前に反映先プレビューへ未公開の変更が無ければ、アプリの設定画面の『変更を中止』で今回の反映を含む未公開の変更をすべて破棄できます。または自動保存したバックアップJSONを『設定JSONから取得』で反映元に読み込み、差分を確認して戻せます（追加したフィールドは削除されません）。";
+
+  // src/reflect/applyProgress.ts
+  function describeApplyProgressStatus(status, stopped = false) {
+    if (status === "ng" && stopped) return { icon: "■", text: "途中で停止", tone: "ng" };
+    if (status === "running") return { icon: "…", text: "実行中…", tone: "running" };
+    if (status === "ok") return { icon: "✓", text: "成功", tone: "ok" };
+    if (status === "ng") return { icon: "✕", text: "失敗", tone: "ng" };
+    if (status === "skip") return { icon: "－", text: "変更なし", tone: "skip" };
+    if (status === "pending") return { icon: "○", text: "未実行", tone: "pending" };
+    return { icon: "○", text: "待機中", tone: "waiting" };
+  }
+  function createApplyProgressRows(sectionKeys, labelOf) {
+    const order = (key) => {
+      const index = REFLECT_SECTION_KEYS.indexOf(key);
+      return index < 0 ? REFLECT_SECTION_KEYS.length : index;
+    };
+    return [...new Set(sectionKeys)].sort((a, b) => order(a) - order(b)).map((sectionKey) => ({ sectionKey, label: labelOf(sectionKey), status: "waiting" }));
+  }
+  function applyProgressUpdate(rows, update) {
+    return rows.map((row) => row.sectionKey === update.sectionKey ? { sectionKey: row.sectionKey, label: row.label, status: update.status, ...update.message ? { message: update.message } : {}, ...update.status === "ng" && update.stopped ? { stopped: true } : {} } : row);
+  }
+  function summarizeApplyProgress(rows) {
+    if (!rows.length) return "";
+    const settled = rows.filter((row) => ["ok", "ng", "skip"].includes(row.status)).length;
+    const failed = rows.filter((row) => row.status === "ng" && !row.stopped).length;
+    const stopped = rows.filter((row) => row.status === "ng" && row.stopped).length;
+    const skipped = rows.filter((row) => row.status === "pending").length;
+    const running = rows.find((row) => row.status === "running");
+    return `${settled} / ${rows.length} 項目が完了${failed ? `（失敗 ${failed}）` : ""}${stopped ? `（途中で停止 ${stopped}）` : ""}${skipped ? `、未実行 ${skipped}` : ""}${running ? `。実行中: ${running.label}` : ""}`;
+  }
+  function describeUndoGuidance(targetPending) {
+    if (targetPending?.state === "clean") {
+      return { tone: "ok", openSettings: true, text: "反映前、反映先プレビューに未公開の変更はありませんでした。アプリの設定画面で『変更を中止』を押すと、今回の反映をすべて取り消せます。" };
+    }
+    if (targetPending?.state === "own") {
+      return { tone: "ok", openSettings: true, text: "反映前の未公開の変更は、このツールによる反映分だけでした。アプリの設定画面で『変更を中止』を押すと、それらを含む未公開の変更をすべて取り消せます。" };
+    }
+    if (targetPending?.state === "pending") {
+      return { tone: "warn", openSettings: false, text: "反映前から未公開の変更があったため、『変更を中止』ではそれらも破棄されます。今回の反映だけを戻す場合は『バックアップから戻す』を使ってください。" };
+    }
+    return { tone: "info", openSettings: false, text: REFLECT_UNDO_GUIDANCE };
+  }
+  var REFLECT_ITEM_KIND_ORDER = ["削除", "変更", "追加", "保持"];
+  function orderReflectItems(items) {
+    const valid = (items || []).filter((item) => item && REFLECT_ITEM_KIND_ORDER.includes(item.kind) && typeof item.name === "string");
+    return REFLECT_ITEM_KIND_ORDER.flatMap((kind) => valid.filter((item) => item.kind === kind));
+  }
+  function countReflectItemKinds(items) {
+    const counts = { 削除: 0, 変更: 0, 追加: 0, 保持: 0 };
+    for (const item of items || []) if (item && item.kind in counts) counts[item.kind] += 1;
+    return counts;
+  }
+  function describeRemovedItem(sectionLabel, item) {
+    const details = (item.details || []).filter(Boolean);
+    return `${sectionLabel} / ${item.name}${details.length ? `：${details.join("、")}` : ""}`;
+  }
+  function formatReflectDateTime(at) {
+    return new Date(at).toLocaleString("ja-JP");
+  }
+
+  // src/settingsBundleImport.ts
+  function preserveImportedMetadata(bundle, raw, preserve) {
+    if (!preserve || !bundle || !raw || typeof raw !== "object") return bundle;
+    bundle.fetchedAt = Object.prototype.hasOwnProperty.call(raw, "fetchedAt") ? raw.fetchedAt : null;
+    if (Object.prototype.hasOwnProperty.call(raw, "guestId")) bundle.guestId = raw.guestId;
+    else delete bundle.guestId;
+    if (Object.prototype.hasOwnProperty.call(raw, "preview")) bundle.preview = raw.preview;
+    else delete bundle.preview;
+    if (raw.meta && typeof raw.meta === "object" && !Array.isArray(raw.meta)) {
+      bundle.meta = {
+        ...raw.meta,
+        sectionRevisions: bundle.meta?.sectionRevisions || {}
+      };
+    }
+    return bundle;
+  }
+  function limitImportedBundleToSections(bundle, sections, raw, preserveMetadata = false) {
+    if (!Array.isArray(sections) || !sections.length) return preserveImportedMetadata(bundle, raw, preserveMetadata);
+    const sourceSections = bundle?.sections || {};
+    const picked = pickBundleSections(bundle, sections);
+    sections.forEach((sectionKey) => {
+      if (Object.prototype.hasOwnProperty.call(sourceSections, sectionKey)) return;
+      picked.sections[sectionKey] = {
+        _fetchError: "読み込んだ設定JSONに比較対象セクションが含まれていません"
+      };
+    });
+    return preserveImportedMetadata(picked, raw, preserveMetadata);
+  }
+  function unwrapBundleCandidates(raw, side) {
+    if (!raw || typeof raw !== "object") return [];
+    if (raw.source && raw.target) return unwrapBundleCandidates(side === "target" ? raw.target : raw.source, side);
+    if (raw.bundle) return unwrapBundleCandidates(raw.bundle, side);
+    if (Array.isArray(raw.apps)) return raw.apps;
+    if (Array.isArray(raw.bundles)) return raw.bundles;
+    if (raw.sections && raw.appId != null) return [raw];
+    return [raw];
+  }
+  function pickSettingsBundle(raw, options = {}) {
+    const side = options.side || "source";
+    const appId = String(options.appId || "").trim();
+    const candidates = unwrapBundleCandidates(raw, side).map((item) => {
+      try {
+        return { bundle: ensureBundleShape(item, options.rawSettings), raw: item };
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+    if (!candidates.length) throw new Error("設定JSON内にアプリ設定バンドルが見つかりません");
+    if (appId) {
+      const matched = candidates.find((entry) => String(entry?.bundle?.appId || "") === appId) || (candidates.length === 1 && !String(candidates[0]?.bundle?.appId || "") ? candidates[0] : void 0);
+      if (matched) return limitImportedBundleToSections(matched.bundle, options.sections, matched.raw, !!options.preserveMetadata);
+      throw new Error(`設定JSON内に App ${appId} のバンドルが見つかりません`);
+    }
+    return limitImportedBundleToSections(candidates[0].bundle, options.sections, candidates[0].raw, !!options.preserveMetadata);
+  }
+  function pickAllSettingsBundles(raw, side, rawSettings = false, preserveMetadata = false) {
+    const candidates = unwrapBundleCandidates(raw, side).map((item) => {
+      try {
+        return preserveImportedMetadata(ensureBundleShape(item, rawSettings), item, preserveMetadata);
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+    if (!candidates.length) throw new Error("設定JSON内にアプリ設定バンドルが見つかりません");
+    return candidates;
+  }
+
+  // src/deploy/sourceRestore.ts
+  function isDeployBackupFile(value) {
+    return !!value && typeof value === "object" && value.kind === "kintone-deploy-backup" && Array.isArray(value.bundles);
+  }
+  function restoreGoalFor(environment) {
+    return environment === "production" ? "production" : "preview";
+  }
+  function restorableScopes(bundle, declared) {
+    const sections = bundle?.sections || {};
+    const limit = Array.isArray(declared) ? new Set(declared.map(String)) : null;
+    return REFLECT_SECTION_KEYS.filter((key) => {
+      if (limit && !limit.has(key)) return false;
+      const section = sections[key];
+      return Object.prototype.hasOwnProperty.call(sections, key) && !!section && typeof section === "object" && !section._fetchError;
+    });
+  }
+  var sameApp = (bundle, appId, guestId) => String(bundle.appId || "") === appId && String(bundle.guestId || "") === guestId;
+  function prepareSourceRestore(request) {
+    let bundles;
+    try {
+      bundles = pickAllSettingsBundles(request.content, "source", true);
+    } catch (error) {
+      return { ok: false, message: `バックアップを読み込めません。${error?.message || String(error)}` };
+    }
+    const appId = String(request.appId || ""), guestId = String(request.guestId || "");
+    const bundleIndex = bundles.findIndex((bundle2) => sameApp(bundle2, appId, guestId));
+    if (bundleIndex < 0) return { ok: false, message: `バックアップに App ${appId} の設定がありません。` };
+    const bundle = bundles[bundleIndex];
+    const declared = request.content?.scopes;
+    const scopes = restorableScopes(bundle, declared);
+    if (!scopes.length) return { ok: false, message: "バックアップに戻せる内容が見つかりません。" };
+    return {
+      ok: true,
+      plan: { bundles, bundleIndex, bundle, scopes, goal: restoreGoalFor(request.environment), targetAppId: appId, targetGuestId: guestId, generatedAt: request.generatedAt, environment: request.environment, declaredScopes: declared }
+    };
+  }
+  function prepareSourceRestoreFromFile(parsed) {
+    if (!isDeployBackupFile(parsed)) return { ok: false, message: "本番反映のバックアップファイルではありません。" };
+    let bundles;
+    try {
+      bundles = pickAllSettingsBundles(parsed, "source", true);
+    } catch (error) {
+      return { ok: false, message: `バックアップを読み込めません。${error?.message || String(error)}` };
+    }
+    const first = bundles[0];
+    if (!first?.appId) return { ok: false, message: "バックアップにアプリの設定がありません。" };
+    const environment = parsed.environment === "preview" ? "preview" : "production";
+    const scopes = restorableScopes(first, parsed.scopes);
+    if (!scopes.length) return { ok: false, message: "バックアップに戻せる内容が見つかりません。" };
+    return {
+      ok: true,
+      plan: { bundles, bundleIndex: 0, bundle: first, scopes, goal: restoreGoalFor(environment), targetAppId: String(first.appId), targetGuestId: String(first.guestId || ""), generatedAt: String(parsed.generatedAt || ""), environment, declaredScopes: parsed.scopes }
+    };
+  }
+  function restoreSelectionFor(plan, index) {
+    const bundle = plan.bundles[index];
+    if (!bundle) return null;
+    return { bundle, scopes: restorableScopes(bundle, plan.declaredScopes), targetAppId: String(bundle.appId || ""), targetGuestId: String(bundle.guestId || "") };
+  }
+  function restoreSourceLabel(targetName, generatedAt) {
+    const stamp = generatedAt && !Number.isNaN(new Date(generatedAt).getTime()) ? formatReflectDateTime(new Date(generatedAt)) : "";
+    return `反映前のバックアップ（${[targetName, stamp].filter(Boolean).join("・")}）`;
+  }
+  var RESTORE_NOTICE_TITLE = "バックアップから戻しています";
+  var RESTORE_NOTICE_BODY = "フィールドの削除は行わないため、反映で追加したフィールドは残ります。削除したフィールドの値は戻りません。反映先だけの一覧・グラフ・アクションは保持せず、参照先変換も使いません。";
+  function pickSourceRestoreRequest(result, target) {
+    const content = result.deploy?.backup?.content;
+    const outcome = result.deploy?.apps.find((app) => app.appId === target.appId && (app.guestId || "") === (target.guestId || ""));
+    if (content && outcome && (outcome.status === "success" || outcome.status === "unknown")) {
+      return { content, appId: target.appId, guestId: target.guestId || "", generatedAt: content.generatedAt, environment: "production" };
+    }
+    const apply = result.apply.backup;
+    if (apply) return { content: apply, appId: target.appId, guestId: target.guestId || "", generatedAt: apply.generatedAt, environment: "preview" };
+    return null;
+  }
+  function pickPublishRestoreOptions(result) {
+    const content = result.backup?.content;
+    if (!content || !Array.isArray(content.bundles)) return [];
+    const environment = content.environment === "preview" ? "preview" : "production";
+    const options = [];
+    for (const app of result.apps) {
+      if (app.status !== "success" && app.status !== "unknown") continue;
+      if (!content.bundles.some((bundle) => sameApp(bundle, app.appId, app.guestId || ""))) continue;
+      options.push({ appId: app.appId, guestId: app.guestId || "", name: app.name, request: { content, appId: app.appId, guestId: app.guestId || "", generatedAt: content.generatedAt, environment } });
+    }
+    return options;
   }
 
   // src/diff/engine.ts
@@ -6478,499 +7224,6 @@ ${base}`
     };
   }
 
-  // src/reflect/standalonePlan.ts
-  var formatBytes = (bytes) => bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.ceil(bytes / 1024))} KB`;
-  var namedSections = { viewSettings: "views", reportSettings: "reports", actionSettings: "actions" };
-  var own2 = (object2, key) => Object.prototype.hasOwnProperty.call(object2, key);
-  var object = (value) => !!value && typeof value === "object" && !Array.isArray(value);
-  var equal = (a, b) => stableReflectStringify(a) === stableReflectStringify(b);
-  var valueText = (value) => value === void 0 ? "（なし）" : typeof value === "string" ? value : JSON.stringify(value);
-  var diffPathLabels = { properties: "フィールド", layout: "配置", views: "一覧", reports: "グラフ", actions: "アクション", rights: "アクセス権", notifications: "通知", categories: "カテゴリー", label: "表示名", required: "必須", unique: "重複禁止", options: "選択肢", defaultValue: "初期値", type: "種類", index: "表示順", filterCond: "絞り込み", sort: "並び順", enable: "有効", states: "状態", scope: "適用範囲", fields: "フィールド", desktop: "PC", mobile: "モバイル" };
-  var nameKeyedContainers = /* @__PURE__ */ new Set(["properties", "fields", "views", "reports", "actions", "states", "categories", "options"]);
-  function diffValues(before, after, path, output, keysAreNames = false) {
-    if (equal(before, after)) return;
-    if (object(before) && object(after)) {
-      for (const key of /* @__PURE__ */ new Set([...Object.keys(before), ...Object.keys(after)])) diffValues(own2(before, key) ? before[key] : void 0, own2(after, key) ? after[key] : void 0, [...path, !keysAreNames && own2(diffPathLabels, key) ? diffPathLabels[key] : key], output, !keysAreNames && nameKeyedContainers.has(key));
-    } else if (Array.isArray(before) && Array.isArray(after)) {
-      const queues = /* @__PURE__ */ new Map(), taken = /* @__PURE__ */ new Set();
-      after.forEach((value, index) => {
-        const key = stableReflectStringify(value);
-        const queue = queues.get(key);
-        if (queue) queue.push(index);
-        else queues.set(key, [index]);
-      });
-      const beforeKeys = before.map((value) => stableReflectStringify(value));
-      for (const [index, value] of before.entries()) {
-        const found = queues.get(beforeKeys[index])?.shift();
-        if (found !== void 0) taken.add(found);
-        else output.push({ kind: "削除", path: [...path, `${index + 1}件目`].join(" / "), before: valueText(value), after: "（なし）" });
-      }
-      const remaining = after.filter((_value, index) => !taken.has(index));
-      for (const value of remaining) output.push({ kind: "追加", path: path.join(" / "), before: "（なし）", after: valueText(value) });
-      if (!remaining.length && before.length === after.length && beforeKeys.every((key) => queues.has(key))) {
-        output.push({ kind: "変更", path: path.join(" / ") + " / 順序", before: valueText(before), after: valueText(after) });
-      }
-    } else output.push({ kind: before === void 0 ? "追加" : after === void 0 ? "削除" : "変更", path: path.join(" / "), before: valueText(before), after: valueText(after) });
-  }
-  function fieldDefinitions(section) {
-    const properties = section?.properties;
-    if (!object(properties)) throw new Error("フィールド設定の properties を取得できません。");
-    return properties;
-  }
-  function mergeFields(source, target, lookupMap, path, plan) {
-    const after = Object.assign(/* @__PURE__ */ Object.create(null), deepClone(target));
-    for (const [code, def] of Object.entries(source)) {
-      if (!object(def) || !def.type) {
-        plan.blockers.push(`${[...path, code].join(" / ")}: フィールドの種類がありません。`);
-        continue;
-      }
-      if (SYSTEM_FIELD_TYPES.has(def.type)) continue;
-      const current = own2(target, code) ? target[code] : void 0;
-      if (current && current.type !== def.type) {
-        plan.blockers.push(`${[...path, code].join(" / ")}: 種類が異なります（${current.type} → ${def.type}）。既存項目の種類はこの反映では変更できません。`);
-        continue;
-      }
-      const next = { code, ...deepClone(current || {}), ...deepClone(def) };
-      if (!current && next.label === void 0) next.label = code;
-      if (next.code && next.code !== code) plan.blockers.push(`${code}: フィールドコードの変更を含みます。フィールド追加ツールで確認してください。`);
-      for (const holder of ["lookup", "referenceTable"]) {
-        const mapped = next[holder]?.relatedApp?.app && lookupMap[String(next[holder].relatedApp.app)];
-        if (!mapped) continue;
-        const currentRelated = current?.[holder]?.relatedApp;
-        if (object(currentRelated) && String(currentRelated.app) === String(mapped)) next[holder].relatedApp = deepClone(currentRelated);
-        else {
-          next[holder].relatedApp.app = mapped;
-          delete next[holder].relatedApp.code;
-        }
-      }
-      for (const holder of ["lookup", "referenceTable"]) {
-        if (current && object(current[holder]) && !own2(def, holder)) plan.warnings.push(`${[...path, code].join(" / ")}: 反映先では${holder === "lookup" ? "ルックアップ" : "関連レコード一覧"}の設定がありますが、反映元にはありません。この反映では設定を外さず、反映先の設定を残します。`);
-      }
-      if (def.type === "SUBTABLE") {
-        if (!object(def.fields)) throw new Error(`${code}: テーブル内のフィールド定義がありません。`);
-        next.fields = mergeFields(def.fields, current?.fields || {}, lookupMap, [...path, code], plan);
-      }
-      after[code] = next;
-    }
-    for (const [code, def] of Object.entries(target)) if (!own2(source, code) && !SYSTEM_FIELD_TYPES.has(def?.type)) {
-      plan.changes.push({ kind: "保持", path: [...path, code].join(" / "), before: valueText(def), after: "反映先の設定を保持" });
-    }
-    return after;
-  }
-  function namedPayload(section, property) {
-    if (!object(section?.[property])) throw new Error(`${property} の設定を取得できません。`);
-    return Object.fromEntries(Object.entries(section[property]).map(([key, raw]) => {
-      if (!object(raw)) throw new Error(`${key}: 設定の形式が不正です。`);
-      const value = deepClone(raw);
-      delete value.id;
-      return [key, value];
-    }));
-  }
-  function mergeLayout(source, target, plan) {
-    const result = deepClone(source), locations = /* @__PURE__ */ new Map();
-    const collect = (nodes) => {
-      for (const node of nodes) {
-        if (!object(node)) throw new Error("レイアウトに不正な項目があります。");
-        if (node.code) {
-          if (locations.has(node.code)) throw new Error(`配置が重複しています: ${node.code}`);
-          locations.set(node.code, node);
-        }
-        if (Array.isArray(node.fields)) collect(node.fields);
-        if (Array.isArray(node.layout)) collect(node.layout);
-      }
-    };
-    collect(result);
-    const retain = (field) => {
-      if (!field.code || locations.has(field.code)) return false;
-      locations.set(field.code, field);
-      plan.changes.push({ kind: "保持", path: `配置 / ${field.code}`, before: valueText(field), after: "既存の配置を末尾に保持" });
-      return true;
-    };
-    const appendMissing = (nodes, destination) => {
-      for (const node of deepClone(nodes)) {
-        if (node.type === "ROW") {
-          node.fields = (node.fields || []).filter(retain);
-          if (node.fields.length) destination.push(node);
-        } else if (node.type === "GROUP") {
-          const existing = locations.get(node.code);
-          if (existing) appendMissing(node.layout || [], existing.layout || (existing.layout = []));
-          else {
-            retain(node);
-            const children = node.layout || [];
-            node.layout = [];
-            appendMissing(children, node.layout);
-            destination.push(node);
-          }
-        } else if (node.type === "SUBTABLE") {
-          const existing = locations.get(node.code);
-          const fields = (node.fields || []).filter(retain);
-          if (existing) existing.fields.push(...fields);
-          else {
-            retain(node);
-            node.fields = fields;
-            destination.push(node);
-          }
-        }
-      }
-    };
-    appendMissing(target, result);
-    return result;
-  }
-  var FIELD_DEPENDENT_SECTIONS = ["layoutSettings", "viewSettings", "reportSettings", "actionSettings", "appSettings", "fieldAcl", "reminderNotifications", "processSettings"];
-  function reflectInspectionScopes(scopes) {
-    return [.../* @__PURE__ */ new Set([...scopes, ...scopes.some((key) => FIELD_DEPENDENT_SECTIONS.includes(key)) ? ["fieldSettings"] : []])];
-  }
-  function reflectSelectionBlockers(entries, scopes, sourceFields, targetFields, sourceSystemFields = [], addableSourceFields = []) {
-    const selected = entries.filter((entry) => scopes.includes(entry.sectionKey));
-    const available = /* @__PURE__ */ new Set([...targetFields, ...scopes.includes("fieldSettings") && !selected.find((entry) => entry.sectionKey === "fieldSettings")?.blockers.length ? sourceFields : []]);
-    const system = new Set(sourceSystemFields);
-    const addable = new Set(addableSourceFields);
-    const issues = selected.flatMap((entry) => entry.blockers.map((message) => `${entry.label}: ${message}`));
-    for (const entry of selected) for (const code of entry.requiredFields || []) {
-      if (available.has(code)) continue;
-      if (system.has(code)) issues.push(`${entry.label}: 参照するフィールド「${code}」は反映元のシステムフィールド（レコード番号・ステータス・カテゴリーなど）ですが、反映先に同じコードがありません。反映先でフィールドコードを合わせる、またはプロセス管理・カテゴリーを有効にしてから再取得するか、この項目を除外してください。`);
-      else if (scopes.includes("fieldSettings") && addable.has(code)) issues.push(`${entry.label}: 参照するフィールド「${code}」が反映先にありません。反映元にあるフィールドなので、フィールド設定で「${code}」の追加も選ぶか、この項目を除外してください。`);
-      else issues.push(`${entry.label}: 参照するフィールド「${code}」が反映先にありません。フィールド設定も反映対象に含めるか、この項目を除外してください。`);
-    }
-    return [...new Set(issues)];
-  }
-  function reflectRequiredFields(key, after) {
-    if (key === "viewSettings") {
-      if (!object(after?.views)) return [];
-      return [...new Set(Object.values(after.views).flatMap((view) => view?.type === "LIST" ? view.fields || [] : view?.type === "CALENDAR" ? [view.date, view.title].filter(Boolean) : []).filter((code) => !["$id", "$revision"].includes(code)))];
-    }
-    if (key === "actionSettings") return extractActionRequiredFields(after?.actions);
-    if (key === "reportSettings") return extractReportRequiredFields(after?.reports);
-    if (key === "fieldAcl") return [...new Set((after?.rights || []).map((right) => String(right?.code || "")).filter((code) => code && !["$id", "$revision"].includes(code)))];
-    if (key === "reminderNotifications") return [...new Set((after?.notifications || []).flatMap((item) => [item?.timing?.code, ...(item?.targets || []).filter((target) => target?.entity?.type === "FIELD_ENTITY").map((target) => target.entity.code)]).map((code) => String(code || "")).filter((code) => !!code))];
-    if (key === "processSettings") {
-      if (!object(after?.states)) return void 0;
-      return [...new Set(Object.values(after.states).flatMap((state3) => (state3?.assignee?.entities || []).filter((item) => item?.entity?.type === "FIELD_ENTITY").map((item) => String(item.entity.code || ""))).filter((code) => !!code))];
-    }
-    if (key === "layoutSettings") {
-      const codes = [];
-      const walk = (nodes) => {
-        for (const node of nodes) {
-          if (node.code) codes.push(String(node.code));
-          if (Array.isArray(node.fields)) walk(node.fields);
-          if (Array.isArray(node.layout)) walk(node.layout);
-        }
-      };
-      walk(Array.isArray(after?.layout) ? after.layout : []);
-      return [...new Set(codes)];
-    }
-    if (key === "appSettings") return after?.titleField?.selectionMode === "MANUAL" && typeof after.titleField.code === "string" && after.titleField.code ? [after.titleField.code] : void 0;
-    return void 0;
-  }
-  var settingValue = (value) => typeof value === "number" ? String(value) : Array.isArray(value) ? value.map(settingValue) : object(value) ? Object.fromEntries(Object.entries(value).map(([name, item]) => [name, settingValue(item)])) : value;
-  function buildAppSettingsPlan(plan, source, target, options) {
-    try {
-      if (own2(source, "titleField") && !object(source.titleField)) throw new Error("レコードのタイトルの設定形式が不正です。");
-      plan.behavior = "動作・表示の設定を更新（アプリ名・説明・アイコンは対象外）";
-      const pick = (section) => Object.fromEntries(APP_SETTINGS_REFLECT_KEYS.filter((name) => own2(source, name) && own2(section, name)).map((name) => [name, name === "titleField" && object(section[name]) && section[name].selectionMode === "AUTO" ? { selectionMode: "AUTO" } : settingValue(section[name])]));
-      const before = pick(target), after = pick(source);
-      if (!Object.keys(after).length) throw new Error("反映元に比較できる一般設定がありません（古い設定JSONの可能性があります）。");
-      if (after.titleField?.selectionMode === "MANUAL") {
-        if (typeof after.titleField.code !== "string" || !after.titleField.code) throw new Error("レコードのタイトルに使うフィールドが指定されていません。");
-        plan.requiredFields = reflectRequiredFields("appSettings", after);
-      }
-      diffValues(before, after, [], plan.changes);
-      for (const change of plan.changes) if (change.kind === "削除") change.kind = "変更";
-      try {
-        plan.items = summarizeReflectItems("appSettings", before, after, { fieldLabels: options.fieldLabels });
-      } catch {
-        plan.items = [];
-      }
-      for (const change of plan.changes) {
-        const [head, ...rest] = change.path.split(" / ");
-        change.path = [APP_SETTINGS_LABELS[head] || head, ...rest].join(" / ");
-      }
-      plan.changeCount = plan.changes.filter((change) => change.kind !== "保持").length;
-      plan.removalCount = plan.changes.filter((change) => change.kind === "削除").length;
-      if (plan.changeCount) plan.operations.push({ method: "PUT", endpoint: SECTION_DEFS.find((item) => item.key === "appSettings")?.endpoint || "/app/settings.json", body: after, label: plan.label });
-      plan.status = plan.operations.length ? "change" : "same";
-      plan.message = plan.operations.length ? `変更 ${plan.changeCount}件 / 削除 ${plan.removalCount}件 / ${plan.behavior}` : "書き込み不要（一致）";
-      plan.values = { before: deepClone(before), after: deepClone(after) };
-    } catch (error) {
-      if (isRunCancelledError(error)) throw error;
-      plan.status = "error";
-      plan.blockers.push(error.message || String(error));
-      plan.message = plan.blockers.join("\n");
-    }
-    return plan;
-  }
-  function buildReflectSectionPlan(key, source, target, options = {}) {
-    const def = SECTION_DEFS.find((item) => item.key === key);
-    const plan = { sectionKey: key, label: reflectSectionLabel(key), status: "same", message: "", behavior: "全置換", changes: [], changeCount: 0, removalCount: 0, warnings: [], blockers: [], operations: [] };
-    const fail = (side, section) => {
-      plan.status = side === "src" ? "src-missing" : "tgt-missing";
-      const partial = section?._partial?.kind === "customizeBody" ? "JS/CSSファイルの本文が一部取得できていない設定JSONです。設定取得をやり直すか、アプリから取得してください" : section?._partial?.message;
-      plan.message = `${side === "src" ? "反映元" : "反映先"}を完全に取得できません: ${section?._fetchError || partial || "設定がありません"}`;
-      plan.blockers.push(plan.message);
-      return plan;
-    };
-    if (!isCompleteReflectSection(source)) return fail("src", source);
-    if (!isCompleteReflectSection(target)) return fail("tgt", target);
-    if (key === "appSettings") return buildAppSettingsPlan(plan, source, target, options);
-    if (!def?.put || !def.putBuilder) {
-      plan.status = "error";
-      plan.blockers.push("この項目は反映に対応していません。");
-      return plan;
-    }
-    try {
-      let before, after, comparable3;
-      const uploads = [];
-      if (key === "fieldSettings") {
-        plan.behavior = "追加・更新（反映先だけの項目は保持）";
-        const sourceProps = fieldDefinitions(source), targetProps = fieldDefinitions(target);
-        const positions = (props) => {
-          const map = /* @__PURE__ */ new Map();
-          const add = (code, parent) => {
-            if (map.has(code)) throw new Error(`フィールドコードが重複しています: ${code}`);
-            map.set(code, parent);
-          };
-          for (const [code, field] of Object.entries(props)) {
-            add(code, "フォーム");
-            if (field?.type === "SUBTABLE") for (const child of Object.keys(field.fields || {})) add(child, code);
-          }
-          return map;
-        };
-        const sourcePositions = positions(sourceProps), targetPositions = positions(targetProps);
-        for (const [code, parent] of sourcePositions) if (targetPositions.has(code) && parent !== targetPositions.get(code)) plan.blockers.push(`${code}: フォームとテーブル間、またはテーブル間の移動には対応していません。`);
-        const merged = mergeFields(sourceProps, targetProps, options.lookupMap || {}, ["フィールド"], plan);
-        const adds = /* @__PURE__ */ Object.create(null), updates = /* @__PURE__ */ Object.create(null);
-        for (const [code, value] of Object.entries(merged)) {
-          if (!own2(sourceProps, code) || SYSTEM_FIELD_TYPES.has(value?.type)) continue;
-          if (!own2(targetProps, code)) adds[code] = value;
-          else if (value.type === "SUBTABLE") {
-            const current = targetProps[code], addedFields = Object.fromEntries(Object.entries(value.fields).filter(([child]) => !own2(current.fields || {}, child)));
-            if (Object.keys(addedFields).length) adds[code] = { type: "SUBTABLE", code, fields: addedFields };
-            const updatedFields = Object.fromEntries(Object.entries(value.fields).filter(([child, childDef]) => own2(current.fields || {}, child) && !equal(childDef, current.fields[child])));
-            const { fields: _nextFields, ...nextTable } = value, { fields: _currentFields, ...currentTable } = current;
-            if (Object.keys(updatedFields).length || !equal(nextTable, currentTable)) updates[code] = { ...nextTable, fields: updatedFields };
-          } else if (!equal(value, targetProps[code])) updates[code] = value;
-        }
-        const fieldCounts = { add: Object.keys(adds).length, update: Object.keys(updates).length, tgtOnly: Object.keys(targetProps).filter((code) => !own2(sourceProps, code) && !SYSTEM_FIELD_TYPES.has(targetProps[code]?.type)).length };
-        plan.fieldStats = fieldCounts;
-        if (fieldCounts.add) plan.operations.push({ method: "POST", endpoint: def.endpoint, body: { properties: adds }, label: "フィールド追加" });
-        if (fieldCounts.update) plan.operations.push({ method: "PUT", endpoint: def.endpoint, body: { properties: updates }, label: "フィールド更新" });
-        before = { properties: targetProps };
-        after = { properties: merged };
-      } else if (namedSections[key]) {
-        const property = namedSections[key];
-        const from = namedPayload(source, property), to = namedPayload(target, property);
-        if (key === "actionSettings") {
-          for (const unmapped of findUnmappedActionDestApps(from, options.lookupMap, to)) {
-            plan.warnings.push(`アクション「${unmapped.actionName}」のコピー先アプリID (${unmapped.destAppId}) が参照先変換に未指定のため、そのままのIDで反映します。`);
-          }
-        }
-        for (const name of Object.keys(from)) {
-          if (own2(to, name) && (!from[name].type || !to[name].type || from[name].type === to[name].type)) from[name] = { ...to[name], ...from[name] };
-          if (key === "actionSettings" && from[name]?.destApp?.app != null) {
-            const mappedApp = options.lookupMap?.[String(from[name].destApp.app)];
-            if (mappedApp) {
-              const currentDest = to[name]?.destApp;
-              if (object(currentDest) && String(currentDest.app) === String(mappedApp)) from[name].destApp = { ...currentDest };
-              else {
-                from[name].destApp = { ...from[name].destApp, app: mappedApp };
-                delete from[name].destApp.code;
-              }
-            }
-          }
-        }
-        const preserve = options.preserveTargetOnly !== false;
-        const combined = preserve ? { ...to, ...from } : from;
-        const ordered = [...Object.keys(from).sort((a, b) => Number(from[a].index || 0) - Number(from[b].index || 0)), ...preserve ? Object.keys(to).filter((name) => !own2(from, name)).sort((a, b) => Number(to[a].index || 0) - Number(to[b].index || 0)) : []];
-        for (const [index, name] of ordered.entries()) combined[name] = { ...combined[name], index: String(index) };
-        if (key === "viewSettings") for (const [name, view] of Object.entries(combined)) {
-          if (!["LIST", "CALENDAR", "CUSTOM"].includes(view.type)) throw new Error(`${name}: 一覧の種類を取得できません。`);
-          if (view.type === "LIST" && (!Array.isArray(view.fields) || view.fields.some((code) => typeof code !== "string"))) throw new Error(`${name}: 一覧のフィールド定義が不完全です。`);
-          if (view.type === "CUSTOM" && typeof view.html !== "string") throw new Error(`${name}: カスタマイズ一覧のHTMLを取得できません。`);
-        }
-        for (const item of Object.values(to)) if (item.index !== void 0) item.index = String(item.index);
-        before = { [property]: to };
-        after = { [property]: combined };
-        plan.behavior = preserve ? "追加・更新（反映先だけの設定は保持）" : "全置換（反映元にない設定を削除）";
-        if (preserve) for (const name of Object.keys(to).filter((name2) => !own2(from, name2))) plan.changes.push({ kind: "保持", path: `${diffPathLabels[property]} / ${name}`, before: valueText(to[name]), after: "内容を保持（表示順は反映元の後）" });
-        plan.requiredFields = reflectRequiredFields(key, after);
-      } else if (key === "pluginSettings") {
-        if (!Array.isArray(source.plugins) || !Array.isArray(target.plugins)) throw new Error("プラグイン一覧の形式が不正です。");
-        const existing = new Set(target.plugins.map((item) => item.id));
-        const additions = source.plugins.filter((item) => !existing.has(item.id));
-        if (additions.some((item) => typeof item.id !== "string" || !item.id)) throw new Error("プラグインIDがありません。");
-        plan.behavior = "未追加のプラグインを追加（設定値は対象外）";
-        plan.warnings.push("プラグイン本体はkintoneシステム管理に導入済みである必要があります。プラグイン固有の設定はコピーしません。");
-        before = { plugins: target.plugins.map((item) => item.id) };
-        after = { plugins: [...before.plugins, ...additions.map((item) => item.id)] };
-        if (additions.length) plan.operations.push({ method: "POST", endpoint: def.endpoint, body: { ids: additions.map((item) => item.id) }, label: "プラグイン追加" });
-      } else {
-        for (const section of [source, target]) {
-          const arrayKey = ["appAcl", "fieldAcl", "recordPermissions"].includes(key) ? "rights" : ["notifications", "perRecordNotifications", "reminderNotifications"].includes(key) ? "notifications" : "";
-          if (arrayKey && !Array.isArray(section[arrayKey])) throw new Error(`${arrayKey} の設定がありません。空の設定で上書きしないため、反映を停止します。`);
-          if (key === "reminderNotifications" && section === source && section.notifications.length && (typeof section.timezone !== "string" || !section.timezone)) throw new Error("リマインダー通知のタイムゾーンを取得できません。");
-          if (key === "categories" && (typeof section.enabled !== "boolean" || !object(section.categories))) throw new Error("カテゴリーの enabled / categories を取得できません。");
-          if (key === "processSettings" && (typeof section.enable !== "boolean" || section.enable && (!object(section.states) || !Array.isArray(section.actions)))) throw new Error("プロセス管理の enable / states / actions を取得できません。");
-          if (key === "customizeSettings") {
-            if (!["ALL", "ADMIN", "NONE"].includes(section.scope)) throw new Error("JS/CSSの適用範囲を取得できません。");
-            for (const platform of ["desktop", "mobile"]) for (const kind of ["js", "css"]) {
-              const list2 = section[platform]?.[kind];
-              if (!Array.isArray(list2) || list2.some((item) => !item || (item.type === "URL" ? typeof item.url !== "string" || !item.url : item.type === "FILE" ? typeof item.file?.fileKey !== "string" || !item.file.fileKey : true))) throw new Error(`${platform}/${kind}: JS/CSS一覧が不完全です。`);
-            }
-          }
-        }
-        before = def.putBuilder(target);
-        after = def.putBuilder(source);
-        if (key === "categories") {
-          before.enabled = target.enabled;
-          after.enabled = source.enabled;
-        }
-        if (key === "reminderNotifications" && !after.timezone) after.timezone = before.timezone;
-        if (key === "processSettings") {
-          const firstState = (states) => object(states) ? String(Object.values(states).sort((a, b) => Number(a?.index) - Number(b?.index))[0]?.name || "") : "";
-          const sourceFirst = firstState(source.states), targetFirst = firstState(target.states);
-          if (sourceFirst && targetFirst && sourceFirst !== targetFirst) plan.warnings.push(`先頭のステータスが異なります（反映先「${targetFirst}」→ 反映元「${sourceFirst}」）。kintone は先頭のステータスの入れ替えを拒否することがあります。拒否された場合は、反映先の管理画面で先頭のステータスを合わせてから再実行してください。`);
-        }
-        if (key === "notifications") {
-          if (typeof target.notifyToCommenter === "boolean") before.notifyToCommenter = after.notifyToCommenter = target.notifyToCommenter;
-          if (typeof source.notifyToCommenter === "boolean") after.notifyToCommenter = source.notifyToCommenter;
-        }
-        if (key === "customizeSettings") {
-          if (source.scope !== void 0) after.scope = source.scope;
-          if (target.scope !== void 0) before.scope = target.scope;
-          const resolution = options.customizeFiles, names = customizeFileNames(source, target);
-          comparable3 = (value) => comparableCustomizePayload(value, resolution, names);
-          const currentKeys = new Set(["desktop", "mobile"].flatMap((platform) => ["js", "css"].flatMap((kind) => (target[platform]?.[kind] || []).map((item) => item.file?.fileKey).filter(Boolean))));
-          for (const platform of ["desktop", "mobile"]) for (const kind of ["js", "css"]) for (const [index, item] of after[platform][kind].entries()) {
-            if (item.type !== "FILE") continue;
-            const fileKey = item.file.fileKey, name = names[fileKey] || "", state3 = resolution?.files[customizeSlotKey(platform, kind, fileKey)];
-            const shown = name || "アップロードファイル";
-            if (state3?.status === "reuse") item.file.fileKey = state3.targetFileKey;
-            else if (state3?.status === "upload") {
-              if (!name) plan.blockers.push(`${platform}/${kind}: 反映元のファイル（${fileKey}）にファイル名がありません。反映元のJS/CSS設定を確認してください。`);
-              else uploads.push({ platform, kind, index, sourceFileKey: fileKey, name, byteSize: state3.byteSize });
-            } else if (state3?.status === "unavailable") plan.blockers.push(`${platform}/${kind}: 「${shown}」を反映元から取得できません（${state3.reason}）。反映元でファイルを確認してください。`);
-            else if (!state3 && !currentKeys.has(fileKey)) plan.blockers.push(`${platform}/${kind}: 「${shown}」は反映先に存在せず、反映元のファイル本体を確認できません。`);
-          }
-          if (uploads.length) plan.warnings.push(`${uploads.length} 件のファイル（合計 ${formatBytes(uploads.reduce((sum, upload) => sum + upload.byteSize, 0))}）を反映先へアップロードしてから設定します。`);
-          if (uploads.length && resolution?.targetUnavailable.length) plan.warnings.push(`反映先の ${resolution.targetUnavailable.map((item) => `「${item.name}」（${item.reason}）`).join("、")} の本体を確認できなかったため、同じ内容のファイルがあっても再利用せずアップロードします。`);
-        }
-        if (key === "fieldAcl" || key === "reminderNotifications" || key === "processSettings") {
-          const required = reflectRequiredFields(key, after);
-          if (required) plan.requiredFields = required;
-        }
-        if (key === "layoutSettings") {
-          if (!Array.isArray(source.layout) || !Array.isArray(target.layout)) throw new Error("レイアウトの形式が不正です。");
-          after.layout = mergeLayout(source.layout, target.layout, plan);
-          plan.behavior = "配置を更新（反映先だけのフィールド配置は保持）";
-          plan.requiredFields = reflectRequiredFields("layoutSettings", after);
-        }
-      }
-      const shownBefore = comparable3 ? comparable3(before) : before, shownAfter = comparable3 ? comparable3(after) : after;
-      diffValues(shownBefore, shownAfter, [], plan.changes);
-      if (key === "layoutSettings") reclassifyLayoutRemovals(plan.changes, shownBefore?.layout, shownAfter?.layout, options.fieldLabels);
-      try {
-        plan.items = summarizeReflectItems(key, shownBefore, shownAfter, { fieldLabels: options.fieldLabels, retained: retainedItemNames(key, plan.changes, options.fieldLabels) });
-      } catch {
-        plan.items = [];
-      }
-      plan.changeCount = plan.changes.filter((change) => change.kind !== "保持").length;
-      plan.removalCount = plan.changes.filter((change) => change.kind === "削除").length;
-      if (key !== "fieldSettings" && key !== "pluginSettings" && plan.changeCount) plan.operations.push({ method: "PUT", endpoint: def.endpoint, body: after, label: def.label, ...uploads.length ? { uploads } : {} });
-      if (uploads.length && plan.changeCount) plan.fileUploads = uploads;
-      plan.values = { before: deepClone(before), after: deepClone(after) };
-      if (key === "customizeSettings") {
-        plan.values.fileNames = { ...customizeFileNames(source, target) };
-        plan.values.fileHashes = { ...options.customizeFiles?.hashes || {} };
-      }
-      if (plan.blockers.length) plan.status = "error";
-      else plan.status = plan.operations.length ? "change" : "same";
-      plan.message = plan.blockers.length ? plan.blockers.join("\n") : plan.operations.length ? `変更 ${plan.changeCount}件 / 削除 ${plan.removalCount}件 / ${plan.behavior}` : `書き込み不要${plan.changes.some((change) => change.kind === "保持") ? "（反映先だけの設定は保持）" : "（一致）"}`;
-    } catch (error) {
-      if (isRunCancelledError(error)) throw error;
-      plan.status = "error";
-      plan.blockers.push(error.message || String(error));
-      plan.message = plan.blockers.join("\n");
-    }
-    return plan;
-  }
-  function listReflectSystemFieldCodes(bundle) {
-    const props = bundle?.sections?.fieldSettings?.properties;
-    if (!object(props)) return [];
-    return Object.entries(props).filter(([, def]) => SYSTEM_FIELD_TYPES.has(def?.type)).map(([code]) => code);
-  }
-  function listReflectFieldCodes(bundle, writableOnly = false) {
-    const props = bundle?.sections?.fieldSettings?.properties;
-    if (!object(props)) return [];
-    return Object.entries(props).filter(([, def]) => !writableOnly || !SYSTEM_FIELD_TYPES.has(def?.type)).flatMap(([code, def]) => [code, ...Object.keys(def?.type === "SUBTABLE" ? def.fields || {} : {})]);
-  }
-
-  // src/settingsBundleImport.ts
-  function preserveImportedMetadata(bundle, raw, preserve) {
-    if (!preserve || !bundle || !raw || typeof raw !== "object") return bundle;
-    bundle.fetchedAt = Object.prototype.hasOwnProperty.call(raw, "fetchedAt") ? raw.fetchedAt : null;
-    if (Object.prototype.hasOwnProperty.call(raw, "guestId")) bundle.guestId = raw.guestId;
-    else delete bundle.guestId;
-    if (Object.prototype.hasOwnProperty.call(raw, "preview")) bundle.preview = raw.preview;
-    else delete bundle.preview;
-    if (raw.meta && typeof raw.meta === "object" && !Array.isArray(raw.meta)) {
-      bundle.meta = {
-        ...raw.meta,
-        sectionRevisions: bundle.meta?.sectionRevisions || {}
-      };
-    }
-    return bundle;
-  }
-  function limitImportedBundleToSections(bundle, sections, raw, preserveMetadata = false) {
-    if (!Array.isArray(sections) || !sections.length) return preserveImportedMetadata(bundle, raw, preserveMetadata);
-    const sourceSections = bundle?.sections || {};
-    const picked = pickBundleSections(bundle, sections);
-    sections.forEach((sectionKey) => {
-      if (Object.prototype.hasOwnProperty.call(sourceSections, sectionKey)) return;
-      picked.sections[sectionKey] = {
-        _fetchError: "読み込んだ設定JSONに比較対象セクションが含まれていません"
-      };
-    });
-    return preserveImportedMetadata(picked, raw, preserveMetadata);
-  }
-  function unwrapBundleCandidates(raw, side) {
-    if (!raw || typeof raw !== "object") return [];
-    if (raw.source && raw.target) return unwrapBundleCandidates(side === "target" ? raw.target : raw.source, side);
-    if (raw.bundle) return unwrapBundleCandidates(raw.bundle, side);
-    if (Array.isArray(raw.apps)) return raw.apps;
-    if (Array.isArray(raw.bundles)) return raw.bundles;
-    if (raw.sections && raw.appId != null) return [raw];
-    return [raw];
-  }
-  function pickSettingsBundle(raw, options = {}) {
-    const side = options.side || "source";
-    const appId = String(options.appId || "").trim();
-    const candidates = unwrapBundleCandidates(raw, side).map((item) => {
-      try {
-        return { bundle: ensureBundleShape(item, options.rawSettings), raw: item };
-      } catch {
-        return null;
-      }
-    }).filter(Boolean);
-    if (!candidates.length) throw new Error("設定JSON内にアプリ設定バンドルが見つかりません");
-    if (appId) {
-      const matched = candidates.find((entry) => String(entry?.bundle?.appId || "") === appId) || (candidates.length === 1 && !String(candidates[0]?.bundle?.appId || "") ? candidates[0] : void 0);
-      if (matched) return limitImportedBundleToSections(matched.bundle, options.sections, matched.raw, !!options.preserveMetadata);
-      throw new Error(`設定JSON内に App ${appId} のバンドルが見つかりません`);
-    }
-    return limitImportedBundleToSections(candidates[0].bundle, options.sections, candidates[0].raw, !!options.preserveMetadata);
-  }
-  function pickAllSettingsBundles(raw, side, rawSettings = false, preserveMetadata = false) {
-    const candidates = unwrapBundleCandidates(raw, side).map((item) => {
-      try {
-        return preserveImportedMetadata(ensureBundleShape(item, rawSettings), item, preserveMetadata);
-      } catch {
-        return null;
-      }
-    }).filter(Boolean);
-    if (!candidates.length) throw new Error("設定JSON内にアプリ設定バンドルが見つかりません");
-    return candidates;
-  }
-
   // src/reflect/targetPending.ts
   var comparableResources = (list2) => Array.isArray(list2) ? list2.map((item) => item?.type === "FILE" ? { type: "FILE", name: item.file?.name ?? "", size: String(item.file?.size ?? "") } : item) : list2;
   var comparable2 = (key, section) => {
@@ -7279,7 +7532,7 @@ ${base}`
     notifications: "通知は一覧全体で選びます（1 件ごとには選べません）。",
     perRecordNotifications: "通知は一覧全体で選びます（1 件ごとには選べません）。",
     reminderNotifications: "通知は一覧全体で選びます（1 件ごとには選べません）。",
-    pluginSettings: "プラグインは一覧全体で選びます。プラグイン固有の設定はコピーしません。"
+    pluginSettings: "プラグインは 1 つずつ選びます。反映先に無いプラグインだけを追加し、プラグイン固有の設定はコピーしません。"
   };
   function groupLength(sectionKey, tokens) {
     switch (sectionKey) {
@@ -7404,6 +7657,15 @@ ${base}`
       editables: []
     });
   }
+  function emitPluginAdditions(w, tokens, kinds, before, after) {
+    const existing = new Set(before.filter((id) => typeof id === "string"));
+    const seen = /* @__PURE__ */ new Set();
+    for (const id of after) {
+      if (typeof id !== "string" || !id || existing.has(id) || seen.has(id)) continue;
+      seen.add(id);
+      emit(w, [...tokens, id], [...kinds, "name"], void 0, id, true);
+    }
+  }
   function walkObject(w, before, after, tokens, kinds, containerKey, elementOf) {
     const namesLevel = containerKey !== void 0;
     const keys = [...Object.keys(after), ...Object.keys(before).filter((key) => !own3(after, key))];
@@ -7420,6 +7682,10 @@ ${base}`
       }
       const childKinds = [...kinds, "key"];
       if (key === "index" && elementOf && ORDERED_CONTAINERS.has(elementOf)) continue;
+      if (w.sectionKey === "pluginSettings" && key === "plugins" && (bv === void 0 || Array.isArray(bv)) && Array.isArray(av)) {
+        emitPluginAdditions(w, childTokens, childKinds, bv ?? [], av);
+        continue;
+      }
       if (w.sectionKey === "fieldSettings" && (key === "type" || key === "code") && (elementOf === "properties" || elementOf === "fields")) continue;
       if (NAME_CONTAINERS.has(key) && isPlainObject(bv) && isPlainObject(av)) {
         if (ORDERED_CONTAINERS.has(key)) emitOrderChange(w, childTokens, bv, av);
@@ -7767,6 +8033,11 @@ ${base}`
       for (const change of selected) {
         if (change.pointer.endsWith(ORDER_SUFFIX)) continue;
         const tokens = parsePointer(change.pointer);
+        if (model.sectionKey === "pluginSettings" && tokens.length === 2 && tokens[0] === "plugins") {
+          if (!Array.isArray(after.plugins)) setOwn(after, "plugins", []);
+          if (typeof change.after === "string" && !after.plugins.includes(change.after)) after.plugins.push(change.after);
+          continue;
+        }
         if (change.after === void 0) deleteAt(after, tokens);
         else setAt(after, tokens, cloneJson(change.after));
       }
@@ -8234,163 +8505,6 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       poll: opts.poll
     });
     return { ...result, deploy, deployInspection: record };
-  }
-
-  // src/reflect/appReference.ts
-  function parseAppReference(text) {
-    const raw = String(text || "").trim();
-    if (!raw) return null;
-    if (/^[1-9]\d*$/.test(raw)) return { appId: raw, guestId: "" };
-    const appId = extractAppIdFromInput(raw);
-    if (!/^[1-9]\d*$/.test(appId)) return null;
-    return { appId, guestId: extractGuestIdFromInput(raw) };
-  }
-  function guestIdFromPagePath(pathname) {
-    return extractGuestIdFromInput(String(pathname || ""));
-  }
-  function needsAppReferenceParse(text) {
-    const raw = String(text || "").trim();
-    return !!raw && !/^\d+$/.test(raw);
-  }
-
-  // src/reflect/liteSetup.ts
-  var LOOKUP_PAIR_SEPARATOR = /\s*(?:→|->|=>|=|:|,|\t)\s*|\s+/;
-  function parseLookupMapText(text) {
-    const trimmed = String(text || "").trim();
-    if (!trimmed) return { ok: true, value: {}, count: 0 };
-    const pairs = [];
-    if (trimmed.startsWith("{")) {
-      let parsed;
-      try {
-        parsed = JSON.parse(trimmed);
-      } catch {
-        return { ok: false, error: '参照先変換の JSON が壊れています。{"旧AppID":"新AppID"} 形式か、1 行ずつ「旧ID → 新ID」で入力してください。' };
-      }
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { ok: false, error: '参照先変換は {"旧AppID":"新AppID"} 形式のJSONを入力してください。' };
-      for (const [key, value] of Object.entries(parsed)) pairs.push([key, String(value)]);
-    } else {
-      for (const [index, line] of trimmed.split(/\r?\n/).entries()) {
-        const body = line.trim();
-        if (!body || body.startsWith("#")) continue;
-        const parts = body.split(LOOKUP_PAIR_SEPARATOR).filter(Boolean);
-        if (parts.length !== 2) return { ok: false, error: `参照先変換の ${index + 1} 行目を読み取れません。「旧ID → 新ID」の形式で入力してください。` };
-        pairs.push([parts[0], parts[1]]);
-      }
-    }
-    const out = /* @__PURE__ */ Object.create(null);
-    for (const [from, to] of pairs) {
-      if (!/^[1-9]\d*$/.test(from) || !/^[1-9]\d*$/.test(to)) return { ok: false, error: `参照先変換のアプリIDには正の整数を指定してください（${from} → ${to}）。` };
-      if (out[from] !== void 0 && out[from] !== to) return { ok: false, error: `参照先変換で旧ID ${from} が複数の変換先（${out[from]}, ${to}）に指定されています。` };
-      out[from] = to;
-    }
-    return { ok: true, value: out, count: Object.keys(out).length };
-  }
-  function lookupMapError(result) {
-    return "error" in result ? result.error : "";
-  }
-  function lookupMapValue(result) {
-    return "value" in result ? result.value : {};
-  }
-  var REFLECT_SCOPE_GROUPS = [
-    { id: "form", label: "フォーム・表示", keys: ["fieldSettings", "layoutSettings", "viewSettings", "reportSettings", "categories"] },
-    { id: "behavior", label: "動作・カスタマイズ", keys: ["appSettings", "processSettings", "actionSettings", "pluginSettings", "customizeSettings"] },
-    { id: "access", label: "権限・通知", keys: ["appAcl", "fieldAcl", "recordPermissions", "notifications", "perRecordNotifications", "reminderNotifications"] }
-  ];
-  var REFLECT_OTHER_SCOPE_GROUP = { id: "other", label: "その他", keys: [] };
-  var REFLECT_SCOPE_HINTS = {
-    appSettings: "テーマ、レコードのタイトル、サムネイル表示、一括削除、コメント機能、レコードの再利用、一覧でのインライン編集、数値の桁数と丸め、年度の開始月を反映元に合わせます。アプリ名・説明・アイコンは変えません。",
-    fieldSettings: "不足しているフィールドを追加し、変更のある定義だけ更新します。反映先だけのフィールドは保持します。",
-    layoutSettings: "配置を反映元に合わせます。反映先だけのフィールドは、フォーム・グループ・テーブルの末尾に保持します。",
-    viewSettings: "一覧を追加・更新します。反映先だけの一覧は「保持」の設定に従います。",
-    reportSettings: "グラフを追加・更新します。反映先だけのグラフは「保持」の設定に従います。",
-    actionSettings: "アクションを追加・更新します。反映先だけのアクションは「保持」の設定に従います。",
-    pluginSettings: "反映先にまだ無いプラグインだけ追加します。プラグインの設定値はコピーしません。",
-    customizeSettings: "適用範囲と、PC・モバイルのJS/CSSファイル一覧を反映元の内容に置き換えます。反映先だけのファイル・URLは外れます。別アプリのファイルは反映先へアップロードして設定します。",
-    processSettings: "反映元の内容で置き換えます。状態・アクション・作業者が変わり、運用中の申請に影響することがあります。",
-    appAcl: "反映元の内容で置き換えます。反映先だけの権限は削除されます。",
-    fieldAcl: "反映元の内容で置き換えます。反映先だけの権限は削除されます。",
-    recordPermissions: "反映元の内容で置き換えます。反映先だけの権限は削除されます。",
-    notifications: "反映元の内容で置き換えます。反映先だけの通知は削除されます。",
-    perRecordNotifications: "反映元の内容で置き換えます。反映先だけの通知は削除されます。",
-    reminderNotifications: "反映元の内容で置き換えます。タイムゾーンも反映元に合わせます。",
-    categories: "反映元の内容で置き換えます。カテゴリーの有効状態も反映元に合わせます。"
-  };
-  function describeReflectScope(key) {
-    return REFLECT_SCOPE_HINTS[key] || "";
-  }
-  function groupReflectScopes(availableKeys) {
-    const available = new Set(availableKeys);
-    const placed = /* @__PURE__ */ new Set();
-    const groups = REFLECT_SCOPE_GROUPS.map((group) => {
-      const keys = group.keys.filter((key) => available.has(key));
-      keys.forEach((key) => placed.add(key));
-      return { ...group, keys };
-    });
-    const rest = availableKeys.filter((key) => !placed.has(key));
-    if (rest.length) groups.push({ ...REFLECT_OTHER_SCOPE_GROUP, keys: [...rest] });
-    return groups.filter((group) => group.keys.length > 0);
-  }
-  function shouldWarnMissingFieldSettings(scopes) {
-    if (scopes.includes("fieldSettings")) return false;
-    return reflectInspectionScopes([...scopes]).includes("fieldSettings");
-  }
-  var FIELD_SETTINGS_OMITTED_NOTICE = "フィールド設定を含めない場合、反映先に無いフィールドを参照していると差分確認で停止します。";
-  var REFLECT_UNDO_GUIDANCE = "取り消す場合: 反映前に反映先プレビューへ未公開の変更が無ければ、アプリの設定画面の『変更を中止』で今回の反映を含む未公開の変更をすべて破棄できます。または自動保存したバックアップJSONを『設定JSONから取得』で反映元に読み込み、差分を確認して戻せます（追加したフィールドは削除されません）。";
-
-  // src/reflect/applyProgress.ts
-  function describeApplyProgressStatus(status, stopped = false) {
-    if (status === "ng" && stopped) return { icon: "■", text: "途中で停止", tone: "ng" };
-    if (status === "running") return { icon: "…", text: "実行中…", tone: "running" };
-    if (status === "ok") return { icon: "✓", text: "成功", tone: "ok" };
-    if (status === "ng") return { icon: "✕", text: "失敗", tone: "ng" };
-    if (status === "skip") return { icon: "－", text: "変更なし", tone: "skip" };
-    if (status === "pending") return { icon: "○", text: "未実行", tone: "pending" };
-    return { icon: "○", text: "待機中", tone: "waiting" };
-  }
-  function createApplyProgressRows(sectionKeys, labelOf) {
-    const order = (key) => {
-      const index = REFLECT_SECTION_KEYS.indexOf(key);
-      return index < 0 ? REFLECT_SECTION_KEYS.length : index;
-    };
-    return [...new Set(sectionKeys)].sort((a, b) => order(a) - order(b)).map((sectionKey) => ({ sectionKey, label: labelOf(sectionKey), status: "waiting" }));
-  }
-  function applyProgressUpdate(rows, update) {
-    return rows.map((row) => row.sectionKey === update.sectionKey ? { sectionKey: row.sectionKey, label: row.label, status: update.status, ...update.message ? { message: update.message } : {}, ...update.status === "ng" && update.stopped ? { stopped: true } : {} } : row);
-  }
-  function summarizeApplyProgress(rows) {
-    if (!rows.length) return "";
-    const settled = rows.filter((row) => ["ok", "ng", "skip"].includes(row.status)).length;
-    const failed = rows.filter((row) => row.status === "ng" && !row.stopped).length;
-    const stopped = rows.filter((row) => row.status === "ng" && row.stopped).length;
-    const skipped = rows.filter((row) => row.status === "pending").length;
-    const running = rows.find((row) => row.status === "running");
-    return `${settled} / ${rows.length} 項目が完了${failed ? `（失敗 ${failed}）` : ""}${stopped ? `（途中で停止 ${stopped}）` : ""}${skipped ? `、未実行 ${skipped}` : ""}${running ? `。実行中: ${running.label}` : ""}`;
-  }
-  function describeUndoGuidance(targetPending) {
-    if (targetPending?.state === "clean") {
-      return { tone: "ok", openSettings: true, text: "反映前、反映先プレビューに未公開の変更はありませんでした。アプリの設定画面で『変更を中止』を押すと、今回の反映をすべて取り消せます。" };
-    }
-    if (targetPending?.state === "own") {
-      return { tone: "ok", openSettings: true, text: "反映前の未公開の変更は、このツールによる反映分だけでした。アプリの設定画面で『変更を中止』を押すと、それらを含む未公開の変更をすべて取り消せます。" };
-    }
-    if (targetPending?.state === "pending") {
-      return { tone: "warn", openSettings: false, text: "反映前から未公開の変更があったため、『変更を中止』ではそれらも破棄されます。今回の反映だけを戻す場合は『バックアップから戻す』を使ってください。" };
-    }
-    return { tone: "info", openSettings: false, text: REFLECT_UNDO_GUIDANCE };
-  }
-  var REFLECT_ITEM_KIND_ORDER = ["削除", "変更", "追加", "保持"];
-  function orderReflectItems(items) {
-    const valid = (items || []).filter((item) => item && REFLECT_ITEM_KIND_ORDER.includes(item.kind) && typeof item.name === "string");
-    return REFLECT_ITEM_KIND_ORDER.flatMap((kind) => valid.filter((item) => item.kind === kind));
-  }
-  function countReflectItemKinds(items) {
-    const counts = { 削除: 0, 変更: 0, 追加: 0, 保持: 0 };
-    for (const item of items || []) if (item && item.kind in counts) counts[item.kind] += 1;
-    return counts;
-  }
-  function describeRemovedItem(sectionLabel, item) {
-    const details = (item.details || []).filter(Boolean);
-    return `${sectionLabel} / ${item.name}${details.length ? `：${details.join("、")}` : ""}`;
   }
 
   // src/deploy/sourceDisplay.ts
@@ -8862,6 +8976,58 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   function hasJsonOverride(session, sectionKey) {
     return session.states[sectionKey]?.json !== void 0;
   }
+  function carryOverSession(next, previous) {
+    const summary = { selectionKept: 0, selectionLost: 0, overridesKept: 0, overridesLost: 0, jsonLost: 0 };
+    for (const [key, previousSelected] of Object.entries(previous.selected)) {
+      const model = next.models[key];
+      if (!model) {
+        summary.selectionLost += previousSelected.size;
+        continue;
+      }
+      const previousIds = new Set(previous.models[key]?.changes.map((change) => change.id) ?? []);
+      const nextIds = new Set(model.changes.map((change) => change.id));
+      const selected = /* @__PURE__ */ new Set();
+      for (const change of model.changes) {
+        if (!previousIds.has(change.id) || previousSelected.has(change.id)) selected.add(change.id);
+      }
+      for (const id of previousSelected) {
+        if (nextIds.has(id)) summary.selectionKept += 1;
+        else summary.selectionLost += 1;
+      }
+      next.selected[key] = selected;
+    }
+    const flat = /* @__PURE__ */ new Set();
+    for (const set of Object.values(next.selected)) for (const id of set) flat.add(id);
+    for (const id of requiredToSelect([...flat], next.index, flat)) {
+      const sectionKey = next.index.byId.get(id)?.sectionKey || "";
+      next.selected[sectionKey]?.add(id);
+    }
+    for (const [key, previousState] of Object.entries(previous.states)) {
+      const model = next.models[key];
+      const state3 = next.states[key];
+      const overrides = Object.entries(previousState.overrides || {});
+      if (!model || !state3) {
+        summary.overridesLost += overrides.length;
+        if (previousState.json !== void 0) summary.jsonLost += 1;
+        continue;
+      }
+      const pointers = new Set(model.changes.flatMap((change) => change.editables.map((editable) => editable.pointer)));
+      for (const [pointer, value] of overrides) {
+        if (pointers.has(pointer)) {
+          state3.overrides[pointer] = value;
+          summary.overridesKept += 1;
+        } else summary.overridesLost += 1;
+      }
+      if (previousState.json !== void 0) summary.jsonLost += 1;
+    }
+    return summary;
+  }
+  function describeCarryOver(summary) {
+    const kept = [summary.selectionKept ? `選択 ${summary.selectionKept} 件` : "", summary.overridesKept ? `入力欄の修正 ${summary.overridesKept} 件` : ""].filter(Boolean);
+    const lost = [summary.selectionLost ? `選択 ${summary.selectionLost} 件` : "", summary.overridesLost ? `入力欄の修正 ${summary.overridesLost} 件` : "", summary.jsonLost ? `JSON での修正 ${summary.jsonLost} 項目` : ""].filter(Boolean);
+    const head = kept.length ? `前回の${kept.join("・")}を引き継ぎました。` : "前回の選択と修正はありませんでした。";
+    return lost.length ? `${head}引き継げなかったもの: ${lost.join("・")}（更新後の差分に無い、または JSON のため）。選び直してください。` : head;
+  }
 
   // src/reflect/appLookup.ts
   var REFLECT_APP_LOOKUP_FAILURE = "アプリを確認できません。ID・ゲストスペース・閲覧権限を確認してください。";
@@ -9070,6 +9236,13 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     const option = editable.editor.type === "select" ? (editable.editor.options || []).find(([optionValue]) => optionValue === raw) : void 0;
     return (option ? option[1] : raw) || "（空）";
   }
+  function jsonValueAt(json, pointer) {
+    try {
+      return getAt(json, parsePointer(pointer));
+    } catch {
+      return void 0;
+    }
+  }
   function coerceEditable(text, like) {
     if (typeof like === "number") {
       const n = Number(text);
@@ -9101,6 +9274,9 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     let idSeq = 0;
     function currentValue(session, sectionKey, editable) {
       return hasOverride(session, sectionKey, editable.pointer) ? session.states[sectionKey].overrides[editable.pointer] : editable.value;
+    }
+    function displayValue(session, sectionKey, editable) {
+      return hasJsonOverride(session, sectionKey) ? jsonValueAt(session.states[sectionKey].json, editable.pointer) : currentValue(session, sectionKey, editable);
     }
     function buildControl(session, view, sectionKey, change, editable) {
       const id = `kus-ds-edit-${++idSeq}`;
@@ -9181,8 +9357,8 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       fallback.title = clipText2(defaultText, 2e3);
       meta.append(fallback, reset);
       row.append(label, control, meta);
-      const rowView = { section: sectionKey, change, editable, row, reset, controls, setControl };
-      setControl(currentValue(session, sectionKey, editable));
+      const rowView = { section: sectionKey, change, editable, row, reset, controls, setControl, locked: false };
+      setControl(displayValue(session, sectionKey, editable));
       const paint = () => paintRow(rowView);
       view.rows.set(`${change.id}|${editable.pointer}`, rowView);
       paintRow(rowView);
@@ -9191,11 +9367,14 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     function paintRow(row) {
       const session = host.session();
       if (!session) return;
-      const changed = !same3(currentValue(session, row.section, row.editable), row.editable.value);
+      const locked = hasJsonOverride(session, row.section);
+      if (locked || row.locked) row.setControl(displayValue(session, row.section, row.editable));
+      row.locked = locked;
+      const changed = !same3(displayValue(session, row.section, row.editable), row.editable.value);
       row.row.classList.toggle("kus-ds-edit--changed", changed);
       row.row.dataset.changed = String(changed);
-      row.reset.hidden = !changed;
-      const locked = hasJsonOverride(session, row.section);
+      row.row.dataset.jsonLocked = String(locked);
+      row.reset.hidden = !changed || locked;
       for (const control of row.controls) control.disabled = locked;
       row.reset.disabled = locked;
     }
@@ -9252,7 +9431,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       }
       head.append(el("strong", "kus-ds-card__title", model.label), counts, tools);
       card.appendChild(head);
-      const jsonNote = el("div", "kus-ds-note kus-ds-note--info", "JSONで修正中です。この項目は、選択・入力欄より JSON の内容を優先します。入力欄は使えません。");
+      const jsonNote = el("div", "kus-ds-note kus-ds-note--info", "JSONで修正中です。この項目は、選択・入力欄より JSON の内容を優先します。入力欄には JSON の値を表示していて、ここでは直せません。");
       jsonNote.dataset.jsonActive = sectionKey;
       card.appendChild(jsonNote);
       const groups = collectEditables(session, model);
@@ -9880,6 +10059,7 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
   // src/entries/deploy-source-ui.ts
   var REPLACING_SCOPE_KEYS = /* @__PURE__ */ new Set(["appAcl", "fieldAcl", "recordPermissions", "notifications", "perRecordNotifications", "reminderNotifications", "processSettings"]);
   var DEFAULT_SCOPES = ["fieldSettings", "layoutSettings", "viewSettings"];
+  var STALE_BLOCKER = "反映先が更新されたため、抽出結果は古くなりました。「差分を抽出し直す」を押してください。";
   var memory = { kind: "production", sourceApp: "", sourceGuest: "", targetApp: "", targetGuest: "", scopes: [...DEFAULT_SCOPES], preserve: true, lookupText: "", goal: "production", lastRun: null };
   function createSourceFlow(panel) {
     ensureSourceStyles();
@@ -9906,6 +10086,11 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
     };
     let refreshWorkflow = () => {
     };
+    let extractionStale = false;
+    let staleReason = "";
+    let carryNote = "";
+    let restore = null;
+    let sessionRestoreLabel = "";
     const pageGuest = () => guestIdFromPagePath(window.location?.pathname || "");
     const srcApp = makeInput({ placeholder: "反映元アプリID", value: memory.sourceApp, width: "id" });
     const srcGuest = makeInput({ placeholder: "ゲストID", value: memory.sourceGuest, width: "guest" });
@@ -10208,15 +10393,17 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
       return { text: `詳細設定: ${parts.join(" / ")}`, warn: !preserve.checkbox.checked || !lookup.ok };
     }
     function onInputsChanged() {
-      memory.kind = currentKind();
-      memory.sourceApp = srcApp.value;
-      memory.sourceGuest = srcGuest.value;
+      const restoreNote = syncRestore();
+      const persisted = restore ? restore.before : null;
+      memory.kind = persisted ? persisted.kind : currentKind();
+      memory.sourceApp = persisted ? persisted.sourceApp : srcApp.value;
+      memory.sourceGuest = persisted ? persisted.sourceGuest : srcGuest.value;
       memory.targetApp = tgtApp.value;
       memory.targetGuest = tgtGuest.value;
-      memory.scopes = activeScopes();
-      memory.preserve = preserve.checkbox.checked;
-      memory.lookupText = lookupTa.value;
-      memory.goal = currentGoal();
+      memory.scopes = persisted ? [...persisted.scopes] : activeScopes();
+      memory.preserve = persisted ? persisted.preserve : preserve.checkbox.checked;
+      memory.lookupText = persisted ? persisted.lookupText : lookupTa.value;
+      memory.goal = persisted ? persisted.goal : currentGoal();
       if (srcGuest.value) sourceGuestDetails.details.open = true;
       if (tgtGuest.value) targetGuestDetails.details.open = true;
       sourceNote.refresh();
@@ -10233,6 +10420,8 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
       bump();
       if (ready && isFresh() !== viewsFresh) renderViews();
       refreshWorkflow();
+      if (restoreNote) panel.setStatus(restoreNote, "info");
+      return restoreNote;
     }
     function renderViews() {
       viewsFresh = isFresh();
@@ -10240,7 +10429,11 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
       editView.render();
     }
     function onScopesChanged() {
-      memory.scopes = activeScopes();
+      if (restore && !restoreStillApplies(restore)) {
+        onInputsChanged();
+        return;
+      }
+      memory.scopes = restore ? [...restore.before.scopes] : activeScopes();
       fieldNotice.hidden = !shouldWarnMissingFieldSettings(activeScopes()) || !activeScopes().length;
       bump();
       if (session && isFresh()) recompose();
@@ -10306,6 +10499,7 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
       const file = jsonFile.files?.[0];
       if (!file) return;
       jsonFile.value = "";
+      const priorBefore = restore ? restore.before : captureRestoreBefore();
       jsonBundle = null;
       jsonBundles = [];
       jsonToken = "";
@@ -10316,16 +10510,35 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
       } catch {
         throw new Error("設定JSONの読み込みに失敗しました（JSON形式が不正です）");
       }
+      if (isDeployBackupFile(parsed)) {
+        const prepared = prepareSourceRestoreFromFile(parsed);
+        if (!prepared.ok) throw new Error(prepared.message);
+        beginRestore(prepared.plan, file.name, priorBefore);
+        panel.setStatus(`本番反映のバックアップを読み込みました（アプリ #${prepared.plan.targetAppId}）。バックアップから戻す設定にしました。「差分を抽出する」で戻す内容を確認してください。まだ書き込んでいません。`, "ok");
+        return;
+      }
       jsonBundles = pickAllSettingsBundles(parsed, "source", true);
       renderJsonAppSelect();
       jsonBundle = jsonBundles[0];
       jsonToken = `${file.name}:${file.size}:${file.lastModified}:${Date.now()}`;
       jsonFileName = file.name;
-      onInputsChanged();
-      panel.setStatus(`反映元の設定JSONを読み込みました（アプリ #${jsonBundle?.appId || "-"}）。`, "ok");
+      const note = onInputsChanged();
+      panel.setStatus(`${note ? `${note} ` : ""}反映元の設定JSONを読み込みました（アプリ #${jsonBundle?.appId || "-"}）。`, "ok");
     }));
     jsonAppSelect.addEventListener("change", () => {
-      jsonBundle = jsonBundles[Number(jsonAppSelect.value)];
+      const index = Number(jsonAppSelect.value);
+      jsonBundle = jsonBundles[index];
+      if (restore && jsonToken === restore.token) {
+        const chosen = restoreSelectionFor(restore.plan, index);
+        if (chosen) {
+          tgtApp.value = chosen.targetAppId;
+          tgtGuest.value = chosen.targetGuestId;
+          setScopes(chosen.scopes);
+          restore.targetAppId = chosen.targetAppId;
+          restore.targetGuestId = chosen.targetGuestId;
+          restore.scopes = [...chosen.scopes];
+        }
+      }
       onInputsChanged();
     });
     jsonClearBtn.addEventListener("click", () => {
@@ -10334,9 +10547,126 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
       jsonToken = "";
       jsonFileName = "";
       jsonFile.value = "";
-      onInputsChanged();
-      panel.setStatus("読み込んだ設定JSONをクリアしました。設定JSONを選び直してください。", "info");
+      const note = onInputsChanged();
+      panel.setStatus(`${note ? `${note} ` : ""}読み込んだ設定JSONをクリアしました。設定JSONを選び直してください。`, "info");
     });
+    function captureRestoreBefore() {
+      return {
+        kind: currentKind(),
+        sourceApp: srcApp.value,
+        sourceGuest: srcGuest.value,
+        scopes: activeScopes(),
+        preserve: preserve.checkbox.checked,
+        lookupText: lookupTa.value,
+        goal: currentGoal(),
+        jsonBundle,
+        jsonBundles: [...jsonBundles],
+        jsonToken,
+        jsonFileName
+      };
+    }
+    function setScopes(keys) {
+      const wanted = new Set(keys);
+      for (const chip of chips) chip.checkbox.checked = wanted.has(chip.checkbox.value);
+    }
+    function setGoal(goal) {
+      goalProduction.input.checked = goal === "production";
+      goalPreview.input.checked = goal === "preview";
+    }
+    function restoring() {
+      return !!restore && jsonToken === restore.token && !!jsonBundle;
+    }
+    function restoreLabel() {
+      return restore ? restoreSourceLabel(extractAppNameFromBundle(jsonBundle) || `App ${restore.targetAppId}`, restore.plan.generatedAt) : "";
+    }
+    function beginRestore(plan, fileName, before) {
+      jsonBundles = plan.bundles;
+      renderJsonAppSelect();
+      jsonBundle = plan.bundle;
+      jsonAppSelect.value = String(plan.bundleIndex);
+      jsonToken = `backup:${plan.generatedAt}:${Date.now()}`;
+      jsonFileName = fileName;
+      jsonFile.value = "";
+      kindSelect.value = "json";
+      tgtApp.value = plan.targetAppId;
+      tgtGuest.value = plan.targetGuestId;
+      preserve.checkbox.checked = false;
+      lookupTa.value = "";
+      setScopes(plan.scopes);
+      setGoal(plan.goal);
+      restore = { token: jsonToken, plan, targetAppId: plan.targetAppId, targetGuestId: plan.targetGuestId, scopes: [...plan.scopes], goal: plan.goal, before };
+      session = null;
+      extractionStale = false;
+      carryNote = "";
+      sessionRestoreLabel = "";
+      clearConfirmation();
+      onInputsChanged();
+      renderViews();
+      showStage("setup");
+    }
+    function startRestore(request) {
+      if (busy) return false;
+      const prepared = prepareSourceRestore(request);
+      if (!prepared.ok) {
+        panel.setStatus(prepared.message, "err");
+        return false;
+      }
+      const name = extractAppNameFromBundle(prepared.plan.bundle);
+      beginRestore(prepared.plan, restoreSourceLabel(name || `App ${prepared.plan.targetAppId}`, prepared.plan.generatedAt), restore ? restore.before : captureRestoreBefore());
+      panel.setStatus(`バックアップから戻す設定にしました（アプリ #${prepared.plan.targetAppId}）。「差分を抽出する」で戻す内容を確認してください。まだ書き込んでいません。`, "info");
+      return true;
+    }
+    function restoreStillApplies(state3) {
+      return currentKind() === "json" && jsonToken === state3.token && tgtApp.value.trim() === state3.targetAppId && tgtGuest.value.trim() === state3.targetGuestId && !preserve.checkbox.checked && lookupTa.value.trim() === "" && activeScopes().every((key) => state3.scopes.includes(key));
+    }
+    function endRestore() {
+      const state3 = restore;
+      if (!state3) return "";
+      restore = null;
+      const before = state3.before;
+      let reverted = false;
+      if (jsonToken === state3.token) {
+        jsonBundle = before.jsonBundle;
+        jsonBundles = before.jsonBundles;
+        jsonToken = before.jsonToken;
+        jsonFileName = before.jsonFileName;
+        renderJsonAppSelect();
+        if (before.jsonBundle) jsonAppSelect.value = String(Math.max(0, before.jsonBundles.indexOf(before.jsonBundle)));
+        jsonFile.value = "";
+        if (currentKind() === "json") {
+          kindSelect.value = before.kind;
+          srcApp.value = before.sourceApp;
+          srcGuest.value = before.sourceGuest;
+        }
+        reverted = true;
+      }
+      if (!preserve.checkbox.checked && before.preserve) {
+        preserve.checkbox.checked = true;
+        reverted = true;
+      }
+      if (lookupTa.value.trim() === "" && before.lookupText !== "") {
+        lookupTa.value = before.lookupText;
+        reverted = true;
+      }
+      const selected = activeScopes();
+      if (selected.length === state3.scopes.length && selected.every((key) => state3.scopes.includes(key)) && !(before.scopes.length === selected.length && before.scopes.every((key) => selected.includes(key)))) {
+        setScopes(before.scopes);
+        reverted = true;
+      }
+      if (currentGoal() === state3.goal && state3.goal !== before.goal) {
+        setGoal(before.goal);
+        reverted = true;
+      }
+      session = null;
+      extractionStale = false;
+      sessionRestoreLabel = "";
+      clearConfirmation();
+      return reverted ? "バックアップから戻す設定を終了しました。反映元・保持・参照先変換・項目・目標のうち、変えていないものを戻す前の値に戻しました。" : "バックアップから戻す設定を終了しました。";
+    }
+    function syncRestore() {
+      if (!restore || restoreStillApplies(restore)) return "";
+      return endRestore();
+    }
     function recompose() {
       window.clearTimeout(composeTimer);
       composeTimer = 0;
@@ -10449,7 +10779,12 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
         if (kind !== "json") sourceNote.adopt({ ok: true, appId: identities.source.appId, name: identities.source.name, code: identities.source.code });
         targetNote.adopt({ ok: true, appId: identities.target.appId, name: identities.target.name, code: identities.target.code });
         const preview = await previewReflectStandalone(options, (message) => panel.setStatus(message, "busy"));
+        const previous = extractionStale && session && session.signature === signature ? session : null;
         session = createSourceSession({ signature, opts: options, identities, sourceEnvironment: kind, preview });
+        extractionStale = false;
+        staleReason = "";
+        sessionRestoreLabel = restoring() ? restoreSourceLabel(identities.target.name, restore.plan.generatedAt) : "";
+        carryNote = previous ? describeCarryOver(carryOverSession(session, previous)) : "";
         bump();
         clearConfirmation();
         recompose();
@@ -10457,9 +10792,10 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
         showStage("select");
         const counts = countExtraction(preview.entries);
         const summary = describeExtractionSummary(counts);
-        if (counts.error) panel.setStatus(`${summary}取得失敗の項目は、反映しない項目から外すか、抽出し直してください。まだ書き込んでいません。`, "warn");
-        else if (!counts.change) panel.setStatus(`${summary}まだ書き込んでいません。`, "info");
-        else panel.setStatus(`${summary}反映する変更を選んでください。まだ書き込んでいません。`, "ok");
+        const carried = carryNote ? ` ${carryNote}` : "";
+        if (counts.error) panel.setStatus(`${summary}取得失敗の項目は、反映しない項目から外すか、抽出し直してください。まだ書き込んでいません。${carried}`, "warn");
+        else if (!counts.change) panel.setStatus(`${summary}まだ書き込んでいません。${carried}`, "info");
+        else panel.setStatus(`${summary}反映する変更を選んでください。まだ書き込んでいません。${carried}`, "ok");
       });
     }
     const confirmBtn = makeButton("最終確認に進む", "primary");
@@ -10481,7 +10817,7 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
     let pendingAck = makeCheck({ label: "", checked: false });
     confirmCard.body.append(confirmBody, ack.label, confirmInputWrap, confirmStatus);
     function confirmationToken() {
-      return session && isFresh() ? `${session.id}:${revision}:${currentGoal()}` : "";
+      return session && isFresh() && !extractionStale ? `${session.id}:${revision}:${currentGoal()}` : "";
     }
     function clearConfirmation() {
       confirmedToken = "";
@@ -10512,12 +10848,13 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
       return { root: root2, dd };
     }
     function sourceLabelText(current) {
+      if (sessionRestoreLabel) return sessionRestoreLabel;
       const identity = current.identities.source;
       const where = current.sourceEnvironment === "json" ? "設定JSON" : current.sourceEnvironment === "preview" ? "プレビュー設定" : "本番設定";
       return `${identity.name}（#${identity.appId}・${where}）`;
     }
     function openConfirmation() {
-      if (busy || !session || !isFresh()) return;
+      if (busy || !session || !isFresh() || extractionStale) return;
       flushRecompose();
       if (stageBlocker()) return;
       const run = sectionsToRun(session.composed, activeScopes());
@@ -10623,8 +10960,11 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
     const saveJsonBtn = makeButton("結果JSONを保存", "sub");
     const saveRecordBtn = makeButton("記録をMarkdownで保存", "sub");
     const copyRecordBtn = makeButton("記録をコピー", "sub");
+    const restoreBtn = makeButton("バックアップから戻す", "sub");
+    restoreBtn.dataset.sourceRestore = "true";
+    restoreBtn.title = "保存したバックアップを反映元にして、反映先との差分を確認します（この操作では書き込みません）";
     const openSettingsBtn = makeButton("反映先アプリの設定画面を開く", "sub");
-    resultTools.append(saveJsonBtn, saveRecordBtn, copyRecordBtn, openSettingsBtn);
+    resultTools.append(saveJsonBtn, saveRecordBtn, copyRecordBtn, restoreBtn, openSettingsBtn);
     const resultGrid = el("div", "kus-ds-result-grid");
     resultGrid.append(resultHead, resultNotes, applyCard.card, deployCard.card, resultTools);
     resultCard.body.appendChild(resultGrid);
@@ -10707,6 +11047,8 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
         resultNotes.appendChild(note);
       }
       resultNotes.appendChild(el("div", "kus-dp-info", sourceUndoGuidance(last.context.goal, last.context.targetPending)));
+      restoreBtn.hidden = !pickSourceRestoreRequest(result, last.context.target);
+      restoreBtn.disabled = busy;
     }
     function recordInput(last) {
       return { ...last.context, finishedAt: last.finishedAt, result: last.result };
@@ -10737,6 +11079,12 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
       window.open(`${window.location.origin}${appSettingsPath(last.context.target)}`, "_blank", "noopener");
       panel.setStatus(`アプリ #${last.context.target.appId} の設定画面を開きました。`, "info");
     });
+    restoreBtn.addEventListener("click", () => {
+      const last = memory.lastRun;
+      const request = last ? pickSourceRestoreRequest(last.result, last.context.target) : null;
+      if (!last || !request || busy) return;
+      startRestore(request);
+    });
     async function startRun() {
       if (busy || !confirmationReady() || !session) return;
       flushRecompose();
@@ -10749,7 +11097,7 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
       const source = current.identities.source;
       const context = {
         goal,
-        source: { appId: source.appId, guestId: source.guestId, name: source.name, environment: current.sourceEnvironment },
+        source: { appId: source.appId, guestId: source.guestId, name: sessionRestoreLabel || source.name, environment: current.sourceEnvironment },
         target: { appId: target.appId, guestId: target.guestId, name: target.name },
         preserveTargetOnly: !!current.opts.preserveTargetOnly,
         lookupMap: { ...current.opts.lookupMap || {} },
@@ -10776,6 +11124,7 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
         const last = { result, context, finishedAt: (/* @__PURE__ */ new Date()).toISOString() };
         memory.lastRun = last;
         session = null;
+        extractionStale = false;
         running = false;
         renderFinalProgress(last);
       };
@@ -10806,7 +11155,11 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
             memory.lastRun = previous;
             if (previous) renderFinalProgress(previous);
             renderResultCard();
+            extractionStale = true;
+            staleReason = firstLines(reason, 1).replace(/[。.]\s*$/, "");
+            clearConfirmation();
             showStage("edit");
+            refreshWorkflow();
             throw error;
           }
           const rows = progress?.rows() || [];
@@ -10907,6 +11260,46 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
       head.append(el("h2", "", heads[def.id][0]), el("p", "", heads[def.id][1]));
       stages[def.id].appendChild(head);
     }
+    const restoreBanners = [];
+    for (const stageId of ["setup", "select", "edit", "confirm"]) {
+      const root2 = el("div", "kus-ds-note kus-ds-note--warn kus-ds-restore-notice");
+      root2.dataset.restoreNotice = stageId;
+      root2.hidden = true;
+      const body = el("span");
+      root2.append(el("strong", "", RESTORE_NOTICE_TITLE), body);
+      stages[stageId].appendChild(root2);
+      restoreBanners.push({ root: root2, body });
+    }
+    const staleBanners = [];
+    for (const stageId of ["select", "edit"]) {
+      const root2 = el("div", "kus-ds-note kus-ds-note--warn");
+      root2.dataset.staleExtraction = stageId;
+      root2.setAttribute("role", "alert");
+      root2.hidden = true;
+      const body = el("span");
+      root2.append(el("strong", "", "抽出結果が古くなりました"), body);
+      stages[stageId].appendChild(root2);
+      staleBanners.push({ root: root2, body });
+    }
+    const carryBanner = el("div", "kus-ds-note kus-ds-note--info");
+    carryBanner.dataset.carryOver = "true";
+    carryBanner.setAttribute("aria-live", "polite");
+    carryBanner.hidden = true;
+    stages.select.appendChild(carryBanner);
+    function paintBanners(fresh) {
+      const restoreText = restoring() ? `${restoreLabel()}を反映元にしています。${RESTORE_NOTICE_BODY}` : "";
+      for (const banner of restoreBanners) {
+        banner.root.hidden = !restoreText;
+        banner.body.textContent = restoreText;
+      }
+      const staleText = fresh && extractionStale ? `書き込み前の確認で止めたため、まだ何も書き込んでいません（${staleReason || "反映先が更新されました"}）。「差分を抽出し直す」を押してください。選択と入力欄の修正は、抽出し直した後もできるだけ引き継ぎます。` : "";
+      for (const banner of staleBanners) {
+        banner.root.hidden = !staleText;
+        banner.body.textContent = staleText;
+      }
+      carryBanner.hidden = !fresh || !carryNote || extractionStale;
+      carryBanner.textContent = carryNote;
+    }
     stages.setup.appendChild(setupStage);
     stages.select.appendChild(selectView.root);
     stages.edit.appendChild(editView.root);
@@ -10929,7 +11322,7 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
     });
     toEditBtn.addEventListener("click", () => {
       flushRecompose();
-      if (!session || !isFresh() || editEntryBlocker()) return;
+      if (!session || !isFresh() || extractionStale || editEntryBlocker()) return;
       showStage("edit");
     });
     dockActions.append(backBtn, extractBtn, toEditBtn, confirmBtn, runBtn);
@@ -10949,41 +11342,44 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
     function dockTitle() {
       if (activeStage === "setup") {
         const kind = currentKind();
-        return `反映元 ${kind === "json" ? "設定JSON" : `#${srcApp.value.trim() || "－"}`} → 反映先 #${tgtApp.value.trim() || "－"} · ${currentGoal() === "production" ? "本番まで反映" : "プレビューまで"}`;
+        return `反映元 ${restoring() ? "バックアップ" : kind === "json" ? "設定JSON" : `#${srcApp.value.trim() || "－"}`} → 反映先 #${tgtApp.value.trim() || "－"} · ${currentGoal() === "production" ? "本番まで反映" : "プレビューまで"}`;
       }
       if (activeStage === "result") return memory.lastRun ? describeRoute(memory.lastRun.context.source.name, memory.lastRun.context.target.name, memory.lastRun.context.goal) : "実行結果";
       return `選んだ変更 ${selectedTotal()} 件 · ${currentGoal() === "production" ? "本番まで反映" : "プレビューまで"}`;
     }
     refreshWorkflow = () => {
       const fresh = isFresh();
-      const blocker = activeStage === "setup" ? setupBlocker() : "";
+      const stale = fresh && extractionStale;
+      const usable = fresh && !stale;
+      const blocker = activeStage === "setup" || stale ? setupBlocker() : "";
       const stageProblem = fresh ? stageBlocker() : "";
       backBtn.hidden = activeStage === "setup";
-      extractBtn.hidden = activeStage !== "setup";
+      extractBtn.hidden = !(activeStage === "setup" || stale && (activeStage === "select" || activeStage === "edit"));
       toEditBtn.hidden = activeStage !== "select";
       confirmBtn.hidden = activeStage !== "edit";
       runBtn.hidden = activeStage !== "confirm";
       backBtn.disabled = busy;
       extractBtn.disabled = busy || !!blocker;
-      toEditBtn.disabled = busy || !fresh || !!editEntryBlocker();
-      confirmBtn.disabled = busy || !fresh || !!stageProblem;
+      toEditBtn.disabled = busy || !usable || !!editEntryBlocker();
+      confirmBtn.disabled = busy || !usable || !!stageProblem;
       setButtonText(backBtn, activeStage === "select" ? "対象を変更" : activeStage === "edit" ? "差分の選択に戻る" : activeStage === "confirm" ? "内容の修正に戻る" : "対象を選び直す");
-      setButtonText(extractBtn, fresh ? "抽出し直す" : "差分を抽出する");
+      setButtonText(extractBtn, stale ? "差分を抽出し直す" : fresh ? "抽出し直す" : "差分を抽出する");
       navButtons.select.disabled = !fresh;
       navButtons.edit.disabled = !fresh || !!editEntryBlocker();
-      navButtons.confirm.disabled = !fresh || !!stageProblem || busy;
+      navButtons.confirm.disabled = !usable || !!stageProblem || busy;
       let message = "";
       if (activeStage === "setup") {
-        message = blocker ? `次に進むには：${blocker}` : fresh ? "抽出済みの差分があります。「差分を選ぶ」へ進むか、抽出し直してください。" : "反映元と反映先の差分を抽出します。書き込みは行いません。";
+        message = blocker ? `次に進むには：${blocker}` : stale ? STALE_BLOCKER : fresh ? "抽出済みの差分があります。「差分を選ぶ」へ進むか、抽出し直してください。" : "反映元と反映先の差分を抽出します。書き込みは行いません。";
       } else if (activeStage === "select" || activeStage === "edit") {
-        message = !fresh ? "入力が変わりました。「対象を選ぶ」で差分を抽出し直してください。" : (activeStage === "select" ? editEntryBlocker() : stageProblem) ? `次に進むには：${activeStage === "select" ? editEntryBlocker() : stageProblem}` : activeStage === "select" ? `${selectedTotal()} 件の変更を選んでいます。内容を修正するか、そのまま進めます。` : `${selectedTotal()} 件の変更を反映します。最終確認へ進んでください。`;
+        message = stale ? `次に進むには：${STALE_BLOCKER}` : !fresh ? "入力が変わりました。「対象を選ぶ」で差分を抽出し直してください。" : (activeStage === "select" ? editEntryBlocker() : stageProblem) ? `次に進むには：${activeStage === "select" ? editEntryBlocker() : stageProblem}` : activeStage === "select" ? `${selectedTotal()} 件の変更を選んでいます。内容を修正するか、そのまま進めます。` : `${selectedTotal()} 件の変更を反映します。最終確認へ進んでください。`;
       } else if (activeStage === "confirm") {
         message = confirmationReady() ? "内容を確認できました。実行すると反映先が変わります。" : pendingRequired ? "確認のチェック、未公開の変更の了承、入力をすると、実行できます。" : "確認のチェックと入力をすると、実行できます。";
       } else {
         message = busy ? "実行中です。終わるまでお待ちください。「中止」で、次の書き込みの前に止められます。" : memory.lastRun ? "結果を確認してください。" : "まだ実行していません。";
       }
-      const blocked = activeStage === "setup" && !!blocker || (activeStage === "select" || activeStage === "edit") && fresh && !!(activeStage === "select" ? editEntryBlocker() : stageProblem);
+      const blocked = activeStage === "setup" && !!blocker || (activeStage === "select" || activeStage === "edit") && fresh && (stale || !!(activeStage === "select" ? editEntryBlocker() : stageProblem));
       dockCopy.replaceChildren(el("strong", "", dockTitle()), el("span", `kus-dp-dock-msg${blocked ? " kus-dp-dock-reason" : ""}`, message));
+      paintBanners(fresh);
       panel.result.hidden = activeStage === "confirm";
       panel.setPrimaryAction(activeStage === "setup" ? extractBtn : activeStage === "select" ? toEditBtn : activeStage === "edit" ? confirmBtn : noInputSubmit);
     };
@@ -11068,7 +11464,8 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
           panel.setStatus(message.text, message.tone);
         }
       },
-      setBusy
+      setBusy,
+      startRestore
     };
   }
 
@@ -11920,7 +12317,16 @@ ${P2} .kus-rl-items__more{margin-top:8px}
     const copyRecordBtn = makeButton("記録をコピー", "sub");
     const retryBtn = makeButton("失敗・未実行だけ選び直す", "sub");
     const openSettingsBtn = makeButton("アプリの設定画面を開く", "sub");
-    resultTools.append(saveJsonBtn, saveRecordBtn, copyRecordBtn, retryBtn, openSettingsBtn);
+    let restoreOptions = [];
+    const restoreSelect = makeSelect([]);
+    restoreSelect.setAttribute("aria-label", "バックアップから戻すアプリ");
+    restoreSelect.dataset.deployRestoreApp = "true";
+    restoreSelect.hidden = true;
+    const restoreBtn = makeButton("バックアップから戻す", "sub");
+    restoreBtn.dataset.deployRestore = "true";
+    restoreBtn.title = "保存したバックアップとの差分を確認します（この操作では書き込みません）";
+    restoreBtn.hidden = true;
+    resultTools.append(saveJsonBtn, saveRecordBtn, copyRecordBtn, retryBtn, restoreSelect, restoreBtn, openSettingsBtn);
     resultCard.body.append(resultHead, resultPills, resultNotes, progressHost, resultTools);
     const resultEmpty = el("div", "kus-dp-empty", "まだ実行していません。対象を選び、変更を確認してから実行してください。");
     function renderResultCard() {
@@ -11981,6 +12387,19 @@ ${P2} .kus-rl-items__more{margin-top:8px}
       resultNotes.appendChild(el("div", "kus-dp-info", undoGuidance(mode)));
       retryBtn.disabled = busy || !retryableOutcomes(result.apps).length;
       retryBtn.hidden = !retryableOutcomes(result.apps).length;
+      const chosen = restoreSelect.value;
+      restoreOptions = pickPublishRestoreOptions(result);
+      restoreSelect.replaceChildren(...restoreOptions.map((option, index) => {
+        const node = document.createElement("option");
+        node.value = String(index);
+        node.textContent = formatDeployApp(option);
+        return node;
+      }));
+      if (chosen && Number(chosen) < restoreOptions.length) restoreSelect.value = chosen;
+      restoreSelect.hidden = restoreOptions.length < 2;
+      restoreSelect.disabled = busy;
+      restoreBtn.hidden = !restoreOptions.length;
+      restoreBtn.disabled = busy;
       openSettingsBtn.hidden = result.apps.length !== 1;
       saveJsonBtn.disabled = busy;
       saveRecordBtn.disabled = busy;
@@ -12023,6 +12442,17 @@ ${P2} .kus-rl-items__more{margin-top:8px}
       refreshReview();
       showStage("setup");
       panel.setStatus(`失敗・未実行の ${retry.length} アプリを対象に選び直しました。未公開の変更を確認し直してください。`, "info");
+    });
+    restoreBtn.addEventListener("click", () => {
+      const option = restoreOptions[Number(restoreSelect.value) || 0];
+      if (!option || busy) return;
+      const prepared = prepareSourceRestore(option.request);
+      if (!prepared.ok) {
+        panel.setStatus(prepared.message, "err");
+        return;
+      }
+      switchFlow("source");
+      sourceFlow.startRestore(option.request);
     });
     openSettingsBtn.addEventListener("click", () => {
       const last = memory2.lastRun;

@@ -8,6 +8,7 @@
 
 import { clipText } from '../deploy/sourceDisplay.js';
 import { hasJsonOverride, hasOverride, type SourceSession } from '../deploy/sourceSession.js';
+import { getAt, parsePointer } from '../reflect/selectionPointer.js';
 import type { SectionSelectionModel, SelectableChange, SelectableEditable } from '../reflect/selectionTypes.js';
 import { el, firstLines, setButtonText } from './deployProgressView.js';
 import { makeButton, makeInput, makeSelect, makeTextarea } from './litePanelTheme.js';
@@ -61,6 +62,11 @@ export function editableDefaultText(editable: Pick<SelectableEditable, 'value' |
   return (option ? option[1] : raw) || '（空）';
 }
 
+/** JSON で直した項目の入力欄に表示する値（JSON の同じ場所の値）。JSON にその場所が無ければ undefined（空の表示）。 */
+export function jsonValueAt(json: unknown, pointer: string): unknown {
+  try { return getAt(json, parsePointer(pointer)); } catch { return undefined; }
+}
+
 /** 入力欄の文字列を、既定の値と同じ型に戻す（数値・真偽値の既定は型を保つ）。 */
 export function coerceEditable(text: string, like: unknown): unknown {
   if (typeof like === 'number') { const n = Number(text); return text.trim() !== '' && Number.isFinite(n) ? n : text; }
@@ -68,7 +74,7 @@ export function coerceEditable(text: string, like: unknown): unknown {
   return text;
 }
 
-interface EditRowView { section: string; change: SelectableChange; editable: SelectableEditable; row: HTMLElement; reset: HTMLButtonElement; controls: Array<HTMLInputElement | HTMLSelectElement>; setControl(value: unknown): void }
+interface EditRowView { section: string; change: SelectableChange; editable: SelectableEditable; row: HTMLElement; reset: HTMLButtonElement; controls: Array<HTMLInputElement | HTMLSelectElement>; setControl(value: unknown): void; /** 直前に描いたとき、JSON 優先で入力欄を無効にしていたか */ locked: boolean }
 
 interface EditCardView {
   sectionKey: string;
@@ -116,6 +122,11 @@ export function createEditView(host: EditViewHost): EditView {
 
   function currentValue(session: SourceSession, sectionKey: string, editable: SelectableEditable): unknown {
     return hasOverride(session, sectionKey, editable.pointer) ? session.states[sectionKey].overrides[editable.pointer] : editable.value;
+  }
+
+  /** 入力欄に表示する値。JSON で直している間は JSON の値（入力欄は無効で、選択・入力欄より JSON を優先して送る）。 */
+  function displayValue(session: SourceSession, sectionKey: string, editable: SelectableEditable): unknown {
+    return hasJsonOverride(session, sectionKey) ? jsonValueAt(session.states[sectionKey].json, editable.pointer) : currentValue(session, sectionKey, editable);
   }
 
   function buildControl(session: SourceSession, view: EditCardView, sectionKey: string, change: SelectableChange, editable: SelectableEditable) {
@@ -175,8 +186,8 @@ export function createEditView(host: EditViewHost): EditView {
     fallback.title = clipText(defaultText, 2000);
     meta.append(fallback, reset);
     row.append(label, control, meta);
-    const rowView: EditRowView = { section: sectionKey, change, editable, row, reset, controls, setControl };
-    setControl(currentValue(session, sectionKey, editable));
+    const rowView: EditRowView = { section: sectionKey, change, editable, row, reset, controls, setControl, locked: false };
+    setControl(displayValue(session, sectionKey, editable));
     const paint = () => paintRow(rowView);
     view.rows.set(`${change.id}|${editable.pointer}`, rowView);
     paintRow(rowView);
@@ -186,11 +197,15 @@ export function createEditView(host: EditViewHost): EditView {
   function paintRow(row: EditRowView) {
     const session = host.session();
     if (!session) return;
-    const changed = !same(currentValue(session, row.section, row.editable), row.editable.value);
+    const locked = hasJsonOverride(session, row.section);
+    // JSON で直している間は入力欄に JSON の値を出す。JSON の修正を取り消したら、入力欄の修正（なければ既定）へ戻す。
+    if (locked || row.locked) row.setControl(displayValue(session, row.section, row.editable));
+    row.locked = locked;
+    const changed = !same(displayValue(session, row.section, row.editable), row.editable.value);
     row.row.classList.toggle('kus-ds-edit--changed', changed);
     row.row.dataset.changed = String(changed);
-    row.reset.hidden = !changed;
-    const locked = hasJsonOverride(session, row.section);
+    row.row.dataset.jsonLocked = String(locked);
+    row.reset.hidden = !changed || locked;
     for (const control of row.controls) control.disabled = locked;
     row.reset.disabled = locked;
   }
@@ -248,7 +263,7 @@ export function createEditView(host: EditViewHost): EditView {
     head.append(el('strong', 'kus-ds-card__title', model.label), counts, tools);
     card.appendChild(head);
 
-    const jsonNote = el('div', 'kus-ds-note kus-ds-note--info', 'JSONで修正中です。この項目は、選択・入力欄より JSON の内容を優先します。入力欄は使えません。');
+    const jsonNote = el('div', 'kus-ds-note kus-ds-note--info', 'JSONで修正中です。この項目は、選択・入力欄より JSON の内容を優先します。入力欄には JSON の値を表示していて、ここでは直せません。');
     jsonNote.dataset.jsonActive = sectionKey;
     card.appendChild(jsonNote);
 

@@ -489,7 +489,7 @@ async function main() {
     assert.match(await facts('changes').innerText(), /フィールド設定 1 件（合計 1 件）/, '削除される設定の件数（項目別）');
     assert.match(await facts('removed-fields').innerText(), /削除されるフィールド（2 件）[\s\S]*レコードの値も削除され、元に戻せません[\s\S]*営業管理（#101）: 旧項目（old_code）/);
     assert.match(await facts('backup').innerText(), /反映前の本番設定（3 アプリ分。変更のあるJS\/CSSはファイル本体も含む）をJSONで保存してから反映します。/);
-    assert.match(await facts('undo').innerText(), /本番への反映は取り消せません。戻すときは、バックアップJSONをプレビュー反映の反映元（設定JSON）に読み込んでプレビューへ戻し、このツールで本番へ反映します。削除したフィールドの値は戻りません。/);
+    assert.match(await facts('undo').innerText(), /本番への反映は取り消せません。戻すときは、結果画面の「バックアップから戻す」で、反映前のバックアップとの差分を確認してから、本番へ反映します。削除したフィールドの値は戻りません。/);
     assert.equal(await runButton().innerText(), '確認した 3 アプリを本番へ反映');
     assert.equal(await runButton().isDisabled(), true, '確認前は実行できない');
     assert.equal(await confirmBox().getAttribute('aria-label'), '確認用の対象アプリ数');
@@ -553,7 +553,7 @@ async function main() {
     await toConfirm();
     assert.match(await facts('direction').innerText(), /プレビューの変更を破棄して本番の設定に戻す/);
     assert.match(await facts('backup').innerText(), /中止前のプレビューの設定（2 アプリ分）をJSONで保存してから、変更を中止します。/);
-    assert.match(await facts('undo').innerText(), /破棄した変更は、バックアップJSONをプレビュー反映で読み込むと戻せます。/);
+    assert.match(await facts('undo').innerText(), /破棄した変更は、結果画面の「バックアップから戻す」で、プレビューに戻せます。/);
     assert.equal(await facts('removed-fields').count(), 0, 'revert では削除されるフィールドの項目を出さない');
     assert.equal(await runButton().innerText(), '確認した 2 アプリの変更を中止');
     ok('revert mode');

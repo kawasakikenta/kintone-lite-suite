@@ -244,9 +244,14 @@ export interface DeployResultJson {
   blocked?: string;
   summary: ReturnType<typeof countOutcomes>;
   message: string;
-  backup?: DeployRunResult['backup'];
+  backup?: Omit<NonNullable<DeployRunResult['backup']>, 'content'>;
   apps: DeployAppOutcome[];
   logs: string[];
+}
+
+function omitBackupContent(backup: NonNullable<DeployRunResult['backup']>): Omit<NonNullable<DeployRunResult['backup']>, 'content'> {
+  const { content: _content, ...rest } = backup;
+  return { ...rest, unavailableFiles: [...(rest.unavailableFiles || [])] };
 }
 
 export function buildDeployResultJson(result: DeployRunResult): DeployResultJson {
@@ -261,7 +266,8 @@ export function buildDeployResultJson(result: DeployRunResult): DeployResultJson
     ...(result.blocked ? { blocked: result.blocked } : {}),
     summary: countOutcomes(result.apps),
     message: describeRunResult(result).text,
-    ...(result.backup ? { backup: result.backup } : {}),
+    // バックアップ JSON の本体（content）は結果 JSON に含めない（JS/CSS の本文を含み得る。ファイル名と件数だけ残す）。
+    ...(result.backup ? { backup: omitBackupContent(result.backup) } : {}),
     apps: result.apps.map((app) => ({ ...app })),
     logs: [...(result.logs || [])]
   };

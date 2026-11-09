@@ -429,7 +429,7 @@ export async function runDeployStandalone(opts: DeployRunOptions): Promise<Deplo
       block(`バックアップを保存できなかったため、反映を依頼していません（${reasonOf(error)}）。`);
       return finish();
     }
-    backup = { fileName, appCount: targets.length, generatedAt: built.file.generatedAt, environment: built.file.environment, unavailableFiles: built.unavailableFiles };
+    backup = { fileName, appCount: targets.length, generatedAt: built.file.generatedAt, environment: built.file.environment, unavailableFiles: built.unavailableFiles, content: built.file };
     log(`バックアップを保存しました（${fileName}、${targets.length} アプリ、${revert ? '中止前のプレビュー' : '反映前の本番'}）`);
 
     // 3. 反映
