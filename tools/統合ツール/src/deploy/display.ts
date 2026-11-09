@@ -289,6 +289,16 @@ export function describeRemovedField(field: DeployRemovedField): string {
   return field.table ? `${base}（テーブル ${field.table} 内）` : base;
 }
 
+/**
+ * 削除されるフィールドがあるアプリの、レコード数の表示（影響の大きさ）。
+ * 件数は閲覧できるレコードの数（kintone は閲覧権限のないレコードを数えない）。取得できなかったときも、止めずに「確認できませんでした」と示す。
+ */
+export function describeRecordCount(outcome: { ok: true; count: number } | { ok: false; message: string }): string {
+  return 'count' in outcome
+    ? `このアプリのレコード: ${outcome.count.toLocaleString('ja-JP')} 件（閲覧できるレコードの数）。削除するフィールドの値は、これらのレコードから削除されます。`
+    : `レコード数は確認できませんでした（${outcome.message}）。削除するフィールドの値は、すべてのレコードから削除されます。`;
+}
+
 export function formatRevisionPair(app: Pick<DeployAppInspection, 'productionRevision' | 'previewRevision'>): string {
   return `本番 ${app.productionRevision || '－'} → プレビュー ${app.previewRevision || '－'}`;
 }

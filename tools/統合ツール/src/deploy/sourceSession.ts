@@ -209,6 +209,14 @@ export interface CarryOverSummary {
   jsonLost: number;
 }
 
+/** 引き継ぐ元の選択と修正（前回の SourceSession、または保存ファイルから組み立てたもの）。 */
+export interface CarryOverSource {
+  selected: Record<string, Set<string>>;
+  /** 項目ごとの、選べた変更（選んでいたもの・外していたもの）の ID */
+  models: Record<string, { changes: ReadonlyArray<{ id: string }> } | undefined>;
+  states: Record<string, { overrides: Record<string, unknown>; json?: unknown }>;
+}
+
 /**
  * 同じ入力で差分を抽出し直したとき、前回の選択と修正をできるだけ引き継ぐ（next を書き換える）。
  * - 選択: 同じ change.id は前回の選択のとおり。今回だけにある変更は既定（選ぶ）。
@@ -216,7 +224,7 @@ export interface CarryOverSummary {
  * - JSON での修正は引き継がない（前回の反映先の内容を土台にした設定全体のため、更新後の反映先には使えない）。
  * 引き継げなかった件数を返す。
  */
-export function carryOverSession(next: SourceSession, previous: SourceSession): CarryOverSummary {
+export function carryOverSession(next: SourceSession, previous: CarryOverSource): CarryOverSummary {
   const summary: CarryOverSummary = { selectionKept: 0, selectionLost: 0, overridesKept: 0, overridesLost: 0, jsonLost: 0 };
   for (const [key, previousSelected] of Object.entries(previous.selected)) {
     const model = next.models[key];

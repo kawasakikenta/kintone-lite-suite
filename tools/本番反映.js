@@ -3888,6 +3888,22 @@ ${base}`
     }
   }
 
+  // src/tabs/deploy-record-count.ts
+  async function fetchRecordCountStandalone(app) {
+    try {
+      const response = await apiGet(buildApiPrefix(app.guestId || "", false), "/records.json", { app: app.appId, query: "limit 1", fields: ["$id"], totalCount: true });
+      const total = Number(response?.totalCount);
+      if (response?.totalCount === void 0 || response?.totalCount === null || !Number.isFinite(total) || total < 0) {
+        return { ok: false, message: "応答にレコード数がありませんでした" };
+      }
+      return { ok: true, count: total };
+    } catch (error) {
+      if (isRunCancelledError(error)) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, message: message.split("\n")[0].trim() || "原因不明" };
+    }
+  }
+
   // src/deploy/display.ts
   var DEPLOY_TARGET_LIMIT = 1e3;
   var DEPLOY_ATOMIC_LIMIT = 300;
@@ -4040,6 +4056,9 @@ ${base}`
     const label = String(field.label || "").trim();
     const base = label && label !== field.code ? `${label}（${field.code}）` : field.code;
     return field.table ? `${base}（テーブル ${field.table} 内）` : base;
+  }
+  function describeRecordCount(outcome) {
+    return "count" in outcome ? `このアプリのレコード: ${outcome.count.toLocaleString("ja-JP")} 件（閲覧できるレコードの数）。削除するフィールドの値は、これらのレコードから削除されます。` : `レコード数は確認できませんでした（${outcome.message}）。削除するフィールドの値は、すべてのレコードから削除されます。`;
   }
   function formatRevisionPair(app) {
     return `本番 ${app.productionRevision || "－"} → プレビュー ${app.previewRevision || "－"}`;
@@ -4734,7 +4753,7 @@ ${base}`
       return plan;
     }
     try {
-      let before, after, comparable3;
+      let before, after, comparable4;
       const uploads = [];
       if (key === "fieldSettings") {
         plan.behavior = "追加・更新（反映先だけの項目は保持）";
@@ -4854,7 +4873,7 @@ ${base}`
           if (source.scope !== void 0) after.scope = source.scope;
           if (target.scope !== void 0) before.scope = target.scope;
           const resolution = options.customizeFiles, names = customizeFileNames(source, target);
-          comparable3 = (value) => comparableCustomizePayload(value, resolution, names);
+          comparable4 = (value) => comparableCustomizePayload(value, resolution, names);
           const currentKeys = new Set(["desktop", "mobile"].flatMap((platform) => ["js", "css"].flatMap((kind) => (target[platform]?.[kind] || []).map((item) => item.file?.fileKey).filter(Boolean))));
           for (const platform of ["desktop", "mobile"]) for (const kind of ["js", "css"]) for (const [index, item] of after[platform][kind].entries()) {
             if (item.type !== "FILE") continue;
@@ -4881,7 +4900,7 @@ ${base}`
           plan.requiredFields = reflectRequiredFields("layoutSettings", after);
         }
       }
-      const shownBefore = comparable3 ? comparable3(before) : before, shownAfter = comparable3 ? comparable3(after) : after;
+      const shownBefore = comparable4 ? comparable4(before) : before, shownAfter = comparable4 ? comparable4(after) : after;
       diffValues(shownBefore, shownAfter, [], plan.changes);
       if (key === "layoutSettings") reclassifyLayoutRemovals(plan.changes, shownBefore?.layout, shownAfter?.layout, options.fieldLabels);
       try {
@@ -7382,46 +7401,6 @@ ${base}`
     };
   }
 
-  // src/reflect/targetPending.ts
-  var comparableResources = (list2) => Array.isArray(list2) ? list2.map((item) => item?.type === "FILE" ? { type: "FILE", name: item.file?.name ?? "", size: String(item.file?.size ?? "") } : item) : list2;
-  var comparable2 = (key, section) => {
-    if (!section || typeof section !== "object" || Array.isArray(section)) return stableReflectStringify(section);
-    const { revision: _revision, ...rest } = section;
-    if (key === "customizeSettings") {
-      for (const platform of ["desktop", "mobile"]) if (rest[platform] && typeof rest[platform] === "object") rest[platform] = { ...rest[platform], js: comparableResources(rest[platform].js), css: comparableResources(rest[platform].css) };
-    }
-    return stableReflectStringify(rest);
-  };
-  async function inspectTargetPendingChanges(opts, targetPreviewBundle) {
-    const unknown = (productionRevision2, previewRevision2, reason) => ({ state: "unknown", productionRevision: productionRevision2, previewRevision: previewRevision2, sectionKeys: [], message: `反映先プレビューに未公開の変更があるか確認できませんでした（${reason}）。` });
-    let productionRevision = "", previewRevision = "";
-    try {
-      const incomplete = opts.scopes.find((key) => !isCompleteReflectSection(targetPreviewBundle?.sections?.[key]));
-      if (incomplete) return unknown("", "", `反映先プレビューの${reflectSectionLabel(incomplete)}を取得できません`);
-      const revisions = new Set(opts.scopes.map((key) => String(targetPreviewBundle?.meta?.sectionRevisions?.[key] ?? targetPreviewBundle?.sections?.[key]?.revision ?? "")));
-      if (revisions.size !== 1) return unknown("", "", "取得中に反映先プレビューが更新された可能性があります");
-      previewRevision = [...revisions][0];
-      if (!/^\d+$/.test(previewRevision)) return unknown("", "", "反映先プレビューのrevisionがありません");
-      const response = await apiGet(buildApiPrefix(opts.targetGuestId || "", false), "/app/settings.json", { app: opts.targetAppId });
-      productionRevision = String(response?.revision ?? "");
-      if (!/^\d+$/.test(productionRevision)) return unknown("", previewRevision, "本番のrevisionがありません");
-      if (productionRevision === previewRevision) return { state: "clean", productionRevision, previewRevision, sectionKeys: [], message: "反映先プレビューに未公開の変更はありません。" };
-      const production = await fetchBundle({ appId: opts.targetAppId, guestId: opts.targetGuestId || "", preview: false, sections: opts.scopes, rawSettings: true });
-      const sectionKeys = [];
-      for (const key of opts.scopes) {
-        const before = production.sections?.[key], after = targetPreviewBundle?.sections?.[key];
-        if (!isCompleteReflectSection(before) || !isCompleteReflectSection(after)) return unknown(productionRevision, previewRevision, `${reflectSectionLabel(key)}を取得できません`);
-        if (comparable2(key, before) !== comparable2(key, after)) sectionKeys.push(key);
-      }
-      const customizeNote = opts.scopes.includes("customizeSettings") ? "。JS/CSSのファイルは名前とサイズだけで比べています" : "";
-      const message = sectionKeys.length ? `反映先プレビューには未公開の変更があります（${sectionKeys.map(reflectSectionLabel).join("、")}）。公開すると今回の反映と一緒に本番へ反映されます。` : `選択した項目には未公開の変更はありませんが、ほかの設定に未公開の変更がある可能性があります（設定の更新番号 revision が 本番 ${productionRevision} とプレビュー ${previewRevision} で異なります${customizeNote}）。`;
-      return { state: "pending", productionRevision, previewRevision, sectionKeys, message };
-    } catch (error) {
-      if (isRunCancelledError(error)) throw error;
-      return unknown(productionRevision, previewRevision, error?.message || String(error));
-    }
-  }
-
   // src/reflect/selectionPointer.ts
   var own4 = (target, key) => Object.prototype.hasOwnProperty.call(target, key);
   var isPlainObject = (value) => !!value && typeof value === "object" && !Array.isArray(value);
@@ -7903,6 +7882,410 @@ ${base}`
       jsonEditable: plan.sectionKey !== "customizeSettings" && plan.sectionKey !== "pluginSettings",
       ...NOTES[plan.sectionKey] ? { note: NOTES[plan.sectionKey] } : {}
     };
+  }
+
+  // src/deploy/sourceDisplay.ts
+  var searchCache = /* @__PURE__ */ new WeakMap();
+  function changeSearchText(change) {
+    let text = searchCache.get(change);
+    if (text === void 0) {
+      text = [change.groupLabel, ...change.labelPath, change.kind, change.beforeText, change.afterText].join("\n").toLowerCase();
+      searchCache.set(change, text);
+    }
+    return text;
+  }
+  function isFilterActive(filter) {
+    return !!filter.keyword.trim() || filter.kind !== "all";
+  }
+  function filterChanges(changes, filter) {
+    const words = filter.keyword.toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length && filter.kind === "all") return [...changes];
+    return changes.filter((change) => (filter.kind === "all" || change.kind === filter.kind) && (!words.length || words.every((word) => changeSearchText(change).includes(word))));
+  }
+  function groupChanges(changes) {
+    const groups = /* @__PURE__ */ new Map();
+    for (const change of changes) {
+      let group = groups.get(change.groupId);
+      if (!group) {
+        group = { groupId: change.groupId, groupLabel: change.groupLabel, changes: [] };
+        groups.set(change.groupId, group);
+      }
+      group.changes.push(change);
+    }
+    return [...groups.values()];
+  }
+  function groupCheckState(changes, selected) {
+    let count = 0;
+    for (const change of changes) if (selected.has(change.id)) count += 1;
+    return count === 0 ? "none" : count === changes.length ? "all" : "some";
+  }
+  function describePath(change) {
+    return change.labelPath.length ? change.labelPath.join(" / ") : change.groupLabel;
+  }
+  function clipText2(text, max = 160) {
+    const value = String(text ?? "");
+    return value.length > max ? `${value.slice(0, max)}…` : value;
+  }
+  function buildRequirementIndex(models) {
+    const byId = /* @__PURE__ */ new Map();
+    const dependents = /* @__PURE__ */ new Map();
+    for (const model of models) for (const change of model.changes) byId.set(change.id, change);
+    for (const change of byId.values()) {
+      for (const required of change.requires || []) {
+        if (!byId.has(required)) continue;
+        const list2 = dependents.get(required);
+        if (list2) list2.push(change.id);
+        else dependents.set(required, [change.id]);
+      }
+    }
+    return { byId, dependents };
+  }
+  function requiredToSelect(ids, index, selected) {
+    const seen = new Set(ids);
+    const added = [];
+    const queue = [...ids];
+    while (queue.length) {
+      const change = index.byId.get(queue.pop());
+      for (const required of change?.requires || []) {
+        if (seen.has(required) || !index.byId.has(required)) continue;
+        seen.add(required);
+        if (!selected.has(required)) added.push(required);
+        queue.push(required);
+      }
+    }
+    return added;
+  }
+  function dependentsToDeselect(ids, index, selected) {
+    const seen = new Set(ids);
+    const removed = [];
+    const queue = [...ids];
+    while (queue.length) {
+      for (const dependent of index.dependents.get(queue.pop()) || []) {
+        if (seen.has(dependent)) continue;
+        seen.add(dependent);
+        if (selected.has(dependent)) removed.push(dependent);
+        queue.push(dependent);
+      }
+    }
+    return removed;
+  }
+  function describeRequires(change, index) {
+    const names = (change.requires || []).map((id) => index.byId.get(id)).filter((item) => !!item).map((item) => describePath(item));
+    if (!names.length) return "";
+    const shown = names.slice(0, 3).join("、");
+    return `選ぶと一緒に選ばれる変更: ${shown}${names.length > 3 ? ` ほか ${names.length - 3} 件` : ""}`;
+  }
+  function entryTone(entry) {
+    return entry.status === "change" || entry.status === "same" ? entry.status : "error";
+  }
+  function countExtraction(entries, scopes, models) {
+    const counts = { change: 0, same: 0, error: 0, changes: 0 };
+    for (const entry of entries) {
+      if (scopes && !scopes.includes(entry.sectionKey)) continue;
+      counts[entryTone(entry)] += 1;
+      if (entry.status === "change") counts.changes += models?.[entry.sectionKey]?.changes.length ?? (entry.changeCount || 0);
+    }
+    return counts;
+  }
+  function describeStageStatus(stage) {
+    switch (stage) {
+      case "setup":
+        return "反映元と反映先の差分を抽出します。まだ書き込んでいません。";
+      case "select":
+        return "反映する変更を選んでください。まだ書き込んでいません。";
+      case "edit":
+        return "内容を確認し、必要なら直してください。まだ書き込んでいません。";
+      default:
+        return "最終確認です。内容を確認して、実行するとここから書き込みます。";
+    }
+  }
+  var EXTRACTION_COUNT_HELP = "「変更 N 件」は、下の項目で選べる変更の数です。レイアウト・アクセス権・通知・JS/CSS の一覧などは、配置や一覧の全体を 1 件と数えます。";
+  function describeExtractionSummary(counts) {
+    if (!counts.change && !counts.error) return "差分はありません。反映先は反映元と同じ設定です。";
+    const parts = [`差分のある項目 ${counts.change}`, `差分なし ${counts.same}`];
+    if (counts.error) parts.push(`取得失敗 ${counts.error}`);
+    return `${parts.join("・")}（変更 ${counts.changes} 件）。`;
+  }
+  function collectSelectionBlockers(input) {
+    const active2 = new Set(input.activeScopes);
+    const failed = [];
+    let selectedTotal = 0;
+    for (const entry of input.entries) {
+      if (!active2.has(entry.sectionKey)) continue;
+      const model = input.models[entry.sectionKey];
+      if (entryTone(entry) === "error" || !model && entry.status !== "same") {
+        const reason = [...entry.blockers || [], entry.message].filter(Boolean)[0] || "設定を取得できませんでした。";
+        failed.push({ sectionKey: entry.sectionKey, label: entry.label, message: String(reason).split("\n")[0] });
+      }
+    }
+    const problems = [];
+    for (const section of input.composed?.sections || []) {
+      if (!active2.has(section.sectionKey)) continue;
+      selectedTotal += section.selectedCount;
+      for (const error of section.errors || []) problems.push(`${section.label}: ${error}`);
+    }
+    for (const blocker of input.composed?.blockers || []) problems.push(blocker);
+    return {
+      processing: input.targetDeployStatus?.state === "processing" ? input.targetDeployStatus.message : "",
+      failed,
+      problems: [...new Set(problems)],
+      references: [...new Set(input.composed?.blockers || [])],
+      empty: !!input.composed && selectedTotal === 0
+    };
+  }
+  function firstEditEntryBlockerText(result) {
+    if (result.processing) return result.processing;
+    if (result.failed.length) return firstBlockerText({ ...result, problems: [] });
+    if (result.references.length) return result.references[0];
+    if (result.empty) return "反映する差分を選んでください。";
+    return "";
+  }
+  function firstBlockerText(result) {
+    if (result.processing) return result.processing;
+    if (result.failed.length) return `取得失敗の項目（${result.failed.map((item) => item.label).join("、")}）は、反映しない項目から外すか、差分を抽出し直してください。`;
+    if (result.problems.length) return result.problems[0];
+    if (result.empty) return "反映する差分を選んでください。";
+    return "";
+  }
+  function buildSourceSetupSignature(input) {
+    const lookupPairs = Object.keys(input.lookupMap || {}).sort().map((key) => [key, input.lookupMap[key]]);
+    return JSON.stringify([input.sourceKind, input.sourceAppId, input.sourceGuestId, input.jsonToken, input.targetAppId, input.targetGuestId, !!input.preserveTargetOnly, lookupPairs]);
+  }
+  function scopesCoveredBy(current, extracted) {
+    return current.length > 0 && current.every((key) => extracted.includes(key));
+  }
+  function sourceRunLabel(goal) {
+    return goal === "production" ? "確認した内容を反映先へ書き込み、本番へ反映" : "確認した内容を反映先プレビューへ反映";
+  }
+  function describeRoute(sourceLabel, targetLabel, goal) {
+    return goal === "production" ? `${sourceLabel} → ${targetLabel}のプレビュー → ${targetLabel}の本番` : `${sourceLabel} → ${targetLabel}のプレビュー（本番へは反映しません）`;
+  }
+  function sourceBackupDescriptions(goal) {
+    const list2 = ["反映前の反映先プレビューの設定をJSONで保存してから、プレビューへ書き込みます。"];
+    if (goal === "production") list2.push("本番へ反映する前の本番設定をJSONで保存してから、本番へ反映します（変更のあるJS/CSSはファイル本体も含む）。");
+    return list2;
+  }
+  function sourceUndoGuidance(goal, targetPending) {
+    if (goal === "production") return undoGuidance("deploy");
+    return describeUndoGuidance(targetPending).text;
+  }
+  function summarizeItemKinds(items) {
+    const counts = {};
+    for (const item of items || []) counts[item.kind] = (counts[item.kind] || 0) + 1;
+    return REFLECT_ITEM_KIND_ORDER.filter((kind) => kind !== "保持" && counts[kind]).map((kind) => `${kind} ${counts[kind]}`).join("・");
+  }
+  function collectRemovedSettings(sections) {
+    const out = [];
+    for (const section of sections) {
+      for (const item of section.plan.items || []) {
+        if (item.kind !== "削除") continue;
+        out.push({ sectionKey: section.sectionKey, sectionLabel: section.label, text: describeRemovedItem(section.label, item), isField: section.sectionKey === "fieldSettings" });
+      }
+    }
+    return out;
+  }
+  function sectionsToRun(composed, activeScopes) {
+    const active2 = new Set(activeScopes);
+    return (composed?.sections || []).filter((section) => active2.has(section.sectionKey) && section.selectedCount > 0);
+  }
+  function composedAfterMap(sections) {
+    const map = {};
+    for (const section of sections) map[section.sectionKey] = section.after;
+    return map;
+  }
+  function describeSourceResult(input) {
+    const counts = summarizeApplyOutcome([...input.sections]);
+    const total = counts.ok + counts.ng + counts.stopped + counts.pending + counts.skip;
+    const written = counts.ok;
+    if (input.cancelled) {
+      return {
+        text: `中止しました（${written}/${total} 項目を反映先プレビューへ反映${counts.stopped ? `、${counts.stopped} 項目は途中で停止` : ""}${counts.ng ? `、${counts.ng} 項目は失敗` : ""}、残り ${counts.pending} 項目は未実行）。書き込み済みの分は反映先プレビューに残っています。本番へは反映していません。`,
+        tone: "warn"
+      };
+    }
+    if (counts.ng || counts.pending || counts.stopped) {
+      const failure = input.sections.find((section) => section.status === "ng" && !section.stopped);
+      const reason = failure ? `（${failure.label}: ${String(failure.message || "").split("\n")[0].slice(0, 80)}）` : "";
+      return {
+        text: `${total} 項目中 ${written} 項目を反映先プレビューへ反映しました。失敗 ${counts.ng} 項目${counts.pending ? `、未実行 ${counts.pending} 項目` : ""}${reason}。本番へは反映していません。`,
+        tone: written ? "warn" : "err"
+      };
+    }
+    if (input.goal === "preview") {
+      return { text: `${written} 項目を反映先プレビューへ反映しました。本番へは反映していません。`, tone: "ok" };
+    }
+    if (input.deploySkipped) {
+      return { text: `${written} 項目を反映先プレビューへ反映しましたが、本番へは反映していません。${input.deploySkipped}`, tone: "warn" };
+    }
+    if (input.deploy) return { text: `${written} 項目を反映先プレビューへ反映し、${input.deploy.text}`, tone: input.deploy.ok ? "ok" : "warn" };
+    return { text: `${written} 項目を反映先プレビューへ反映しました。`, tone: "ok" };
+  }
+  function describeDeploySkippedFollowUp(state3 = "all") {
+    if (state3 !== "all") return "";
+    return "反映先プレビューには書き込み済みです。理由を解消したあと、パネル上部の「プレビューの変更を公開」から続けて本番へ反映できます。";
+  }
+
+  // src/deploy/sourceVerify.ts
+  function formatVerifyValue(value, max = 120) {
+    const text = value === void 0 ? "（なし）" : value === null ? "（空）" : typeof value === "boolean" ? value ? "はい" : "いいえ" : typeof value === "string" ? value === "" ? "（空）" : value : JSON.stringify(value) ?? "（なし）";
+    return text.length > max ? `${text.slice(0, max)}…` : text;
+  }
+  function buildVerifyExpectations(input) {
+    const out = [];
+    for (const section of input.sections) {
+      const model = own4(input.session.models, section.sectionKey) ? input.session.models[section.sectionKey] : void 0;
+      if (!model) continue;
+      const jsonMode = input.session.states[section.sectionKey]?.json !== void 0;
+      const chosen = input.session.selected[section.sectionKey] ?? /* @__PURE__ */ new Set();
+      for (const change of model.changes) {
+        const isOrder = change.pointer.endsWith(ORDER_SUFFIX);
+        const tokens = parsePointer(isOrder ? change.pointer.slice(0, -ORDER_SUFFIX.length) : change.pointer);
+        const value = getAt(section.after, tokens);
+        if (jsonMode ? isOrder || sameValue(value, change.before) : !chosen.has(change.id)) continue;
+        const place = `${model.label} / ${describePath(change)}`;
+        const base = { id: change.id, sectionKey: section.sectionKey, sectionLabel: model.label, place, pointer: change.pointer, kind: change.kind };
+        if (isOrder) {
+          const names = isPlainObject(value) ? orderedNames(value) : [];
+          out.push({ ...base, check: "order", expected: names, expectedText: names.join(" → "), edited: false });
+        } else if (section.sectionKey === "pluginSettings" && tokens.length === 2 && tokens[0] === "plugins") {
+          out.push({ ...base, check: "member", expected: change.after, expectedText: formatVerifyValue(change.after), edited: false });
+        } else {
+          out.push({ ...base, check: "value", expected: cloneJson(value), expectedText: formatVerifyValue(value), edited: !sameValue(value, change.after) });
+        }
+      }
+    }
+    return out;
+  }
+  function comparable2(sectionKey, value) {
+    if (sectionKey !== "customizeSettings") return value;
+    const visit = (node) => {
+      if (Array.isArray(node)) return node.map(visit);
+      if (!isPlainObject(node)) return node;
+      if (node.type === "FILE" && isPlainObject(node.file)) return { type: "FILE", file: { name: node.file.name } };
+      return Object.fromEntries(Object.entries(node).map(([key, child]) => [key, visit(child)]));
+    };
+    return visit(value);
+  }
+  var isScalar = (value) => value === null || ["string", "number", "boolean"].includes(typeof value);
+  function satisfiesExpected(expected, current) {
+    if (expected === void 0 || expected === null) return current === void 0 || current === null;
+    if (Array.isArray(expected)) return Array.isArray(current) && current.length === expected.length && expected.every((item, index) => satisfiesExpected(item, current[index]));
+    if (isPlainObject(expected)) return isPlainObject(current) && Object.keys(expected).every((key) => satisfiesExpected(expected[key], own4(current, key) ? current[key] : void 0));
+    if (isScalar(expected) && isScalar(current) && typeof expected !== typeof current) {
+      return typeof expected === "boolean" || typeof current === "boolean" ? false : String(expected) === String(current);
+    }
+    return expected === current;
+  }
+  function verifyState(result) {
+    if (result.mismatches.length) return "mismatch";
+    return result.unknownCount > 0 || result.total === 0 ? "unknown" : "all";
+  }
+  var firstLine2 = (text) => String(text || "").split("\n")[0].trim();
+  function compareVerifyExpectations(expectations, read, meta) {
+    const result = { checkedAt: meta.checkedAt, side: meta.side, total: expectations.length, reflected: 0, mismatches: [], unknown: [], unknownCount: 0, editedTotal: 0, editedReflected: 0, notes: [] };
+    const unknownBySection = /* @__PURE__ */ new Map();
+    for (const item of expectations) {
+      if (item.edited) result.editedTotal += 1;
+      const section = own4(read, item.sectionKey) ? read[item.sectionKey] : void 0;
+      if (!section || section.ok === false) {
+        const reason = section && section.ok === false ? firstLine2(section.message) || "設定を取得できませんでした" : "設定を読み取れませんでした";
+        const entry = unknownBySection.get(item.sectionKey) ?? { sectionKey: item.sectionKey, sectionLabel: item.sectionLabel, count: 0, reason };
+        entry.count += 1;
+        unknownBySection.set(item.sectionKey, entry);
+        result.unknownCount += 1;
+        continue;
+      }
+      const current = comparable2(item.sectionKey, section.value);
+      const tokens = parsePointer(item.check === "order" ? item.pointer.slice(0, -ORDER_SUFFIX.length) : item.pointer);
+      const found = getAt(current, tokens);
+      let currentText;
+      let reflected;
+      if (item.check === "member") {
+        const list2 = isPlainObject(current) && Array.isArray(current.plugins) ? current.plugins : [];
+        reflected = list2.includes(item.expected);
+        currentText = reflected ? formatVerifyValue(item.expected) : "（一覧にありません）";
+      } else if (item.check === "order") {
+        const expectedNames = item.expected;
+        const container = isPlainObject(found) ? found : {};
+        const currentOrder = orderedNames(container).filter((name) => expectedNames.includes(name));
+        const expectedOrder = expectedNames.filter((name) => own4(container, name));
+        reflected = sameValue(currentOrder, expectedOrder);
+        currentText = currentOrder.join(" → ") || "（なし）";
+      } else {
+        reflected = satisfiesExpected(comparable2(item.sectionKey, item.expected), found);
+        currentText = formatVerifyValue(found);
+      }
+      if (reflected) {
+        result.reflected += 1;
+        if (item.edited) result.editedReflected += 1;
+      } else {
+        result.mismatches.push({ sectionKey: item.sectionKey, sectionLabel: item.sectionLabel, place: item.place, kind: item.kind, expectedText: item.expectedText, currentText });
+      }
+    }
+    result.unknown = [...unknownBySection.values()];
+    if (expectations.some((item) => item.sectionKey === "customizeSettings")) result.notes.push("JS/CSS はファイル名で確認しています（ファイルの中身は比べていません）。");
+    return result;
+  }
+  function describeVerifyResult(result) {
+    const where = result.side === "production" ? "本番" : "反映先のプレビュー";
+    const state3 = verifyState(result);
+    if (state3 === "all") {
+      return { text: `選んだ ${result.total} 件はすべて反映されています（${where}の設定を確認しました${result.editedTotal ? `。修正した値 ${result.editedTotal} 件も、その値になっています` : ""}）。`, tone: "ok" };
+    }
+    if (state3 === "mismatch") {
+      const unknown = result.unknownCount ? `確認できなかった変更 ${result.unknownCount} 件。` : "";
+      return { text: `反映されていない変更 ${result.mismatches.length} 件（選んだ ${result.total} 件中。${where}の設定を確認しました）。${unknown}`, tone: "err" };
+    }
+    if (result.total === 0) return { text: "確認できる変更がありませんでした。選んだ変更を確認できません。", tone: "warn" };
+    return { text: `確認できません。選んだ ${result.total} 件のうち ${result.unknownCount} 件の内容を確認できませんでした（確認できた ${result.reflected} 件は反映されています）。「反映されています」とは言えないため、アプリの設定画面で確認してください。`, tone: "warn" };
+  }
+  function verifySideFor(result, goal = result.goal) {
+    if (result.apply.cancelled) return null;
+    if (goal === "production") {
+      const status = result.deploy?.apps[0]?.status;
+      return status === "success" || status === "unknown" ? "production" : null;
+    }
+    return previewWriteState(result.apply.sections) === "all" ? "preview" : null;
+  }
+
+  // src/reflect/targetPending.ts
+  var comparableResources = (list2) => Array.isArray(list2) ? list2.map((item) => item?.type === "FILE" ? { type: "FILE", name: item.file?.name ?? "", size: String(item.file?.size ?? "") } : item) : list2;
+  var comparable3 = (key, section) => {
+    if (!section || typeof section !== "object" || Array.isArray(section)) return stableReflectStringify(section);
+    const { revision: _revision, ...rest } = section;
+    if (key === "customizeSettings") {
+      for (const platform of ["desktop", "mobile"]) if (rest[platform] && typeof rest[platform] === "object") rest[platform] = { ...rest[platform], js: comparableResources(rest[platform].js), css: comparableResources(rest[platform].css) };
+    }
+    return stableReflectStringify(rest);
+  };
+  async function inspectTargetPendingChanges(opts, targetPreviewBundle) {
+    const unknown = (productionRevision2, previewRevision2, reason) => ({ state: "unknown", productionRevision: productionRevision2, previewRevision: previewRevision2, sectionKeys: [], message: `反映先プレビューに未公開の変更があるか確認できませんでした（${reason}）。` });
+    let productionRevision = "", previewRevision = "";
+    try {
+      const incomplete = opts.scopes.find((key) => !isCompleteReflectSection(targetPreviewBundle?.sections?.[key]));
+      if (incomplete) return unknown("", "", `反映先プレビューの${reflectSectionLabel(incomplete)}を取得できません`);
+      const revisions = new Set(opts.scopes.map((key) => String(targetPreviewBundle?.meta?.sectionRevisions?.[key] ?? targetPreviewBundle?.sections?.[key]?.revision ?? "")));
+      if (revisions.size !== 1) return unknown("", "", "取得中に反映先プレビューが更新された可能性があります");
+      previewRevision = [...revisions][0];
+      if (!/^\d+$/.test(previewRevision)) return unknown("", "", "反映先プレビューのrevisionがありません");
+      const response = await apiGet(buildApiPrefix(opts.targetGuestId || "", false), "/app/settings.json", { app: opts.targetAppId });
+      productionRevision = String(response?.revision ?? "");
+      if (!/^\d+$/.test(productionRevision)) return unknown("", previewRevision, "本番のrevisionがありません");
+      if (productionRevision === previewRevision) return { state: "clean", productionRevision, previewRevision, sectionKeys: [], message: "反映先プレビューに未公開の変更はありません。" };
+      const production = await fetchBundle({ appId: opts.targetAppId, guestId: opts.targetGuestId || "", preview: false, sections: opts.scopes, rawSettings: true });
+      const sectionKeys = [];
+      for (const key of opts.scopes) {
+        const before = production.sections?.[key], after = targetPreviewBundle?.sections?.[key];
+        if (!isCompleteReflectSection(before) || !isCompleteReflectSection(after)) return unknown(productionRevision, previewRevision, `${reflectSectionLabel(key)}を取得できません`);
+        if (comparable3(key, before) !== comparable3(key, after)) sectionKeys.push(key);
+      }
+      const customizeNote = opts.scopes.includes("customizeSettings") ? "。JS/CSSのファイルは名前とサイズだけで比べています" : "";
+      const message = sectionKeys.length ? `反映先プレビューには未公開の変更があります（${sectionKeys.map(reflectSectionLabel).join("、")}）。公開すると今回の反映と一緒に本番へ反映されます。` : `選択した項目には未公開の変更はありませんが、ほかの設定に未公開の変更がある可能性があります（設定の更新番号 revision が 本番 ${productionRevision} とプレビュー ${previewRevision} で異なります${customizeNote}）。`;
+      return { state: "pending", productionRevision, previewRevision, sectionKeys, message };
+    } catch (error) {
+      if (isRunCancelledError(error)) throw error;
+      return unknown(productionRevision, previewRevision, error?.message || String(error));
+    }
   }
 
   // src/reflect/selectionPlan.ts
@@ -8798,246 +9181,36 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     });
     return { ...result, deploy, deployInspection: record };
   }
-
-  // src/deploy/sourceDisplay.ts
-  var searchCache = /* @__PURE__ */ new WeakMap();
-  function changeSearchText(change) {
-    let text = searchCache.get(change);
-    if (text === void 0) {
-      text = [change.groupLabel, ...change.labelPath, change.kind, change.beforeText, change.afterText].join("\n").toLowerCase();
-      searchCache.set(change, text);
-    }
-    return text;
-  }
-  function isFilterActive(filter) {
-    return !!filter.keyword.trim() || filter.kind !== "all";
-  }
-  function filterChanges(changes, filter) {
-    const words = filter.keyword.toLowerCase().split(/\s+/).filter(Boolean);
-    if (!words.length && filter.kind === "all") return [...changes];
-    return changes.filter((change) => (filter.kind === "all" || change.kind === filter.kind) && (!words.length || words.every((word) => changeSearchText(change).includes(word))));
-  }
-  function groupChanges(changes) {
-    const groups = /* @__PURE__ */ new Map();
-    for (const change of changes) {
-      let group = groups.get(change.groupId);
-      if (!group) {
-        group = { groupId: change.groupId, groupLabel: change.groupLabel, changes: [] };
-        groups.set(change.groupId, group);
-      }
-      group.changes.push(change);
-    }
-    return [...groups.values()];
-  }
-  function groupCheckState(changes, selected) {
-    let count = 0;
-    for (const change of changes) if (selected.has(change.id)) count += 1;
-    return count === 0 ? "none" : count === changes.length ? "all" : "some";
-  }
-  function describePath(change) {
-    return change.labelPath.length ? change.labelPath.join(" / ") : change.groupLabel;
-  }
-  function clipText2(text, max = 160) {
-    const value = String(text ?? "");
-    return value.length > max ? `${value.slice(0, max)}…` : value;
-  }
-  function buildRequirementIndex(models) {
-    const byId = /* @__PURE__ */ new Map();
-    const dependents = /* @__PURE__ */ new Map();
-    for (const model of models) for (const change of model.changes) byId.set(change.id, change);
-    for (const change of byId.values()) {
-      for (const required of change.requires || []) {
-        if (!byId.has(required)) continue;
-        const list2 = dependents.get(required);
-        if (list2) list2.push(change.id);
-        else dependents.set(required, [change.id]);
-      }
-    }
-    return { byId, dependents };
-  }
-  function requiredToSelect(ids, index, selected) {
-    const seen = new Set(ids);
-    const added = [];
-    const queue = [...ids];
-    while (queue.length) {
-      const change = index.byId.get(queue.pop());
-      for (const required of change?.requires || []) {
-        if (seen.has(required) || !index.byId.has(required)) continue;
-        seen.add(required);
-        if (!selected.has(required)) added.push(required);
-        queue.push(required);
-      }
-    }
-    return added;
-  }
-  function dependentsToDeselect(ids, index, selected) {
-    const seen = new Set(ids);
-    const removed = [];
-    const queue = [...ids];
-    while (queue.length) {
-      for (const dependent of index.dependents.get(queue.pop()) || []) {
-        if (seen.has(dependent)) continue;
-        seen.add(dependent);
-        if (selected.has(dependent)) removed.push(dependent);
-        queue.push(dependent);
-      }
-    }
-    return removed;
-  }
-  function describeRequires(change, index) {
-    const names = (change.requires || []).map((id) => index.byId.get(id)).filter((item) => !!item).map((item) => describePath(item));
-    if (!names.length) return "";
-    const shown = names.slice(0, 3).join("、");
-    return `選ぶと一緒に選ばれる変更: ${shown}${names.length > 3 ? ` ほか ${names.length - 3} 件` : ""}`;
-  }
-  function entryTone(entry) {
-    return entry.status === "change" || entry.status === "same" ? entry.status : "error";
-  }
-  function countExtraction(entries, scopes, models) {
-    const counts = { change: 0, same: 0, error: 0, changes: 0 };
-    for (const entry of entries) {
-      if (scopes && !scopes.includes(entry.sectionKey)) continue;
-      counts[entryTone(entry)] += 1;
-      if (entry.status === "change") counts.changes += models?.[entry.sectionKey]?.changes.length ?? (entry.changeCount || 0);
-    }
-    return counts;
-  }
-  function describeStageStatus(stage) {
-    switch (stage) {
-      case "setup":
-        return "反映元と反映先の差分を抽出します。まだ書き込んでいません。";
-      case "select":
-        return "反映する変更を選んでください。まだ書き込んでいません。";
-      case "edit":
-        return "内容を確認し、必要なら直してください。まだ書き込んでいません。";
-      default:
-        return "最終確認です。内容を確認して、実行するとここから書き込みます。";
-    }
-  }
-  var EXTRACTION_COUNT_HELP = "「変更 N 件」は、下の項目で選べる変更の数です。レイアウト・アクセス権・通知・JS/CSS の一覧などは、配置や一覧の全体を 1 件と数えます。";
-  function describeExtractionSummary(counts) {
-    if (!counts.change && !counts.error) return "差分はありません。反映先は反映元と同じ設定です。";
-    const parts = [`差分のある項目 ${counts.change}`, `差分なし ${counts.same}`];
-    if (counts.error) parts.push(`取得失敗 ${counts.error}`);
-    return `${parts.join("・")}（変更 ${counts.changes} 件）。`;
-  }
-  function collectSelectionBlockers(input) {
-    const active2 = new Set(input.activeScopes);
-    const failed = [];
-    let selectedTotal = 0;
-    for (const entry of input.entries) {
-      if (!active2.has(entry.sectionKey)) continue;
-      const model = input.models[entry.sectionKey];
-      if (entryTone(entry) === "error" || !model && entry.status !== "same") {
-        const reason = [...entry.blockers || [], entry.message].filter(Boolean)[0] || "設定を取得できませんでした。";
-        failed.push({ sectionKey: entry.sectionKey, label: entry.label, message: String(reason).split("\n")[0] });
-      }
-    }
-    const problems = [];
-    for (const section of input.composed?.sections || []) {
-      if (!active2.has(section.sectionKey)) continue;
-      selectedTotal += section.selectedCount;
-      for (const error of section.errors || []) problems.push(`${section.label}: ${error}`);
-    }
-    for (const blocker of input.composed?.blockers || []) problems.push(blocker);
-    return {
-      processing: input.targetDeployStatus?.state === "processing" ? input.targetDeployStatus.message : "",
-      failed,
-      problems: [...new Set(problems)],
-      references: [...new Set(input.composed?.blockers || [])],
-      empty: !!input.composed && selectedTotal === 0
+  async function verifySourceDeployStandalone(opts) {
+    const keys = [...new Set(opts.expectations.map((item) => item.sectionKey))];
+    const read = {};
+    const failAll = (message) => {
+      for (const key of keys) read[key] = { ok: false, message };
     };
-  }
-  function firstEditEntryBlockerText(result) {
-    if (result.processing) return result.processing;
-    if (result.failed.length) return firstBlockerText({ ...result, problems: [] });
-    if (result.references.length) return result.references[0];
-    if (result.empty) return "反映する差分を選んでください。";
-    return "";
-  }
-  function firstBlockerText(result) {
-    if (result.processing) return result.processing;
-    if (result.failed.length) return `取得失敗の項目（${result.failed.map((item) => item.label).join("、")}）は、反映しない項目から外すか、差分を抽出し直してください。`;
-    if (result.problems.length) return result.problems[0];
-    if (result.empty) return "反映する差分を選んでください。";
-    return "";
-  }
-  function buildSourceSetupSignature(input) {
-    const lookupPairs = Object.keys(input.lookupMap || {}).sort().map((key) => [key, input.lookupMap[key]]);
-    return JSON.stringify([input.sourceKind, input.sourceAppId, input.sourceGuestId, input.jsonToken, input.targetAppId, input.targetGuestId, !!input.preserveTargetOnly, lookupPairs]);
-  }
-  function scopesCoveredBy(current, extracted) {
-    return current.length > 0 && current.every((key) => extracted.includes(key));
-  }
-  function sourceRunLabel(goal) {
-    return goal === "production" ? "確認した内容を反映先へ書き込み、本番へ反映" : "確認した内容を反映先プレビューへ反映";
-  }
-  function describeRoute(sourceLabel, targetLabel, goal) {
-    return goal === "production" ? `${sourceLabel} → ${targetLabel}のプレビュー → ${targetLabel}の本番` : `${sourceLabel} → ${targetLabel}のプレビュー（本番へは反映しません）`;
-  }
-  function sourceBackupDescriptions(goal) {
-    const list2 = ["反映前の反映先プレビューの設定をJSONで保存してから、プレビューへ書き込みます。"];
-    if (goal === "production") list2.push("本番へ反映する前の本番設定をJSONで保存してから、本番へ反映します（変更のあるJS/CSSはファイル本体も含む）。");
-    return list2;
-  }
-  function sourceUndoGuidance(goal, targetPending) {
-    if (goal === "production") return undoGuidance("deploy");
-    return describeUndoGuidance(targetPending).text;
-  }
-  function summarizeItemKinds(items) {
-    const counts = {};
-    for (const item of items || []) counts[item.kind] = (counts[item.kind] || 0) + 1;
-    return REFLECT_ITEM_KIND_ORDER.filter((kind) => kind !== "保持" && counts[kind]).map((kind) => `${kind} ${counts[kind]}`).join("・");
-  }
-  function collectRemovedSettings(sections) {
-    const out = [];
-    for (const section of sections) {
-      for (const item of section.plan.items || []) {
-        if (item.kind !== "削除") continue;
-        out.push({ sectionKey: section.sectionKey, sectionLabel: section.label, text: describeRemovedItem(section.label, item), isField: section.sectionKey === "fieldSettings" });
+    opts.setStatus?.(opts.side === "production" ? "本番の設定を読み取って確認中…" : "反映先プレビューの設定を読み取って確認中…");
+    try {
+      const bundle = await fetchBundle({
+        rawSettings: true,
+        appId: opts.target.appId,
+        guestId: opts.target.guestId || "",
+        preview: opts.side === "preview",
+        sections: keys,
+        onProgress: (done, label) => opts.setStatus?.(`${opts.side === "production" ? "本番" : "反映先プレビュー"}の設定を確認中 ${Math.round(done * 100)}%（${label}）`)
+      });
+      for (const key of keys) {
+        const section = bundle.sections?.[key];
+        if (!isCompleteReflectSection(section)) {
+          read[key] = { ok: false, message: String(section?._fetchError || "設定を完全には取得できませんでした") };
+          continue;
+        }
+        const plan = buildReflectSectionPlan(key, section, section);
+        read[key] = plan.values ? { ok: true, value: plan.values.before } : { ok: false, message: plan.blockers[0] || plan.message || "設定の形式を読み取れませんでした" };
       }
+    } catch (error) {
+      if (isRunCancelledError(error)) throw error;
+      failAll(`設定を取得できませんでした（${reasonOf2(error)}）`);
     }
-    return out;
-  }
-  function sectionsToRun(composed, activeScopes) {
-    const active2 = new Set(activeScopes);
-    return (composed?.sections || []).filter((section) => active2.has(section.sectionKey) && section.selectedCount > 0);
-  }
-  function composedAfterMap(sections) {
-    const map = {};
-    for (const section of sections) map[section.sectionKey] = section.after;
-    return map;
-  }
-  function describeSourceResult(input) {
-    const counts = summarizeApplyOutcome([...input.sections]);
-    const total = counts.ok + counts.ng + counts.stopped + counts.pending + counts.skip;
-    const written = counts.ok;
-    if (input.cancelled) {
-      return {
-        text: `中止しました（${written}/${total} 項目を反映先プレビューへ反映${counts.stopped ? `、${counts.stopped} 項目は途中で停止` : ""}${counts.ng ? `、${counts.ng} 項目は失敗` : ""}、残り ${counts.pending} 項目は未実行）。書き込み済みの分は反映先プレビューに残っています。本番へは反映していません。`,
-        tone: "warn"
-      };
-    }
-    if (counts.ng || counts.pending || counts.stopped) {
-      const failure = input.sections.find((section) => section.status === "ng" && !section.stopped);
-      const reason = failure ? `（${failure.label}: ${String(failure.message || "").split("\n")[0].slice(0, 80)}）` : "";
-      return {
-        text: `${total} 項目中 ${written} 項目を反映先プレビューへ反映しました。失敗 ${counts.ng} 項目${counts.pending ? `、未実行 ${counts.pending} 項目` : ""}${reason}。本番へは反映していません。`,
-        tone: written ? "warn" : "err"
-      };
-    }
-    if (input.goal === "preview") {
-      return { text: `${written} 項目を反映先プレビューへ反映しました。本番へは反映していません。`, tone: "ok" };
-    }
-    if (input.deploySkipped) {
-      return { text: `${written} 項目を反映先プレビューへ反映しましたが、本番へは反映していません。${input.deploySkipped}`, tone: "warn" };
-    }
-    if (input.deploy) return { text: `${written} 項目を反映先プレビューへ反映し、${input.deploy.text}`, tone: input.deploy.ok ? "ok" : "warn" };
-    return { text: `${written} 項目を反映先プレビューへ反映しました。`, tone: "ok" };
-  }
-  function describeDeploySkippedFollowUp(state3 = "all") {
-    if (state3 !== "all") return "";
-    return "反映先プレビューには書き込み済みです。理由を解消したあと、パネル上部の「プレビューの変更を公開」から続けて本番へ反映できます。";
+    return compareVerifyExpectations(opts.expectations, read, { checkedAt: (/* @__PURE__ */ new Date()).toISOString(), side: opts.side });
   }
 
   // src/deploy/sourceReport.ts
@@ -9126,6 +9299,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       if (followUp) lines.push(`- ${esc3(followUp)}`);
     }
     lines.push("");
+    appendVerification(lines, input);
     lines.push("## 項目別の変更の要約", "");
     for (const section of input.sections) {
       const kinds = summarizeItemKinds(section.items);
@@ -9141,6 +9315,34 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     }
     return `${lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd()}
 `;
+  }
+  var VERIFY_ROWS_LIMIT = 100;
+  var VERIFY_SIDE_LABEL = { production: "本番", preview: "反映先のプレビュー" };
+  function appendVerification(lines, input) {
+    const verification = input.verification;
+    if (!verification) {
+      if (verifySideFor(input.result, input.goal)) lines.push("## 反映後の内容の確認", "", "- 確認していません（結果の「反映後の内容を確認する」で、選んだ変更が意図した値で入っているか確認できます）。", "");
+      return;
+    }
+    const message = describeVerifyResult(verification);
+    lines.push("## 反映後の内容の確認", "");
+    lines.push(`- 確認した日時: ${esc3(formatStamp2(verification.checkedAt))}`);
+    lines.push(`- 確認した設定: ${VERIFY_SIDE_LABEL[verification.side]}`);
+    lines.push(`- 結果: ${esc3(message.text)}`);
+    lines.push(`- 件数: 選んだ変更 ${verification.total}・意図した値で反映 ${verification.reflected}・反映されていない ${verification.mismatches.length}・確認できない ${verification.unknownCount}（修正した値 ${verification.editedTotal} 件のうち ${verification.editedReflected} 件が反映）`);
+    for (const note of verification.notes) lines.push(`- 注意: ${esc3(note)}`);
+    lines.push("- 選ばなかった変更が反映先に残っているのは正常なため、確認の対象にしていません。", "");
+    if (verification.mismatches.length) {
+      lines.push("### 反映されていない変更", "", "| 場所 | 期待した値 | 現在の値 |", "| --- | --- | --- |");
+      for (const item of verification.mismatches.slice(0, VERIFY_ROWS_LIMIT)) lines.push(`| ${cell2(item.place)} | ${cell2(item.expectedText)} | ${cell2(item.currentText)} |`);
+      if (verification.mismatches.length > VERIFY_ROWS_LIMIT) lines.push(`| ほか ${verification.mismatches.length - VERIFY_ROWS_LIMIT} 件 | | |`);
+      lines.push("");
+    }
+    if (verification.unknown.length) {
+      lines.push("### 確認できなかった変更", "");
+      for (const item of verification.unknown) lines.push(`- ${esc3(item.sectionLabel)}: ${item.count} 件（${esc3(item.reason)}）`);
+      lines.push("");
+    }
   }
   function buildSourceDeployResultJson(input) {
     const { result } = input;
@@ -9163,7 +9365,8 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         logs: [...result.apply.logs || []]
       },
       ...result.deploy ? { deploy: buildDeployResultJson(result.deploy), deploySummary: countOutcomes(result.deploy.apps) } : {},
-      ...result.deploySkipped ? { deploySkipped: result.deploySkipped } : {}
+      ...result.deploySkipped ? { deploySkipped: result.deploySkipped } : {},
+      ...input.verification ? { verification: { ...input.verification, state: verifyState(input.verification), message: describeVerifyResult(input.verification).text } } : {}
     };
   }
   function stringifySourceDeployResultJson(input) {
@@ -9343,6 +9546,239 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     const lost = [summary.selectionLost ? `選択 ${summary.selectionLost} 件` : "", summary.overridesLost ? `入力欄の修正 ${summary.overridesLost} 件` : "", summary.jsonLost ? `JSON での修正 ${summary.jsonLost} 項目` : ""].filter(Boolean);
     const head = kept.length ? `前回の${kept.join("・")}を引き継ぎました。` : "前回の選択と修正はありませんでした。";
     return lost.length ? `${head}引き継げなかったもの: ${lost.join("・")}（更新後の差分に無い、または JSON のため）。選び直してください。` : head;
+  }
+
+  // src/deploy/sourceSelectionFile.ts
+  var SELECTION_FILE_KIND = "kintone-source-deploy-selection";
+  var SELECTION_FILE_VERSION = 1;
+  var MAX_SELECTION_FILE_BYTES = 20 * 1024 * 1024;
+  function settingsFingerprint(value) {
+    const text = stableJson(value);
+    let h1 = 3735928559, h2 = 1103547991;
+    for (let index = 0; index < text.length; index += 1) {
+      const code = text.charCodeAt(index);
+      h1 = Math.imul(h1 ^ code, 2654435761);
+      h2 = Math.imul(h2 ^ code, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ h1 >>> 16, 2246822507) ^ Math.imul(h2 ^ h2 >>> 13, 3266489909);
+    h2 = Math.imul(h2 ^ h2 >>> 16, 2246822507) ^ Math.imul(h1 ^ h1 >>> 13, 3266489909);
+    return `${(h2 >>> 0).toString(16).padStart(8, "0")}${(h1 >>> 0).toString(16).padStart(8, "0")}:${text.length}`;
+  }
+  function buildSelectionFile(input) {
+    const { session } = input;
+    const sections = [];
+    for (const [sectionKey, model] of Object.entries(session.models)) {
+      const state3 = session.states[sectionKey];
+      const chosen = session.selected[sectionKey] ?? /* @__PURE__ */ new Set();
+      const selected = [];
+      const notSelected = [];
+      for (const change of model.changes) (chosen.has(change.id) ? selected : notSelected).push(change.id);
+      const section = {
+        sectionKey,
+        label: model.label,
+        selected,
+        notSelected,
+        overrides: Object.entries(state3?.overrides || {}).map(([pointer, value]) => ({ pointer, value }))
+      };
+      if (state3 && state3.json !== void 0) section.json = { baseHash: settingsFingerprint(model.before), value: state3.json };
+      sections.push(section);
+    }
+    const source = session.identities.source, target = session.identities.target;
+    return {
+      kind: SELECTION_FILE_KIND,
+      version: SELECTION_FILE_VERSION,
+      createdAt: input.createdAt,
+      source: { appId: source.appId, guestId: source.guestId || "", name: source.name, environment: session.sourceEnvironment },
+      target: { appId: target.appId, guestId: target.guestId || "", name: target.name },
+      scopes: [...input.scopes],
+      preserveTargetOnly: session.opts.preserveTargetOnly !== false,
+      lookupMap: { ...session.opts.lookupMap || {} },
+      goal: input.goal,
+      sections
+    };
+  }
+  function stringifySelectionFile(file) {
+    return JSON.stringify(file, null, 2);
+  }
+  function countSelectionFile(file) {
+    return {
+      selected: file.sections.reduce((sum, section) => sum + section.selected.length, 0),
+      overrides: file.sections.reduce((sum, section) => sum + section.overrides.length, 0),
+      jsonSections: file.sections.filter((section) => section.json).length,
+      sections: file.sections.length
+    };
+  }
+  var isRecord = (value) => !!value && typeof value === "object" && !Array.isArray(value);
+  var isStringArray = (value) => Array.isArray(value) && value.every((item) => typeof item === "string");
+  function megabytes(bytes) {
+    return `${(bytes / 1048576).toFixed(1)} MB`;
+  }
+  function checkSelectionFileSize(byteSize) {
+    return byteSize > MAX_SELECTION_FILE_BYTES ? `ファイルが大きすぎるため読み込めません（${megabytes(byteSize)}。上限は ${megabytes(MAX_SELECTION_FILE_BYTES)}）。「選択と修正を保存」で保存したファイルを選んでください。` : "";
+  }
+  function parseApp(value, where) {
+    if (!isRecord(value)) return `${where}の情報がありません`;
+    if (typeof value.appId !== "string" || !value.appId) return `${where}のアプリIDがありません`;
+    if (value.guestId !== void 0 && typeof value.guestId !== "string") return `${where}のゲストスペースIDの形式が不正です`;
+    if (value.name !== void 0 && typeof value.name !== "string") return `${where}のアプリ名の形式が不正です`;
+    return { appId: value.appId, guestId: typeof value.guestId === "string" ? value.guestId : "", name: typeof value.name === "string" ? value.name : "", ...value.environment !== void 0 ? { environment: value.environment } : {} };
+  }
+  function parseSelectionFile(text, byteSize = text.length) {
+    const tooLarge = checkSelectionFileSize(byteSize);
+    if (tooLarge) return { ok: false, message: tooLarge };
+    let raw;
+    try {
+      raw = JSON.parse(text);
+    } catch {
+      return { ok: false, message: "JSON として読み込めませんでした。「選択と修正を保存」で保存したファイルを選んでください。" };
+    }
+    if (!isRecord(raw)) return { ok: false, message: "選択と修正のファイルではありません（JSON の最上位がオブジェクトではありません）。" };
+    if (raw.kind !== SELECTION_FILE_KIND) {
+      const kind = typeof raw.kind === "string" && raw.kind ? `（種類: ${raw.kind.slice(0, 60)}）` : "";
+      return { ok: false, message: `選択と修正のファイルではありません${kind}。「選択と修正を保存」で保存したファイルを選んでください。` };
+    }
+    if (raw.version !== SELECTION_FILE_VERSION) {
+      return { ok: false, message: `このファイルの版（${String(raw.version).slice(0, 20)}）は読み込めません。このツールが読み込めるのは版 ${SELECTION_FILE_VERSION} です。` };
+    }
+    const broken = (detail) => ({ ok: false, message: `ファイルの内容が壊れています（${detail}）。保存し直したファイルを選んでください。` });
+    if (typeof raw.createdAt !== "string") return broken("作成日時がありません");
+    const source = parseApp(raw.source, "反映元");
+    if (typeof source === "string") return broken(source);
+    const target = parseApp(raw.target, "反映先");
+    if (typeof target === "string") return broken(target);
+    const environment = source.environment;
+    if (environment !== "production" && environment !== "preview" && environment !== "json") return broken("反映元の取得方法がありません");
+    if (!isStringArray(raw.scopes)) return broken("反映する項目の形式が不正です");
+    if (typeof raw.preserveTargetOnly !== "boolean") return broken("反映先だけの設定の扱いがありません");
+    const lookupMap = {};
+    if (raw.lookupMap !== void 0) {
+      if (!isRecord(raw.lookupMap) || Object.values(raw.lookupMap).some((value) => typeof value !== "string")) return broken("参照先変換の形式が不正です");
+      for (const [from, to] of Object.entries(raw.lookupMap)) lookupMap[from] = to;
+    }
+    if (raw.goal !== "production" && raw.goal !== "preview") return broken("目標がありません");
+    if (!Array.isArray(raw.sections)) return broken("項目の一覧がありません");
+    const sections = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const [index, item] of raw.sections.entries()) {
+      const at = `項目 ${index + 1} 件目`;
+      if (!isRecord(item) || typeof item.sectionKey !== "string" || !item.sectionKey) return broken(`${at}の項目名がありません`);
+      if (seen.has(item.sectionKey)) return broken(`${at}の項目が重複しています`);
+      seen.add(item.sectionKey);
+      if (!isStringArray(item.selected) || !isStringArray(item.notSelected)) return broken(`${at}の選択の形式が不正です`);
+      if (!Array.isArray(item.overrides) || item.overrides.some((entry) => !isRecord(entry) || typeof entry.pointer !== "string" || !("value" in entry))) return broken(`${at}の入力欄の修正の形式が不正です`);
+      const section = {
+        sectionKey: item.sectionKey,
+        label: typeof item.label === "string" ? item.label : item.sectionKey,
+        selected: item.selected,
+        notSelected: item.notSelected,
+        overrides: item.overrides.map((entry) => ({ pointer: entry.pointer, value: entry.value }))
+      };
+      if (item.json !== void 0) {
+        if (!isRecord(item.json) || typeof item.json.baseHash !== "string" || !("value" in item.json)) return broken(`${at}の JSON での修正の形式が不正です`);
+        section.json = { baseHash: item.json.baseHash, value: item.json.value };
+      }
+      sections.push(section);
+    }
+    return {
+      ok: true,
+      file: {
+        kind: SELECTION_FILE_KIND,
+        version: SELECTION_FILE_VERSION,
+        createdAt: raw.createdAt,
+        source: { appId: source.appId, guestId: source.guestId, name: source.name, environment },
+        target: { appId: target.appId, guestId: target.guestId, name: target.name },
+        scopes: raw.scopes,
+        preserveTargetOnly: raw.preserveTargetOnly,
+        lookupMap,
+        goal: raw.goal,
+        sections
+      }
+    };
+  }
+  var ENVIRONMENT_LABEL2 = { production: "本番設定", preview: "プレビュー設定", json: "設定JSON" };
+  function appText(app, environment) {
+    const where = environment ? `・${ENVIRONMENT_LABEL2[environment]}` : "";
+    return `${app.name || "（名前なし）"}（#${app.appId}${app.guestId ? `・ゲストスペース ${app.guestId}` : ""}${where}）`;
+  }
+  function describeSelectionFileMismatch(file, session) {
+    const source = session.identities.source, target = session.identities.target;
+    const differences = [];
+    if (file.source.environment !== session.sourceEnvironment) differences.push(`反映元の取得方法が違います（保存時: ${ENVIRONMENT_LABEL2[file.source.environment]}、現在: ${ENVIRONMENT_LABEL2[session.sourceEnvironment]}）`);
+    if (file.source.appId !== source.appId) differences.push(`反映元のアプリが違います（保存時: ${appText(file.source)}、現在: ${appText(source)}）`);
+    else if (file.source.guestId !== (source.guestId || "")) differences.push(`反映元のゲストスペースIDが違います（保存時: ${file.source.guestId || "なし"}、現在: ${source.guestId || "なし"}）`);
+    if (file.target.appId !== target.appId) differences.push(`反映先のアプリが違います（保存時: ${appText(file.target)}、現在: ${appText(target)}）`);
+    else if (file.target.guestId !== (target.guestId || "")) differences.push(`反映先のゲストスペースIDが違います（保存時: ${file.target.guestId || "なし"}、現在: ${target.guestId || "なし"}）`);
+    return differences;
+  }
+  function describeSelectionFileSettingNotes(file, session) {
+    const notes = [];
+    const preserve = session.opts.preserveTargetOnly !== false;
+    if (file.preserveTargetOnly !== preserve) notes.push(`反映先だけの一覧・グラフ・アクションの扱いが保存時と違います（保存時: ${file.preserveTargetOnly ? "保持" : "削除"}、現在: ${preserve ? "保持" : "削除"}）`);
+    if (!sameValue(file.lookupMap, session.opts.lookupMap || {})) notes.push("参照先変換が保存時と違います");
+    return notes;
+  }
+  function applySelectionFile(session, file) {
+    const hasOwn = (target, key) => Object.prototype.hasOwnProperty.call(target, key);
+    const selected = /* @__PURE__ */ Object.create(null);
+    const models = /* @__PURE__ */ Object.create(null);
+    const states = /* @__PURE__ */ Object.create(null);
+    const result = { selectionKept: 0, selectionLost: 0, overridesKept: 0, overridesLost: 0, jsonKept: 0, jsonLost: 0, jsonLostLabels: [], sectionsLost: 0 };
+    for (const section of file.sections) {
+      if (!hasOwn(session.models, section.sectionKey) || !hasOwn(session.states, section.sectionKey)) {
+        result.sectionsLost += 1;
+        result.selectionLost += section.selected.length;
+        result.overridesLost += section.overrides.length;
+        if (section.json) {
+          result.jsonLost += 1;
+          result.jsonLostLabels.push(section.label || section.sectionKey);
+        }
+        continue;
+      }
+      selected[section.sectionKey] = new Set(section.selected);
+      models[section.sectionKey] = { changes: [...section.selected, ...section.notSelected].map((id) => ({ id })) };
+      const overrides = /* @__PURE__ */ Object.create(null);
+      for (const entry of section.overrides) overrides[entry.pointer] = entry.value;
+      states[section.sectionKey] = { selected: [], overrides };
+      const state3 = session.states[section.sectionKey];
+      state3.overrides = {};
+      delete state3.json;
+    }
+    const summary = carryOverSession(session, { selected, models, states });
+    result.selectionKept += summary.selectionKept;
+    result.selectionLost += summary.selectionLost;
+    result.overridesKept += summary.overridesKept;
+    result.overridesLost += summary.overridesLost;
+    for (const section of file.sections) {
+      if (!section.json || !hasOwn(session.models, section.sectionKey) || !hasOwn(session.states, section.sectionKey)) continue;
+      const model = session.models[section.sectionKey];
+      if (model.jsonEditable && settingsFingerprint(model.before) === section.json.baseHash) {
+        setJsonOverride(session, section.sectionKey, section.json.value);
+        result.jsonKept += 1;
+      } else {
+        result.jsonLost += 1;
+        result.jsonLostLabels.push(section.label || section.sectionKey);
+      }
+    }
+    return result;
+  }
+  function describeSelectionFileApply(file, result) {
+    const kept = [result.selectionKept ? `選択 ${result.selectionKept} 件` : "", result.overridesKept ? `入力欄の修正 ${result.overridesKept} 件` : "", result.jsonKept ? `JSON での修正 ${result.jsonKept} 項目` : ""].filter(Boolean);
+    const lost = [result.selectionLost ? `選択 ${result.selectionLost} 件` : "", result.overridesLost ? `入力欄の修正 ${result.overridesLost} 件` : "", result.jsonLost ? `JSON での修正 ${result.jsonLost} 項目` : ""].filter(Boolean);
+    const parts = [`選択と修正を読み込みました（保存した日時: ${formatSavedAt(file.createdAt)}）。`];
+    parts.push(kept.length ? `当てはめたもの: ${kept.join("・")}。` : "当てはめるものはありませんでした。");
+    if (lost.length) parts.push(`当てはまらなかったもの: ${lost.join("・")}（現在の差分に無いため）。選び直してください。`);
+    if (result.jsonKept) parts.push("JSON での修正は、反映先の設定が保存時と同じだったため当てはめました。");
+    if (result.jsonLost) parts.push(`JSON での修正（${result.jsonLostLabels.join("、")}）は、反映先の設定が保存時から変わった（または現在の差分に無い）ため当てはめていません。JSON で直し直してください。`);
+    parts.push("最終確認は、あらためて必要です。");
+    return parts.join("");
+  }
+  function formatSavedAt(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleString("ja-JP", { hour12: false });
+  }
+  function selectionFileLabels(file) {
+    const label = (app) => `${app.name ? `${app.name}(app${app.appId})` : `app${app.appId}`}`;
+    return { appLabel: `反映元-${label(file.source)}`, suffix: `反映先-${label(file.target)}` };
   }
 
   // src/reflect/appLookup.ts
@@ -10371,6 +10807,12 @@ ${P} .kus-ds-confirm-section summary{cursor:pointer;font-size:12.5px;font-weight
 ${P} .kus-ds-route-line{font-size:14px;font-weight:700;color:#0f172a;overflow-wrap:anywhere}
 ${P} .kus-ds-result-grid{display:flex;flex-direction:column;gap:12px}
 ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-wrap:anywhere}
+${P} .kus-ds-filetools{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:12px;background:#fff}
+${P} .kus-ds-filetools__hint{flex:1 1 220px;min-width:0;font-size:12.5px;color:#64748b;overflow-wrap:anywhere}
+${P} .kus-ds-verify{display:flex;flex-direction:column;gap:8px;min-width:0}
+${P} .kus-ds-verify__list{margin:0;padding-left:18px;font-size:13px;line-height:1.6;overflow-wrap:anywhere}
+${P} .kus-ds-verify__value{display:inline;padding:1px 6px;border-radius:5px;background:#f1f5f9;white-space:pre-wrap;overflow-wrap:anywhere}
+${P} .kus-ds-impact{margin-top:6px;font-size:13px;line-height:1.6;font-weight:600;color:#991b1b;overflow-wrap:anywhere}
 @media(max-width:900px){
   ${P} .kus-ds-scope-groups{grid-template-columns:1fr}
 }
@@ -10439,6 +10881,7 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
     let extractionStale = false;
     let staleReason = "";
     let carryNote = "";
+    let selectionFileNote = null;
     let restore = null;
     let sessionRestoreLabel = "";
     const pageGuest = () => guestIdFromPagePath(window.location?.pathname || "");
@@ -11135,6 +11578,7 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
         staleReason = "";
         sessionRestoreLabel = restoring() ? restoreSourceLabel(identities.target.name, restore.plan.generatedAt) : "";
         carryNote = previous ? describeCarryOver(carryOverSession(session, previous)) : "";
+        selectionFileNote = null;
         bump();
         clearConfirmation();
         recompose();
@@ -11149,6 +11593,96 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
         else if (counts.error) panel.setStatus(`${summary}取得失敗の項目は、反映しない項目から外すか、抽出し直してください。まだ書き込んでいません。${carried}${caution}`, "warn");
         else if (!counts.change) panel.setStatus(`${summary}まだ書き込んでいません。${carried}${caution}`, "info");
         else panel.setStatus(`${summary}反映する変更を選んでください。まだ書き込んでいません。${carried}${caution}`, caution ? "info" : "ok");
+      });
+    }
+    const selectionTools = [];
+    function makeSelectionTools(stageId) {
+      const root2 = el("div", "kus-ds-filetools");
+      root2.dataset.selectionTools = stageId;
+      const saveBtn = makeButton("選択と修正を保存", "sub");
+      const loadBtn = makeButton("選択と修正を読み込む", "sub");
+      saveBtn.dataset.action = "selection-save";
+      loadBtn.dataset.action = "selection-load";
+      saveBtn.title = "選んだ変更・入力欄の修正・JSON での修正を JSON ファイルに保存します（書き込みはしません）";
+      loadBtn.title = "保存したファイルの選択と修正を、いまの抽出結果に当てはめます（書き込みはしません）";
+      const file = document.createElement("input");
+      file.type = "file";
+      file.accept = ".json,application/json";
+      file.hidden = true;
+      file.dataset.selectionFile = stageId;
+      file.setAttribute("aria-label", "選択と修正のファイル");
+      const hint = el("span", "kus-ds-filetools__hint", "承認を待つ間や、別の担当者への受け渡しに使います。読み込んでも、最終確認は必要です。");
+      root2.append(saveBtn, loadBtn, file, hint);
+      saveBtn.addEventListener("click", saveSelectionFile);
+      loadBtn.addEventListener("click", () => file.click());
+      file.addEventListener("change", () => {
+        const picked = file.files?.[0];
+        file.value = "";
+        if (picked) void loadSelectionFile(picked);
+      });
+      const tools = { root: root2, saveBtn, loadBtn, file };
+      selectionTools.push(tools);
+      return tools;
+    }
+    function saveSelectionFile() {
+      if (busy || !session || !isFresh()) return;
+      const file = buildSelectionFile({ session, scopes: activeScopes(), goal: currentGoal(), createdAt: (/* @__PURE__ */ new Date()).toISOString() });
+      const counts = countSelectionFile(file);
+      downloadText(buildExportFilename("選択と修正", "json", selectionFileLabels(file)), stringifySelectionFile(file), "application/json;charset=utf-8");
+      const parts = [`選んだ変更 ${counts.selected} 件`, `入力欄の修正 ${counts.overrides} 件`, ...counts.jsonSections ? [`JSON での修正 ${counts.jsonSections} 項目`] : []];
+      panel.setStatus(`選択と修正を保存しました（${parts.join("・")}）。JS/CSS の本文は含みません。差分を抽出し直したあとに「選択と修正を読み込む」で戻せます。`, "ok");
+    }
+    async function loadSelectionFile(picked) {
+      if (busy) return;
+      await runLite("選択と修正を読み込み中…", async () => {
+        const reject = (text2) => {
+          selectionFileNote = { tone: "warn", text: `${text2} 現在の選択と修正は変えていません。` };
+          paintBanners(isFresh());
+          panel.setStatus(selectionFileNote.text, "warn");
+        };
+        const current = session;
+        if (!current || !isFresh() || extractionStale) {
+          reject("先に「対象を選ぶ」で差分を抽出してください。");
+          return;
+        }
+        const unapplied = editView.unappliedJson();
+        if (unapplied.length) {
+          reject(`${unapplied.join("、")}のJSONの変更がまだ適用されていません。「JSONを適用」を押すか、「JSONの編集を閉じる」で取り消してから読み込んでください。`);
+          return;
+        }
+        const tooLarge = checkSelectionFileSize(picked.size);
+        if (tooLarge) {
+          reject(tooLarge);
+          return;
+        }
+        let text;
+        try {
+          text = await picked.text();
+        } catch {
+          reject("ファイルを読み込めませんでした。");
+          return;
+        }
+        const parsed = parseSelectionFile(text, picked.size);
+        if ("message" in parsed) {
+          reject(parsed.message);
+          return;
+        }
+        const differences = describeSelectionFileMismatch(parsed.file, current);
+        if (differences.length) {
+          reject(`このファイルは、いまの反映元・反映先のものではないため読み込めません。${differences.join("。")}。`);
+          return;
+        }
+        flushRecompose();
+        const result = applySelectionFile(current, parsed.file);
+        const notes = describeSelectionFileSettingNotes(parsed.file, current);
+        bump();
+        recompose();
+        renderViews();
+        const message = `${describeSelectionFileApply(parsed.file, result)}${notes.length ? ` 注意: ${notes.join("。")}。当てはまらない変更が増えることがあります。` : ""}`;
+        const incomplete = result.selectionLost + result.overridesLost + result.jsonLost > 0 || notes.length > 0;
+        selectionFileNote = { tone: incomplete ? "warn" : "ok", text: message };
+        refreshWorkflow();
+        panel.setStatus(message, incomplete ? "warn" : "ok");
       });
     }
     const confirmBtn = makeButton("最終確認に進む", "primary");
@@ -11298,7 +11832,10 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
       showStage("confirm");
       panel.setStatus(`反映先と内容を確認してください。まだ${goal === "production" ? "反映先へは書き込んで" : "反映先のプレビューへは書き込んで"}いません。`, "info");
     }
-    confirmBtn.addEventListener("click", openConfirmation);
+    confirmBtn.addEventListener("click", (event) => {
+      if (event.detail > 1) return;
+      openConfirmation();
+    });
     const resultCard = makeCard({ title: "実行結果" });
     const resultHead = el("div", "kus-ds-result-head");
     resultHead.setAttribute("aria-live", "polite");
@@ -11309,6 +11846,13 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
     const deployCard = makeCard({ title: "本番への反映", soft: true });
     const deployHost = el("div");
     deployCard.body.appendChild(deployHost);
+    const verifyCard = makeCard({ title: "反映後の内容の確認", soft: true });
+    const verifyIntro = el("p", "kus-ds-verify__intro");
+    const verifyBtn = makeButton("反映後の内容を確認する", "sub");
+    verifyBtn.dataset.sourceVerify = "true";
+    const verifyHost = el("div", "kus-ds-verify");
+    verifyHost.setAttribute("aria-live", "polite");
+    verifyCard.body.append(verifyIntro, verifyBtn, verifyHost);
     const resultTools = el("div", "kus-dp-tools");
     const saveJsonBtn = makeButton("結果JSONを保存", "sub");
     const saveRecordBtn = makeButton("記録をMarkdownで保存", "sub");
@@ -11319,7 +11863,7 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
     const openSettingsBtn = makeButton("反映先アプリの設定画面を開く", "sub");
     resultTools.append(saveJsonBtn, saveRecordBtn, copyRecordBtn, restoreBtn, openSettingsBtn);
     const resultGrid = el("div", "kus-ds-result-grid");
-    resultGrid.append(resultHead, resultNotes, applyCard.card, deployCard.card, resultTools);
+    resultGrid.append(resultHead, resultNotes, applyCard.card, deployCard.card, verifyCard.card, resultTools);
     resultCard.body.appendChild(resultGrid);
     const resultEmpty = el("div", "kus-dp-empty", "まだ実行していません。対象を選び、差分を選んで最終確認をしてから実行してください。");
     function progressRowsFromResult(result) {
@@ -11358,6 +11902,7 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
       if (running || !last) {
         resultHead.textContent = `${currentRunGoal === "preview" ? "反映先プレビューへの書き込み" : "反映先プレビューへの書き込みと本番への反映"}を実行中です。`;
         resultTools.hidden = true;
+        verifyCard.card.hidden = true;
         applyCard.card.hidden = false;
         deployCard.card.hidden = currentRunGoal !== "production";
         return;
@@ -11404,9 +11949,62 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
       resultNotes.appendChild(el("div", "kus-dp-info", sourceUndoGuidance(last.context.goal, last.context.targetPending)));
       restoreBtn.hidden = !pickSourceRestoreRequest(result, last.context.target);
       restoreBtn.disabled = busy;
+      renderVerifyCard(last);
     }
+    function renderVerifyCard(last) {
+      const side = verifySideFor(last.result, last.context.goal);
+      verifyCard.card.hidden = !side || !last.context.verifyExpectations.length;
+      verifyBtn.disabled = busy;
+      if (verifyCard.card.hidden || !side) return;
+      const count = last.context.verifyExpectations.length;
+      verifyIntro.textContent = `${side === "production" ? "本番" : "反映先のプレビュー"}の設定を読み取り、選んだ ${count} 件の変更が、選んだ値（修正した値を含む）で入っているか確かめます。読み取りだけで、書き込みません。選ばなかった変更は確認しません。`;
+      setButtonText(verifyBtn, last.verification ? "反映後の内容を確認し直す" : "反映後の内容を確認する");
+      verifyHost.replaceChildren();
+      const verification = last.verification;
+      if (!verification) return;
+      const message = describeVerifyResult(verification);
+      const state3 = verifyState(verification);
+      const box = el("div", `kus-ds-note kus-ds-note--${state3 === "all" ? "ok" : state3 === "mismatch" ? "err" : "warn"}`);
+      box.dataset.verifyResult = state3;
+      box.append(el("strong", "", `${state3 === "all" ? "✓ " : state3 === "mismatch" ? "! " : "ⓘ "}${message.text}`), el("span", "", `確認した日時: ${new Date(verification.checkedAt).toLocaleString("ja-JP", { hour12: false })}`));
+      verifyHost.appendChild(box);
+      const listOf = (title, rows, dataKey) => {
+        const section = el("div");
+        section.dataset.verifyList = dataKey;
+        section.appendChild(el("strong", "", `${title}（${rows.length} 件）`));
+        const ul = el("ul", "kus-ds-verify__list");
+        for (const row of rows.slice(0, 30)) ul.appendChild(el("li", "", row));
+        if (rows.length > 30) ul.appendChild(el("li", "", `ほか ${rows.length - 30} 件（全件は記録のMarkdownと結果JSONで確認できます）`));
+        section.appendChild(ul);
+        verifyHost.appendChild(section);
+      };
+      if (verification.mismatches.length) listOf("反映されていない変更", verification.mismatches.map((item) => `${item.place}: 期待した値 ${item.expectedText}、現在の値 ${item.currentText}`), "mismatch");
+      if (verification.unknown.length) listOf("確認できなかった変更", verification.unknown.map((item) => `${item.sectionLabel}: ${item.count} 件（${item.reason}）`), "unknown");
+      for (const note of verification.notes) verifyHost.appendChild(el("div", "kus-ds-note kus-ds-note--quiet", note));
+    }
+    async function runVerify() {
+      const last = memory.lastRun;
+      if (busy || !last) return;
+      const side = verifySideFor(last.result, last.context.goal);
+      if (!side) return;
+      await runLite("反映後の内容を確認中…", async () => {
+        const verification = await verifySourceDeployStandalone({
+          target: { appId: last.context.target.appId, guestId: last.context.target.guestId },
+          side,
+          expectations: last.context.verifyExpectations,
+          setStatus: (message2) => panel.setStatus(message2, "busy")
+        });
+        last.verification = verification;
+        renderResultCard();
+        const message = describeVerifyResult(verification);
+        panel.setStatus(message.text, message.tone);
+      });
+    }
+    verifyBtn.addEventListener("click", () => {
+      void runVerify();
+    });
     function recordInput(last) {
-      return { ...last.context, finishedAt: last.finishedAt, result: last.result };
+      return { ...last.context, finishedAt: last.finishedAt, result: last.result, verification: last.verification };
     }
     function exportName(base, ext, last) {
       return buildExportFilename(base, ext, { appLabel: buildAppFilenameLabel(last.context.target.appId, last.context.target.name) });
@@ -11459,7 +12057,8 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
         targetPending: current.preview.targetPending,
         allowPendingChanges,
         sections: run.map((section) => ({ sectionKey: section.sectionKey, label: section.label, selectedCount: section.selectedCount, totalCount: section.totalCount, editedCount: section.editedCount, items: section.plan.items || [] })),
-        startedAt: (/* @__PURE__ */ new Date()).toISOString()
+        startedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        verifyExpectations: buildVerifyExpectations({ session: current, sections: run })
       };
       const reflect = { ...current.opts, scopes: run.map((section) => section.sectionKey) };
       const composed = composedAfterMap(run);
@@ -11476,7 +12075,7 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
       showStage("result");
       renderResultCard();
       const finish2 = (result) => {
-        const last = { result, context, finishedAt: (/* @__PURE__ */ new Date()).toISOString() };
+        const last = { result, context, finishedAt: (/* @__PURE__ */ new Date()).toISOString(), verification: null };
         memory.lastRun = last;
         session = null;
         extractionStale = false;
@@ -11641,7 +12240,22 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
     carryBanner.setAttribute("aria-live", "polite");
     carryBanner.hidden = true;
     stages.select.appendChild(carryBanner);
+    const fileBanners = [];
+    for (const stageId of ["select", "edit"]) {
+      const tools = makeSelectionTools(stageId);
+      const banner = el("div", "kus-ds-note kus-ds-note--info");
+      banner.dataset.selectionFileNote = stageId;
+      banner.setAttribute("aria-live", "polite");
+      banner.hidden = true;
+      stages[stageId].append(tools.root, banner);
+      fileBanners.push(banner);
+    }
     function paintBanners(fresh) {
+      for (const banner of fileBanners) {
+        banner.hidden = !fresh || !selectionFileNote;
+        banner.className = `kus-ds-note kus-ds-note--${selectionFileNote?.tone === "warn" ? "warn" : "ok"}`;
+        banner.textContent = selectionFileNote?.text || "";
+      }
       const restoreText = restoring() ? `${restoreLabel()}を反映元にしています。${RESTORE_NOTICE_BODY}` : "";
       for (const banner of restoreBanners) {
         banner.root.hidden = !restoreText;
@@ -11675,7 +12289,8 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
     extractBtn.addEventListener("click", () => {
       void startExtract();
     });
-    toEditBtn.addEventListener("click", () => {
+    toEditBtn.addEventListener("click", (event) => {
+      if (event.detail > 1) return;
       flushRecompose();
       if (!session || !isFresh() || extractionStale || editEntryBlocker()) return;
       showStage("edit");
@@ -11724,6 +12339,10 @@ ${P} .kus-ds-result-head{font-size:14px;font-weight:700;margin:0 0 8px;overflow-
       backBtn.disabled = busy;
       extractBtn.disabled = busy || !!blocker;
       toEditBtn.disabled = busy || !usable || !!editEntryBlocker();
+      for (const tools of selectionTools) {
+        tools.saveBtn.disabled = busy || !fresh;
+        tools.loadBtn.disabled = busy || !usable;
+      }
       confirmBtn.disabled = busy || !usable || !!stageProblem;
       setButtonText(backBtn, activeStage === "select" ? "対象を変更" : activeStage === "edit" ? "差分の選択に戻る" : activeStage === "confirm" ? "内容の修正に戻る" : "対象を選び直す");
       setButtonText(extractBtn, stale ? "差分を抽出し直す" : fresh ? "抽出し直す" : "差分を抽出する");
@@ -12053,11 +12672,12 @@ ${P2} .kus-rl-items__more{margin-top:8px}
     st.textContent = CSS3;
     document.head.appendChild(st);
   }
+  var RECORD_COUNT_APP_LIMIT = 20;
   var FLOW_SUBTITLES = {
     source: "反映元アプリとの差分を選んで、反映先のプレビューへ書き込み、続けて本番へ反映します。",
     publish: "プレビューの未公開の変更を確認してから、本番へ反映します。"
   };
-  function renderAppDetail(host, app, mode) {
+  function renderAppDetail(host, app, mode, recordCountText) {
     host.replaceChildren();
     const body = el("div", "kus-dp-detail");
     const text = deployModeText(mode);
@@ -12081,6 +12701,15 @@ ${P2} .kus-rl-items__more{margin-top:8px}
         ul.appendChild(li);
       }
       box.appendChild(ul);
+      if (recordCountText) {
+        const impact = el("div", "kus-ds-impact");
+        impact.dataset.recordCount = app.appId;
+        impact.textContent = "レコード数を確認しています…";
+        box.appendChild(impact);
+        void recordCountText(app).then((text2) => {
+          if (impact.isConnected) impact.textContent = text2;
+        });
+      }
       body.appendChild(box);
     } else if (removed.length) {
       body.appendChild(el("div", "kus-dp-info", `プレビューで削除されたフィールド（${removed.length} 件）は、変更を中止すると本番の状態に戻ります。`));
@@ -12138,6 +12767,16 @@ ${P2} .kus-rl-items__more{margin-top:8px}
     let ready = false;
     let activeStage = "setup";
     let inspection = null;
+    const recordCounts = /* @__PURE__ */ new Map();
+    function recordCountText(app) {
+      const key = deployAppKey(app);
+      let pending = recordCounts.get(key);
+      if (!pending) {
+        pending = fetchRecordCountStandalone({ appId: app.appId, guestId: app.guestId }).then(describeRecordCount, () => describeRecordCount({ ok: false, message: "取得を中止しました" }));
+        recordCounts.set(key, pending);
+      }
+      return pending;
+    }
     let selected = /* @__PURE__ */ new Set();
     let confirmedToken = "";
     let progressView = null;
@@ -12385,7 +13024,7 @@ ${P2} .kus-rl-items__more{margin-top:8px}
           setButtonText(toggle, open ? "詳細を閉じる" : "詳細を表示");
           if (open && !rendered) {
             rendered = true;
-            renderAppDetail(detailTd, app, modeForInspection());
+            renderAppDetail(detailTd, app, modeForInspection(), recordCountText);
           }
         });
         tdAct.appendChild(toggle);
@@ -12545,6 +13184,7 @@ ${P2} .kus-rl-items__more{margin-top:8px}
         });
         const apps = mergeInspection(result, problemKeys ? previous : null, problemKeys);
         inspection = { apps, signature, at: Date.now(), inspectedAt: result.inspectedAt || (/* @__PURE__ */ new Date()).toISOString() };
+        recordCounts.clear();
         reviewShown = 200;
         appTable.putApps(apps.map((app) => ({ appId: app.appId, guestId: app.guestId, appName: app.name })));
         clearConfirmation();
@@ -12657,6 +13297,25 @@ ${P2} .kus-rl-items__more{margin-top:8px}
           }
           if (removedFields.length > 30) ul.appendChild(el("li", "", `ほか ${removedFields.length - 30} 件（全件は計画のMarkdownで確認できます）`));
           removed.dd.appendChild(ul);
+          const impactApps = [...new Map(removedFields.map(({ app }) => [deployAppKey(app), app])).values()];
+          const impactHost = el("div");
+          impactHost.dataset.recordImpact = String(impactApps.length);
+          const lines = impactApps.slice(0, RECORD_COUNT_APP_LIMIT).map((app) => {
+            const line = el("div", "kus-ds-impact", `${formatDeployApp(app)}: レコード数を確認しています…`);
+            line.dataset.recordImpactApp = app.appId;
+            impactHost.appendChild(line);
+            return { app, line };
+          });
+          if (impactApps.length > lines.length) impactHost.appendChild(el("div", "kus-ds-impact", `ほか ${impactApps.length - lines.length} アプリのレコード数は確認していません。削除するフィールドの値は、それらのアプリのすべてのレコードから削除されます。`));
+          removed.dd.appendChild(impactHost);
+          void (async () => {
+            for (let index = 0; index < lines.length; index += 3) {
+              await Promise.all(lines.slice(index, index + 3).map(async ({ app, line }) => {
+                const text2 = await recordCountText(app);
+                if (line.isConnected) line.textContent = `${formatDeployApp(app)}: ${text2}`;
+              }));
+            }
+          })();
         } else {
           removed.dd.textContent = "削除されるフィールドはありません。";
         }

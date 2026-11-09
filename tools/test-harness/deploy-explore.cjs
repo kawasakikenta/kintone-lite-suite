@@ -451,6 +451,13 @@ function installSyntheticKintone(config) {
         return { apps: ids.map(id => { const app = appOf(id); return { app: id, status: processing(app) ? 'PROCESSING' : (app.status || 'SUCCESS') }; }) };
       }
       if (p === '/app/plugin/config.json') { const app = appOf(params?.app); return { config: { note: `設定 ${params?.id}` }, revision: String(preview ? app.previewRev : app.prodRev) }; }
+      if (p === '/records.json') {
+        // 削除されるフィールドの影響の大きさ（レコード数）の読み取り。件数だけを返す GET だけを受け付ける。
+        if (preview) throw violation(`records.json に preview prefix は無い: ${url}`);
+        const app = appOf(params?.app);
+        if (params?.query !== 'limit 1' || params?.totalCount !== true) throw violation(`想定外のレコード取得: ${JSON.stringify(params)}`);
+        return { records: [], totalCount: String(app.recordCount ?? 1234) };
+      }
       const key = ENDPOINTS[p];
       if (!key) throw violation(`想定外の GET: ${url}`);
       const app = appOf(params?.app);
@@ -893,7 +900,7 @@ async function main() {
 
 
 function registerScenarios(scenario, ctx) {
-  const { page, button, tab, radio, chip, idle, statusText, statusTone, dockText, panelText, shot, row, rowCheck, card, selectCount, snapshot, reset, extract, finding, ok, metrics, editCard, editRow, fact, toEdit, toConfirm, selectNone, selectAll, assertOnlyAllowedWrites, writeLabels, okWrites, backupJson, runSource, arm, progress, resultItem } = ctx;
+  const { page, button, tab, radio, chip, idle, statusText, statusTone, dockText, panelText, shot, row, rowCheck, card, selectCount, snapshot, reset, extract, finding, ok, metrics, editCard, editRow, fact, toEdit, toConfirm, selectNone, selectAll, assertOnlyAllowedWrites, writeLabels, okWrites, backupJson, runSource, arm, progress, resultItem, sourceRunButton } = ctx;
   const SCOPE_LABEL = { fieldSettings: 'フィールド設定', layoutSettings: 'レイアウト設定', viewSettings: 'ビュー設定', reportSettings: 'グラフ設定', categories: 'カテゴリ設定', appSettings: '一般設定', processSettings: 'プロセス管理', actionSettings: 'アクション設定', pluginSettings: 'プラグイン(※)', customizeSettings: 'JS/CSS設定', appAcl: 'アプリ権限', fieldAcl: 'フィールド権限', recordPermissions: 'レコード権限', notifications: '通知設定', perRecordNotifications: 'レコード条件通知', reminderNotifications: 'リマインダー通知' };
   const allScopes = () => ALL_SCOPES.map(key => [SCOPE_LABEL[key], true]);
   /** 条件が成り立たないとき、失敗させずに既知の問題として記録する。 */
@@ -1031,6 +1038,67 @@ function registerScenarios(scenario, ctx) {
     assert.equal(await statusText(), '5 項目を反映先プレビューへ反映し、1 アプリを本番へ反映しました。');
     await shot('source-granular-result');
     ok('source: 粒度を変えて選ぶ・入力欄と JSON で直す・本番まで（送信内容と、選ばなかった値が反映先のまま残ること）');
+  });
+
+  scenario('source: 選んだ変更と修正の保存・読み込み・反映後の内容の確認（配布物）', async () => {
+    const lastDownload = () => page.evaluate(async () => {
+      const list = window.__k.downloads, item = list[list.length - 1];
+      return item ? { name: item.name, text: await item.blob.text(), count: list.length } : null;
+    });
+    const fileInput = stage => page.locator(`#kus-ds-stage-${stage} [data-selection-file]`);
+    const fileNote = stage => page.locator(`[data-selection-file-note="${stage}"]`);
+    const verifyButton = () => page.getByRole('button', { name: /^反映後の内容を確認(する|し直す)$/ });
+    const pick = ['fieldSettings:/properties/customer/required', 'fieldSettings:/properties/amount/unit', 'viewSettings:/views/未完了/filterCond'];
+
+    // 保存: 選んだ 3 件と、単位の入力欄の修正
+    await reset(businessWorld());
+    await extract();
+    await chooseOnly(pick);
+    await toEdit();
+    await editRow('fieldSettings', '/properties/amount/unit').locator('input').fill('万円');
+    await editRow('fieldSettings', '/properties/amount/unit').locator('input').press('Tab');
+    await button('選択と修正を保存').click();
+    const saved = await lastDownload();
+    assert.match(saved.name, /^選択と修正_反映元-.*\(app101\)_反映先-.*\(app202\)_.+\.json$/);
+    assert.match(await statusText(), /^選択と修正を保存しました（選んだ変更 3 件・入力欄の修正 1 件）/);
+    const file = JSON.parse(saved.text);
+    assert.deepEqual(file.sections.find(section => section.sectionKey === 'fieldSettings').overrides, [{ pointer: '/properties/amount/unit', value: '万円' }]);
+    await shot('source-selection-saved');
+    assert.equal((await assertOnlyAllowedWrites('選択と修正の保存')).writes.length, 0, '保存では何も書き込まない');
+
+    // ページを読み込み直す → 抽出 → 読み込み
+    await reset(businessWorld());
+    await extract();
+    const defaults = await counts();
+    await fileInput('select').setInputFiles({ name: saved.name, mimeType: 'application/json', buffer: Buffer.from(saved.text) });
+    await idle();
+    const restored = await counts();
+    assert.notDeepEqual(restored, defaults, '読み込みで選択が変わる');
+    assert.deepEqual(Object.fromEntries(Object.entries(restored).filter(([key]) => ['fieldSettings', 'viewSettings'].includes(key)).map(([key, value]) => [key, value.split('/')[0]])), { fieldSettings: '2', viewSettings: '1' });
+    assert.match(await fileNote('select').innerText(), /^選択と修正を読み込みました（保存した日時: .+）。当てはめたもの: 選択 3 件・入力欄の修正 1 件。最終確認は、あらためて必要です。$/);
+    await shot('source-selection-loaded');
+    await toEdit();
+    assert.equal(await editRow('fieldSettings', '/properties/amount/unit').locator('input').inputValue(), '万円');
+    await toConfirm();
+    assert.equal(await sourceRunButton().isDisabled(), true, '読み込んだだけでは実行できない（最終確認が必要）');
+    await runSource();
+    const done = await assertOnlyAllowedWrites('読み込んで実行');
+    const update = done.writes.find(write => write.method === 'PUT' && /fields/.test(write.path));
+    assert.equal(update.body.properties.amount.unit, '万円', '読み込んだ入力欄の修正が送信内容になる');
+    assert.equal(update.body.properties.customer.required, true);
+    assert.equal(update.body.properties.customer.label, '顧客名', '選ばなかった表示名は反映先のまま');
+
+    // 反映後の内容の確認（本番を読み取る。書き込みなし）
+    const callsBefore = (await snapshot()).calls.length;
+    await verifyButton().click();
+    await idle();
+    const afterVerify = await snapshot();
+    const reads = afterVerify.calls.slice(callsBefore);
+    assert.ok(reads.length > 0 && reads.every(call => call.method === 'GET' && !call.url.includes('/preview/')), '確認は本番の読み取りだけ');
+    assert.equal(await page.locator('[data-verify-result]').getAttribute('data-verify-result'), 'all');
+    assert.match(await page.locator('[data-verify-result]').innerText(), /^✓ 選んだ 3 件はすべて反映されています（本番の設定を確認しました。修正した値 1 件も、その値になっています）。/);
+    await shot('source-verified');
+    ok('source: 選択と修正の保存・読み込みと、反映後の内容の確認（配布物。保存 → 読み込み直し → 抽出 → 読み込み → 実行 → 確認）');
   });
 
   /**
@@ -1534,6 +1602,19 @@ function registerScale(scenario, ctx) {
     const rows = await page.locator('.kus-ds-row').count();
     metrics['規模: 選択画面の描画済みの行数（全変更に対して）'] = rows;
     expectOr(rows < count, 'scale-select-renders-all', 'medium', '変更 1000 件超の選択画面で、すべての行を一度に描画している', { repro: 'フィールド 300・一覧 50 のアプリ同士を抽出する。', expected: '件数が多い項目は畳むか、一部だけ描画する。', actual: `${rows} 行を描画（変更 ${count} 件）。` });
+    // 選んだ変更と修正の保存・読み込み（1000 件超）。保存したファイルを、選択を外した状態へ読み込んで戻す
+    const selectedBefore = await selectCount('fieldSettings').innerText();
+    await timed('操作: 選択と修正を保存（1000 件超を選んだまま）', async () => { await button('選択と修正を保存').click(); });
+    const bigFile = await page.evaluate(async () => { const list = window.__k.downloads, item = list[list.length - 1]; return { name: item.name, text: await item.blob.text() }; });
+    metrics['規模: 選択と修正のファイルのサイズ'] = `${Math.round(Buffer.byteLength(bigFile.text) / 1024)} KB`;
+    await selectNone('fieldSettings');
+    await selectNone('viewSettings');
+    await timed('操作: 選択と修正を読み込む（1000 件超）', async () => {
+      await page.locator('#kus-ds-stage-select [data-selection-file]').setInputFiles({ name: bigFile.name, mimeType: 'application/json', buffer: Buffer.from(bigFile.text) });
+      await idle();
+    });
+    assert.equal(await selectCount('fieldSettings').innerText(), selectedBefore, '1000 件超の選択が、読み込みで元に戻る');
+    assert.match(await page.locator('[data-selection-file-note="select"]').innerText(), /^選択と修正を読み込みました（保存した日時: .+）。当てはめたもの: 選択 \d+ 件。最終確認は、あらためて必要です。$/);
     // 修正・最終確認
     const edit = await timed('操作: 「内容の修正へ」（1000 件超を選んだまま）', async () => { await toEdit(); });
     await timed('操作: フィールド設定を「JSONで編集」', async () => { await editCard('fieldSettings').locator('[data-action="json-toggle"]').click(); await page.locator('[data-edit-section="fieldSettings"] [data-json-area] textarea').waitFor(); });
