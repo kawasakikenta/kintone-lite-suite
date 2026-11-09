@@ -139,7 +139,10 @@ const sourceDeployModule = `
       if (plan === 'ng') { var msg = '権限がありません（CB_NO02）\\n[API] PUT /k/v1/preview/app/form/fields.json'; sections.push({ sectionKey: key, label: label(key), status: 'ng', message: msg }); opts.onSectionUpdate({ sectionKey: key, label: label(key), status: 'ng', message: msg }); stopped = true; }
       else { sections.push({ sectionKey: key, label: label(key), status: 'ok' }); opts.onSectionUpdate({ sectionKey: key, label: label(key), status: 'ok' }); }
     }
-    var apply = { logs: ['[mock] 合成エンジンのログです。実アプリには通信していません。'], sections: sections, finalRevision: '15', backup: { generatedAt: new Date().toISOString(), scopes: scopes, bundle: { secret: 'BUNDLE-BODY' } } };
+    // バックアップの設定本体（「バックアップから戻す」でそのまま反映元になる形）。cfg.backupApp で、バックアップに含まれるアプリを変えられる。
+    var bundleOf = function (appId, preview) { return { appId: appId, guestId: '', preview: preview, fetchedAt: new Date().toISOString(), meta: { sectionRevisions: {} }, sections: { fieldSettings: { properties: {} }, layoutSettings: { layout: [] }, viewSettings: { views: {} }, customizeSettings: { scope: 'ALL' } } }; };
+    var backupApp = cfg.backupApp || opts.reflect.targetAppId;
+    var apply = { logs: ['[mock] 合成エンジンのログです。実アプリには通信していません。'], sections: sections, finalRevision: '15', backup: { generatedAt: new Date().toISOString(), scopes: scopes, bundle: Object.assign({ secret: 'BUNDLE-BODY' }, bundleOf(backupApp, true)) } };
     if (cancelled) apply.cancelled = true;
     var result = { goal: opts.goal, apply: apply };
     if (opts.goal !== 'production') return result;
@@ -154,7 +157,8 @@ const sourceDeployModule = `
     else { app.productionRevisionAfter = cfg.unverified ? '12' : '16'; app.verified = !cfg.unverified; }
     update(app.status, app.message);
     result.deploy = { mode: 'deploy', batchMode: 'sequential', startedAt: startedAt, finishedAt: new Date().toISOString(), apps: [app], logs: ['[mock] POST /k/v1/preview/app/deploy.json'],
-      backup: { fileName: '本番反映前バックアップ_' + target.name + '(app' + opts.reflect.targetAppId + ')_20260101_000009.json', appCount: 1, generatedAt: new Date().toISOString(), environment: 'production', unavailableFiles: [] } };
+      backup: { fileName: '本番反映前バックアップ_' + target.name + '(app' + opts.reflect.targetAppId + ')_20260101_000009.json', appCount: 1, generatedAt: new Date().toISOString(), environment: 'production', unavailableFiles: [],
+        content: { kind: 'kintone-deploy-backup', version: 1, generatedAt: new Date().toISOString(), mode: 'deploy', environment: 'production', scopes: ['fieldSettings', 'layoutSettings', 'viewSettings', 'customizeSettings'], bundles: [bundleOf(backupApp, false)], secret: 'CONTENT-BODY' } } };
     return result;
   }
 `;
@@ -752,7 +756,7 @@ module.exports = {
     assert.equal(backupItems.length, 2, 'バックアップは反映前のプレビューと本番へ反映する前の本番の 2 つ');
     assert.match(backupItems[0], /反映前の反映先プレビューの設定/);
     assert.match(backupItems[1], /本番へ反映する前の本番設定/);
-    assert.match(await fact('undo').innerText(), /^取り消し方\n?本番への反映は取り消せません。戻すときは、バックアップJSONをプレビュー反映の反映元（設定JSON）に読み込んでプレビューへ戻し、このツールで本番へ反映します。削除したフィールドの値は戻りません。$/);
+    assert.match(await fact('undo').innerText(), /^取り消し方\n?本番への反映は取り消せません。戻すときは、結果画面の「バックアップから戻す」で、反映前のバックアップとの差分を確認してから、本番へ反映します。削除したフィールドの値は戻りません。$/);
     assert.equal(await runButton().innerText(), '確認した内容を反映先へ書き込み、本番へ反映');
     assert.equal(await runButton().isDisabled(), true);
     assert.match(await page.locator('.kus-dp-confirm-label').innerText(), /^反映先アプリID（20 と入力）$/);
@@ -999,8 +1003,87 @@ module.exports = {
     assert.match(await statusText(), /^エラー: 反映前の検査で停止しました。まだ書き込んでいません。/);
     assert.equal(await tab('内容を修正').getAttribute('aria-selected'), 'true', '書き込み前に止まったときは修正の画面へ戻る');
     assert.equal(await ackBox().count() ? await ackBox().isChecked() : false, false, '確認は解除される');
-    assert.equal(await tab('差分を選ぶ').isEnabled(), true, '抽出結果は残す');
+    assert.equal(await tab('差分を選ぶ').isEnabled(), true, '抽出結果は残す（見直せる）');
+    // 抽出結果は古いものとして扱う: 段階 2〜4 の主ボタンは使えず、「差分を抽出し直す」へ案内する
+    assert.equal(await button('最終確認に進む').isDisabled(), true, '最終確認に進めない');
+    assert.equal(await tab('最終確認').isDisabled(), true);
+    assert.match(await dockText(), /次に進むには：反映先が更新されたため、抽出結果は古くなりました。「差分を抽出し直す」を押してください。/);
+    assert.match(await page.locator('[data-stale-extraction="edit"]').innerText(), /抽出結果が古くなりました[\s\S]*まだ何も書き込んでいません（反映前の検査で停止しました。まだ書き込んでいません）。「差分を抽出し直す」を押してください。/);
+    await tab('差分を選ぶ').click();
+    assert.equal(await button('内容の修正へ').isDisabled(), true, '内容の修正へ進めない');
+    assert.equal(await page.locator('[data-stale-extraction="select"]').isVisible(), true);
+    assert.equal(await button('差分を抽出し直す').isEnabled(), true);
+    await button('差分を抽出し直す').click(); await idle();
+    assert.equal(await page.locator('[data-stale-extraction="select"]').isHidden(), true, '抽出し直すと案内は消える');
+    assert.equal(await button('内容の修正へ').isEnabled(), true, '抽出し直すと先へ進める');
+    assert.equal(await page.locator('[data-carry-over]').innerText(), '前回の選択 9 件を引き継ぎました。', '選択を引き継いだ件数');
+    assert.equal((await src()).previewCalls.length, 2, '抽出し直した');
     ok('stopped before writing');
+
+    // バックアップから戻す（結果画面のボタン。合成エンジンへ渡る内容を確かめる）
+    await reset({ cfg: { targetPending: clean } });
+    await extract();
+    await toEdit(); await toConfirm();
+    await ackBox().check(); await idBox().fill('20');
+    await runButton().click(); await idle();
+    assert.equal(await tab('結果').getAttribute('aria-selected'), 'true');
+    assert.equal(await page.locator('[data-source-restore]').isVisible(), true, '結果画面に「バックアップから戻す」');
+    for (const width of [320, 800, 1440]) { await page.setViewportSize({ width, height: 900 }); await overflowOf(`${width}px 結果（バックアップから戻す）`); }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    const resultJson = await downloadOf('結果JSONを保存');
+    assert.doesNotMatch(resultJson.text, /CONTENT-BODY|BUNDLE-BODY|"bundles"/, '結果JSONにバックアップの本体は含めない');
+    assert.match(resultJson.text, /本番反映前バックアップ_営業管理\(app20\)/);
+    await page.locator('[data-source-restore]').click();
+    assert.equal(await tab('対象を選ぶ').getAttribute('aria-selected'), 'true');
+    assert.equal(await page.locator('select[data-source-kind]').inputValue(), 'json');
+    assert.equal(await page.getByLabel('反映先アプリID', { exact: true }).inputValue(), '20');
+    assert.match(await page.locator('.kus-dp-detail-summary').innerText(), /^詳細設定: 反映先だけの一覧・グラフ・アクションを削除 \/ 参照先変換なし$/);
+    assert.equal(await page.getByRole('radio', { name: '本番まで反映', exact: true }).isChecked(), true);
+    assert.deepEqual(await page.locator('.kus-ds-scope-group input:checked').evaluateAll(list => list.map(el => el.getAttribute('aria-label'))), ['フィールド設定', 'レイアウト設定', 'ビュー設定', 'JS/CSS設定'], 'バックアップにある反映可能な項目');
+    assert.match(await page.locator('[data-restore-notice="setup"]').innerText(), /バックアップから戻しています\n反映前のバックアップ（App 20・[^）]*）を反映元にしています。フィールドの削除は行わないため、反映で追加したフィールドは残ります。削除したフィールドの値は戻りません。/);
+    assert.match(await page.locator('.kus-dp-dock-copy strong').innerText(), /^反映元 バックアップ → 反映先 #20 · 本番まで反映$/);
+    assert.equal((await src()).previewCalls.length, 1, '戻す設定にしただけでは差分を取得しない');
+    for (const width of [320, 800, 1440]) { await page.setViewportSize({ width, height: 900 }); await overflowOf(`${width}px バックアップから戻す（段階 1）`); }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await button('差分を抽出する').click(); await idle();
+    assert.deepEqual((await src()).previewCalls.at(-1), { sourceAppId: '20', sourceGuestId: '', sourcePreview: false, hasBundle: true, targetAppId: '20', targetGuestId: '', scopes: ['fieldSettings', 'layoutSettings', 'viewSettings', 'customizeSettings'], lookupMap: {}, preserveTargetOnly: false }, '反映元はバックアップの設定、保持OFF、参照先変換なし');
+    await toEdit(); await toConfirm();
+    assert.match(await fact('route').innerText(), /反映前のバックアップ（営業管理・[^）]*） → 営業管理（#20）のプレビュー → 営業管理（#20）の本番/);
+    assert.equal(await page.locator('[data-restore-notice="confirm"]').isVisible(), true);
+    await ackBox().check(); await idBox().fill('20');
+    await runButton().click(); await idle();
+    const restoreRun = (await src()).runs.at(-1);
+    assert.equal(restoreRun.goal, 'production');
+    assert.equal(restoreRun.reflect.preserveTargetOnly, false);
+    assert.deepEqual(restoreRun.reflect.lookupMap, {});
+    // 記録には、反映元がバックアップだと残る
+    const record = await downloadOf('記録をMarkdownで保存');
+    assert.match(record.text, /反映前のバックアップ（営業管理・/);
+    ok('restore from backup (result button)');
+
+    // プレビューまでの反映結果から戻すときは、反映前のプレビューのバックアップ・目標はプレビューまで
+    await reset({ cfg: { targetPending: clean } });
+    await page.getByRole('radio', { name: 'プレビューまで（本番へは反映しない）', exact: true }).check();
+    await extract();
+    await toEdit(); await toConfirm();
+    await ackBox().check(); await idBox().fill('20');
+    await runButton().click(); await idle();
+    await page.locator('[data-source-restore]').click();
+    assert.equal(await page.getByRole('radio', { name: 'プレビューまで（本番へは反映しない）', exact: true }).isChecked(), true, '目標はプレビューまで');
+    assert.match(await page.locator('.kus-dp-dock-copy strong').innerText(), /· プレビューまで$/);
+    ok('restore from preview backup keeps the preview goal');
+
+    // バックアップに戻すアプリの設定が無いときは、理由を示して設定を変えない
+    await reset({ cfg: { targetPending: clean, run: { backupApp: '999' } } });
+    await extract();
+    await toEdit(); await toConfirm();
+    await ackBox().check(); await idBox().fill('20');
+    await runButton().click(); await idle();
+    await page.locator('[data-source-restore]').click();
+    assert.match(await statusText(), /^バックアップに App 20 の設定がありません。$/);
+    assert.equal(await tab('結果').getAttribute('aria-selected'), 'true', '設定を変えず、結果画面のまま');
+    assert.equal(await page.locator('[data-restore-notice="setup"]').isHidden(), true);
+    ok('restore failure keeps the screen');
 
     // 書き込みの途中で想定外の例外
     await reset({ cfg: { targetPending: clean, run: { throwsAfter: 'ネットワークに接続できません' } } });

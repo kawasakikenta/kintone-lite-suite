@@ -335,6 +335,18 @@ module.exports = async function verifyDeployEngine({ page, script, out }) {
   assert.match(await page.locator('[data-deploy-backup="saved"]').innerText(), /バックアップ: 本番反映前バックアップ_営業管理\(app101\)_\d{8}_\d{6}\.json（1 アプリ分・反映前の本番設定）/);
   assert.equal(await page.locator('[data-deploy-unverified]').count(), 0);
   await shot('result-1app');
+  // 結果画面の「バックアップから戻す」: 「反映元アプリから本番へ」に切り替え、反映元 = そのバックアップ、反映先 = そのアプリで段階 1 を表示する
+  assert.equal(await page.locator('[data-deploy-restore]').isVisible(), true, '成功したアプリがあれば「バックアップから戻す」を出す');
+  assert.equal(await page.locator('select[data-deploy-restore-app]').isHidden(), true, '戻せるアプリが 1 つなら選ばない');
+  await page.locator('[data-deploy-restore]').click();
+  assert.equal(await page.getByRole('radio', { name: '反映元アプリから本番へ', exact: true }).isChecked(), true, '操作を切り替える');
+  assert.equal(await page.locator('#kus-ds-tab-setup').getAttribute('aria-selected'), 'true', '段階 1 を表示する');
+  assert.equal(await page.locator('select[data-source-kind]').inputValue(), 'json', '反映元はバックアップ（設定JSON）');
+  assert.equal(await page.getByLabel('反映先アプリID', { exact: true }).inputValue(), '101', '反映先はそのアプリ');
+  assert.equal(await page.locator('[data-restore-notice="setup"]').isVisible(), true, '戻している間の表示');
+  assert.match(await page.locator('.kus-dp-detail-summary').innerText(), /^詳細設定: 反映先だけの一覧・グラフ・アクションを削除 \/ 参照先変換なし$/, '保持はOFF・参照先変換は空');
+  assert.equal(await page.getByRole('radio', { name: '本番まで反映', exact: true }).isChecked(), true, '目標は本番まで');
+  assert.deepEqual((await assertOnlyDeployWrites('1 戻す設定')).posts.length, 1, '戻す設定にしただけでは何も依頼しない');
   ok('engine: single app deploy');
 
   // =========================================================================
@@ -473,6 +485,7 @@ module.exports = async function verifyDeployEngine({ page, script, out }) {
   assert.match(await resultItem('503').innerText(), /取り消し（ほかのアプリの失敗）/);
   assert.match(await statusText(), /^3 アプリ中、反映できたアプリはありません。失敗 1 アプリ、取り消し 2 アプリ（App 502: kintone が反映に失敗しました/);
   assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'err');
+  assert.equal(await page.locator('[data-deploy-restore]').isHidden(), true, '反映できたアプリが無ければ「バックアップから戻す」は出さない');
   ok('engine: atomic failure cancels the others');
 
   // =========================================================================
@@ -508,7 +521,11 @@ module.exports = async function verifyDeployEngine({ page, script, out }) {
   }
   assert.match(await statusText(), /^1 アプリのプレビューの変更を中止しました。$/, '中止の文言');
   assert.match(await page.locator('[data-deploy-backup="saved"]').innerText(), /変更中止前バックアップ.*（1 アプリ分・中止前のプレビューの設定）/);
-  assert.match(await page.locator('#kus-dp-stage-result').innerText(), /破棄した変更は、バックアップJSONをプレビュー反映で読み込むと戻せます。/);
+  assert.match(await page.locator('#kus-dp-stage-result').innerText(), /破棄した変更は、結果画面の「バックアップから戻す」で、プレビューに戻せます。/);
+  // 中止前のプレビューのバックアップから戻すときの目標は、プレビューまで（本番へは反映しない）
+  await page.locator('[data-deploy-restore]').click();
+  assert.equal(await page.getByRole('radio', { name: 'プレビューまで（本番へは反映しない）', exact: true }).isChecked(), true);
+  assert.equal(await page.getByLabel('反映先アプリID', { exact: true }).inputValue(), '601');
   ok('engine: revert');
 
   // =========================================================================
@@ -649,6 +666,33 @@ module.exports = async function verifyDeployEngine({ page, script, out }) {
   assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'warn');
   await shot('result-cancelled-polling');
   ok('engine: cancel before request and while polling');
+
+  // =========================================================================
+  // 10. 複数アプリを反映した結果から、アプリを選んでバックアップから戻す（そのアプリの設定を反映元にする）
+  // =========================================================================
+  await reset({ apps: [addedApp('1001', 'A'), addedApp('1002', 'B'), addedApp('1003', 'C', { previewRevision: '10' })] });
+  await setTargets(['1001', '1002', '1003']);
+  await inspect();
+  await toConfirm();
+  await confirmAndRun(2);
+  {
+    const run = await assertOnlyDeployWrites('10 複数アプリ');
+    assert.equal(run.posts.length, 2);
+    assert.equal(run.downloads.length, 1, '2 アプリ分のバックアップを 1 つのファイルに保存する');
+    assert.equal((await backupJson(0)).bundles.length, 2);
+  }
+  assert.equal(await page.locator('[data-deploy-restore]').isVisible(), true);
+  const restoreSelect = page.locator('select[data-deploy-restore-app]');
+  assert.equal(await restoreSelect.isVisible(), true, '戻せるアプリが複数なら選べる');
+  assert.deepEqual(await restoreSelect.locator('option').allInnerTexts(), ['A（#1001）', 'B（#1002）']);
+  await restoreSelect.selectOption({ index: 1 });
+  await page.locator('[data-deploy-restore]').click();
+  assert.equal(await page.getByRole('radio', { name: '反映元アプリから本番へ', exact: true }).isChecked(), true);
+  assert.equal(await page.getByLabel('反映先アプリID', { exact: true }).inputValue(), '1002', '選んだアプリが反映先になる');
+  assert.equal(await page.locator('select[aria-label="設定JSON内の反映元アプリ"]').isVisible(), true, 'バックアップ内のアプリも選べる');
+  assert.equal(await page.locator('select[aria-label="設定JSON内の反映元アプリ"]').inputValue(), '1', '反映元は選んだアプリの設定');
+  assert.equal((await assertOnlyDeployWrites('10 戻す設定')).posts.length, 2, '戻す設定にしただけでは何も依頼しない');
+  ok('engine: restore from a multi-app deploy result');
 
   return checks;
 };

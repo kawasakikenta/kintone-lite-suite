@@ -1,5 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { coerceEditable, editableDefaultText, editableText } from '../../src/entries/deploy-source-edit';
+import { coerceEditable, editableDefaultText, editableText, jsonValueAt } from '../../src/entries/deploy-source-edit';
+
+describe('jsonValueAt（JSON で直した項目の入力欄に出す値）', () => {
+  const json = { properties: { name: { label: 'JSONの表示名', required: true }, 'a/b': { label: 'スラッシュ' } } };
+  it('JSON の同じ場所の値を返す（エスケープした pointer も）', () => {
+    expect(jsonValueAt(json, '/properties/name/label')).toBe('JSONの表示名');
+    expect(jsonValueAt(json, '/properties/name/required')).toBe(true);
+    expect(jsonValueAt(json, '/properties/a~1b/label')).toBe('スラッシュ');
+  });
+  it('JSON にその場所が無い・JSON がオブジェクトでないときは undefined', () => {
+    expect(jsonValueAt(json, '/properties/memo/label')).toBeUndefined();
+    expect(jsonValueAt(null, '/properties/name/label')).toBeUndefined();
+    expect(jsonValueAt('text', '/properties/name/label')).toBeUndefined();
+    expect(jsonValueAt(json, 'invalid')).toBeUndefined();
+  });
+});
 
 describe('editableDefaultText（段階 3 の「既定: …」）', () => {
   it('真偽値の既定は「はい / いいえ」で示す（true / false を出さない）', () => {

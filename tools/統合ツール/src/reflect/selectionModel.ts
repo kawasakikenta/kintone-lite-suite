@@ -40,7 +40,7 @@ const NOTES: Record<string, string> = {
   notifications: '通知は一覧全体で選びます（1 件ごとには選べません）。',
   perRecordNotifications: '通知は一覧全体で選びます（1 件ごとには選べません）。',
   reminderNotifications: '通知は一覧全体で選びます（1 件ごとには選べません）。',
-  pluginSettings: 'プラグインは一覧全体で選びます。プラグイン固有の設定はコピーしません。'
+  pluginSettings: 'プラグインは 1 つずつ選びます。反映先に無いプラグインだけを追加し、プラグイン固有の設定はコピーしません。'
 };
 
 function groupLength(sectionKey: string, tokens: readonly string[]): number {
@@ -149,6 +149,20 @@ function emitOrderChange(w: Walker, tokens: readonly string[], before: Record<st
   });
 }
 
+/**
+ * プラグインの一覧（ID の配列）は、反映先に無い ID ごとの追加（whole）にする。反映先のプラグインを外す変更は出さない。
+ * 変更の場所は `/plugins/{ID}`（配列の添字ではなく ID）。送る設定への反映は selectionCompose.ts が行う。
+ */
+function emitPluginAdditions(w: Walker, tokens: readonly string[], kinds: readonly Kind[], before: unknown[], after: unknown[]): void {
+  const existing = new Set(before.filter((id): id is string => typeof id === 'string'));
+  const seen = new Set<string>();
+  for (const id of after) {
+    if (typeof id !== 'string' || !id || existing.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    emit(w, [...tokens, id], [...kinds, 'name'], undefined, id, true);
+  }
+}
+
 function walkObject(w: Walker, before: Record<string, any>, after: Record<string, any>, tokens: string[], kinds: Kind[], containerKey: string | undefined, elementOf: string | undefined): void {
   const namesLevel = containerKey !== undefined;
   const keys = [...Object.keys(after), ...Object.keys(before).filter(key => !own(after, key))];
@@ -166,6 +180,10 @@ function walkObject(w: Walker, before: Record<string, any>, after: Record<string
     const childKinds: Kind[] = [...kinds, 'key'];
     // 表示順は選ばない（選んだ結果から振り直す）。フィールドの種類・コードの違いは変更として出さない（既存の blockers で止まる）。
     if (key === 'index' && elementOf && ORDERED_CONTAINERS.has(elementOf)) continue;
+    if (w.sectionKey === 'pluginSettings' && key === 'plugins' && (bv === undefined || Array.isArray(bv)) && Array.isArray(av)) {
+      emitPluginAdditions(w, childTokens, childKinds, bv ?? [], av);
+      continue;
+    }
     if (w.sectionKey === 'fieldSettings' && (key === 'type' || key === 'code') && (elementOf === 'properties' || elementOf === 'fields')) continue;
     if (NAME_CONTAINERS.has(key) && isPlainObject(bv) && isPlainObject(av)) {
       if (ORDERED_CONTAINERS.has(key)) emitOrderChange(w, childTokens, bv, av);

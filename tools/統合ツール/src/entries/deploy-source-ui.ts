@@ -48,13 +48,27 @@ import {
 } from '../deploy/sourceReport.js';
 import {
   applySelection,
+  carryOverSession,
   createSourceSession,
+  describeCarryOver,
   recomposeSession,
   setJsonOverride,
   setOverride,
   clearOverrides,
   type SourceSession
 } from '../deploy/sourceSession.js';
+import {
+  RESTORE_NOTICE_BODY,
+  RESTORE_NOTICE_TITLE,
+  isDeployBackupFile,
+  pickSourceRestoreRequest,
+  prepareSourceRestore,
+  prepareSourceRestoreFromFile,
+  restoreSelectionFor,
+  restoreSourceLabel,
+  type SourceRestorePlan,
+  type SourceRestoreRequest
+} from '../deploy/sourceRestore.js';
 import { appSettingsPath } from '../deploy/display.js';
 import type { DeployAppStatus } from '../deploy/types.js';
 import { createApplyProgressRows, type ApplyProgressRow, type ApplyProgressStatus } from '../reflect/applyProgress.js';
@@ -124,6 +138,36 @@ interface RunContext {
 
 interface SourceRunSnapshot { result: SourceDeployResult; context: RunContext; finishedAt: string }
 
+/** 「バックアップから戻す」を始める前の入力（戻す状態を終えるとき、利用者が変えていない値だけをここへ戻す）。 */
+interface RestoreBefore {
+  kind: SourceKind;
+  sourceApp: string;
+  sourceGuest: string;
+  scopes: string[];
+  preserve: boolean;
+  lookupText: string;
+  goal: SourceDeployGoal;
+  jsonBundle: any;
+  jsonBundles: any[];
+  jsonToken: string;
+  jsonFileName: string;
+}
+
+/** バックアップから戻している状態（メモリだけ。画面を閉じて開き直すと、戻す前の入力で通常の状態になる）。 */
+interface RestoreState {
+  /** 反映元にしているバックアップの識別子（jsonToken）。変わったら（別の設定JSONを読み込む・クリア）戻す状態を終える */
+  token: string;
+  plan: SourceRestorePlan;
+  /** 戻しているアプリ（反映先）と項目。バックアップ内のアプリを選び直すと、それに合わせる */
+  targetAppId: string;
+  targetGuestId: string;
+  scopes: string[];
+  goal: SourceDeployGoal;
+  before: RestoreBefore;
+}
+
+const STALE_BLOCKER = '反映先が更新されたため、抽出結果は古くなりました。「差分を抽出し直す」を押してください。';
+
 interface SourceMemory {
   kind: SourceKind;
   sourceApp: string;
@@ -150,6 +194,11 @@ export interface SourceFlow {
   deactivate(): void;
   /** パネルの実行中の切り替え（deploy-lite-ui の setBusy から呼ぶ） */
   setBusy(value: boolean): void;
+  /**
+   * 「バックアップから戻す」。反映元をそのバックアップ（メモリ上の JSON）、反映先をそのアプリにして、段階 1 を表示する（書き込みはしない）。
+   * 戻せないときは理由を表示して false。実行中は何もしない。
+   */
+  startRestore(request: SourceRestoreRequest): boolean;
 }
 
 export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
@@ -178,6 +227,14 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
   let shown = false;
   let showStage: (stage: SourceStage) => void = () => {};
   let refreshWorkflow: () => void = () => {};
+  /** 書き込み前の検査で止まったため、抽出結果を古いものとして扱っている（差分を抽出し直すまで、段階 2〜4 の主ボタンは使えない） */
+  let extractionStale = false;
+  let staleReason = '';
+  /** 抽出し直した後の、選択と修正の引き継ぎの案内（次の抽出まで段階 2 に出す） */
+  let carryNote = '';
+  let restore: RestoreState | null = null;
+  /** いまの抽出結果が、バックアップから戻す設定で抽出したものなら、その反映元の表示名 */
+  let sessionRestoreLabel = '';
 
   const pageGuest = () => guestIdFromPagePath(window.location?.pathname || '');
 
@@ -471,16 +528,20 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
     return { text: `詳細設定: ${parts.join(' / ')}`, warn: !preserve.checkbox.checked || !lookup.ok };
   }
 
-  function onInputsChanged() {
-    memory.kind = currentKind();
-    memory.sourceApp = srcApp.value;
-    memory.sourceGuest = srcGuest.value;
+  /** 戻り値は、バックアップから戻す設定を終えたときの通知文（なければ空）。 */
+  function onInputsChanged(): string {
+    const restoreNote = syncRestore();
+    // バックアップから戻している間に画面を閉じても、戻す設定（保持OFF など）が通常の状態に残らないよう、戻す前の入力を控える。
+    const persisted = restore ? restore.before : null;
+    memory.kind = persisted ? persisted.kind : currentKind();
+    memory.sourceApp = persisted ? persisted.sourceApp : srcApp.value;
+    memory.sourceGuest = persisted ? persisted.sourceGuest : srcGuest.value;
     memory.targetApp = tgtApp.value;
     memory.targetGuest = tgtGuest.value;
-    memory.scopes = activeScopes();
-    memory.preserve = preserve.checkbox.checked;
-    memory.lookupText = lookupTa.value;
-    memory.goal = currentGoal();
+    memory.scopes = persisted ? [...persisted.scopes] : activeScopes();
+    memory.preserve = persisted ? persisted.preserve : preserve.checkbox.checked;
+    memory.lookupText = persisted ? persisted.lookupText : lookupTa.value;
+    memory.goal = persisted ? persisted.goal : currentGoal();
     if (srcGuest.value) sourceGuestDetails.details.open = true;
     if (tgtGuest.value) targetGuestDetails.details.open = true;
     sourceNote.refresh();
@@ -498,6 +559,8 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
     bump();
     if (ready && isFresh() !== viewsFresh) renderViews();
     refreshWorkflow();
+    if (restoreNote) panel.setStatus(restoreNote, 'info');
+    return restoreNote;
   }
 
   function renderViews() {
@@ -508,7 +571,9 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
 
   /** 反映する項目だけが変わったとき。抽出時の項目の部分集合なら抽出結果を使い続け、選択と反映内容を作り直す。 */
   function onScopesChanged() {
-    memory.scopes = activeScopes();
+    // バックアップに無い項目を足したときは、バックアップから戻す設定を終える（onInputsChanged が控えと通知を扱う）。
+    if (restore && !restoreStillApplies(restore)) { onInputsChanged(); return; }
+    memory.scopes = restore ? [...restore.before.scopes] : activeScopes();
     fieldNotice.hidden = !shouldWarnMissingFieldSettings(activeScopes()) || !activeScopes().length;
     bump();
     if (session && isFresh()) recompose();
@@ -562,23 +627,169 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
     const file = jsonFile.files?.[0];
     if (!file) return;
     jsonFile.value = '';
+    // バックアップから戻している途中なら、戻す前の入力を引き継ぐ（読み込む前に控える）
+    const priorBefore = restore ? restore.before : captureRestoreBefore();
     jsonBundle = null; jsonBundles = []; jsonToken = ''; jsonFileName = '';
     let parsed: unknown;
     try { parsed = JSON.parse(await file.text()); } catch { throw new Error('設定JSONの読み込みに失敗しました（JSON形式が不正です）'); }
+    // 本番反映が保存したバックアップ（kind: 'kintone-deploy-backup'）は、バックアップから戻す設定にする（反映先もそのアプリに合わせる）。
+    if (isDeployBackupFile(parsed)) {
+      const prepared = prepareSourceRestoreFromFile(parsed);
+      if (!prepared.ok) throw new Error(prepared.message);
+      beginRestore(prepared.plan, file.name, priorBefore);
+      panel.setStatus(`本番反映のバックアップを読み込みました（アプリ #${prepared.plan.targetAppId}）。バックアップから戻す設定にしました。「差分を抽出する」で戻す内容を確認してください。まだ書き込んでいません。`, 'ok');
+      return;
+    }
     jsonBundles = pickAllSettingsBundles(parsed, 'source', true);
     renderJsonAppSelect();
     jsonBundle = jsonBundles[0];
     jsonToken = `${file.name}:${file.size}:${file.lastModified}:${Date.now()}`;
     jsonFileName = file.name;
-    onInputsChanged();
-    panel.setStatus(`反映元の設定JSONを読み込みました（アプリ #${jsonBundle?.appId || '-'}）。`, 'ok');
+    const note = onInputsChanged();
+    panel.setStatus(`${note ? `${note} ` : ''}反映元の設定JSONを読み込みました（アプリ #${jsonBundle?.appId || '-'}）。`, 'ok');
   }));
-  jsonAppSelect.addEventListener('change', () => { jsonBundle = jsonBundles[Number(jsonAppSelect.value)]; onInputsChanged(); });
+  jsonAppSelect.addEventListener('change', () => {
+    const index = Number(jsonAppSelect.value);
+    jsonBundle = jsonBundles[index];
+    // バックアップから戻している間は、選んだアプリを反映先にそろえる（バックアップのアプリと反映先は同じアプリ）。
+    if (restore && jsonToken === restore.token) {
+      const chosen = restoreSelectionFor(restore.plan, index);
+      if (chosen) {
+        tgtApp.value = chosen.targetAppId;
+        tgtGuest.value = chosen.targetGuestId;
+        setScopes(chosen.scopes);
+        restore.targetAppId = chosen.targetAppId;
+        restore.targetGuestId = chosen.targetGuestId;
+        restore.scopes = [...chosen.scopes];
+      }
+    }
+    onInputsChanged();
+  });
   jsonClearBtn.addEventListener('click', () => {
     jsonBundle = null; jsonBundles = []; jsonToken = ''; jsonFileName = ''; jsonFile.value = '';
-    onInputsChanged();
-    panel.setStatus('読み込んだ設定JSONをクリアしました。設定JSONを選び直してください。', 'info');
+    const note = onInputsChanged();
+    panel.setStatus(`${note ? `${note} ` : ''}読み込んだ設定JSONをクリアしました。設定JSONを選び直してください。`, 'info');
   });
+
+  // ---------------------------------------------------------------------------
+  // バックアップから戻す
+  // 反映元 = そのバックアップ（メモリ上の JSON）、反映先 = そのアプリ、項目 = バックアップにある反映可能な項目、
+  // 反映先だけの一覧・グラフ・アクションの保持 = OFF（反映で追加された設定を外すため）、参照先変換 = 空。
+  // 目標は、反映前の本番を戻すなら本番まで、反映前のプレビューを戻すならプレビューまで。
+  // ---------------------------------------------------------------------------
+  function captureRestoreBefore(): RestoreBefore {
+    return {
+      kind: currentKind(), sourceApp: srcApp.value, sourceGuest: srcGuest.value, scopes: activeScopes(), preserve: preserve.checkbox.checked,
+      lookupText: lookupTa.value, goal: currentGoal(), jsonBundle, jsonBundles: [...jsonBundles], jsonToken, jsonFileName
+    };
+  }
+  function setScopes(keys: readonly string[]) {
+    const wanted = new Set(keys);
+    for (const chip of chips) chip.checkbox.checked = wanted.has(chip.checkbox.value);
+  }
+  function setGoal(goal: SourceDeployGoal) {
+    goalProduction.input.checked = goal === 'production';
+    goalPreview.input.checked = goal === 'preview';
+  }
+  /** 戻している状態が、いまも画面に出ているバックアップのものか。 */
+  function restoring(): boolean {
+    return !!restore && jsonToken === restore.token && !!jsonBundle;
+  }
+  function restoreLabel(): string {
+    return restore ? restoreSourceLabel(extractAppNameFromBundle(jsonBundle) || `App ${restore.targetAppId}`, restore.plan.generatedAt) : '';
+  }
+
+  function beginRestore(plan: SourceRestorePlan, fileName: string, before: RestoreBefore) {
+    jsonBundles = plan.bundles;
+    renderJsonAppSelect();
+    jsonBundle = plan.bundle;
+    jsonAppSelect.value = String(plan.bundleIndex);
+    jsonToken = `backup:${plan.generatedAt}:${Date.now()}`;
+    jsonFileName = fileName;
+    jsonFile.value = '';
+    kindSelect.value = 'json';
+    tgtApp.value = plan.targetAppId;
+    tgtGuest.value = plan.targetGuestId;
+    preserve.checkbox.checked = false;
+    lookupTa.value = '';
+    setScopes(plan.scopes);
+    setGoal(plan.goal);
+    restore = { token: jsonToken, plan, targetAppId: plan.targetAppId, targetGuestId: plan.targetGuestId, scopes: [...plan.scopes], goal: plan.goal, before };
+    // これまでの抽出結果・確認は、戻す内容のものではない
+    session = null;
+    extractionStale = false;
+    carryNote = '';
+    sessionRestoreLabel = '';
+    clearConfirmation();
+    onInputsChanged();
+    renderViews();
+    showStage('setup');
+  }
+
+  function startRestore(request: SourceRestoreRequest): boolean {
+    if (busy) return false;
+    const prepared = prepareSourceRestore(request);
+    if (!prepared.ok) { panel.setStatus(prepared.message, 'err'); return false; }
+    const name = extractAppNameFromBundle(prepared.plan.bundle);
+    beginRestore(prepared.plan, restoreSourceLabel(name || `App ${prepared.plan.targetAppId}`, prepared.plan.generatedAt), restore ? restore.before : captureRestoreBefore());
+    panel.setStatus(`バックアップから戻す設定にしました（アプリ #${prepared.plan.targetAppId}）。「差分を抽出する」で戻す内容を確認してください。まだ書き込んでいません。`, 'info');
+    return true;
+  }
+
+  /** 利用者が反映元・反映先・保持・参照先変換・項目を変えていないか（バックアップから戻す設定のままか）。 */
+  function restoreStillApplies(state: RestoreState): boolean {
+    return currentKind() === 'json' && jsonToken === state.token
+      && tgtApp.value.trim() === state.targetAppId && tgtGuest.value.trim() === state.targetGuestId
+      && !preserve.checkbox.checked && lookupTa.value.trim() === ''
+      // 戻す項目を絞るのは戻すままでよい。バックアップに無い項目を足したときは、戻すことではなくなる。
+      && activeScopes().every((key) => state.scopes.includes(key));
+  }
+
+  /** 戻す状態を終える。自動で設定した値のうち、利用者がまだ変えていないものだけを戻す前の値へ戻し、利用者への通知文を返す。 */
+  function endRestore(): string {
+    const state = restore;
+    if (!state) return '';
+    restore = null;
+    const before = state.before;
+    let reverted = false;
+    if (jsonToken === state.token) {
+      // バックアップを反映元のままにしているときは、戻す前の設定JSON（読み込み状態）へ戻す。
+      jsonBundle = before.jsonBundle;
+      jsonBundles = before.jsonBundles;
+      jsonToken = before.jsonToken;
+      jsonFileName = before.jsonFileName;
+      renderJsonAppSelect();
+      if (before.jsonBundle) jsonAppSelect.value = String(Math.max(0, before.jsonBundles.indexOf(before.jsonBundle)));
+      jsonFile.value = '';
+      if (currentKind() === 'json') {
+        kindSelect.value = before.kind;
+        srcApp.value = before.sourceApp;
+        srcGuest.value = before.sourceGuest;
+      }
+      reverted = true;
+    }
+    if (!preserve.checkbox.checked && before.preserve) { preserve.checkbox.checked = true; reverted = true; }
+    if (lookupTa.value.trim() === '' && before.lookupText !== '') { lookupTa.value = before.lookupText; reverted = true; }
+    const selected = activeScopes();
+    if (selected.length === state.scopes.length && selected.every((key) => state.scopes.includes(key)) && !(before.scopes.length === selected.length && before.scopes.every((key) => selected.includes(key)))) {
+      setScopes(before.scopes);
+      reverted = true;
+    }
+    if (currentGoal() === state.goal && state.goal !== before.goal) { setGoal(before.goal); reverted = true; }
+    session = null;
+    extractionStale = false;
+    sessionRestoreLabel = '';
+    clearConfirmation();
+    return reverted
+      ? 'バックアップから戻す設定を終了しました。反映元・保持・参照先変換・項目・目標のうち、変えていないものを戻す前の値に戻しました。'
+      : 'バックアップから戻す設定を終了しました。';
+  }
+
+  /** 入力が変わったとき、バックアップから戻す設定のままか確かめ、崩れていれば終える。通知文（なければ空）を返す。 */
+  function syncRestore(): string {
+    if (!restore || restoreStillApplies(restore)) return '';
+    return endRestore();
+  }
 
   // ---------------------------------------------------------------------------
   // 差分の抽出・選択・作り直し
@@ -680,7 +891,13 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
       if (kind !== 'json') sourceNote.adopt({ ok: true, appId: identities.source.appId, name: identities.source.name, code: identities.source.code });
       targetNote.adopt({ ok: true, appId: identities.target.appId, name: identities.target.name, code: identities.target.code });
       const preview = await previewReflectStandalone(options, (message) => panel.setStatus(message, 'busy'));
+      // 書き込み前の検査で止まった後の抽出し直し（同じ入力）は、前回の選択と入力欄の修正をできるだけ引き継ぐ。
+      const previous = extractionStale && session && session.signature === signature ? session : null;
       session = createSourceSession({ signature, opts: options, identities, sourceEnvironment: kind, preview });
+      extractionStale = false;
+      staleReason = '';
+      sessionRestoreLabel = restoring() ? restoreSourceLabel(identities.target.name, restore!.plan.generatedAt) : '';
+      carryNote = previous ? describeCarryOver(carryOverSession(session, previous)) : '';
       bump();
       clearConfirmation();
       recompose();
@@ -688,9 +905,10 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
       showStage('select');
       const counts = countExtraction(preview.entries);
       const summary = describeExtractionSummary(counts);
-      if (counts.error) panel.setStatus(`${summary}取得失敗の項目は、反映しない項目から外すか、抽出し直してください。まだ書き込んでいません。`, 'warn');
-      else if (!counts.change) panel.setStatus(`${summary}まだ書き込んでいません。`, 'info');
-      else panel.setStatus(`${summary}反映する変更を選んでください。まだ書き込んでいません。`, 'ok');
+      const carried = carryNote ? ` ${carryNote}` : '';
+      if (counts.error) panel.setStatus(`${summary}取得失敗の項目は、反映しない項目から外すか、抽出し直してください。まだ書き込んでいません。${carried}`, 'warn');
+      else if (!counts.change) panel.setStatus(`${summary}まだ書き込んでいません。${carried}`, 'info');
+      else panel.setStatus(`${summary}反映する変更を選んでください。まだ書き込んでいません。${carried}`, 'ok');
     });
   }
 
@@ -717,7 +935,7 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
   confirmCard.body.append(confirmBody, ack.label, confirmInputWrap, confirmStatus);
 
   function confirmationToken(): string {
-    return session && isFresh() ? `${session.id}:${revision}:${currentGoal()}` : '';
+    return session && isFresh() && !extractionStale ? `${session.id}:${revision}:${currentGoal()}` : '';
   }
   function clearConfirmation() {
     confirmedToken = '';
@@ -753,13 +971,14 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
   }
 
   function sourceLabelText(current: SourceSession): string {
+    if (sessionRestoreLabel) return sessionRestoreLabel;
     const identity = current.identities.source;
     const where = current.sourceEnvironment === 'json' ? '設定JSON' : current.sourceEnvironment === 'preview' ? 'プレビュー設定' : '本番設定';
     return `${identity.name}（#${identity.appId}・${where}）`;
   }
 
   function openConfirmation() {
-    if (busy || !session || !isFresh()) return;
+    if (busy || !session || !isFresh() || extractionStale) return;
     flushRecompose();
     if (stageBlocker()) return;
     const run = sectionsToRun(session.composed, activeScopes());
@@ -874,8 +1093,11 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
   const saveJsonBtn = makeButton('結果JSONを保存', 'sub');
   const saveRecordBtn = makeButton('記録をMarkdownで保存', 'sub');
   const copyRecordBtn = makeButton('記録をコピー', 'sub');
+  const restoreBtn = makeButton('バックアップから戻す', 'sub');
+  restoreBtn.dataset.sourceRestore = 'true';
+  restoreBtn.title = '保存したバックアップを反映元にして、反映先との差分を確認します（この操作では書き込みません）';
   const openSettingsBtn = makeButton('反映先アプリの設定画面を開く', 'sub');
-  resultTools.append(saveJsonBtn, saveRecordBtn, copyRecordBtn, openSettingsBtn);
+  resultTools.append(saveJsonBtn, saveRecordBtn, copyRecordBtn, restoreBtn, openSettingsBtn);
   const resultGrid = el('div', 'kus-ds-result-grid');
   resultGrid.append(resultHead, resultNotes, applyCard.card, deployCard.card, resultTools);
   resultCard.body.appendChild(resultGrid);
@@ -958,6 +1180,8 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
       resultNotes.appendChild(note);
     }
     resultNotes.appendChild(el('div', 'kus-dp-info', sourceUndoGuidance(last.context.goal, last.context.targetPending)));
+    restoreBtn.hidden = !pickSourceRestoreRequest(result, last.context.target);
+    restoreBtn.disabled = busy;
   }
 
   function recordInput(last: SourceRunSnapshot): SourceRecordInput {
@@ -989,6 +1213,12 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
     window.open(`${window.location.origin}${appSettingsPath(last.context.target)}`, '_blank', 'noopener');
     panel.setStatus(`アプリ #${last.context.target.appId} の設定画面を開きました。`, 'info');
   });
+  restoreBtn.addEventListener('click', () => {
+    const last = memory.lastRun;
+    const request = last ? pickSourceRestoreRequest(last.result, last.context.target) : null;
+    if (!last || !request || busy) return;
+    startRestore(request);
+  });
 
   // ---------------------------------------------------------------------------
   // 実行
@@ -1005,7 +1235,7 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
     const source = current.identities.source;
     const context: RunContext = {
       goal,
-      source: { appId: source.appId, guestId: source.guestId, name: source.name, environment: current.sourceEnvironment },
+      source: { appId: source.appId, guestId: source.guestId, name: sessionRestoreLabel || source.name, environment: current.sourceEnvironment },
       target: { appId: target.appId, guestId: target.guestId, name: target.name },
       preserveTargetOnly: !!current.opts.preserveTargetOnly,
       lookupMap: { ...(current.opts.lookupMap || {}) },
@@ -1034,6 +1264,7 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
       memory.lastRun = last;
       // 書き込んだため、実行前の差分の抽出は使えない。
       session = null;
+      extractionStale = false;
       running = false;
       renderFinalProgress(last);
     };
@@ -1058,7 +1289,12 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
           memory.lastRun = previous;
           if (previous) renderFinalProgress(previous);
           renderResultCard();
+          // 差分の抽出の後に反映先が更新されたなど。抽出結果は古いものとして、差分を抽出し直すまで先へ進めない（選択と修正は抽出し直した後に引き継ぐ）。
+          extractionStale = true;
+          staleReason = firstLines(reason, 1).replace(/[。.]\s*$/, '');
+          clearConfirmation();
           showStage('edit');
+          refreshWorkflow();
           throw error;
         }
         // 書き込みの途中で想定外の例外。進捗の表示から結果を組み立て、状態の確認を促す。
@@ -1151,6 +1387,42 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
     head.append(el('h2', '', heads[def.id][0]), el('p', '', heads[def.id][1]));
     stages[def.id].appendChild(head);
   }
+  // バックアップから戻している間の注意（段階 1〜4）、抽出結果が古くなったときの案内（段階 2・3）、抽出し直した後の引き継ぎの案内（段階 2）
+  const restoreBanners: Array<{ root: HTMLElement; body: HTMLElement }> = [];
+  for (const stageId of ['setup', 'select', 'edit', 'confirm'] as const) {
+    const root = el('div', 'kus-ds-note kus-ds-note--warn kus-ds-restore-notice');
+    root.dataset.restoreNotice = stageId;
+    root.hidden = true;
+    const body = el('span');
+    root.append(el('strong', '', RESTORE_NOTICE_TITLE), body);
+    stages[stageId].appendChild(root);
+    restoreBanners.push({ root, body });
+  }
+  const staleBanners: Array<{ root: HTMLElement; body: HTMLElement }> = [];
+  for (const stageId of ['select', 'edit'] as const) {
+    const root = el('div', 'kus-ds-note kus-ds-note--warn');
+    root.dataset.staleExtraction = stageId;
+    root.setAttribute('role', 'alert');
+    root.hidden = true;
+    const body = el('span');
+    root.append(el('strong', '', '抽出結果が古くなりました'), body);
+    stages[stageId].appendChild(root);
+    staleBanners.push({ root, body });
+  }
+  const carryBanner = el('div', 'kus-ds-note kus-ds-note--info');
+  carryBanner.dataset.carryOver = 'true';
+  carryBanner.setAttribute('aria-live', 'polite');
+  carryBanner.hidden = true;
+  stages.select.appendChild(carryBanner);
+  function paintBanners(fresh: boolean) {
+    const restoreText = restoring() ? `${restoreLabel()}を反映元にしています。${RESTORE_NOTICE_BODY}` : '';
+    for (const banner of restoreBanners) { banner.root.hidden = !restoreText; banner.body.textContent = restoreText; }
+    const staleText = fresh && extractionStale ? `書き込み前の確認で止めたため、まだ何も書き込んでいません（${staleReason || '反映先が更新されました'}）。「差分を抽出し直す」を押してください。選択と入力欄の修正は、抽出し直した後もできるだけ引き継ぎます。` : '';
+    for (const banner of staleBanners) { banner.root.hidden = !staleText; banner.body.textContent = staleText; }
+    carryBanner.hidden = !fresh || !carryNote || extractionStale;
+    carryBanner.textContent = carryNote;
+  }
+
   stages.setup.appendChild(setupStage);
   stages.select.appendChild(selectView.root);
   stages.edit.appendChild(editView.root);
@@ -1172,7 +1444,7 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
   extractBtn.addEventListener('click', () => { void startExtract(); });
   toEditBtn.addEventListener('click', () => {
     flushRecompose();
-    if (!session || !isFresh() || editEntryBlocker()) return;
+    if (!session || !isFresh() || extractionStale || editEntryBlocker()) return;
     showStage('edit');
   });
   dockActions.append(backBtn, extractBtn, toEditBtn, confirmBtn, runBtn);
@@ -1196,7 +1468,7 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
   function dockTitle(): string {
     if (activeStage === 'setup') {
       const kind = currentKind();
-      return `反映元 ${kind === 'json' ? '設定JSON' : `#${srcApp.value.trim() || '－'}`} → 反映先 #${tgtApp.value.trim() || '－'} · ${currentGoal() === 'production' ? '本番まで反映' : 'プレビューまで'}`;
+      return `反映元 ${restoring() ? 'バックアップ' : kind === 'json' ? '設定JSON' : `#${srcApp.value.trim() || '－'}`} → 反映先 #${tgtApp.value.trim() || '－'} · ${currentGoal() === 'production' ? '本番まで反映' : 'プレビューまで'}`;
     }
     if (activeStage === 'result') return memory.lastRun ? describeRoute(memory.lastRun.context.source.name, memory.lastRun.context.target.name, memory.lastRun.context.goal) : '実行結果';
     return `選んだ変更 ${selectedTotal()} 件 · ${currentGoal() === 'production' ? '本番まで反映' : 'プレビューまで'}`;
@@ -1204,27 +1476,31 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
 
   refreshWorkflow = () => {
     const fresh = isFresh();
-    const blocker = activeStage === 'setup' ? setupBlocker() : '';
+    // 書き込み前の検査で止まった後は、抽出結果を古いものとして扱う（差分を抽出し直すまで、段階 2〜4 の主ボタンは使えない）。
+    const stale = fresh && extractionStale;
+    const usable = fresh && !stale;
+    const blocker = activeStage === 'setup' || stale ? setupBlocker() : '';
     const stageProblem = fresh ? stageBlocker() : '';
     backBtn.hidden = activeStage === 'setup';
-    extractBtn.hidden = activeStage !== 'setup';
+    extractBtn.hidden = !(activeStage === 'setup' || (stale && (activeStage === 'select' || activeStage === 'edit')));
     toEditBtn.hidden = activeStage !== 'select';
     confirmBtn.hidden = activeStage !== 'edit';
     runBtn.hidden = activeStage !== 'confirm';
     backBtn.disabled = busy;
     extractBtn.disabled = busy || !!blocker;
-    toEditBtn.disabled = busy || !fresh || !!editEntryBlocker();
-    confirmBtn.disabled = busy || !fresh || !!stageProblem;
+    toEditBtn.disabled = busy || !usable || !!editEntryBlocker();
+    confirmBtn.disabled = busy || !usable || !!stageProblem;
     setButtonText(backBtn, activeStage === 'select' ? '対象を変更' : activeStage === 'edit' ? '差分の選択に戻る' : activeStage === 'confirm' ? '内容の修正に戻る' : '対象を選び直す');
-    setButtonText(extractBtn, fresh ? '抽出し直す' : '差分を抽出する');
+    setButtonText(extractBtn, stale ? '差分を抽出し直す' : fresh ? '抽出し直す' : '差分を抽出する');
     navButtons.select.disabled = !fresh;
     navButtons.edit.disabled = !fresh || !!editEntryBlocker();
-    navButtons.confirm.disabled = !fresh || !!stageProblem || busy;
+    navButtons.confirm.disabled = !usable || !!stageProblem || busy;
     let message = '';
     if (activeStage === 'setup') {
-      message = blocker ? `次に進むには：${blocker}` : fresh ? '抽出済みの差分があります。「差分を選ぶ」へ進むか、抽出し直してください。' : '反映元と反映先の差分を抽出します。書き込みは行いません。';
+      message = blocker ? `次に進むには：${blocker}` : stale ? STALE_BLOCKER : fresh ? '抽出済みの差分があります。「差分を選ぶ」へ進むか、抽出し直してください。' : '反映元と反映先の差分を抽出します。書き込みは行いません。';
     } else if (activeStage === 'select' || activeStage === 'edit') {
-      message = !fresh ? '入力が変わりました。「対象を選ぶ」で差分を抽出し直してください。'
+      message = stale ? `次に進むには：${STALE_BLOCKER}`
+        : !fresh ? '入力が変わりました。「対象を選ぶ」で差分を抽出し直してください。'
         : (activeStage === 'select' ? editEntryBlocker() : stageProblem) ? `次に進むには：${activeStage === 'select' ? editEntryBlocker() : stageProblem}`
         : activeStage === 'select' ? `${selectedTotal()} 件の変更を選んでいます。内容を修正するか、そのまま進めます。` : `${selectedTotal()} 件の変更を反映します。最終確認へ進んでください。`;
     } else if (activeStage === 'confirm') {
@@ -1233,8 +1509,9 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
     } else {
       message = busy ? '実行中です。終わるまでお待ちください。「中止」で、次の書き込みの前に止められます。' : memory.lastRun ? '結果を確認してください。' : 'まだ実行していません。';
     }
-    const blocked = (activeStage === 'setup' && !!blocker) || ((activeStage === 'select' || activeStage === 'edit') && fresh && !!(activeStage === 'select' ? editEntryBlocker() : stageProblem));
+    const blocked = (activeStage === 'setup' && !!blocker) || ((activeStage === 'select' || activeStage === 'edit') && fresh && (stale || !!(activeStage === 'select' ? editEntryBlocker() : stageProblem)));
     dockCopy.replaceChildren(el('strong', '', dockTitle()), el('span', `kus-dp-dock-msg${blocked ? ' kus-dp-dock-reason' : ''}`, message));
+    paintBanners(fresh);
     panel.result.hidden = activeStage === 'confirm';
     // 入力欄での Enter が、書き込みを始めてはならない（確認・結果の画面では何も実行しない。差分の選択と修正では次へ進むだけ）。
     panel.setPrimaryAction(activeStage === 'setup' ? extractBtn : activeStage === 'select' ? toEditBtn : activeStage === 'edit' ? confirmBtn : noInputSubmit);
@@ -1317,6 +1594,7 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
         panel.setStatus(message.text, message.tone);
       }
     },
-    setBusy
+    setBusy,
+    startRestore
   };
 }

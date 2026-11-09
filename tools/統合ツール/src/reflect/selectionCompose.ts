@@ -95,6 +95,12 @@ export function composeSectionSelection(model: SectionSelectionModel, state: Sec
     for (const change of selected) {
       if (change.pointer.endsWith(ORDER_SUFFIX)) continue;
       const tokens = parsePointer(change.pointer);
+      // プラグインは ID ごとの追加（配列の末尾へ足す）。ほかの項目は場所の値を置き換える。
+      if (model.sectionKey === 'pluginSettings' && tokens.length === 2 && tokens[0] === 'plugins') {
+        if (!Array.isArray(after.plugins)) setOwn(after, 'plugins', []);
+        if (typeof change.after === 'string' && !after.plugins.includes(change.after)) after.plugins.push(change.after);
+        continue;
+      }
       if (change.after === undefined) deleteAt(after, tokens); else setAt(after, tokens, cloneJson(change.after));
     }
     // 入力欄での修正。選んだ変更の範囲の pointer だけ受け付け、範囲外は無視する。
