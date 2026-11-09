@@ -16,6 +16,7 @@
 | `ER図.js` | `er-lite-entry.ts` | `tabs/er.ts`, `tabs/er-standalone.ts` |
 | `プロセス実行.js` | `process-lite-entry.ts` | `tabs/process-standalone.ts` |
 | `プレビュー反映.js` | `reflect-lite-entry.ts` | `tabs/reflect-standalone.ts` |
+| `本番反映.js` | `deploy-lite-entry.ts` | `tabs/deploy-standalone.ts`（取り決めの型は `deploy/types.ts`、画面は `entries/deploy-lite-ui.ts`） |
 | `フィールド追加.js` | `field-lite-entry.ts` | `tabs/field-standalone.ts` |
 | `kintoneレコード取得.js` | `record-lite-entry.ts` | `tabs/record-standalone.ts` |
 | `CSV出力.js` | `csv-export-lite-entry.ts` | `tabs/record-standalone.ts` |
@@ -62,6 +63,7 @@ tools/統合ツール/
 │   │   └── *-standalone.ts    # lite 版用に統合 UI 依存を外した関数群
 │   ├── diff/                  # 差分エンジン
 │   ├── reflect/               # プレビュー反映エンジン
+│   ├── deploy/                # 本番反映（types.ts: エンジンと画面の取り決め / display.ts・report.ts: 表示・Markdown・結果 JSON の純粋関数 / sections.ts・inspect.ts: エンジン）
 │   ├── handlers/              # 差分行のフォーカス移動
 │   └── ui/                    # UI 層（ダイアログ・共通コンポーネント）
 └── tools/                     # ← 親ディレクトリ（生成物の出力先）
@@ -83,6 +85,7 @@ tools/統合ツール/
 - 確認画面・確認ダイアログで対象アプリを列挙するときは `utils.ts` の `summarizeList`（先頭 20 件＋「…ほか N 件（合計 M 件）」。`liteWorkflow.ts` からも再公開）を使い、全アプリ指定で数千行にしない。カンマ区切りの対象アプリ欄（レコード管理・データ品質チェック・ER図）は `entries/recordTargetApps.ts` を使う。アプリごとにネイティブの確認を出す本番書き込み（ステータス更新・コピー）は `PER_APP_CONFIRM_APP_LIMIT`（50）で件数を制限している。
 - 複数の反映先へ書き込む処理（フィールド追加 `runFieldApplyMultiStandalone`、JS/CSS `runApplyJsConfigMultiStandalone`）は、全対象の事前確認 → 最終確認 1 回 → 事前確認の revision を送って 1 件ずつ反映（競合は上書きしない、失敗後も続行、中止後は「未実行（中止）」）の順に揃える。
 - `runControl.ts` は全 lite パネル共通の中止基盤。`createLitePanel` の `setBusy(true)` が `beginRun()`、「中止」ボタンが `requestCancel()`、`api.ts` が各リクエスト前に `throwIfCancelled()` を呼ぶ。読み取り（GET / fetch）は `activeAbortSignal()` で進行中でも打ち切るが、書き込みは進行中のリクエストを待ってから止める。複数件を順に処理するループは `isRunCancelledError` で中止を見分け、残りを「未実行（中止）」として報告する（1 件の中止を N 件の失敗にしない）。
-- `api.ts` の `assertAllowsMutatingRestCall` は本番 prefix への書き込みを原則拒否する。例外はレコード API、`/records/cursor.json`（読み取り用ハンドル）、プレビュー反映が別アプリの JS/CSS を渡すための `POST /file.json`（一時ファイルのアップロード。パスの完全一致のみ）。
+- `api.ts` の `assertAllowsMutatingRestCall` は本番 prefix への書き込みを原則拒否する。例外はレコード API、`/records/cursor.json`（読み取り用ハンドル）、プレビュー反映が別アプリの JS/CSS を渡すための `POST /file.json`（一時ファイルのアップロード。パスの完全一致のみ）、本番反映ツールの `/app/deploy.json` への POST（preview prefix・完全一致・自動再試行なし）。
 - プレビュー反映で反映できる項目と実行順は `reflect/sections.ts` の `REFLECT_SECTION_KEYS` が正規の一覧（一般設定 `appSettings` を含む）。共有の `SECTION_DEFS` の `put` は他ツールにも波及するため、反映項目を増やすときはこちらを変更する。
 - 設定の書き戻し（フィールド追加 / JS/CSS 設定）は GET の `revision` を送り、`decorateRevisionConflict` で競合を利用者へ通知する。
+- 本番反映（`entries/deploy-lite-ui.ts`）は、エンジンを `tabs/deploy-standalone.ts` の `validateDeployTargets`・`inspectDeployTargetsStandalone`・`runDeployStandalone` と `deploy/types.ts` の型だけで使う。状態の表示名・件数の集計・ステータス文は `deploy/display.ts`、計画・記録の Markdown と結果 JSON は `deploy/report.ts`（どちらも DOM 非依存）に置く。差分確認後に対象・操作・詳細設定が変わったら、確認は差分確認からやり直す（署名の比較）。取得失敗・反映処理中のアプリは自動で除外せず、選択している間は先へ進めない。数百件を超える結果は全行を描画せず、要約と問題のある行だけ出す。

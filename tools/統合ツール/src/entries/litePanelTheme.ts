@@ -22,6 +22,7 @@ const STYLE_ID = 'kus-lp-theme-styles';
 const ACCENTS: Record<string, { from: string; via: string; to: string; chip: string; ring: string }> = {
   diff:    { from: '#1d4ed8', via: '#2563eb', to: '#0ea5e9', chip: '#dbeafe', ring: 'rgba(37,99,235,.16)' },
   reflect: { from: '#b91c1c', via: '#dc2626', to: '#f97316', chip: '#fee2e2', ring: 'rgba(220,38,38,.18)' },
+  deploy:  { from: '#4c0519', via: '#881337', to: '#be123c', chip: '#ffe4e6', ring: 'rgba(136,19,55,.22)' },
   field:   { from: '#6d28d9', via: '#7c3aed', to: '#a855f7', chip: '#ede9fe', ring: 'rgba(124,58,237,.18)' },
   jsconfig:{ from: '#0f766e', via: '#0d9488', to: '#22d3ee', chip: '#ccfbf1', ring: 'rgba(13,148,136,.18)' },
   settings:{ from: '#0369a1', via: '#0284c7', to: '#22d3ee', chip: '#e0f2fe', ring: 'rgba(2,132,199,.18)' },
