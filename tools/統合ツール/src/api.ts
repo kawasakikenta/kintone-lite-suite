@@ -302,8 +302,12 @@ export async function apiPut(prefix: string, path: string, body: Record<string, 
   return executeMutatingApiWithRetry('PUT', prefix, path, body);
 }
 
-export async function apiPost(prefix: string, path: string, body: Record<string, unknown>): Promise<any> {
-  return executeMutatingApiWithRetry('POST', prefix, path, body);
+/**
+ * @param retries 試行回数の上限（既定 3）。レコードの追加（POST /records.json）のように、サーバー側で確定したのに応答だけ届かなかった
+ *   場合に再送すると二重に登録される書き込みは、1 を指定して自動で再送しない。
+ */
+export async function apiPost(prefix: string, path: string, body: Record<string, unknown>, retries?: number): Promise<any> {
+  return executeMutatingApiWithRetry('POST', prefix, path, body, retries);
 }
 
 export interface ApiDeleteOptions {

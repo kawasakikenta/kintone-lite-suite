@@ -157,8 +157,8 @@ describe('all-app CSV inspection before any writes', () => {
     const csv = 'title\n' + Array.from({ length: 100 }, (_, i) => `件名${i}`).join('\n') + '\n\n' + Array.from({ length: 6 }, (_, i) => `後続${i}`).join('\n');
     const error = await runCsvImportBatchStandalone({ appId: '7', file: file(csv) }, status).catch(caught => caught);
     expect(error.message).toContain('確定済み: 100件');
-    expect(error.message).toContain('CSV 104行目・amount: 数字でなければなりません。');
-    expect(error.message).toContain('CSV 108行目・title: 必須です。');
+    expect(error.message).toContain('CSV 104行目・金額［amount］: 数字でなければなりません。');
+    expect(error.message).toContain('CSV 108行目・件名［title］: 必須です。');
   });
   it('retains the committed count on an actual chunk failure', async () => {
     vi.mocked(apiPost).mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('権限が変更されました'));

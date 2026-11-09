@@ -9574,6 +9574,26 @@ applySavedViewState();
     return details;
   }
 
+  // src/archive/lite-zip.ts
+  var LITE_ZIP_MAX_ENTRIES = 65535;
+  var LITE_ZIP_MAX_BYTES = 4294967294;
+
+  // src/tabs/record-zip-split.ts
+  var ZIP_PART_TARGET_BYTES = 2 * 1024 * 1024 * 1024;
+  var ZIP_MAX_BYTES = LITE_ZIP_MAX_BYTES;
+  var ZIP_MAX_ENTRIES = LITE_ZIP_MAX_ENTRIES;
+  var RESERVED_ENTRIES = 32;
+  var RESERVED_BYTES = 16 * 1024 * 1024;
+  var PER_FILE_FIXED_BYTES = 76 + 64 + 1024;
+  var PER_DIRECTORY_FIXED_BYTES = 76 + 64;
+  var DEFAULT_ZIP_PLAN_LIMITS = Object.freeze({
+    targetBytes: ZIP_PART_TARGET_BYTES,
+    maxBytes: ZIP_MAX_BYTES,
+    maxEntries: ZIP_MAX_ENTRIES,
+    reservedEntries: RESERVED_ENTRIES,
+    reservedBytes: RESERVED_BYTES
+  });
+
   // src/tabs/record-standalone.ts
   function parseRecordAppIds(value) {
     const tokens = String(value ?? "").split(/[\s,\u3001\uFF0C]+/).filter(Boolean);

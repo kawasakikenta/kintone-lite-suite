@@ -1032,8 +1032,8 @@
   async function apiPut(prefix, path, body) {
     return executeMutatingApiWithRetry("PUT", prefix, path, body);
   }
-  async function apiPost(prefix, path, body) {
-    return executeMutatingApiWithRetry("POST", prefix, path, body);
+  async function apiPost(prefix, path, body, retries) {
+    return executeMutatingApiWithRetry("POST", prefix, path, body, retries);
   }
   var REVISION_CONFLICT_CODES = /* @__PURE__ */ new Set(["GAIA_CO02"]);
   function isRevisionConflictError(error) {

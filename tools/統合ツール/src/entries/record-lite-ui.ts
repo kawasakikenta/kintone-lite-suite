@@ -11,6 +11,7 @@ import {
   runRecordCopyStandalone,
   runPreviewRecordCopyStandalone,
   formatRecordCopyPreview,
+  copyReportNeedsAttention,
   runAttachmentDownloadStandalone,
   runRecordBackupStandalone,
   runLoadStatusActionsStandalone,
@@ -470,6 +471,7 @@ export function mountRecordLitePanel() {
         options.body.appendChild(makeRow(zipName, { label: 'ZIP名' }));
         root.appendChild(makeNote('閲覧権限がないなどで取得できなかったファイルは、ZIP 内の download_errors.txt に記録し、完了メッセージに件数を表示します。', 'help'));
         root.appendChild(makeNote('テーブル内の添付はレコード・テーブル行ごとに保存します。manifest.json で元レコード、行ID、ファイル名、サイズ、保存先を確認できます。', 'help'));
+        root.appendChild(makeNote('ZIP が約 2GB（またはファイル数が約 65,000 件）を超えるときは、レコード単位で「…_part1.zip」「…_part2.zip」のように分けて保存します。分けた内容と ZIP ごとの範囲は、各 ZIP の manifest.json に書きます。', 'help'));
         const run = makeButton('添付ファイルをZIPで保存', 'primary', { icon: '↓' });
         run.style.width = '100%';
         run.addEventListener('click', () => liteRun(panel, '添付ファイル取得中…', async () => {
@@ -486,7 +488,7 @@ export function mountRecordLitePanel() {
             status
           ), status);
         }));
-        addAction({ id: 'attach', label: '添付ファイルを保存', description: '条件に合うレコードの添付ファイルを、ZIPで保存します。', button: run, validate: () => requiredApps() || (fileCode.value.trim() ? '' : '添付ファイルのフィールドコードを指定してください。'), summary: () => [targetSummary(), ['条件', query.value.trim() || '全件'], ['添付フィールド', [tableCode.value.trim(), fileCode.value.trim()].filter(Boolean).join(' / ')], ['フォルダ名にするフィールド', folderCode.value.trim() || '指定なし'], ['ZIP名', zipName.value.trim() || '自動命名'], ...perAppNote('保存', (count) => `${count}アプリ分のZIPを、アプリごとに別々のファイルとして保存します。`)] });
+        addAction({ id: 'attach', label: '添付ファイルを保存', description: '条件に合うレコードの添付ファイルを、ZIPで保存します。', button: run, validate: () => requiredApps() || (fileCode.value.trim() ? '' : '添付ファイルのフィールドコードを指定してください。'), summary: () => [targetSummary(), ['条件', query.value.trim() || '全件'], ['添付フィールド', [tableCode.value.trim(), fileCode.value.trim()].filter(Boolean).join(' / ')], ['フォルダ名にするフィールド', folderCode.value.trim() || '指定なし'], ['ZIP名', zipName.value.trim() || '自動命名'], ['ZIPの分割', '約 2GB またはファイル約 65,000 件を超える前に、レコード単位で「_part1」「_part2」…の ZIP に分けます。複数の ZIP を続けてダウンロードするため、ブラウザの許可確認が出たら許可してください。'], ...perAppNote('保存', (count) => `${count}アプリ分のZIPを、アプリごとに別々のファイルとして保存します。`)] });
         root.appendChild(options.row);
         root.appendChild(makeRow(run));
       }
@@ -538,7 +540,7 @@ export function mountRecordLitePanel() {
             panel.setStatus('コピー元または対象アプリが変わりました。もう一度確認してください。', 'warn');
             return;
           }
-          const warnApps = results.filter((r) => r.error || (r.report && (!r.report.compatibleFields.length || r.report.droppedMissing.length > 0 || r.report.droppedMismatch.length > 0))).length;
+          const warnApps = results.filter((r) => r.error || (r.report && copyReportNeedsAttention(r.report))).length;
           copyPreviewSummary = `${results.length}アプリ確認済${warnApps ? `（除外・注意あり ${warnApps}アプリ）` : '（全フィールド互換）'}`;
           previewText.textContent = results.map((r) => `対象アプリ App ${r.targetAppId}\n${r.error || (r.report ? formatRecordCopyPreview(r.report) : '')}`).join('\n\n');
           previewText.hidden = false;
@@ -612,6 +614,7 @@ export function mountRecordLitePanel() {
         root.appendChild(makeNote('ZIPには records.csv / records.json と manifest.json を保存します。テーブルがある場合は tables/ に明細CSVを追加し、親レコードの $id で紐付けできます。', 'help'));
         root.appendChild(makeNote('CSVは閲覧・集計用で、CSV取込用の互換形式ではありません。Excelで数式として実行されないよう、= + - @ で始まる文字列の先頭に \' を付けます（数値は対象外）。', 'help'));
         root.appendChild(makeNote('添付ファイルの本体は「添付ファイルも保存」で取得します。取得できなかった添付・コメント・設定は manifest.json に記録し、完了メッセージに件数を表示します。', 'help'));
+        root.appendChild(makeNote('添付が約 2GB（またはファイル数が約 65,000 件）を超えるときは、添付を「…_part1.zip」「…_part2.zip」のように分け、レコード・コメント・設定と全体の manifest.json は最後の ZIP に保存します。', 'help'));
 
         const run = makeButton('バックアップをZIPで保存', 'primary', { icon: '↓' });
         run.style.width = '100%';
@@ -630,7 +633,7 @@ export function mountRecordLitePanel() {
             status
           ), status);
         }));
-        addAction({ id: 'backup', label: 'バックアップを保存', description: 'レコード・テーブル明細と選択した関連データをZIPで保存します。', button: run, validate: () => requiredApps() || (incSettings.checkbox.checked && !chips.some((c) => c.checkbox.checked) ? 'アプリ設定の保存範囲を1つ以上選ぶか、「アプリ設定も保存」を外してください。' : ''), summary: () => [targetSummary(), ['条件', query.value.trim() || '全件'], ['ZIP名', zipName.value.trim() || '自動命名'], ['保存内容', ['レコード・テーブル明細', incFiles.checkbox.checked ? '添付ファイル' : '', incComments.checkbox.checked ? 'コメント' : '', incSettings.checkbox.checked ? `アプリ設定（${chips.filter((c) => c.checkbox.checked).map((c) => c.label.textContent).join('、')}）` : ''].filter(Boolean).join('、')], ...perAppNote('保存', (count) => `${count}アプリ分のZIPを、アプリごとに別々のファイルとして保存します。`)] });
+        addAction({ id: 'backup', label: 'バックアップを保存', description: 'レコード・テーブル明細と選択した関連データをZIPで保存します。', button: run, validate: () => requiredApps() || (incSettings.checkbox.checked && !chips.some((c) => c.checkbox.checked) ? 'アプリ設定の保存範囲を1つ以上選ぶか、「アプリ設定も保存」を外してください。' : ''), summary: () => [targetSummary(), ['条件', query.value.trim() || '全件'], ['ZIP名', zipName.value.trim() || '自動命名'], ['保存内容', ['レコード・テーブル明細', incFiles.checkbox.checked ? '添付ファイル' : '', incComments.checkbox.checked ? 'コメント' : '', incSettings.checkbox.checked ? `アプリ設定（${chips.filter((c) => c.checkbox.checked).map((c) => c.label.textContent).join('、')}）` : ''].filter(Boolean).join('、')], ...(incFiles.checkbox.checked ? [['ZIPの分割', '添付が約 2GB またはファイル約 65,000 件を超える前に、レコード単位で「_part1」「_part2」…の ZIP に分けます（レコード・コメント・設定と全体の manifest.json は最後の ZIP）。複数の ZIP を続けてダウンロードするため、ブラウザの許可確認が出たら許可してください。'] as [string, string]] : []), ...perAppNote('保存', (count) => `${count}アプリ分のZIPを、アプリごとに別々のファイルとして保存します。`)] });
         root.appendChild(options.row);
         root.appendChild(makeRow(run));
       }

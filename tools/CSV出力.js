@@ -1042,8 +1042,8 @@
     }
     throw apiErrorWithContext(lastErr, { method, prefix, path, payload: body });
   }
-  async function apiPost(prefix, path, body) {
-    return executeMutatingApiWithRetry("POST", prefix, path, body);
+  async function apiPost(prefix, path, body, retries) {
+    return executeMutatingApiWithRetry("POST", prefix, path, body, retries);
   }
   async function apiDelete(prefix, path, body, options = {}) {
     assertAllowsMutatingRestCall(prefix, path, "DELETE");
@@ -3670,6 +3670,22 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       }];
     }).sort((a, b) => a.index - b.index);
   }
+
+  // src/tabs/record-zip-split.ts
+  var ZIP_PART_TARGET_BYTES = 2 * 1024 * 1024 * 1024;
+  var ZIP_MAX_BYTES = LITE_ZIP_MAX_BYTES;
+  var ZIP_MAX_ENTRIES = LITE_ZIP_MAX_ENTRIES;
+  var RESERVED_ENTRIES = 32;
+  var RESERVED_BYTES = 16 * 1024 * 1024;
+  var PER_FILE_FIXED_BYTES = 76 + 64 + 1024;
+  var PER_DIRECTORY_FIXED_BYTES = 76 + 64;
+  var DEFAULT_ZIP_PLAN_LIMITS = Object.freeze({
+    targetBytes: ZIP_PART_TARGET_BYTES,
+    maxBytes: ZIP_MAX_BYTES,
+    maxEntries: ZIP_MAX_ENTRIES,
+    reservedEntries: RESERVED_ENTRIES,
+    reservedBytes: RESERVED_BYTES
+  });
 
   // src/tabs/record-standalone.ts
   function parseRecordAppIds(value) {
