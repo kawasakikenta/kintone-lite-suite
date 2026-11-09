@@ -15,6 +15,18 @@ import { buildRecordCsvExport, type RecordCsvExportOptions } from './record-csv-
 import { readRecordViews, readAttachmentFields } from './record-metadata.js';
 import { parseCsvText, planCsvImport, formatCsvImportReport, type CsvImportReport } from './record-csv-import.js';
 import { readProcessActionChoices } from './record-process-metadata.js';
+import {
+  buildZipSplitManifest,
+  estimateZipEntryBytes,
+  exceedsZipBudget,
+  planZipParts,
+  zipDirectoryPrefixes,
+  zipPartFileName,
+  type ZipPartRecord,
+  type ZipPlanFile,
+  type ZipPlanLimits,
+  type ZipPlanUnit
+} from './record-zip-split.js';
 export { parseCsvText, validateCsvImportHeader, coerceCsvImportValue, splitCsvListValue } from './record-csv-import.js';
 
 /**
@@ -66,6 +78,8 @@ export interface RecordOperationResult {
   warning?: string;
   cancelled?: boolean;
   summary?: RecordOperationSummary;
+  /** ダウンロードを依頼した ZIP のファイル名（複数あるときの案内に使う） */
+  downloads?: string[];
 }
 
 /** 複数アプリのときは「3アプリで計 750件…」、1 アプリのときは「250件…（App 202）」の形にそろえる件数つきの完了文。 */
@@ -94,14 +108,17 @@ export async function runRecordAppBatchStandalone(
   const warnings: string[] = [];
   const cancelled: string[] = [];
   const completed: Array<{ appId: string; summary?: RecordOperationSummary }> = [];
+  const downloads: string[] = [];
   let failedWritten = 0;
   let failedUnwritten = 0;
   let writeKnown = false;
+  let unconfirmedApps = 0;
   for (let i = 0; i < appIds.length; i++) {
     const appId = appIds[i];
     setStatus(`App ${appId}: 実行中 (${i + 1}/${appIds.length})`);
     try {
       const result = await operation(appId, i, appIds.length);
+      if (result && result.downloads) downloads.push(...result.downloads);
       if (result && result.warning) warnings.push(`App ${appId}: ${result.warning}`);
       if (result && result.cancelled) cancelled.push(`App ${appId}`);
       else completed.push({ appId, summary: result ? result.summary : undefined });
@@ -124,6 +141,7 @@ export async function runRecordAppBatchStandalone(
         writeKnown = true;
         failedWritten += Number(partial.done);
         failedUnwritten += Math.max(0, Number(partial.total) - Number(partial.done));
+        if (partial.unconfirmed) unconfirmedApps += 1;
       }
     }
   }
@@ -137,7 +155,8 @@ export async function runRecordAppBatchStandalone(
     const known = [
       completed.length ? `成功 ${completed.length}アプリ` : '',
       writeKnown ? `書き込み済み ${successWritten + failedWritten}件` : '',
-      writeKnown && failedUnwritten ? `未処理 ${failedUnwritten}件` : ''
+      writeKnown && failedUnwritten ? `未処理 ${failedUnwritten}件` : '',
+      unconfirmedApps ? `${unconfirmedApps}アプリで失敗した塊が書き込まれたか未確認` : ''
     ].filter(Boolean);
     const error = new Error(`${appIds.length}アプリ中${failures.length}アプリで失敗しました${known.length ? `（${known.join('・')}）` : ''}\n${failures.join('\n')}${warningSummary ? `\n${warningSummary}` : ''}${cancelSummary ? `\n${cancelSummary}` : ''}`);
     // 一部のアプリが成功しているときは、エラーではなく警告として知らせる
@@ -160,9 +179,20 @@ export async function runRecordAppBatchStandalone(
     headline = `${completed.length}アプリの操作が完了しました`;
   }
   const tone: RecordStatusTone = warningSummary || cancelSummary ? 'warn' : 'ok';
-  const message = `${headline}${cancelSummary ? `\n${cancelSummary}` : ''}${warningSummary ? `\n${warningSummary}` : ''}`;
+  const message = `${headline}${cancelSummary ? `\n${cancelSummary}` : ''}${warningSummary ? `\n${warningSummary}` : ''}${describeMultipleDownloads(downloads)}`;
   setStatus(message, tone);
   return { message, tone };
+}
+
+/**
+ * ZIP を複数ダウンロードしたとき（アプリごとの ZIP・分割した ZIP）の案内。
+ * ブラウザは 2 つ目以降の自動ダウンロードを止めたり許可を求めたりすることがあり、止められても画面からは分からない。
+ * 依頼した ZIP の数と名前を示し、ダウンロード一覧と照らし合わせられるようにする。
+ */
+export function describeMultipleDownloads(downloads: string[]): string {
+  if (downloads.length < 2) return '';
+  const names = downloads.length > 20 ? `${downloads.slice(0, 20).join(', ')} …ほか ${downloads.length - 20}個` : downloads.join(', ');
+  return `\nZIP ${downloads.length}個のダウンロードを依頼しました。ブラウザの許可確認が出たら許可し、ダウンロード一覧に ${downloads.length} 個そろっているか確認してください: ${names}`;
 }
 
 const CANCEL_WRITE_WAIT_MESSAGE = '書き込み中のリクエストの応答を待っています。応答が返ると次のリクエストの前で止めます。応答がない場合は kintone 画面で結果を確認してください。';
@@ -637,10 +667,11 @@ async function writeChunksUnlessCancelled<T>(
   label: string,
   writeChunk: (chunk: T[], chunkIndex: number) => Promise<void>,
   onProgress: (done: number, total: number) => void,
-  describeItem?: (index: number) => string
+  describeItem?: (index: number) => string,
+  describeField?: (path: string) => string
 ): Promise<number> {
   try {
-    return await writeInChunks(items, label, writeChunk, onProgress, undefined, describeItem);
+    return await writeInChunks(items, label, writeChunk, onProgress, undefined, describeItem, describeField);
   } catch (error: any) {
     if (!isRunCancelledError(error)) throw error;
     const done = Math.max(0, Number(error?.partial?.done) || 0);
@@ -649,6 +680,12 @@ async function writeChunksUnlessCancelled<T>(
       '書き込み済みのレコードは取り消していません'
     ]);
   }
+}
+
+/** 書き込みのエラーに出るフィールドのコード（`code`）を「フィールド名［コード］」にする。テーブル内などのパスはそのまま。 */
+function fieldLabelFor(properties: Record<string, any> | undefined, path: string): string {
+  const label = /^[^.[\]]+$/.test(path) ? properties?.[path]?.label : undefined;
+  return label && label !== path ? `${label}［${path}］` : path;
 }
 
 export async function runCsvImportBatchStandalone(opts, setStatus) {
@@ -678,9 +715,11 @@ export async function runCsvImportBatchStandalone(opts, setStatus) {
     // Build just one app's payload at a time, keeping multi-app memory bounded.
     const { records, recordRows } = planCsvImport(rows, plan.properties);
     const ok = await writeChunksUnlessCancelled(records, `App ${appId} の CSV取込`,
-      batch => apiPost(prefix, '/records.json', { app: appId, records: batch }),
+      // 追加は冪等ではない（応答だけ届かなかった塊を再送すると二重に登録される）ので、自動では再送しない
+      batch => apiPost(prefix, '/records.json', { app: appId, records: batch }, 1),
       (done, total) => setStatus(`App ${appId}: インポート中... (${done} / ${total}件)`),
-      index => `CSV ${recordRows[index]}行目`);
+      index => `CSV ${recordRows[index]}行目`,
+      path => fieldLabelFor(plan.properties, path));
     setStatus(`App ${appId}: ${ok}件を取り込みました`);
     return { summary: { counts: { 件: ok }, written: ok, describe: countedSummary('を取り込みました', { withApp: true }) } };
   }, setStatus);
@@ -823,6 +862,33 @@ export interface RecordCopyCompatibilityReport {
   droppedMissing: string[];
   droppedMismatch: string[];
   excludedSystemOrFile: string[];
+  /** コピー先で必須なのに、コピー元から値が入らず初期値も無いフィールド（すべてのレコードが kintone に拒否される） */
+  requiredWithoutValue: string[];
+}
+
+const enabledFlag = (value: unknown) => value === true || value === 'true';
+
+/** 初期値（または現在の日付・日時）を持つか。持つフィールドは、値を送らなければ初期値が入る。 */
+function hasDefaultValue(field: any): boolean {
+  const value = field?.defaultValue;
+  if (enabledFlag(field?.defaultNowValue)) return true;
+  return Array.isArray(value) ? value.length > 0 : value !== undefined && value !== null && String(value) !== '';
+}
+
+/**
+ * コピー先で必須なのに、コピーでは値を送らず初期値も無いフィールド（ステータス・計算などのシステム項目は書き込み対象外なので除く）。
+ * これがあると、コピーするレコードすべてを kintone が拒否する。
+ * @param providedCodes コピーで値を送るトップレベルのフィールドコード
+ */
+export function findRequiredFieldsWithoutValue(targetProps: Record<string, any> | null | undefined, providedCodes: ReadonlySet<string>): string[] {
+  const out: string[] = [];
+  for (const [code, field] of Object.entries(targetProps && typeof targetProps === 'object' ? targetProps : {}) as Array<[string, any]>) {
+    if (!field || typeof field !== 'object' || !enabledFlag(field.required)) continue;
+    if (COPY_SYSTEM_CODES.has(code) || (COPY_SYSTEM_TYPES.has(field.type) && field.type !== 'FILE') || field.expression) continue;
+    if (providedCodes.has(code) || hasDefaultValue(field)) continue;
+    out.push(`${String(field.label || code)}［${code}］${field.type === 'FILE' ? '（添付はコピーできません）' : ''}`);
+  }
+  return out;
 }
 
 export function inspectRecordCopyCompatibility(
@@ -835,6 +901,7 @@ export function inspectRecordCopyCompatibility(
   const droppedMissing: string[] = [];
   const droppedMismatch: string[] = [];
   const excludedSystemOrFile: string[] = [];
+  const provided = new Set<string>();
 
   for (const [code, field] of Object.entries(src)) {
     if (!field || typeof field !== 'object') continue;
@@ -855,6 +922,7 @@ export function inspectRecordCopyCompatibility(
       droppedMismatch.push(`${display}(${type} → ${targetType})`);
       continue;
     }
+    provided.add(code);
     if (type === 'SUBTABLE') {
       const srcChildren = field.fields && typeof field.fields === 'object' ? field.fields : {};
       const tgtChildren = targetField.fields && typeof targetField.fields === 'object' ? targetField.fields : {};
@@ -885,8 +953,14 @@ export function inspectRecordCopyCompatibility(
     compatibleFields,
     droppedMissing,
     droppedMismatch,
-    excludedSystemOrFile
+    excludedSystemOrFile,
+    requiredWithoutValue: findRequiredFieldsWithoutValue(tgt, provided)
   };
+}
+
+/** 事前確認で、コピーできないフィールドや登録できない原因があるか（警告色にする）。 */
+export function copyReportNeedsAttention(report: RecordCopyCompatibilityReport): boolean {
+  return !report.compatibleFields.length || report.droppedMissing.length > 0 || report.droppedMismatch.length > 0 || report.requiredWithoutValue.length > 0;
 }
 
 export function formatRecordCopyPreview(report: RecordCopyCompatibilityReport): string {
@@ -894,7 +968,8 @@ export function formatRecordCopyPreview(report: RecordCopyCompatibilityReport): 
     `コピー対象フィールド (${report.compatibleFields.length}件): ${report.compatibleFields.join(', ') || 'なし'}`,
     `コピー先に無いため除外 (${report.droppedMissing.length}件): ${report.droppedMissing.join(', ') || 'なし'}`,
     `型不一致のため除外 (${report.droppedMismatch.length}件): ${report.droppedMismatch.join(', ') || 'なし'}`,
-    `システム・添付・自動計算のため除外 (${report.excludedSystemOrFile.length}件): ${report.excludedSystemOrFile.join(', ') || 'なし'}`
+    `システム・添付・自動計算のため除外 (${report.excludedSystemOrFile.length}件): ${report.excludedSystemOrFile.join(', ') || 'なし'}`,
+    ...(report.requiredWithoutValue.length ? [`コピー先の必須フィールドに値が入らない (${report.requiredWithoutValue.length}件・すべてのレコードが登録できません): ${report.requiredWithoutValue.join(', ')}`] : [])
   ].join('\n');
 }
 
@@ -928,7 +1003,7 @@ export async function runPreviewRecordCopyStandalone(
       results.push({ targetAppId, error: error?.message || String(error) });
     }
   }
-  const hasWarn = results.some((r) => r.error || (r.report && (!r.report.compatibleFields.length || r.report.droppedMissing.length > 0 || r.report.droppedMismatch.length > 0)));
+  const hasWarn = results.some((r) => r.error || (r.report && copyReportNeedsAttention(r.report)));
   setStatus(`フィールド互換性確認完了: ${results.length}アプリ。まだコピーは実行していません。`, hasWarn ? 'warn' : 'ok');
   return results;
 }
@@ -958,6 +1033,12 @@ export async function runRecordCopyStandalone(opts, setStatus) {
   if (!plan.records.some((record) => Object.keys(record).length)) {
     throw new Error(`コピーできるフィールドがありません（コピー先 App ${targetAppId} に一致するフィールドがありません）。コピー元とコピー先のアプリIDを確認してください。${droppedNote ? `\n${droppedNote}` : ''}`);
   }
+  // コピー先で必須なのに値が入らないフィールドがあると、すべてのレコードが拒否される（確認を出す前に止める）。
+  const providedCodes = new Set(plan.records.flatMap((record) => Object.keys(record)));
+  const unfillable = findRequiredFieldsWithoutValue(targetProps, providedCodes);
+  if (unfillable.length) {
+    throw new Error(`コピー先 App ${targetAppId} の必須フィールドに、コピー元から値が入らないため、すべてのレコードが登録できません。コピー先のフィールド設定（必須・初期値）またはコピー元のフィールドを確認してください。\n対象: ${unfillable.join(', ')}${droppedNote ? `\n${droppedNote}` : ''}`);
+  }
   const fileNote = plan.droppedFileFields.length
     ? `添付ファイルはコピーされません: ${plan.droppedFileFields.slice(0, 10).join(', ')}${plan.droppedFileFields.length > 10 ? ` 他${plan.droppedFileFields.length - 10}件` : ''}（${plan.droppedFileFields.length}フィールド、添付ありレコード ${plan.recordsWithFiles}件）。必要な場合はコピー後に手動で再アップロードしてください。`
     : '';
@@ -977,9 +1058,11 @@ export async function runRecordCopyStandalone(opts, setStatus) {
   const ok = await writeChunksUnlessCancelled(
     plan.records,
     `App ${sourceAppId} → ${targetAppId} のレコードコピー`,
-    (batch) => apiPost(tgtPrefix, '/records.json', { app: targetAppId, records: batch }),
+    // 追加は冪等ではない（応答だけ届かなかった塊を再送すると二重に登録される）ので、自動では再送しない
+    (batch) => apiPost(tgtPrefix, '/records.json', { app: targetAppId, records: batch }, 1),
     (done, total) => setStatus(`コピー中... ${done} / ${total}件`),
-    index => `コピー元レコードID ${records[index]?.$id?.value ?? index + 1}`
+    index => `コピー元レコードID ${records[index]?.$id?.value ?? index + 1}`,
+    path => fieldLabelFor(targetProps, path)
   );
   const fileDropNote = plan.droppedFileFields.length ? `添付除外 ${plan.droppedFileFields.length}フィールド` : '';
   const dropWarning = [fileDropNote, droppedNote].filter(Boolean).join(' / ');
@@ -1005,20 +1088,68 @@ function folderLabelFromField(field: any): string {
   return (Array.isArray(value) ? value.map(label).filter(Boolean).join(',') : label(value)).trim();
 }
 
-/** 添付ファイル一括ダウンロード（条件で絞り、指定したファイルフィールドの中身を ZIP 化） */
-/** 添付ファイル保存の完了文。取得失敗があれば件数を添える。 */
+/** 添付ファイル一括ダウンロード（条件で絞り、指定したファイルフィールドの中身を ZIP 化。上限を超える前に ZIP を分ける） */
+/** ZIP の上限のために ZIP に入れられなかった添付（取得失敗とは別に数える）。 */
+export interface UnsavedAttachment {
+  recordId: string;
+  fileName: string;
+  size: string;
+  reason: string;
+}
+
+function formatUnsavedAttachments(items: UnsavedAttachment[]): string {
+  return items.map((item) => `record ${item.recordId}\t${item.fileName || '(名称不明)'}\t${item.reason}`).join('\n');
+}
+
+/**
+ * download_errors.txt の本文。取得できなかった添付と、ZIP の上限で保存できなかった添付を分けて書く。
+ * 分割して保存したときは、この ZIP が全体のどこにあたるかを先頭に示す。
+ */
+export function buildDownloadErrorsText(failures: FileFailure[], unsaved: UnsavedAttachment[], split?: { part: number; partCount: number }): string {
+  return [
+    ...(split && split.partCount > 1 ? [`この ZIP は ${split.partCount} 個に分けて保存した ZIP の part ${split.part} です。ほかの ZIP の取得失敗・保存できなかった添付は、それぞれの download_errors.txt と manifest.json に記録しています。`, ''] : []),
+    ...(failures.length ? [`取得できなかった添付ファイル ${failures.length}件`, formatFileFailures(failures), ''] : []),
+    ...(unsaved.length ? [`ZIP の上限のため保存できなかった添付ファイル ${unsaved.length}件（取得は試みていません）`, formatUnsavedAttachments(unsaved), ''] : [])
+  ].join('\n');
+}
+
+/** ZIP を作れなかったとき、どの ZIP までを保存済みかを添えて利用者に伝える。 */
+function zipBuildError(error: unknown, part: number, partCount: number, savedZips: string[]): Error {
+  const reason = error instanceof Error ? error.message : String(error ?? '');
+  const wrapped = new Error([
+    `ZIP を作成できませんでした${partCount > 1 ? `（${partCount} 個中 part ${part}）` : ''}: ${reason}`,
+    savedZips.length ? `保存済みの ZIP: ${savedZips.join(', ')}（作成できなかった ZIP と以降は保存していません）` : ''
+  ].filter(Boolean).join('\n'));
+  Object.assign(wrapped, { original: error });
+  return wrapped;
+}
+
+/** 添付ファイル保存の完了文。取得失敗・ZIP に入れられなかった添付・分割があれば件数を添える。 */
 function describeAttachmentSummary(counts: Record<string, number>, appIds: string[]): string {
   const files = counts['ファイル'] || 0;
   const failed = counts['取得失敗'] || 0;
-  const failNote = failed ? `（取得失敗 ${failed}件）` : '';
+  const unsaved = counts['保存不可'] || 0;
+  const zips = counts['ZIP'] || 0;
+  const notes = [failed ? `取得失敗 ${failed}件` : '', unsaved ? `ZIPの上限で保存できなかった添付 ${unsaved}件` : ''].filter(Boolean);
+  const failNote = notes.length ? `（${notes.join('・')}）` : '';
+  const splitNote = zips > appIds.length ? `（${zips}個のZIPに分けて保存）` : '';
   if (!files) return `保存した添付ファイルはありません${failNote}`;
   return appIds.length === 1
-    ? `添付ファイル ${files}件を保存しました${failNote}`
-    : `${appIds.length}アプリで計 ${files}件の添付ファイルを保存しました${failNote}`;
+    ? `添付ファイル ${files}件を保存しました${splitNote}${failNote}`
+    : `${appIds.length}アプリで計 ${files}件の添付ファイルを保存しました${splitNote}${failNote}`;
+}
+
+interface AttachmentPlanFile extends ZipPlanFile {
+  groupIndex: number;
+  recordId: string;
+  rowId: string;
+  folderPath: string;
+  file: any;
 }
 
 export async function runAttachmentDownloadStandalone(opts, setStatus: RecordStatusCallback): Promise<RecordOperationResult> {
   const { appId, guestId, query, fileFieldCode, folderFieldCode, zipName } = opts;
+  const zipLimits: Partial<ZipPlanLimits> | undefined = opts.zipLimits;
   const tableFieldCode = String(opts.tableFieldCode || '');
   if (!appId) throw new Error('アプリIDを入力してください');
   if (!fileFieldCode) throw new Error('ファイルフィールドコードを入力してください');
@@ -1054,84 +1185,179 @@ export async function runAttachmentDownloadStandalone(opts, setStatus: RecordSta
     return { warning, summary: { counts: { ファイル: 0, 取得失敗: 0 }, describe: describeAttachmentSummary } };
   }
   const JSZipCtor = await loadJSZipLite();
-  const zip = new JSZipCtor();
-  let fileCount = 0;
-  let totalAttachmentBytes = 0;
-  let resolvedAppName = String(opts.appName || '');
-  const failures: FileFailure[] = [];
-  const manifest: any[] = [];
-  const usedByFolder = new Map<string, Set<string>>();
 
-  for (let i = 0; i < groups.length; i++) {
-    const { rec, recordId, rowId, files } = groups[i];
-    setStatus(`添付DL中 (${i + 1}/${groups.length}${failures.length ? ` / 失敗 ${failures.length}` : ''})`);
-    if (!files.length) continue;
+  // 取得を始める前に、レコード単位でどの ZIP に入れるかを決める（classic ZIP の上限を超える前に次の ZIP へ分ける）。
+  const units: Array<ZipPlanUnit<AttachmentPlanFile>> = [];
+  groups.forEach((group, groupIndex) => {
+    if (!group.files.length) return;
+    const { rec, recordId, rowId, files } = group;
     let folderName = folderFieldCode ? folderLabelFromField(rec[folderFieldCode]) : '';
     if (!folderName) folderName = `Record_${recordId}`;
     const folderPath = [sanitizeZipSegment(folderName, `Record_${recordId}`),
       ...(tableFieldCode ? [...(folderName === `Record_${recordId}` ? [] : [`Record_${recordId}`]), sanitizeZipSegment(tableFieldCode), `Row_${sanitizeZipSegment(rowId)}`] : [])].join('/');
-    const folder = zip.folder(folderPath);
-    const used = usedByFolder.get(folderPath) || new Set<string>();
-    usedByFolder.set(folderPath, used);
-    for (const f of files) {
+    const planned: AttachmentPlanFile[] = files.map((file) => ({
+      path: `${folderPath}/${sanitizeZipSegment(String(file.fileKey || '').slice(0, 12) || 'file', 'file')}_${sanitizeZipSegment(file.name || 'file.bin', 'file.bin')}`,
+      size: Number(file.size),
+      groupIndex, recordId, rowId, folderPath, file
+    }));
+    const last = units[units.length - 1];
+    if (last && last.id === recordId) last.files.push(...planned);
+    else units.push({ id: recordId, files: planned });
+  });
+  const plan = planZipParts(units, { limits: zipLimits });
+  const partCount = plan.parts.length;
+  const baseName = recordExportFilename(zipName, 'zip', buildExportFilename('添付ファイル', 'zip', { appLabel: buildAppFilenameLabel(appId, '') }));
+  const partStates: ZipPartRecord[] = plan.parts.map((part) => ({
+    part: part.index,
+    fileName: zipPartFileName(baseName, part.index, partCount),
+    state: 'pending',
+    firstRecordId: part.unitIds[0] ?? '',
+    lastRecordId: part.unitIds[part.unitIds.length - 1] ?? '',
+    recordCount: part.unitIds.length,
+    plannedFileCount: part.files.length,
+    savedCount: 0, failedCount: 0, unsavedCount: 0
+  }));
+  const splitInfo = {
+    recordCount: records.length,
+    plannedFileCount: units.reduce((sum, unit) => sum + unit.files.length, 0),
+    splitRecordIds: [...new Set(plan.parts.flatMap((part) => part.splitUnitIds))]
+  };
+
+  let fileCount = 0;
+  let failureCount = 0;
+  let unsavedCount = 0;
+  const downloads: string[] = [];
+  const usedByFolder = new Map<string, Set<string>>();
+  /** まだどの ZIP も保存していない間に、保存できた添付が無かった ZIP の記録。次に保存する ZIP へ持ち越す。 */
+  let carried = { manifest: [] as any[], failures: [] as FileFailure[], unsaved: [] as UnsavedAttachment[] };
+  const saveOrder = (state: ZipPartRecord) => (partCount > 1 ? ` / ZIP ${state.part}/${partCount}` : '');
+
+  for (let p = 0; p < plan.parts.length; p++) {
+    const part = plan.parts[p];
+    const state = partStates[p];
+    const isLast = p === plan.parts.length - 1;
+    const zip = new JSZipCtor();
+    const manifest: any[] = [...carried.manifest];
+    const failures: FileFailure[] = [...carried.failures];
+    const unsaved: UnsavedAttachment[] = [...carried.unsaved];
+    const carriedFailureCount = failures.length;
+    const carriedUnsavedCount = unsaved.length;
+    let savedHere = 0;
+    let partBytes = 0;
+    const partDirs = new Set<string>();
+    let partEntries = 0;
+    // 1 ファイルで上限を超えるなど、最初から ZIP に入れられないと分かっている添付はここで記録する（取得は試みない）。
+    for (const skipped of plan.skipped.filter((item) => item.part === part.index)) {
+      const f = skipped.file.file;
+      unsaved.push({ recordId: skipped.file.recordId, fileName: String(f.name || ''), size: String(f.size ?? ''), reason: skipped.reason });
+      manifest.push({ recordId: skipped.file.recordId, tableFieldCode, rowId: skipped.file.rowId, fileFieldCode, name: String(f.name || ''),
+        size: String(f.size ?? ''), contentType: String(f.contentType || ''), path: '', error: '', unsaved: skipped.reason });
+    }
+    for (const item of part.files) {
+      const { file: f, recordId, rowId, folderPath } = item;
+      setStatus(`添付DL中 (${item.groupIndex + 1}/${groups.length}${failureCount + failures.length ? ` / 失敗 ${failureCount + failures.length}` : ''}${saveOrder(state)})`);
+      const used = usedByFolder.get(folderPath) || new Set<string>();
+      usedByFolder.set(folderPath, used);
       let result: FileFetchResult;
       try {
         result = await downloadFileBlob(prefix, f.fileKey);
       } catch (error) {
         if (!isCancelStop(error)) throw error;
-        throw createCancelReport(i, groups.length, [
+        throw createCancelReport(item.groupIndex, groups.length, [
           `中断したレコード: ${recordId}${rowId ? ` / テーブル行 ${rowId}` : ''}`,
-          `取得済み ${fileCount}ファイル / 取得失敗 ${failures.length}件`,
-          '添付ファイルの ZIP は保存していません'
+          `取得済み ${fileCount + savedHere}ファイル / 取得失敗 ${failureCount + failures.length}件`,
+          downloads.length
+            ? `保存済みの ZIP: ${downloads.join(', ')}（${downloads.length}個）。中断した ZIP（part ${state.part}）と以降は保存していません`
+            : '添付ファイルの ZIP は保存していません'
         ]);
       }
-      const entry = { recordId, tableFieldCode, rowId, fileFieldCode, name: String(f.name || ''),
+      const entry: any = { recordId, tableFieldCode, rowId, fileFieldCode, name: String(f.name || ''),
         size: String(f.size ?? ''), contentType: String(f.contentType || ''), path: '', error: '' };
       if (result.ok === true) {
-        const name = uniqueZipName(used, f.name || 'file.bin', f.fileKey, fileCount);
-        folder.file(name, result.blob);
-        entry.path = `${folderPath}/${name}`;
-        fileCount++;
+        const name = uniqueZipName(used, f.name || 'file.bin', f.fileKey, fileCount + savedHere);
+        const path = `${folderPath}/${name}`;
+        const overflow = exceedsZipBudget(partBytes, partEntries, path, Number(result.blob?.size || 0), zipLimits);
+        if (overflow) {
+          // 宣言サイズと実際のサイズが違い、この ZIP に入れると上限を超える。この 1 件だけを記録して続ける。
+          entry.unsaved = overflow;
+          unsaved.push({ recordId, fileName: String(f.name || ''), size: String(f.size ?? ''), reason: overflow });
+        } else {
+          zip.file(path, result.blob);
+          entry.path = path;
+          savedHere++;
+          partBytes += estimateZipEntryBytes(path, Number(result.blob?.size || 0));
+          partEntries += 1;
+          for (const dir of zipDirectoryPrefixes(path)) if (!partDirs.has(dir)) { partDirs.add(dir); partEntries += 1; partBytes += estimateZipEntryBytes(`${dir}/`, 0); }
+        }
       } else {
         entry.error = result.reason;
         failures.push({ recordId, fileName: String(f.name || ''), fileKey: String(f.fileKey || ''), reason: `${rowId ? `テーブル ${tableFieldCode} / 行 ${rowId}: ` : ''}${result.reason}` });
       }
       manifest.push(entry);
     }
-  }
-  if (!fileCount) {
-    if (failures.length) {
-      throw new Error(`添付ファイルを1件も取得できませんでした（失敗 ${failures.length}件）\n${formatFileFailures(failures.slice(0, 5))}${failures.length > 5 ? '\n…' : ''}`);
+
+    state.savedCount = savedHere;
+    // 持ち越した分は前の ZIP の記録なので、この ZIP の件数には数えない（全体の合計が二重にならないように）
+    state.failedCount = failures.length - carriedFailureCount;
+    state.unsavedCount = unsaved.length - carriedUnsavedCount;
+    if (!savedHere && !fileCount) {
+      // 保存できた添付がここまで 1 件も無い: ZIP は作らず、失敗の記録を次の ZIP へ持ち越す。最後まで 1 件も無ければエラーにする。
+      state.state = 'empty';
+      if (!isLast) { carried = { manifest, failures, unsaved }; continue; }
+      if (failures.length) {
+        throw new Error(`添付ファイルを1件も取得できませんでした（失敗 ${failures.length}件${unsaved.length ? ` / ZIPの上限で保存できなかった添付 ${unsaved.length}件` : ''}）\n${formatFileFailures(failures.slice(0, 5))}${failures.length > 5 ? '\n…' : ''}${unsaved.length ? `\n${formatUnsavedAttachments(unsaved.slice(0, 5))}` : ''}`);
+      }
+      if (unsaved.length) throw new Error(`ZIP の上限のため、添付ファイルを1件も保存できませんでした（${unsaved.length}件）\n${formatUnsavedAttachments(unsaved.slice(0, 5))}`);
+      setStatus('ダウンロード対象の添付がありませんでした', 'warn');
+      return { warning: 'ダウンロード対象の添付がありませんでした', summary: { counts: { ファイル: 0, 取得失敗: 0 }, describe: describeAttachmentSummary } };
     }
-    setStatus('ダウンロード対象の添付がありませんでした', 'warn');
-    return { warning: 'ダウンロード対象の添付がありませんでした', summary: { counts: { ファイル: 0, 取得失敗: 0 }, describe: describeAttachmentSummary } };
+    carried = { manifest: [], failures: [], unsaved: [] };
+    state.state = 'saved';
+    failureCount += failures.length;
+    unsavedCount += unsaved.length;
+    fileCount += savedHere;
+    if (failures.length || unsaved.length) {
+      zip.file('download_errors.txt', buildDownloadErrorsText(failures, unsaved, { part: state.part, partCount }));
+    }
+    zip.file('manifest.json', JSON.stringify({
+      generatedAt: new Date().toISOString(),
+      appId: String(appId),
+      guestId: String(guestId || ''),
+      query: query || '',
+      recordCount: records.length,
+      savedCount: savedHere,
+      failedCount: failures.length,
+      failures,
+      ...(unsaved.length || partCount > 1 ? { unsavedCount: unsaved.length, unsaved } : {}),
+      files: manifest,
+      ...(partCount > 1 ? { split: buildZipSplitManifest(partStates, state.part, splitInfo) } : {})
+    }, null, 2));
+    setStatus(`ZIP生成中 (${savedHere}ファイル${partCount > 1 ? ` / ZIP ${state.part}/${partCount}` : ''})`);
+    let zipBlob: Blob;
+    try {
+      zipBlob = await zip.generateAsync({ type: 'blob' });
+    } catch (error) {
+      throw zipBuildError(error, state.part, partCount, downloads);
+    }
+    downloadBlob(state.fileName, zipBlob);
+    downloads.push(state.fileName);
   }
-  if (failures.length) {
-    zip.file('download_errors.txt', `取得できなかった添付ファイル ${failures.length}件\n${formatFileFailures(failures)}\n`);
-  }
-  zip.file('manifest.json', JSON.stringify({
-    generatedAt: new Date().toISOString(),
-    appId: String(appId),
-    guestId: String(guestId || ''),
-    query: query || '',
-    recordCount: records.length,
-    savedCount: fileCount,
-    failedCount: failures.length,
-    failures,
-    files: manifest
-  }, null, 2));
-  setStatus(`ZIP生成中 (${fileCount}ファイル)`);
-  const zipBlob = await zip.generateAsync({ type: 'blob' });
-  downloadBlob(recordExportFilename(zipName, 'zip', buildExportFilename('添付ファイル', 'zip', { appLabel: buildAppFilenameLabel(appId, '') })), zipBlob);
-  const summary: RecordOperationSummary = { counts: { ファイル: fileCount, 取得失敗: failures.length }, describe: describeAttachmentSummary };
+
+  const allFailures = failureCount;
+  const summary: RecordOperationSummary = {
+    counts: { ファイル: fileCount, 取得失敗: allFailures, ...(unsavedCount ? { 保存不可: unsavedCount } : {}), ZIP: downloads.length },
+    describe: describeAttachmentSummary
+  };
   const headline = summary.describe(summary.counts, [String(appId)]);
-  if (failures.length) {
-    const detail = `取得失敗 ${failures.length}件の詳細は ZIP 内の download_errors.txt`;
+  const problemParts = partStates.filter((state) => state.state === 'saved' && (state.failedCount || state.unsavedCount)).map((state) => state.part);
+  if (allFailures || unsavedCount) {
+    const where = partCount > 1 ? `各 ZIP 内の download_errors.txt（part ${problemParts.join('・')}）` : 'ZIP 内の download_errors.txt';
+    const detail = `${[allFailures ? `取得失敗 ${allFailures}件` : '', unsavedCount ? `ZIPの上限で保存できなかった添付 ${unsavedCount}件` : ''].filter(Boolean).join('・')}の詳細は ${where}`;
     setStatus(`${headline}\n${detail}`, 'warn');
-    return { warning: detail, summary };
+    return { warning: detail, summary, downloads };
   }
   setStatus(headline, 'ok');
-  return { summary };
+  return { summary, downloads };
 }
 
 // ---------------------------------------------------------------------------
@@ -1151,11 +1377,21 @@ function describeBackupSummary(counts: Record<string, number>, appIds: string[])
   const parts = [`レコード ${counts['レコード'] || 0}件`];
   if ('添付' in counts) parts.push(`添付 ${counts['添付']}件`);
   if ('コメント' in counts) parts.push(`コメント ${counts['コメント']}件`);
+  const zips = counts['ZIP'] || 0;
+  if (zips > appIds.length) parts.push(`${zips}個のZIPに分けて保存`);
   return `${appIds.length === 1 ? '' : `${appIds.length}アプリの`}バックアップを保存しました（${parts.join('・')}）`;
+}
+
+interface BackupPlanFile extends ZipPlanFile {
+  index: number;
+  recordId: string;
+  dir: string;
+  ent: { rec: any; fieldCode: string; childCode?: string; rowIndex?: number; fileIndex: number; file: any };
 }
 
 export async function runRecordBackupStandalone(opts, setStatus: RecordStatusCallback): Promise<RecordOperationResult> {
   const { appId, guestId, query, zipName, includeFiles, includeComments, includeAppSettings, appScopes } = opts;
+  const zipLimits: Partial<ZipPlanLimits> | undefined = opts.zipLimits;
   if (!appId) throw new Error('アプリIDを入力してください');
   const prefix = buildApiPrefix(guestId || '', false);
 
@@ -1168,20 +1404,24 @@ export async function runRecordBackupStandalone(opts, setStatus: RecordStatusCal
   if (!records.length) throw new Error('対象レコードが0件です');
 
   const JSZipCtor = await loadJSZipLite();
-  const zip = new JSZipCtor();
   const notes: string[] = [];
 
   const csvExport = buildRecordCsvExport(records, fields.properties);
-  addRecordCsvFiles(zip, csvExport);
   notes.push(...csvExport.warnings);
-  zip.file('records.json', JSON.stringify({ generatedAt: new Date().toISOString(), appId, recordCount: records.length, records }, null, 2));
+  const recordsJson = JSON.stringify({ generatedAt: new Date().toISOString(), appId, recordCount: records.length, records }, null, 2);
 
   let fileCount = 0;
   let totalAttachmentBytes = 0;
   let resolvedAppName = String(opts.appName || '');
+  /** 全体の取得失敗・ZIP に入れられなかった添付（最後の ZIP の manifest.json に載せる） */
   const fileFailures: FileFailure[] = [];
+  const unsavedAttachments: UnsavedAttachment[] = [];
+  const downloads: string[] = [];
+  const baseName = recordExportFilename(zipName, 'zip', buildExportFilename('レコードバックアップ', 'zip', { appLabel: buildAppFilenameLabel(appId, '') }));
+
+  // ---- 添付ファイル: 取得を始める前に、レコード単位でどの ZIP に入れるかを決める ----
+  const collected: BackupPlanFile['ent'][] = [];
   if (includeFiles) {
-    const collected: Array<{ rec: any; fieldCode: string; childCode?: string; rowIndex?: number; fileIndex: number; file: any }> = [];
     for (const rec of records) {
       for (const [code, field] of Object.entries(rec) as Array<[string, any]>) {
         if (!field || typeof field !== 'object') continue;
@@ -1198,56 +1438,176 @@ export async function runRecordBackupStandalone(opts, setStatus: RecordStatusCal
       }
     }
     if (!collected.length) notes.push('添付ファイルなし');
+  } else {
+    notes.push('添付ファイル未取得');
+  }
+  const units: Array<ZipPlanUnit<BackupPlanFile>> = [];
+  collected.forEach((ent, index) => {
+    const recordId = String(ent.rec?.$id?.value || 'unknown');
+    const parts = ['attachments', `record_${sanitizeZipSegment(recordId)}`];
+    if (ent.childCode) {
+      parts.push(sanitizeZipSegment(ent.fieldCode || 'subtable'));
+      parts.push(`row_${(ent.rowIndex || 0) + 1}`);
+      parts.push(sanitizeZipSegment(ent.childCode));
+    } else {
+      parts.push(sanitizeZipSegment(ent.fieldCode || 'files'));
+    }
+    const dir = parts.join('/');
+    const planned: BackupPlanFile = {
+      path: `${dir}/${sanitizeZipSegment(String(ent.file.fileKey || '').slice(0, 12) || 'file', 'file')}_${sanitizeZipSegment(ent.file.name || 'file.bin', 'file.bin')}`,
+      size: Number(ent.file?.size), index, recordId, dir, ent
+    };
+    const last = units[units.length - 1];
+    if (last && last.id === recordId) last.files.push(planned);
+    else units.push({ id: recordId, files: [planned] });
+  });
+  // 添付以外（レコードの CSV・JSON、コメント、設定、manifest）は最後の ZIP に入れる。入る余地がなければ専用の ZIP を足す。
+  const baseBytes = new Blob([csvExport.parentCsv, ...csvExport.tables.map((table) => table.csvText), recordsJson]).size;
+  const plan = planZipParts(units, { limits: zipLimits, base: { entries: 8 + csvExport.tables.length, bytes: baseBytes } });
+  const partCount = plan.parts.length;
+  const partStates: ZipPartRecord[] = plan.parts.map((part) => ({
+    part: part.index,
+    fileName: zipPartFileName(baseName, part.index, partCount),
+    state: 'pending',
+    firstRecordId: part.unitIds[0] ?? '',
+    lastRecordId: part.unitIds[part.unitIds.length - 1] ?? '',
+    recordCount: part.unitIds.length,
+    plannedFileCount: part.files.length,
+    savedCount: 0, failedCount: 0, unsavedCount: 0
+  }));
+  const splitInfo = {
+    recordCount: records.length,
+    plannedFileCount: collected.length,
+    splitRecordIds: [...new Set(plan.parts.flatMap((part) => part.splitUnitIds))],
+    baseInLastPart: true
+  };
+  const lastCancelNote = () => downloads.length
+    ? `保存済みの ZIP（${downloads.join(', ')}）は添付ファイルの一部で、完全なバックアップではありません。中断した ZIP と以降は保存していません`
+    : 'バックアップの ZIP は保存していません（途中までのバックアップを完全なものと取り違えないため）';
+
+  // ---- 添付ファイルを ZIP ごとに取得して保存（最後の ZIP は、この後に残りの内容を足して保存する） ----
+  const usedByDir = new Map<string, Set<string>>();
+  let carried = { failures: [] as FileFailure[], unsaved: [] as UnsavedAttachment[], files: [] as any[] };
+  let zip: any = null;
+  let finalCarried = carried;
+  for (let p = 0; p < plan.parts.length; p++) {
+    const part = plan.parts[p];
+    const state = partStates[p];
+    const isLast = p === plan.parts.length - 1;
+    zip = new JSZipCtor();
     const blobCache = new Map<string, FileFetchResult>();
-    const usedByDir = new Map<string, Set<string>>();
-    for (let i = 0; i < collected.length; i++) {
-      const ent = collected[i];
-      setStatus(`添付ファイル取得中 (${i + 1}/${collected.length}${fileFailures.length ? ` / 失敗 ${fileFailures.length}` : ''})`);
-      const recordId = String(ent.rec?.$id?.value || 'unknown');
+    const partFailures: FileFailure[] = [...carried.failures];
+    const partUnsaved: UnsavedAttachment[] = [...carried.unsaved];
+    const partFiles: any[] = [...carried.files];
+    const carriedFailureCount = partFailures.length;
+    const carriedUnsavedCount = partUnsaved.length;
+    let savedHere = 0;
+    let partBytes = 0;
+    let partEntries = 0;
+    const partDirs = new Set<string>();
+    for (const skipped of plan.skipped.filter((item) => item.part === part.index)) {
+      partUnsaved.push({ recordId: skipped.file.recordId, fileName: String(skipped.file.ent.file.name || ''), size: String(skipped.file.ent.file.size ?? ''), reason: skipped.reason });
+    }
+    for (const item of part.files) {
+      const ent = item.ent;
+      setStatus(`添付ファイル取得中 (${item.index + 1}/${collected.length}${fileFailures.length + partFailures.length - carriedFailureCount ? ` / 失敗 ${fileFailures.length + partFailures.length - carriedFailureCount}` : ''}${partCount > 1 ? ` / ZIP ${state.part}/${partCount}` : ''})`);
+      const recordId = item.recordId;
       let result = blobCache.get(ent.file.fileKey);
       if (!result) {
         try {
           result = await downloadFileBlob(prefix, ent.file.fileKey);
         } catch (error) {
           if (!isCancelStop(error)) throw error;
-          throw createCancelReport(i, collected.length, [
-            `添付ファイルの取得を中止しました（取得済み ${fileCount}ファイル / 取得失敗 ${fileFailures.length}件）`,
-            'バックアップの ZIP は保存していません（途中までのバックアップを完全なものと取り違えないため）'
+          throw createCancelReport(item.index, collected.length, [
+            `添付ファイルの取得を中止しました（取得済み ${fileCount + savedHere}ファイル / 取得失敗 ${fileFailures.length + partFailures.length - carriedFailureCount}件）`,
+            lastCancelNote()
           ]);
         }
         blobCache.set(ent.file.fileKey, result);
       }
       if (result.ok === false) {
-        fileFailures.push({ recordId, fileName: String(ent.file.name || ''), fileKey: String(ent.file.fileKey || ''), reason: result.reason });
+        partFailures.push({ recordId, fileName: String(ent.file.name || ''), fileKey: String(ent.file.fileKey || ''), reason: result.reason });
         continue;
       }
-      const parts = ['attachments', `record_${sanitizeZipSegment(recordId)}`];
-      if (ent.childCode) {
-        parts.push(sanitizeZipSegment(ent.fieldCode || 'subtable'));
-        parts.push(`row_${(ent.rowIndex || 0) + 1}`);
-        parts.push(sanitizeZipSegment(ent.childCode));
-      } else {
-        parts.push(sanitizeZipSegment(ent.fieldCode || 'files'));
-      }
       // 同じフォルダに同名・同じ fileKey 接頭辞のファイルがあっても、後続が先のファイルを上書きしない。
-      const dir = parts.join('/');
-      const used = usedByDir.get(dir) || new Set<string>();
-      usedByDir.set(dir, used);
-      zip.file(`${dir}/${uniqueZipName(used, ent.file.name || 'file.bin', ent.file.fileKey, ent.fileIndex)}`, result.blob);
+      const used = usedByDir.get(item.dir) || new Set<string>();
+      usedByDir.set(item.dir, used);
+      const path = `${item.dir}/${uniqueZipName(used, ent.file.name || 'file.bin', ent.file.fileKey, ent.fileIndex)}`;
+      const actualBytes = Number(result.blob?.size || 0);
+      const overflow = exceedsZipBudget(partBytes, partEntries, path, actualBytes, zipLimits);
+      if (overflow) {
+        // 宣言サイズと実際のサイズが違い、この ZIP に入れると上限を超える。この 1 件だけを記録して続ける。
+        partUnsaved.push({ recordId, fileName: String(ent.file.name || ''), size: String(ent.file.size ?? ''), reason: overflow });
+        continue;
+      }
+      zip.file(path, result.blob);
+      partFiles.push({ recordId, path, name: String(ent.file.name || ''), size: String(ent.file.size ?? '') });
+      partBytes += estimateZipEntryBytes(path, actualBytes);
+      partEntries += 1;
+      for (const dir of zipDirectoryPrefixes(path)) if (!partDirs.has(dir)) { partDirs.add(dir); partEntries += 1; partBytes += estimateZipEntryBytes(`${dir}/`, 0); }
       const declaredBytes = Number(ent.file?.size);
-      totalAttachmentBytes += Number.isFinite(declaredBytes) && declaredBytes > 0 ? declaredBytes : Number(result.blob?.size || 0);
-      fileCount++;
+      totalAttachmentBytes += Number.isFinite(declaredBytes) && declaredBytes > 0 ? declaredBytes : actualBytes;
+      savedHere++;
     }
-    if (fileFailures.length) {
-      notes.push(`添付ファイル取得失敗 ${fileFailures.length}件（manifest.json の fileFailures 参照）`);
+    state.savedCount = savedHere;
+    state.failedCount = partFailures.length - carriedFailureCount;
+    state.unsavedCount = partUnsaved.length - carriedUnsavedCount;
+    fileFailures.push(...partFailures.slice(carriedFailureCount));
+    unsavedAttachments.push(...partUnsaved.slice(carriedUnsavedCount));
+    fileCount += savedHere;
+    if (isLast) {
+      // 最後の ZIP は、ここで保存せず、続けて残りの内容を足す。
+      state.state = 'saved';
+      finalCarried = { failures: partFailures, unsaved: partUnsaved, files: partFiles };
+      break;
     }
-  } else {
-    notes.push('添付ファイル未取得');
+    if (!savedHere && !downloads.length) {
+      // まだどの ZIP も保存しておらず、この ZIP にも保存できた添付が無い: ZIP は作らず、記録を次の ZIP へ持ち越す。
+      state.state = 'empty';
+      carried = { failures: partFailures, unsaved: partUnsaved, files: partFiles };
+      zip = null;
+      continue;
+    }
+    carried = { failures: [], unsaved: [], files: [] };
+    state.state = 'saved';
+    const missing = partFailures.length || partUnsaved.length;
+    if (missing) zip.file('download_errors.txt', buildDownloadErrorsText(partFailures, partUnsaved, { part: state.part, partCount }));
+    zip.file('manifest.json', JSON.stringify({
+      generatedAt: new Date().toISOString(),
+      appId,
+      guestId: String(guestId || ''),
+      query: query || '',
+      recordCount: records.length,
+      appName: resolvedAppName,
+      attachmentSummary: { savedCount: savedHere, failedCount: partFailures.length, unsavedCount: partUnsaved.length },
+      files: partFiles,
+      fileFailures: partFailures,
+      unsavedAttachments: partUnsaved,
+      split: buildZipSplitManifest(partStates, state.part, splitInfo),
+      notes: ['この ZIP は添付ファイルの一部です。レコードの CSV/JSON・コメント・設定と全体の manifest.json は最後の ZIP にあります。']
+    }, null, 2));
+    setStatus(`ZIP生成中 (添付 ${savedHere}ファイル / ZIP ${state.part}/${partCount})`);
+    try {
+      const partBlob = await zip.generateAsync({ type: 'blob' });
+      downloadBlob(state.fileName, partBlob);
+    } catch (error) {
+      throw zipBuildError(error, state.part, partCount, downloads);
+    }
+    downloads.push(state.fileName);
+    zip = null; // 保存し終えた ZIP の中身（取得した Blob）をここで手放す
   }
+  if (fileFailures.length) {
+    notes.push(`添付ファイル取得失敗 ${fileFailures.length}件（manifest.json の fileFailures 参照）`);
+  }
+  if (unsavedAttachments.length) {
+    notes.push(`ZIP の上限のため保存できなかった添付 ${unsavedAttachments.length}件（manifest.json の unsavedAttachments 参照）`);
+  }
+  if (partCount > 1) notes.push(`ZIP が大きいため ${partCount} 個に分けて保存（manifest.json の split 参照）`);
 
   let commentCount = 0;
   let commentRecordCount = 0;
   const commentFailures: Array<{ recordId: string; reason: string }> = [];
+  let commentsJson = '';
   if (includeComments) {
     const out: any[] = [];
     for (let i = 0; i < records.length; i++) {
@@ -1275,14 +1635,14 @@ export async function runRecordBackupStandalone(opts, setStatus: RecordStatusCal
         if (isCancelStop(e)) {
           throw createCancelReport(i, records.length, [
             `コメントの取得を中止しました（取得済み ${commentCount}件 / 取得失敗 ${commentFailures.length}レコード）`,
-            'バックアップの ZIP は保存していません（途中までのバックアップを完全なものと取り違えないため）'
+            lastCancelNote()
           ]);
         }
         // 1 レコードの失敗で残りを捨てず、失敗したレコードを記録して続行する。
         commentFailures.push({ recordId, reason: e?.message || String(e) });
       }
     }
-    zip.file('comments.json', JSON.stringify({ generatedAt: new Date().toISOString(), appId, commentCount, failures: commentFailures, records: out }, null, 2));
+    commentsJson = JSON.stringify({ generatedAt: new Date().toISOString(), appId, commentCount, failures: commentFailures, records: out }, null, 2);
     if (commentFailures.length) notes.push(`コメント取得失敗 ${commentFailures.length}レコード（manifest.json の commentFailures 参照）`);
   } else {
     notes.push('コメント未取得');
@@ -1291,6 +1651,7 @@ export async function runRecordBackupStandalone(opts, setStatus: RecordStatusCal
   let appOk = 0;
   let appNg = 0;
   const appNgSections: string[] = [];
+  let appSettingsJson = '';
   if (includeAppSettings && appScopes && appScopes.length) {
     setStatus('アプリ設定取得中...');
     const settings = await fetchBundle({
@@ -1314,13 +1675,24 @@ export async function runRecordBackupStandalone(opts, setStatus: RecordStatusCal
     if (!resolvedAppName) {
       resolvedAppName = String(settings?.sections?.generalSettings?.name || settings?.sections?.appInfo?.name || '');
     }
-    zip.file(`app_settings/app_${appId}.json`, JSON.stringify({ generatedAt: new Date().toISOString(), appId, scopes: appScopes, bundle: settings }, null, 2));
+    appSettingsJson = JSON.stringify({ generatedAt: new Date().toISOString(), appId, scopes: appScopes, bundle: settings }, null, 2);
   } else if (!includeAppSettings) {
     notes.push('アプリ設定未取得');
   } else {
     notes.push('アプリ設定の保存範囲が未選択のため取得していません');
   }
 
+  // ---- 最後（または唯一）の ZIP: レコード・コメント・設定と、全体の manifest.json ----
+  const lastState = partStates[partStates.length - 1];
+  zip = zip || new JSZipCtor();
+  addRecordCsvFiles(zip, csvExport);
+  zip.file('records.json', recordsJson);
+  if (includeComments) zip.file('comments.json', commentsJson);
+  if (appSettingsJson) zip.file(`app_settings/app_${appId}.json`, appSettingsJson);
+  // 1 つの ZIP に収まったバックアップで取得失敗だけのときは、これまでどおり manifest.json にだけ記録する。
+  if ((finalCarried.failures.length || finalCarried.unsaved.length) && (partCount > 1 || finalCarried.unsaved.length)) {
+    zip.file('download_errors.txt', buildDownloadErrorsText(finalCarried.failures, finalCarried.unsaved, { part: lastState.part, partCount }));
+  }
   zip.file('manifest.json', JSON.stringify({
     generatedAt: new Date().toISOString(),
     appId,
@@ -1333,31 +1705,44 @@ export async function runRecordBackupStandalone(opts, setStatus: RecordStatusCal
     attachmentSummary: {
       savedCount: fileCount,
       failedCount: fileFailures.length,
+      ...(unsavedAttachments.length ? { unsavedCount: unsavedAttachments.length } : {}),
       totalBytes: totalAttachmentBytes
     },
     fileCount,
     fileFailures,
+    ...(unsavedAttachments.length ? { unsavedAttachments } : {}),
+    ...(partCount > 1 ? { files: finalCarried.files, split: buildZipSplitManifest(partStates, lastState.part, splitInfo) } : {}),
     commentCount,
     commentFailures,
     appSettings: { ok: appOk, ng: appNg, ngSections: appNgSections, scopes: appScopes || [] },
     notes
   }, null, 2));
 
-  setStatus(`ZIP生成中 (${records.length}件 / 添付 ${fileCount} / コメント ${commentCount})`);
-  const blob = await zip.generateAsync({ type: 'blob' });
-  downloadBlob(recordExportFilename(zipName, 'zip', buildExportFilename('レコードバックアップ', 'zip', { appLabel: buildAppFilenameLabel(appId, '') })), blob);
-  const failureCount = fileFailures.length + commentFailures.length + appNg + csvExport.warnings.length;
+  setStatus(`ZIP生成中 (${records.length}件 / 添付 ${fileCount} / コメント ${commentCount}${partCount > 1 ? ` / ZIP ${lastState.part}/${partCount}` : ''})`);
+  let blob: Blob;
+  try {
+    blob = await zip.generateAsync({ type: 'blob' });
+  } catch (error) {
+    throw zipBuildError(error, lastState.part, partCount, downloads);
+  }
+  downloadBlob(lastState.fileName, blob);
+  downloads.push(lastState.fileName);
+  const failureCount = fileFailures.length + unsavedAttachments.length + commentFailures.length + appNg + csvExport.warnings.length;
   const allSettingsFailed = Boolean(includeAppSettings && appScopes?.length && appOk === 0 && appNg > 0);
+  const fetchFailureCount = fileFailures.length + commentFailures.length + appNg + csvExport.warnings.length;
   const detail = failureCount
-    ? `取得失敗: 添付 ${fileFailures.length} / コメント ${commentFailures.length} / 設定 ${appNg}${allSettingsFailed ? ' [全セクション失敗]' : ''} / テーブル ${csvExport.warnings.length}（詳細は manifest.json）`
+    ? `${[
+      fetchFailureCount ? `取得失敗: 添付 ${fileFailures.length} / コメント ${commentFailures.length} / 設定 ${appNg}${allSettingsFailed ? ' [全セクション失敗]' : ''} / テーブル ${csvExport.warnings.length}` : '',
+      unsavedAttachments.length ? `ZIPの上限で保存できなかった添付 ${unsavedAttachments.length}件` : ''
+    ].filter(Boolean).join(' / ')}（詳細は manifest.json）`
     : '';
   const summary: RecordOperationSummary = {
-    counts: { レコード: records.length, ...(includeFiles ? { 添付: fileCount } : {}), ...(includeComments ? { コメント: commentCount } : {}) },
+    counts: { レコード: records.length, ...(includeFiles ? { 添付: fileCount } : {}), ...(includeComments ? { コメント: commentCount } : {}), ZIP: downloads.length },
     describe: describeBackupSummary
   };
   const headline = summary.describe(summary.counts, [String(appId)]);
   setStatus(detail ? `${headline}\n${detail}` : headline, failureCount > 0 ? 'warn' : 'ok');
-  return { summary, ...(detail ? { warning: detail } : {}) };
+  return { summary, downloads, ...(detail ? { warning: detail } : {}) };
 }
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
-import { buildCopyRecordPayloads, parseCsvText, runRecordAppBatchStandalone, runRecordCopyStandalone, validateCsvImportHeader } from '../../src/tabs/record-standalone';
+import { buildCopyRecordPayloads, copyReportNeedsAttention, findRequiredFieldsWithoutValue, formatRecordCopyPreview, inspectRecordCopyCompatibility, parseCsvText, runRecordAppBatchStandalone, runRecordCopyStandalone, validateCsvImportHeader } from '../../src/tabs/record-standalone';
 
 // レコードコピーの payload は本番アプリへ POST される。システム項目・ファイルの除外と
 // サブテーブル行に id を含めないことは kintone REST の制約なので回帰を固定する。
@@ -149,6 +149,25 @@ describe('runRecordCopyStandalone', () => {
     expect(posts()).toHaveLength(0);
   });
 
+  it('stops before the confirmation when a required field of the target app gets no value (every record would be rejected)', async () => {
+    api.mockResolvedValueOnce({ properties: {
+      title: { type: 'SINGLE_LINE_TEXT', code: 'title', label: '件名' },
+      region: { type: 'SINGLE_LINE_TEXT', code: 'region', label: '地域', required: true, defaultValue: '' }
+    } }).mockResolvedValueOnce({ records: source });
+    await expect(runRecordCopyStandalone(options, status)).rejects.toThrow(/必須フィールドに、コピー元から値が入らないため、すべてのレコードが登録できません[\s\S]*対象: 地域［region］/);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(posts()).toHaveLength(0);
+  });
+
+  it('still copies when the required field of the target app has a default value or is provided by the source', async () => {
+    api.mockResolvedValueOnce({ properties: {
+      title: { type: 'SINGLE_LINE_TEXT', code: 'title', required: true },
+      region: { type: 'SINGLE_LINE_TEXT', code: 'region', required: 'true', defaultValue: '東京' }
+    } }).mockResolvedValueOnce({ records: source }).mockResolvedValue({});
+    await runRecordCopyStandalone(options, status);
+    expect(posts()).toHaveLength(1);
+  });
+
   it('rejects a malformed field settings response instead of treating every field as missing', async () => {
     api.mockResolvedValueOnce({});
     await expect(runRecordCopyStandalone(options, status)).rejects.toThrow(/フィールド設定の応答が不正/);
@@ -204,5 +223,35 @@ describe('validateCsvImportHeader', () => {
     expect(() => validateCsvImportHeader(['attach'], props)).toThrow(/非対応.*attach\(FILE\)/);
     expect(() => validateCsvImportHeader(['title', ''], props)).toThrow(/空の列/);
     expect(() => validateCsvImportHeader(['title'], props)).not.toThrow();
+  });
+});
+
+describe('required fields of the copy target', () => {
+  const target = {
+    title: { type: 'SINGLE_LINE_TEXT', label: '件名', required: true },
+    region: { type: 'SINGLE_LINE_TEXT', label: '地域', required: true, defaultValue: '' },
+    area: { type: 'DROP_DOWN', label: '区域', required: true, defaultValue: '東' },
+    when: { type: 'DATE', label: '日付', required: true, defaultNowValue: true },
+    scan: { type: 'FILE', label: '証憑', required: true },
+    num: { type: 'RECORD_NUMBER', label: 'レコード番号', required: true },
+    sum: { type: 'CALC', label: '合計', required: true, expression: 'a + b' },
+    optional: { type: 'SINGLE_LINE_TEXT', label: '任意' }
+  };
+
+  it('lists the required fields that the copy cannot fill and that have no default value', () => {
+    expect(findRequiredFieldsWithoutValue(target, new Set(['title']))).toEqual(['地域［region］', '証憑［scan］（添付はコピーできません）']);
+    expect(findRequiredFieldsWithoutValue(target, new Set(['title', 'region']))).toEqual(['証憑［scan］（添付はコピーできません）']);
+    expect(findRequiredFieldsWithoutValue(null, new Set())).toEqual([]);
+  });
+
+  it('shows the fields in the compatibility preview and treats them as needing attention', () => {
+    const report = inspectRecordCopyCompatibility({ title: { type: 'SINGLE_LINE_TEXT', label: '件名' } }, target);
+    expect(report.requiredWithoutValue).toEqual(['地域［region］', '証憑［scan］（添付はコピーできません）']);
+    expect(formatRecordCopyPreview(report)).toContain('コピー先の必須フィールドに値が入らない (2件・すべてのレコードが登録できません): 地域［region］, 証憑［scan］（添付はコピーできません）');
+    expect(copyReportNeedsAttention(report)).toBe(true);
+    const fine = inspectRecordCopyCompatibility({ title: { type: 'SINGLE_LINE_TEXT' } }, { title: { type: 'SINGLE_LINE_TEXT', required: true } });
+    expect(fine.requiredWithoutValue).toEqual([]);
+    expect(copyReportNeedsAttention(fine)).toBe(false);
+    expect(formatRecordCopyPreview(fine)).not.toContain('必須フィールド');
   });
 });

@@ -42,6 +42,7 @@
     "test:lite-shared": "node tools/test-harness/run-lite-shared-dom.cjs",
     "test:record-metadata": "node tools/test-harness/run-record-metadata-dom.cjs",
     "test:record-quality": "node tools/test-harness/run-record-quality-dom.cjs",
+    "test:record-explore": "node tools/test-harness/record-explore.cjs",
     "test:all": "node scripts/test-all.cjs"
   },
   "engines": {

@@ -61,6 +61,7 @@ tools/統合ツール/
 │   ├── tabs/                  # 各タブの正規実装
 │   │   ├── *.ts               # 共通タブロジック
 │   │   ├── record-query.ts    # レコード取得クエリ / CSV / ZIP 命名 / 分割書き込みの純粋ヘルパー
+│   │   ├── record-zip-split.ts # 添付保存・バックアップで ZIP を分ける位置の計画（レコード単位・上限は archive/lite-zip.ts の定数）
 │   │   └── *-standalone.ts    # lite 版用に統合 UI 依存を外した関数群
 │   ├── diff/                  # 差分エンジン
 │   ├── reflect/               # プレビュー反映エンジン
@@ -74,6 +75,8 @@ tools/統合ツール/
 
 ## 共有モジュールの注意点
 
+- `api.ts` の `apiPost` は、第 4 引数（試行回数の上限、省略時は従来どおり 3）を受け取る。応答だけ届かなかった塊を再送すると二重に登録されるレコード追加（CSV取込・コピーの `POST /records.json`）だけが `1` を渡して自動再送を止める。ほかの呼び出し（設定の PUT/POST、本番反映の deploy.json は従来どおり自動再試行なし）は引数を渡さず、動作は変わらない。
+- 添付ファイル保存・バックアップの ZIP は、`tabs/record-zip-split.ts` が取得の前にレコード単位で分け（1 つ分を取得するたびに保存して Blob を手放す）、上限は `archive/lite-zip.ts` の `LITE_ZIP_MAX_BYTES`・`LITE_ZIP_MAX_ENTRIES` を使う（見積もりは STORE の大きさで、DEFLATE で縮んでも上限を超えない）。
 - `tabs/design-xlsx.ts` は `tabs/design-standalone.ts`（lite 版）からインポートされる。
 - `tabs/er.ts` の `crawl`/`buildHTML` は `tabs/er-standalone.ts`（lite 版）から使用される。`crawl` は深さごとに同時 `ER_DEFAULTS.concurrency`（4）アプリまで読み取り、結果は見つけた順に取り込む（`runOrdered`。並び・深さ・関連は直列のときと同じ。中止の件数は読み取りを終えたアプリを数える）。
 - ER図 HTML の描画ライブラリ（Cytoscape・Dagre・cytoscape-dagre）は `tabs/er-libraries.ts` が `?raw` で取り込み、`buildHTML` が head へインラインで埋め込む。`build.js` は `rawTextPlugin.js`（`?raw` を文字列として取り込む esbuild プラグイン。`tools/test-harness/run-output-layouts.mjs` も使う）、単体テスト（Vitest）は標準の `?raw` で解決する。版は `package.json` の devDependencies で固定し、`tests/er-html.test.ts` が同梱版との一致を検査する。`EXTERNAL_LIBRARIES`（`constants.ts`）に ER図のライブラリは無い。同梱するのは `ER図.js` だけで、ほかの bundle に入らないことをサイズで確認する。図の本体（`er-main`）は `type="text/plain"` の script で、起動用の script が `window.cytoscape` の有無を見て実行する。
