@@ -23,7 +23,7 @@ export interface SourceDeployOptions {
   goal: SourceDeployGoal;
   /** 差分の抽出時の反映先の未公開の変更（previewReflectStandalone の targetPending） */
   targetPending?: ReflectTargetPending;
-  /** targetPending が 'pending'（以前からの未公開の変更あり）でも本番へ反映する（最終確認で利用者が了承した） */
+  /** targetPending が clean / own 以外（'pending' 以前からの未公開の変更あり・'unknown' 確認できない・未指定）でも本番へ反映する（最終確認で利用者が了承した） */
   allowPendingChanges?: boolean;
   onSectionUpdate?: (update: ReflectSectionUpdate) => void;
   onDeployUpdate?: (update: DeployAppUpdate) => void;

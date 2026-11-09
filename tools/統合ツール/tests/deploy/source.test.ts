@@ -152,6 +152,19 @@ describe('runSourceToProductionStandalone: プレビューへ書き込み、続�
     expect(second.result.deployInspection?.productionRevision).toBe('10');
   });
 
+  it('未公開の変更の有無を確認できなかった（unknown）ときも、了承がなければ本番へ反映しない', async () => {
+    const world = makeWorld();
+    const unknown = { state: 'unknown' as const, productionRevision: '', previewRevision: '', sectionKeys: [], message: '確認できませんでした。' };
+    const first = await run(world, {}, { targetPending: unknown });
+    expect(first.result.apply.sections.every(section => section.status === 'ok')).toBe(true);
+    expect(first.result.deploy).toBeUndefined();
+    expect(first.result.deploySkipped).toContain('確認できなかったため');
+    expect(requestsOf(world)).toEqual([]);
+    const allowed = makeWorld();
+    const second = await run(allowed, {}, { targetPending: unknown, allowPendingChanges: true });
+    expect(second.result.deploy?.apps[0].status).toBe('success');
+  });
+
   it('書き込みの後にほかの人がプレビューを更新したら、本番へは反映しない', async () => {
     let writes = 0, bumped = false;
     const world = makeWorld({
