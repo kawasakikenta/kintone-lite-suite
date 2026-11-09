@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readZip } from '../archive/zip-reader';
 import { runAdvancedDesignExporter, runBatchDesignExportXlsxZip } from '../../src/tabs/design-xlsx';
 import { buildDesignAiMarkdown } from '../../src/design/ai-markdown';
+import { bundleToMarkdown } from '../../src/diff/export';
 import { stripSensitiveSupplements } from '../../src/design/sanitize';
 import { compactDesignDiff, buildDesignDiffReport, DESIGN_DIFF_CONTEXT_LINES } from '../../src/tabs/design-standalone';
 
@@ -224,5 +225,79 @@ describe('設計書の差分レポートは変更の前後だけを残す', () =
     expect(md).toContain('変更のない行は、変更の前後 3 行を除いて省略しています');
     expect(md).toContain('@@ フィールド設定（省略');
     expect(md.split('\n').length).toBeLessThan(80);
+  });
+});
+
+describe('Markdown 設計書の内容（業務アプリの設定）', () => {
+  const sections = () => ({
+    appSettings: { name: '案件管理' },
+    fieldSettings: { properties: {
+      grp_basic: { type: 'GROUP', code: 'grp_basic', label: '案件情報' },
+      cust: { type: 'SINGLE_LINE_TEXT', code: 'cust', label: '顧客コード', required: true, lookup: { relatedApp: { app: '301' }, relatedKeyField: 'code', fieldMappings: [{ field: 'cust_name', relatedField: 'name' }, { field: 'cust_rank', relatedField: 'rank' }] } },
+      cust_name: { type: 'SINGLE_LINE_TEXT', code: 'cust_name', label: '顧客名' },
+      tasks: { type: 'SUBTABLE', code: 'tasks', fields: {
+        t_product: { type: 'SINGLE_LINE_TEXT', code: 't_product', label: '商品', required: true, lookup: { relatedApp: { app: '302' }, relatedKeyField: 'code', fieldMappings: [] } }
+      } }
+    } },
+    layoutSettings: { layout: [{ type: 'GROUP', code: 'grp_basic', layout: [{ type: 'ROW', fields: [{ type: 'SINGLE_LINE_TEXT', code: 'cust', size: { width: '200' } }] }] }, { type: 'GROUP', code: 'grp_none', layout: [] }] },
+    viewSettings: { views: { 月次: { type: 'CALENDAR', index: '0', date: 'close_date', title: 'deal_title', filterCond: '', sort: '', device: 'DESKTOP' } } },
+    reportSettings: { reports: { 月別: { chartType: 'LINE', chartMode: 'NORMAL', index: '0', groups: [{ code: 'close_date', per: 'MONTH' }], aggregations: [{ type: 'COUNT' }, { type: 'AVERAGE', code: 'amount' }], filterCond: '' } } },
+    processSettings: { enable: true, states: { 承認待ち: { name: '承認待ち', index: '0', assignee: { type: 'ANY', entities: [] } } }, actions: [] },
+    pluginSettings: { plugins: [{ id: 'p1', name: 'カレンダー', enabled: true }, { id: 'p2', name: '一括更新', enabled: false }] },
+    customizeSettings: { scope: 'ALL', desktop: { js: [{ type: 'URL', url: 'https://x.example/a.js' }], css: [] }, mobile: { js: [], css: [] } },
+    actionSettings: { actions: { 見積作成: { name: '見積作成', index: '0', destApp: { app: '402' }, mappings: [{ srcType: 'FIELD', srcField: 'cust', destField: 'customer_code' }, { srcType: 'RECORD_URL', destField: 'deal_url' }], entities: [], filterCond: 'phase in ("商談中")' } } },
+    categories: { enabled: true, categories: { 東日本: { label: '東日本', index: '0' }, 西日本: { label: '西日本', index: '1' }, 北: { label: '北', index: '2' } } },
+    notifications: { notifications: [], notifyToCommenter: false }
+  });
+  const md = () => bundleToMarkdown({ appId: '1', guestId: '', preview: false, fetchedAt: '2026-11-01T00:00:00.000Z', meta: { sectionRevisions: {} }, sections: sections() });
+  const rowOf = (text: string, key: string) => text.split('\n').find((line) => line.startsWith(`| `) && line.includes(`| ${key} |`));
+
+  it('「出力セクション」の件数は取得状態・サマリーと同じ数え方にする', () => {
+    const text = md();
+    const status = text.slice(text.indexOf('## 取得状態'), text.indexOf('## 目次'));
+    const out = text.slice(text.indexOf('## 出力セクション'), text.indexOf('## アプリ設定'));
+    for (const key of ['customizeSettings', 'categories', 'layoutSettings', 'pluginSettings']) {
+      const statusCount = rowOf(status, key)!.split('|')[4].trim();
+      expect(rowOf(out, key)!.split('|')[3].trim()).toBe(statusCount === '不明' ? '-' : statusCount);
+    }
+    expect(rowOf(out, 'customizeSettings')).toContain('| 1 |');
+    expect(rowOf(out, 'categories')).toContain('| 3 |');
+    expect(rowOf(out, 'appSettings')).toContain('| - |');
+  });
+
+  it('ルックアップ・必須の件数にテーブル内フィールドを含める（Excel と同じ）', () => {
+    const text = md();
+    expect(text).toContain('| ルックアップ数 | 2 |');
+    expect(text).toContain('| 必須フィールド数 | 2 |');
+    expect(text).toContain('- ルックアップ設定が 2 件あります。');
+  });
+
+  it('プラグインの有効状態を出す', () => {
+    const text = md();
+    expect(text).toContain('| プラグインID | 名称 | 状態 | バージョン | 説明 |');
+    expect(text).toContain('| p1 | カレンダー | 有効 |');
+    expect(text).toContain('| p2 | 一括更新 | 無効 |');
+  });
+
+  it('ANY・AVERAGE・件数・期間・カレンダーの日付とタイトルを読める形で出す', () => {
+    const text = md();
+    expect(text).toContain('| 承認待ち | 0 | 候補の誰でも（先着） |');
+    expect(text).toContain('| 月別 | 折れ線グラフ | 通常 | close_date（月） | 件数 / 平均（amount） |');
+    expect(text).not.toContain('件数（）');
+    expect(text).toContain('| 月次 | カレンダー | 0 |  |  |  |  | 日付: `close_date` / タイトル: `deal_title` / PC版のみ |');
+  });
+
+  it('グループ名はフィールド設定の label から出し、名前が無ければ「 — 」を付けない', () => {
+    const text = md();
+    expect(text).toContain('- グループ: `grp_basic` — 案件情報');
+    expect(text).toContain('- グループ: `grp_none`\n');
+    expect(text).toContain('#### テーブル: `tasks`\n');
+  });
+
+  it('ルックアップのコピー項目とアクションの対応を読める形で出す', () => {
+    const text = md();
+    expect(text).toContain('転記 2項目（`cust_name` ← `name`、`cust_rank` ← `rank`）');
+    expect(text).toContain('| コピー項目（コピー元 → コピー先） | 実行条件 |');
+    expect(text).toContain('`cust` → `customer_code`<br>レコードのURL → `deal_url` | phase in ("商談中") |');
   });
 });

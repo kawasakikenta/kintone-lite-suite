@@ -1,4 +1,5 @@
 import { flattenCategories } from '../utils.js';
+import { GROUP_PER_JP } from '../kintone-enums.js';
 import {
   SECTION_DEFS,
   TOOL_ID,
@@ -1281,6 +1282,8 @@ const MD_ENTITY_TYPE_LABELS = {
 
 const MD_PROCESS_ASSIGNEE_TYPE_LABELS = {
   ONE: '1人選出（候補から1人）',
+  // kintone の REST API が返す値は ANY（ANYONE は旧来の表記）
+  ANY: '候補の誰でも（先着）',
   ANYONE: '候補の誰でも（先着）',
   ALL: '全員（全員の処理が必要）'
 };
@@ -1501,15 +1504,17 @@ function mdFieldNotes(f: any): string {
   if (lookup && typeof lookup === 'object') {
     const app = lookup.relatedApp?.app ? `App ${lookup.relatedApp.app}` : (lookup.relatedApp?.code ? `コード ${lookup.relatedApp.code}` : '参照先不明');
     const key = lookup.relatedKeyField ? ` キー \`${lookup.relatedKeyField}\`` : '';
-    const mappings = Array.isArray(lookup.fieldMappings) ? lookup.fieldMappings.length : 0;
-    notes.push(`ルックアップ: ${app}${key}${mappings ? ` / 転記 ${mappings}項目` : ''}`);
+    const mappingList = Array.isArray(lookup.fieldMappings) ? lookup.fieldMappings : [];
+    // コピー先 ← コピー元（参照先アプリのフィールド）を、件数だけでなく読める形で出す
+    const copies = mappingList.map((m: any) => `\`${m?.field ?? ''}\` ← \`${m?.relatedField ?? ''}\``).join('、');
+    notes.push(`ルックアップ: ${app}${key}${mappingList.length ? ` / 転記 ${mappingList.length}項目（${copies}）` : ''}`);
   }
   const ref = f.referenceTable;
   if (ref && typeof ref === 'object') {
     const app = ref.relatedApp?.app ? `App ${ref.relatedApp.app}` : (ref.relatedApp?.code ? `コード ${ref.relatedApp.code}` : '参照先不明');
     const cond = ref.condition?.field && ref.condition?.relatedField ? ` 条件 \`${ref.condition.field}\` = \`${ref.condition.relatedField}\`` : '';
-    const shown = Array.isArray(ref.displayFields) ? ref.displayFields.length : 0;
-    notes.push(`関連レコード: ${app}${cond}${shown ? ` / 表示 ${shown}項目` : ''}${ref.size ? ` / ${ref.size}件表示` : ''}`);
+    const shownList = Array.isArray(ref.displayFields) ? ref.displayFields : [];
+    notes.push(`関連レコード: ${app}${cond}${shownList.length ? ` / 表示 ${shownList.length}項目（${shownList.map((code: any) => `\`${code}\``).join('、')}）` : ''}${ref.size ? ` / ${ref.size}件表示` : ''}`);
   }
   if (f.unit) notes.push(`単位: ${decodeHtmlEntities(f.unit)}${f.unitPosition === 'BEFORE' ? '（前）' : f.unitPosition === 'AFTER' ? '（後）' : ''}`);
   if (f.digit === true || f.digit === 'true') notes.push('桁区切りあり');
@@ -1559,7 +1564,8 @@ function mdRenderFieldSettings(sec: any) {
   ));
   subtables.forEach((tbl: any) => {
     parts.push('');
-    parts.push(`#### テーブル: \`${tbl.code}\` — ${mdLine(stripHtmlToText(tbl.label || ''))}`);
+    const tableLabel = mdLine(stripHtmlToText(tbl.label || ''));
+    parts.push(`#### テーブル: \`${tbl.code}\`${tableLabel ? ` — ${tableLabel}` : ''}`);
     parts.push('');
     const subRows = (Object.values(tbl.fields || ({} as any)) as any[]).map((f: any) => [
       f.code || '',
@@ -1576,7 +1582,7 @@ function mdRenderFieldSettings(sec: any) {
   return parts.join('\n');
 }
 
-function mdRenderLayoutItem(item, depth = 0) {
+function mdRenderLayoutItem(item, depth = 0, fields: any = {}) {
   const indent = '  '.repeat(depth);
   const out: string[] = [];
   if (!item) return out;
@@ -1593,18 +1599,21 @@ function mdRenderLayoutItem(item, depth = 0) {
   } else if (item.type === 'SUBTABLE') {
     out.push(`${indent}- テーブル: \`${item.code}\``);
   } else if (item.type === 'GROUP') {
-    out.push(`${indent}- グループ: \`${item.code}\` — ${mdLine(stripHtmlToText(item.label || ''))}`);
+    // レイアウトのグループはコードだけを持つため、表示名はフィールド設定の label から引く
+    const groupLabel = mdLine(stripHtmlToText(item.label || fields?.[item.code]?.label || ''));
+    out.push(`${indent}- グループ: \`${item.code}\`${groupLabel ? ` — ${groupLabel}` : ''}`);
     (item.layout || []).forEach((child) => {
-      out.push(...mdRenderLayoutItem(child, depth + 1));
+      out.push(...mdRenderLayoutItem(child, depth + 1, fields));
     });
   }
   return out;
 }
 
-function mdRenderLayoutSettings(sec) {
+function mdRenderLayoutSettings(sec, sections: any = {}) {
   const layout = sec?.layout || [];
   const lines: string[] = [];
-  layout.forEach((item) => lines.push(...mdRenderLayoutItem(item)));
+  const fields = sections?.fieldSettings?.properties || {};
+  layout.forEach((item) => lines.push(...mdRenderLayoutItem(item, 0, fields)));
   return lines.join('\n');
 }
 
@@ -1618,6 +1627,11 @@ function mdRenderViewSettings(sec: any) {
       : '';
     const extras: string[] = [];
     if (v.customView || v.html) extras.push('カスタムHTMLあり');
+    if (v.type === 'CALENDAR') {
+      if (v.date) extras.push(`日付: \`${v.date}\``);
+      if (v.title) extras.push(`タイトル: \`${v.title}\``);
+    }
+    if (v.device === 'DESKTOP') extras.push('PC版のみ');
     if (v.pager === false) extras.push('ページャー無効');
     if (v.paginationStyle) {
       const paginationLabel = mdLookupLabel(MD_PAGINATION_LABELS, v.paginationStyle) || v.paginationStyle;
@@ -1645,10 +1659,12 @@ function mdRenderReportSettings(sec: any) {
     r.name || '',
     (MD_REPORT_CHART_LABELS as any)[r.chartType] || r.chartType || '',
     mdLookupLabel(MD_REPORT_CHART_MODE_LABELS, r.chartMode),
-    (r.groups || []).map((g: any) => g.code).filter(Boolean).join(' / '),
+    // 期間で分類するグラフは、フィールドに期間（月など）を添える
+    (r.groups || []).filter((g: any) => g?.code).map((g: any) => `${g.code}${g.per ? `（${mdLookupLabel(GROUP_PER_JP, g.per)}）` : ''}`).join(' / '),
     (r.aggregations || []).map((a: any) => {
       const typeLabel = mdLookupLabel(MD_AGGREGATION_TYPE_LABELS, a.type);
-      return `${typeLabel}（${a.code || ''}）`;
+      // 件数にはフィールドが無い
+      return a.code ? `${typeLabel}（${a.code}）` : typeLabel;
     }).join(' / '),
     r.filterCond || '',
     r.periodicReport?.active ? '定期実行あり' : ''
@@ -1699,10 +1715,11 @@ function mdRenderPluginSettings(sec) {
   const rows = plugins.map((p) => [
     p.id || '',
     p.name || '',
+    p.enabled === false ? '無効' : p.enabled === true ? '有効' : '',
     p.version || '',
     p.description || ''
   ]);
-  return mdTable(['プラグインID', '名称', 'バージョン', '説明'], rows);
+  return mdTable(['プラグインID', '名称', '状態', 'バージョン', '説明'], rows);
 }
 
 function mdRenderCustomizeSettings(sec) {
@@ -1739,9 +1756,12 @@ function mdRenderActionSettings(sec) {
     a.index ?? '',
     a.destApp ? (a.destApp.code || a.destApp.app || '') : '',
     Array.isArray(a.entities) && a.entities.length ? mdEntityList(a.entities) : 'すべてのユーザー',
-    String((a.mappings || []).length)
+    String((a.mappings || []).length),
+    // コピー元 → コピー先（レコードの URL は srcType が RECORD_URL でコピー元のフィールドが無い）
+    (a.mappings || []).map((m: any) => `${m?.srcType === 'RECORD_URL' ? 'レコードのURL' : `\`${m?.srcField ?? ''}\``} → \`${m?.destField ?? ''}\``).join('\n'),
+    a.filterCond || ''
   ]);
-  return mdTable(['アクション名', '表示順', '連携先アプリ', '利用できるユーザー', 'マッピング数'], rows);
+  return mdTable(['アクション名', '表示順', '連携先アプリ', '利用できるユーザー', 'マッピング数', 'コピー項目（コピー元 → コピー先）', '実行条件'], rows);
 }
 
 function mdRenderAclRights(rights, columns) {
@@ -1892,6 +1912,16 @@ const MD_SECTION_RENDERERS = {
   categories: mdRenderCategories
 };
 
+/** トップレベルのフィールドと、テーブル（SUBTABLE）内のフィールドをまとめた定義の一覧（件数を Excel の設計書と同じ数え方にする）。 */
+function mdAllFieldDefinitions(fields: any): any[] {
+  const all: any[] = [];
+  (Object.values(fields || {}) as any[]).forEach((field: any) => {
+    all.push(field);
+    if (field?.type === 'SUBTABLE' && field.fields) all.push(...(Object.values(field.fields) as any[]));
+  });
+  return all;
+}
+
 function mdBundleSummary(bundle) {
   const sections = bundle?.sections || ({} as any);
   const rows: any[][] = [];
@@ -1902,9 +1932,10 @@ function mdBundleSummary(bundle) {
     if (!field || field.type !== 'SUBTABLE' || !field.fields) return sum;
     return sum + Object.keys(field.fields).length;
   }, 0);
-  const requiredCount = fieldValues.filter((field: any) => !!field?.required).length;
-  const lookupCount = fieldValues.filter((field: any) => !!field?.lookup).length;
-  const referenceCount = fieldValues.filter((field: any) => !!field?.referenceTable).length;
+  const allFieldValues = mdAllFieldDefinitions(fields);
+  const requiredCount = allFieldValues.filter((field: any) => !!field?.required).length;
+  const lookupCount = allFieldValues.filter((field: any) => !!field?.lookup).length;
+  const referenceCount = allFieldValues.filter((field: any) => !!field?.referenceTable).length;
   const viewCount = Object.keys(sections.viewSettings?.views || ({} as any)).length;
   const reportCount = Object.keys(sections.reportSettings?.reports || ({} as any)).length;
   const stateCount = Object.keys(sections.processSettings?.states || ({} as any)).length;
@@ -1932,7 +1963,7 @@ function mdBundleSummary(bundle) {
 
 function mdDesignReviewPoints(bundle: any) {
   const sections = bundle?.sections || ({} as any);
-  const fields: any[] = Object.values(sections.fieldSettings?.properties || ({} as any));
+  const fields: any[] = mdAllFieldDefinitions(sections.fieldSettings?.properties || ({} as any));
   const points: string[] = [];
   const lookupCount = fields.filter((field: any) => !!field?.lookup).length;
   const calcCount = fields.filter((field: any) => !!(field?.expression || field?.formula)).length;
@@ -1956,23 +1987,16 @@ function mdSectionHasData(sec: any): boolean {
   return !!sec && typeof sec === 'object' && Object.keys(sec).some((key) => key !== '_fetchError' && key !== '_partial');
 }
 
-function mdDesignSectionRows(bundle: any) {
+function mdDesignSectionRows(bundle: any, snapshotByKey?: Map<string, any>) {
   const sections = bundle?.sections || ({} as any);
   return SECTION_DEFS
     .filter((def) => sections[def.key])
     .map((def): string[] => {
       const sec = sections[def.key];
-      let count: number | string = '';
       if (sec?._fetchError && !mdSectionHasData(sec)) return [def.label, def.key, '取得失敗'];
-      if (def.key === 'fieldSettings') count = Object.keys(sec?.properties || ({} as any)).length;
-      else if (def.key === 'viewSettings') count = Object.keys(sec?.views || ({} as any)).length;
-      else if (def.key === 'reportSettings') count = Object.keys(sec?.reports || ({} as any)).length;
-      else if (def.key === 'processSettings') count = Object.keys(sec?.states || ({} as any)).length;
-      else if (def.key === 'pluginSettings') count = (sec?.plugins || []).length;
-      else if (Array.isArray(sec?.rights)) count = sec.rights.length;
-      else if (Array.isArray(sec?.notifications)) count = sec.notifications.length;
-      else count = sec && typeof sec === 'object' ? Object.keys(sec).length : '';
-      return [def.label, def.key, count === '' ? '-' : String(count)];
+      // 取得状態の表と同じ数え方（スナップショット）にそろえる。件数の定義が無いセクション（アプリ設定など）は「-」。
+      const count = snapshotByKey?.get(def.key)?.count;
+      return [def.label, def.key, count == null ? '-' : String(count)];
     });
 }
 
@@ -2068,7 +2092,7 @@ export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions =
   lines.push(mdDesignReviewPoints(bundle));
   lines.push('');
 
-  const sectionRows = mdDesignSectionRows(bundle);
+  const sectionRows = mdDesignSectionRows(bundle, snapshotByKey);
   if (sectionRows.length) {
     lines.push('## 出力セクション');
     lines.push('');
@@ -2098,7 +2122,7 @@ export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions =
     } else if (snapshotSection?.status === 'partial') {
       lines.push(`（部分取得: ${snapshotSection.detail}）`);
       if (renderer) {
-        try { rendered = renderer(sec) || ''; } catch { rendered = ''; }
+        try { rendered = renderer(sec, sections) || ''; } catch { rendered = ''; }
         if (rendered.trim()) lines.push('', rendered);
       }
       if (!includeRawJson) lines.push('', '（原文JSONは rawJson:false のため省略されています）');
@@ -2108,7 +2132,7 @@ export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions =
       lines.push('（整形表示は未対応です。設定データは下の原文を参照してください）');
       if (!includeRawJson) lines.push('', '（原文JSONは rawJson:false のため省略されています）');
     } else {
-      try { rendered = renderer(sec) || ''; } catch { rendered = ''; }
+      try { rendered = renderer(sec, sections) || ''; } catch { rendered = ''; }
       if (rendered.trim()) {
         lines.push(rendered);
       } else {
