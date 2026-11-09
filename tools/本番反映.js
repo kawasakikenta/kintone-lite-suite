@@ -4229,6 +4229,66 @@ ${base}`
     return list2.some((section) => section.status === "ng" || section.status === "pending") ? "partial" : "all";
   }
 
+  // src/reflect/lookupCandidates.ts
+  var SOURCE_NAME_LIMIT = 5;
+  var own2 = (object2, key) => Object.prototype.hasOwnProperty.call(object2, key);
+  var isObject3 = (value) => !!value && typeof value === "object" && !Array.isArray(value);
+  var appIdOf = (value) => {
+    const id = value === void 0 || value === null ? "" : String(value).trim();
+    return /^[1-9]\d*$/.test(id) ? id : "";
+  };
+  function observeFields(source, target, labelOf, out) {
+    for (const [code, sourceDef] of Object.entries(source)) {
+      if (!own2(target, code) || !isObject3(sourceDef) || !isObject3(target[code])) continue;
+      const targetDef = target[code];
+      for (const holder of ["lookup", "referenceTable"]) {
+        const from = appIdOf(sourceDef[holder]?.relatedApp?.app), to = appIdOf(targetDef[holder]?.relatedApp?.app);
+        if (from && to) out.push({ from, to, source: `${holder === "lookup" ? "ルックアップ" : "関連レコード一覧"}「${labelOf(code)}」` });
+      }
+      if (sourceDef.type === "SUBTABLE" && targetDef.type === "SUBTABLE" && isObject3(sourceDef.fields) && isObject3(targetDef.fields)) observeFields(sourceDef.fields, targetDef.fields, labelOf, out);
+    }
+  }
+  function observeActions(source, target, out) {
+    for (const [name, sourceAction] of Object.entries(source)) {
+      if (!own2(target, name) || !isObject3(sourceAction) || !isObject3(target[name])) continue;
+      const from = appIdOf(sourceAction.destApp?.app), to = appIdOf(target[name].destApp?.app);
+      if (from && to) out.push({ from, to, source: `アクション「${name}」` });
+    }
+  }
+  function findLookupMapCandidates(input) {
+    const observations = [];
+    const labelOf = (code) => {
+      const label = input.fieldLabels?.[code];
+      return label && label !== code ? `${label}（${code}）` : code;
+    };
+    if (isObject3(input.sourceFields?.properties) && isObject3(input.targetFields?.properties)) observeFields(input.sourceFields.properties, input.targetFields.properties, labelOf, observations);
+    if (isObject3(input.sourceActions?.actions) && isObject3(input.targetActions?.actions)) observeActions(input.sourceActions.actions, input.targetActions.actions, observations);
+    const entered = new Set(Object.keys(input.lookupMap || {}));
+    const byFrom = /* @__PURE__ */ new Map();
+    for (const { from, to, source } of observations) {
+      if (entered.has(from)) continue;
+      const targets = byFrom.get(from) ?? /* @__PURE__ */ new Map();
+      const entry = targets.get(to) ?? { total: 0, sources: [] };
+      entry.total += 1;
+      if (entry.sources.length < SOURCE_NAME_LIMIT && !entry.sources.includes(source)) entry.sources.push(source);
+      targets.set(to, entry);
+      byFrom.set(from, targets);
+    }
+    const result = { candidates: [], conflicts: [] };
+    const byNumber = (a, b) => Number(a) - Number(b);
+    for (const from of [...byFrom.keys()].sort(byNumber)) {
+      const targets = byFrom.get(from);
+      const list2 = [...targets.keys()].sort(byNumber).map((to) => ({ to, ...targets.get(to) }));
+      if (list2.length === 1) {
+        if (list2[0].to !== from) result.candidates.push({ from, ...list2[0] });
+      } else result.conflicts.push({ from, targets: list2 });
+    }
+    return result;
+  }
+  function hasLookupCandidates(result) {
+    return !!result && (result.candidates.length > 0 || result.conflicts.length > 0);
+  }
+
   // src/reflect/planReport.ts
   function escapeReflectMarkdown(value) {
     return String(value ?? "").replace(/[\r\n]+/g, " ").replace(/([\\`*_[\]<>|~])/g, "\\$1");
@@ -4421,7 +4481,7 @@ ${base}`
   // src/reflect/standalonePlan.ts
   var formatBytes = (bytes) => bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.ceil(bytes / 1024))} KB`;
   var namedSections = { viewSettings: "views", reportSettings: "reports", actionSettings: "actions" };
-  var own2 = (object2, key) => Object.prototype.hasOwnProperty.call(object2, key);
+  var own3 = (object2, key) => Object.prototype.hasOwnProperty.call(object2, key);
   var object = (value) => !!value && typeof value === "object" && !Array.isArray(value);
   var equal = (a, b) => stableReflectStringify(a) === stableReflectStringify(b);
   var valueText = (value) => value === void 0 ? "（なし）" : typeof value === "string" ? value : JSON.stringify(value);
@@ -4430,7 +4490,7 @@ ${base}`
   function diffValues(before, after, path, output, keysAreNames = false) {
     if (equal(before, after)) return;
     if (object(before) && object(after)) {
-      for (const key of /* @__PURE__ */ new Set([...Object.keys(before), ...Object.keys(after)])) diffValues(own2(before, key) ? before[key] : void 0, own2(after, key) ? after[key] : void 0, [...path, !keysAreNames && own2(diffPathLabels, key) ? diffPathLabels[key] : key], output, !keysAreNames && nameKeyedContainers.has(key));
+      for (const key of /* @__PURE__ */ new Set([...Object.keys(before), ...Object.keys(after)])) diffValues(own3(before, key) ? before[key] : void 0, own3(after, key) ? after[key] : void 0, [...path, !keysAreNames && own3(diffPathLabels, key) ? diffPathLabels[key] : key], output, !keysAreNames && nameKeyedContainers.has(key));
     } else if (Array.isArray(before) && Array.isArray(after)) {
       const queues = /* @__PURE__ */ new Map(), taken = /* @__PURE__ */ new Set();
       after.forEach((value, index) => {
@@ -4465,7 +4525,7 @@ ${base}`
         continue;
       }
       if (SYSTEM_FIELD_TYPES.has(def.type)) continue;
-      const current = own2(target, code) ? target[code] : void 0;
+      const current = own3(target, code) ? target[code] : void 0;
       if (current && current.type !== def.type) {
         plan.blockers.push(`${[...path, code].join(" / ")}: 種類が異なります（${current.type} → ${def.type}）。既存項目の種類はこの反映では変更できません。`);
         continue;
@@ -4484,7 +4544,7 @@ ${base}`
         }
       }
       for (const holder of ["lookup", "referenceTable"]) {
-        if (current && object(current[holder]) && !own2(def, holder)) plan.warnings.push(`${[...path, code].join(" / ")}: 反映先では${holder === "lookup" ? "ルックアップ" : "関連レコード一覧"}の設定がありますが、反映元にはありません。この反映では設定を外さず、反映先の設定を残します。`);
+        if (current && object(current[holder]) && !own3(def, holder)) plan.warnings.push(`${[...path, code].join(" / ")}: 反映先では${holder === "lookup" ? "ルックアップ" : "関連レコード一覧"}の設定がありますが、反映元にはありません。この反映では設定を外さず、反映先の設定を残します。`);
       }
       if (def.type === "SUBTABLE") {
         if (!object(def.fields)) throw new Error(`${code}: テーブル内のフィールド定義がありません。`);
@@ -4492,7 +4552,7 @@ ${base}`
       }
       after[code] = next;
     }
-    for (const [code, def] of Object.entries(target)) if (!own2(source, code) && !SYSTEM_FIELD_TYPES.has(def?.type)) {
+    for (const [code, def] of Object.entries(target)) if (!own3(source, code) && !SYSTEM_FIELD_TYPES.has(def?.type)) {
       plan.changes.push({ kind: "保持", path: [...path, code].join(" / "), before: valueText(def), after: "反映先の設定を保持" });
     }
     return after;
@@ -4621,9 +4681,9 @@ ${base}`
   var settingValue = (value) => typeof value === "number" ? String(value) : Array.isArray(value) ? value.map(settingValue) : object(value) ? Object.fromEntries(Object.entries(value).map(([name, item]) => [name, settingValue(item)])) : value;
   function buildAppSettingsPlan(plan, source, target, options) {
     try {
-      if (own2(source, "titleField") && !object(source.titleField)) throw new Error("レコードのタイトルの設定形式が不正です。");
+      if (own3(source, "titleField") && !object(source.titleField)) throw new Error("レコードのタイトルの設定形式が不正です。");
       plan.behavior = "動作・表示の設定を更新（アプリ名・説明・アイコンは対象外）";
-      const pick = (section) => Object.fromEntries(APP_SETTINGS_REFLECT_KEYS.filter((name) => own2(source, name) && own2(section, name)).map((name) => [name, name === "titleField" && object(section[name]) && section[name].selectionMode === "AUTO" ? { selectionMode: "AUTO" } : settingValue(section[name])]));
+      const pick = (section) => Object.fromEntries(APP_SETTINGS_REFLECT_KEYS.filter((name) => own3(source, name) && own3(section, name)).map((name) => [name, name === "titleField" && object(section[name]) && section[name].selectionMode === "AUTO" ? { selectionMode: "AUTO" } : settingValue(section[name])]));
       const before = pick(target), after = pick(source);
       if (!Object.keys(after).length) throw new Error("反映元に比較できる一般設定がありません（古い設定JSONの可能性があります）。");
       if (after.titleField?.selectionMode === "MANUAL") {
@@ -4696,17 +4756,17 @@ ${base}`
         const merged = mergeFields(sourceProps, targetProps, options.lookupMap || {}, ["フィールド"], plan);
         const adds = /* @__PURE__ */ Object.create(null), updates = /* @__PURE__ */ Object.create(null);
         for (const [code, value] of Object.entries(merged)) {
-          if (!own2(sourceProps, code) || SYSTEM_FIELD_TYPES.has(value?.type)) continue;
-          if (!own2(targetProps, code)) adds[code] = value;
+          if (!own3(sourceProps, code) || SYSTEM_FIELD_TYPES.has(value?.type)) continue;
+          if (!own3(targetProps, code)) adds[code] = value;
           else if (value.type === "SUBTABLE") {
-            const current = targetProps[code], addedFields = Object.fromEntries(Object.entries(value.fields).filter(([child]) => !own2(current.fields || {}, child)));
+            const current = targetProps[code], addedFields = Object.fromEntries(Object.entries(value.fields).filter(([child]) => !own3(current.fields || {}, child)));
             if (Object.keys(addedFields).length) adds[code] = { type: "SUBTABLE", code, fields: addedFields };
-            const updatedFields = Object.fromEntries(Object.entries(value.fields).filter(([child, childDef]) => own2(current.fields || {}, child) && !equal(childDef, current.fields[child])));
+            const updatedFields = Object.fromEntries(Object.entries(value.fields).filter(([child, childDef]) => own3(current.fields || {}, child) && !equal(childDef, current.fields[child])));
             const { fields: _nextFields, ...nextTable } = value, { fields: _currentFields, ...currentTable } = current;
             if (Object.keys(updatedFields).length || !equal(nextTable, currentTable)) updates[code] = { ...nextTable, fields: updatedFields };
           } else if (!equal(value, targetProps[code])) updates[code] = value;
         }
-        const fieldCounts = { add: Object.keys(adds).length, update: Object.keys(updates).length, tgtOnly: Object.keys(targetProps).filter((code) => !own2(sourceProps, code) && !SYSTEM_FIELD_TYPES.has(targetProps[code]?.type)).length };
+        const fieldCounts = { add: Object.keys(adds).length, update: Object.keys(updates).length, tgtOnly: Object.keys(targetProps).filter((code) => !own3(sourceProps, code) && !SYSTEM_FIELD_TYPES.has(targetProps[code]?.type)).length };
         plan.fieldStats = fieldCounts;
         if (fieldCounts.add) plan.operations.push({ method: "POST", endpoint: def.endpoint, body: { properties: adds }, label: "フィールド追加" });
         if (fieldCounts.update) plan.operations.push({ method: "PUT", endpoint: def.endpoint, body: { properties: updates }, label: "フィールド更新" });
@@ -4721,7 +4781,7 @@ ${base}`
           }
         }
         for (const name of Object.keys(from)) {
-          if (own2(to, name) && (!from[name].type || !to[name].type || from[name].type === to[name].type)) from[name] = { ...to[name], ...from[name] };
+          if (own3(to, name) && (!from[name].type || !to[name].type || from[name].type === to[name].type)) from[name] = { ...to[name], ...from[name] };
           if (key === "actionSettings" && from[name]?.destApp?.app != null) {
             const mappedApp = options.lookupMap?.[String(from[name].destApp.app)];
             if (mappedApp) {
@@ -4736,7 +4796,7 @@ ${base}`
         }
         const preserve = options.preserveTargetOnly !== false;
         const combined = preserve ? { ...to, ...from } : from;
-        const ordered = [...Object.keys(from).sort((a, b) => Number(from[a].index || 0) - Number(from[b].index || 0)), ...preserve ? Object.keys(to).filter((name) => !own2(from, name)).sort((a, b) => Number(to[a].index || 0) - Number(to[b].index || 0)) : []];
+        const ordered = [...Object.keys(from).sort((a, b) => Number(from[a].index || 0) - Number(from[b].index || 0)), ...preserve ? Object.keys(to).filter((name) => !own3(from, name)).sort((a, b) => Number(to[a].index || 0) - Number(to[b].index || 0)) : []];
         for (const [index, name] of ordered.entries()) combined[name] = { ...combined[name], index: String(index) };
         if (key === "viewSettings") for (const [name, view] of Object.entries(combined)) {
           if (!["LIST", "CALENDAR", "CUSTOM"].includes(view.type)) throw new Error(`${name}: 一覧の種類を取得できません。`);
@@ -4747,7 +4807,7 @@ ${base}`
         before = { [property]: to };
         after = { [property]: combined };
         plan.behavior = preserve ? "追加・更新（反映先だけの設定は保持）" : "全置換（反映元にない設定を削除）";
-        if (preserve) for (const name of Object.keys(to).filter((name2) => !own2(from, name2))) plan.changes.push({ kind: "保持", path: `${diffPathLabels[property]} / ${name}`, before: valueText(to[name]), after: "内容を保持（表示順は反映元の後）" });
+        if (preserve) for (const name of Object.keys(to).filter((name2) => !own3(from, name2))) plan.changes.push({ kind: "保持", path: `${diffPathLabels[property]} / ${name}`, before: valueText(to[name]), after: "内容を保持（表示順は反映元の後）" });
         plan.requiredFields = reflectRequiredFields(key, after, options.knownFieldCodes);
       } else if (key === "pluginSettings") {
         if (!Array.isArray(source.plugins) || !Array.isArray(target.plugins)) throw new Error("プラグイン一覧の形式が不正です。");
@@ -7363,7 +7423,7 @@ ${base}`
   }
 
   // src/reflect/selectionPointer.ts
-  var own3 = (target, key) => Object.prototype.hasOwnProperty.call(target, key);
+  var own4 = (target, key) => Object.prototype.hasOwnProperty.call(target, key);
   var isPlainObject = (value) => !!value && typeof value === "object" && !Array.isArray(value);
   function cloneJson(value) {
     return value === void 0 ? value : JSON.parse(JSON.stringify(value));
@@ -7389,7 +7449,7 @@ ${base}`
   function getAt(root2, tokens) {
     let current = root2;
     for (const token of tokens) {
-      if (!isPlainObject(current) || !own3(current, token)) return void 0;
+      if (!isPlainObject(current) || !own4(current, token)) return void 0;
       current = current[token];
     }
     return current;
@@ -7398,7 +7458,7 @@ ${base}`
     if (!tokens.length) throw new Error("ルートは置き換えられません。");
     let current = root2;
     for (const token of tokens.slice(0, -1)) {
-      if (!isPlainObject(current[token]) || !own3(current, token)) setOwn(current, token, {});
+      if (!isPlainObject(current[token]) || !own4(current, token)) setOwn(current, token, {});
       current = current[token];
     }
     setOwn(current, tokens[tokens.length - 1], value);
@@ -7420,7 +7480,7 @@ ${base}`
     return chars.length <= max ? text : `${chars.slice(0, max - 1).join("")}…`;
   }
   function fieldDisplayName(code, fieldLabels, hint) {
-    const label = typeof hint === "string" && hint ? hint : own3(fieldLabels, code) ? fieldLabels[code] : "";
+    const label = typeof hint === "string" && hint ? hint : own4(fieldLabels, code) ? fieldLabels[code] : "";
     return label && label !== code ? `${label}（${code}）` : code;
   }
   var VIEW_LABELS = {
@@ -7498,7 +7558,7 @@ ${base}`
   };
   function keyLabel(sectionKey, key) {
     const table = SECTION_KEY_LABELS[sectionKey];
-    if (table && own3(table, key)) return table[key];
+    if (table && own4(table, key)) return table[key];
     return labelOfProp(key);
   }
   var MONTH_OPTIONS = Array.from({ length: 12 }, (_value, index) => [String(index + 1), `${index + 1}月`]);
@@ -7520,7 +7580,7 @@ ${base}`
     let options;
     if (key === "firstMonthOfFiscalYear") options = MONTH_OPTIONS;
     else if (key === "type" && sectionKey === "viewSettings") options = Object.entries(VIEW_TYPE_JP);
-    else if (own3(SELECT_BY_KEY, key)) options = Object.entries(SELECT_BY_KEY[key]);
+    else if (own4(SELECT_BY_KEY, key)) options = Object.entries(SELECT_BY_KEY[key]);
     if (!options) return void 0;
     return typeof value === "string" && options.some(([option]) => option === value) ? options : void 0;
   }
@@ -7528,15 +7588,15 @@ ${base}`
     if (key === "firstMonthOfFiscalYear") return /^\d+$/.test(value) ? `${Number(value)}月` : void 0;
     if (key === "type") {
       const dict3 = sectionKey === "viewSettings" ? VIEW_TYPE_JP : sectionKey === "fieldSettings" ? FIELD_TYPE_JP : void 0;
-      return dict3 && own3(dict3, value) ? dict3[value] : void 0;
+      return dict3 && own4(dict3, value) ? dict3[value] : void 0;
     }
-    const dict2 = own3(SELECT_BY_KEY, key) ? SELECT_BY_KEY[key] : void 0;
-    return dict2 && own3(dict2, value) ? dict2[value] : void 0;
+    const dict2 = own4(SELECT_BY_KEY, key) ? SELECT_BY_KEY[key] : void 0;
+    return dict2 && own4(dict2, value) ? dict2[value] : void 0;
   }
   function entityName(entity) {
     if (!isPlainObject(entity)) return String(entity);
     const type = String(entity.type || ""), code = String(entity.code ?? "");
-    const typeText = own3(ENTITY_TYPE_JP, type) ? ENTITY_TYPE_JP[type] : type === "DEPARTMENT" ? "組織" : type;
+    const typeText = own4(ENTITY_TYPE_JP, type) ? ENTITY_TYPE_JP[type] : type === "DEPARTMENT" ? "組織" : type;
     return code ? `${typeText}「${code}」` : typeText || "対象";
   }
   function elementName(element, key, ctx) {
@@ -7545,7 +7605,7 @@ ${base}`
     if (ctx.sectionKey === "customizeSettings") {
       if (element.type === "URL") return String(element.url ?? "");
       const fileKey = String(element.file?.fileKey ?? "");
-      return element.file?.name || (ctx.fileNames && own3(ctx.fileNames, fileKey) ? ctx.fileNames[fileKey] : "") || "アップロードファイル";
+      return element.file?.name || (ctx.fileNames && own4(ctx.fileNames, fileKey) ? ctx.fileNames[fileKey] : "") || "アップロードファイル";
     }
     if (isPlainObject(element.entity)) return entityName(element.entity);
     if (ctx.sectionKey === "fieldAcl" && element.code) return fieldDisplayName(String(element.code), ctx.fieldLabels);
@@ -7603,12 +7663,12 @@ ${base}`
     if (value === void 0) return "（なし）";
     if (!isPlainObject(value)) return describeValue(tokens[tokens.length - 1] ?? "", value, ctx);
     if (sectionKey === "fieldSettings" && typeof value.type === "string" && !tokens.includes("options")) {
-      const type = own3(FIELD_TYPE_JP, value.type) ? FIELD_TYPE_JP[value.type] : value.type;
+      const type = own4(FIELD_TYPE_JP, value.type) ? FIELD_TYPE_JP[value.type] : value.type;
       const extra = value.type === "SUBTABLE" && isPlainObject(value.fields) ? `（テーブル内フィールド ${Object.keys(value.fields).length}個）` : value.required === true ? "（必須）" : "";
       return `${type}${extra}`;
     }
-    if (sectionKey === "viewSettings" && typeof value.type === "string") return own3(VIEW_TYPE_JP, value.type) ? VIEW_TYPE_JP[value.type] : value.type;
-    if (sectionKey === "reportSettings" && typeof value.chartType === "string") return own3(CHART_TYPE_JP, value.chartType) ? CHART_TYPE_JP[value.chartType] : value.chartType;
+    if (sectionKey === "viewSettings" && typeof value.type === "string") return own4(VIEW_TYPE_JP, value.type) ? VIEW_TYPE_JP[value.type] : value.type;
+    if (sectionKey === "reportSettings" && typeof value.chartType === "string") return own4(CHART_TYPE_JP, value.chartType) ? CHART_TYPE_JP[value.chartType] : value.chartType;
     if (sectionKey === "processSettings" && tokens[0] === "states") return "ステータス";
     if (tokens.includes("options")) return String(tokens[tokens.length - 1]);
     if (sectionKey === "categories") return "カテゴリー";
@@ -7732,7 +7792,7 @@ ${base}`
     return Object.keys(container).map((name, position) => ({ name, position })).sort((a, b) => indexOf(container[a.name]) - indexOf(container[b.name]) || a.position - b.position).map((item) => item.name);
   }
   function emitOrderChange(w, tokens, before, after) {
-    const common = (names, other) => names.filter((name) => own3(other, name));
+    const common = (names, other) => names.filter((name) => own4(other, name));
     const beforeOrder = common(orderedNames(before), after), afterOrder = common(orderedNames(after), before);
     if (afterOrder.length < 2 || sameValue(beforeOrder, afterOrder)) return;
     const kinds = tokens.map(() => "key");
@@ -7766,9 +7826,9 @@ ${base}`
   }
   function walkObject(w, before, after, tokens, kinds, containerKey, elementOf) {
     const namesLevel = containerKey !== void 0;
-    const keys = [...Object.keys(after), ...Object.keys(before).filter((key) => !own3(after, key))];
+    const keys = [...Object.keys(after), ...Object.keys(before).filter((key) => !own4(after, key))];
     for (const key of keys) {
-      const bv = own3(before, key) ? before[key] : void 0, av = own3(after, key) ? after[key] : void 0;
+      const bv = own4(before, key) ? before[key] : void 0, av = own4(after, key) ? after[key] : void 0;
       if (sameValue(bv, av)) continue;
       const childTokens = [...tokens, key];
       if (namesLevel) {
@@ -7807,7 +7867,7 @@ ${base}`
         const beforeOptions = getAt(w.before, [...fieldTokens, "options"]), afterOptions = getAt(w.after, [...fieldTokens, "options"]);
         if (!isPlainObject(afterOptions)) continue;
         for (const value of values) {
-          if (typeof value !== "string" || !own3(afterOptions, value) || isPlainObject(beforeOptions) && own3(beforeOptions, value)) continue;
+          if (typeof value !== "string" || !own4(afterOptions, value) || isPlainObject(beforeOptions) && own4(beforeOptions, value)) continue;
           require2(change, byPointer.get(pointerOf([...fieldTokens, "options", value])) ?? byPointer.get(pointerOf([...fieldTokens, "options"])));
         }
       }
@@ -7815,7 +7875,7 @@ ${base}`
         const beforeStates = getAt(w.before, ["states"]), afterStates = getAt(w.after, ["states"]);
         if (!isPlainObject(afterStates)) continue;
         for (const action of change.after) for (const name of [action?.from, action?.to]) {
-          if (typeof name !== "string" || !own3(afterStates, name) || isPlainObject(beforeStates) && own3(beforeStates, name)) continue;
+          if (typeof name !== "string" || !own4(afterStates, name) || isPlainObject(beforeStates) && own4(beforeStates, name)) continue;
           require2(change, byPointer.get(pointerOf(["states", name])));
         }
       }
@@ -7860,11 +7920,11 @@ ${base}`
     if (definition.type === "DROP_DOWN" || definition.type === "RADIO_BUTTON") {
       if (defaults === void 0 || defaults === "" || defaults === null) return definition.type === "RADIO_BUTTON" ? [`${label}の初期値がありません。ラジオボタンは、初期値を選択肢のどれかにする必要があります。`] : [];
       if (typeof defaults !== "string") return [`${label}の初期値の形式が不正です。${hint}`];
-      return own3(options, defaults) ? [] : [`${label}の初期値「${defaults}」が選択肢にありません。${hint}`];
+      return own4(options, defaults) ? [] : [`${label}の初期値「${defaults}」が選択肢にありません。${hint}`];
     }
     if (defaults === void 0 || defaults === null) return [];
     if (!Array.isArray(defaults)) return [`${label}の初期値の形式が不正です（選択肢の配列にしてください）。`];
-    return defaults.filter((value) => typeof value !== "string" || !own3(options, value)).map((value) => `${label}の初期値「${String(value)}」が選択肢にありません。${hint}`);
+    return defaults.filter((value) => typeof value !== "string" || !own4(options, value)).map((value) => `${label}の初期値「${String(value)}」が選択肢にありません。${hint}`);
   }
   function checkFieldSettings(before, after, fieldLabels, knownFieldCodes) {
     const issues = [];
@@ -7876,7 +7936,7 @@ ${base}`
           continue;
         }
         if (definition.code !== void 0 && definition.code !== code) issues.push(`${name(code, parent)}のフィールドコードは変更できません（${code} → ${String(definition.code)}）。`);
-        const current = own3(beforeFields, code) ? beforeFields[code] : void 0;
+        const current = own4(beforeFields, code) ? beforeFields[code] : void 0;
         if (isPlainObject(current) && current.type !== definition.type) issues.push(`${name(code, parent)}の種類は変更できません（${String(current.type)} → ${definition.type}）。`);
         issues.push(...checkChoiceDefault(name(code, parent), definition));
         if (definition.type === "SUBTABLE") {
@@ -7885,7 +7945,7 @@ ${base}`
         }
       }
       for (const code of Object.keys(beforeFields)) {
-        if (!own3(afterFields, code)) issues.push(`${name(code, parent)}を削除する設定は反映できません（このツールではフィールドを削除しません）。`);
+        if (!own4(afterFields, code)) issues.push(`${name(code, parent)}を削除する設定は反映できません（このツールではフィールドを削除しません）。`);
       }
     };
     if (!isPlainObject(after?.properties)) return ["フィールド設定の properties がありません。"];
@@ -7990,12 +8050,12 @@ ${base}`
     const adds = /* @__PURE__ */ Object.create(null), updates = /* @__PURE__ */ Object.create(null);
     for (const [code, value] of Object.entries(afterProps)) {
       if (SYSTEM_FIELD_TYPES.has(value?.type)) continue;
-      if (!own3(beforeProps, code)) adds[code] = value;
+      if (!own4(beforeProps, code)) adds[code] = value;
       else if (value.type === "SUBTABLE") {
         const current = beforeProps[code];
-        const addedFields = Object.fromEntries(Object.entries(value.fields).filter(([child]) => !own3(current.fields || {}, child)));
+        const addedFields = Object.fromEntries(Object.entries(value.fields).filter(([child]) => !own4(current.fields || {}, child)));
         if (Object.keys(addedFields).length) adds[code] = { type: "SUBTABLE", code, fields: addedFields };
-        const updatedFields = Object.fromEntries(Object.entries(value.fields).filter(([child, childDef]) => own3(current.fields || {}, child) && !sameValue(childDef, current.fields[child])));
+        const updatedFields = Object.fromEntries(Object.entries(value.fields).filter(([child, childDef]) => own4(current.fields || {}, child) && !sameValue(childDef, current.fields[child])));
         const { fields: _nextFields, ...nextTable } = value, { fields: _currentFields, ...currentTable } = current;
         if (Object.keys(updatedFields).length || !sameValue(nextTable, currentTable)) updates[code] = { ...nextTable, fields: updatedFields };
       } else if (!sameValue(value, beforeProps[code])) updates[code] = value;
@@ -8121,7 +8181,7 @@ ${base}`
         const names = Object.keys(container);
         const seen = /* @__PURE__ */ new Set();
         sequence = [];
-        for (const name of [...first, ...second, ...names]) if (own3(container, name) && !seen.has(name)) {
+        for (const name of [...first, ...second, ...names]) if (own4(container, name) && !seen.has(name)) {
           seen.add(name);
           sequence.push(name);
         }
@@ -8312,9 +8372,9 @@ ${base}`
       throw prefixed;
     }
   }
-  async function getReflectBundles(opts, scopes, setStatus) {
+  async function fetchReflectSourceBundle(opts, scopes, setStatus) {
     setStatus(opts.sourceBundle ? "反映元の設定JSONを読み込み中..." : "反映元の設定を取得中...");
-    const source = opts.sourceBundle ? importedReflectSource(opts) : await withAppPrefix("反映元", opts.sourceAppId, () => fetchBundle({
+    return opts.sourceBundle ? importedReflectSource(opts) : await withAppPrefix("反映元", opts.sourceAppId, () => fetchBundle({
       rawSettings: true,
       // フィールド設定を選んでいなくても、参照するフィールドの有無と表示名を示せるよう反映先と同じ範囲を取得する。
       appId: opts.sourceAppId,
@@ -8323,6 +8383,10 @@ ${base}`
       sections: reflectInspectionScopes(scopes),
       onProgress: (p, label) => setStatus(`反映元取得 ${Math.round(p * 100)}% (${label})`)
     }));
+  }
+  async function getReflectBundles(opts, scopes, setStatus, prepared) {
+    const needed = reflectInspectionScopes(scopes);
+    const source = prepared && needed.every((key) => prepared.scopes.includes(key)) ? deepClone(prepared.bundle) : await fetchReflectSourceBundle(opts, scopes, setStatus);
     setStatus("反映先プレビューの設定を確認中...");
     const target = await withAppPrefix("反映先", opts.targetAppId, () => fetchBundle({
       rawSettings: true,
@@ -8340,13 +8404,13 @@ ${base}`
     if (customize && typeof customize === "object" && customize._partial?.kind === "customizeBody" && !customize._fetchError) delete customize._partial;
     return bundle;
   }
-  async function resolveReflectCustomizeFiles(opts, scopes, source, target, setStatus) {
+  async function resolveReflectCustomizeFiles(opts, scopes, source, target, setStatus, download) {
     if (!scopes.includes("customizeSettings")) return void 0;
     const sourceSection = source.sections?.customizeSettings, targetSection = target.sections?.customizeSettings;
     if (!isCompleteReflectSection(sourceSection) || !isCompleteReflectSection(targetSection)) return void 0;
     setStatus("JS/CSSファイルを確認中…");
     const sourceGuestId = opts.sourceBundle ? String(opts.sourceBundle?.guestId || "") : opts.sourceGuestId || "";
-    return resolveCustomizeFiles(sourceSection, targetSection, { sourceGuestId, targetGuestId: opts.targetGuestId || "" });
+    return resolveCustomizeFiles(sourceSection, targetSection, { sourceGuestId, targetGuestId: opts.targetGuestId || "", ...download ? { download } : {} });
   }
   function knownFieldCodesOf(source, target) {
     return [.../* @__PURE__ */ new Set([...listReflectFieldCodes(source), ...listReflectFieldCodes(target)])];
@@ -8367,10 +8431,10 @@ ${base}`
     const invalid = reflectConnectionError(opts);
     if (invalid) throw new Error(invalid);
     const scopes = orderedScopes(opts.scopes);
-    const { source, target } = await getReflectBundles(opts, scopes, setStatus);
+    const { source, target } = await getReflectBundles(opts, scopes, setStatus, options.source);
     setStatus("反映先の未公開の変更を確認中…");
     const targetPending = await inspectTargetPendingChanges({ targetAppId: opts.targetAppId, targetGuestId: opts.targetGuestId, scopes: reflectInspectionScopes(scopes) }, target);
-    const customizeFiles = await resolveReflectCustomizeFiles(opts, scopes, source, target, setStatus);
+    const customizeFiles = await resolveReflectCustomizeFiles(opts, scopes, source, target, setStatus, options.source?.download);
     let targetDeployStatus;
     if (options.checkTargetDeployStatus) {
       setStatus("反映先の反映状況を確認中…");
@@ -8402,6 +8466,12 @@ ${base}`
         }
       }
     }
+    const lookupCandidates = scopes.some((key) => key === "fieldSettings" || key === "actionSettings") ? findLookupMapCandidates({
+      ...scopes.includes("fieldSettings") && isCompleteReflectSection(source.sections?.fieldSettings) && isCompleteReflectSection(target.sections?.fieldSettings) ? { sourceFields: source.sections.fieldSettings, targetFields: target.sections.fieldSettings } : {},
+      ...scopes.includes("actionSettings") && isCompleteReflectSection(source.sections?.actionSettings) && isCompleteReflectSection(target.sections?.actionSettings) ? { sourceActions: source.sections.actionSettings, targetActions: target.sections.actionSettings } : {},
+      lookupMap: opts.lookupMap,
+      fieldLabels
+    }) : void 0;
     return {
       totalSections: entries.length,
       changedSections: entries.filter((entry) => entry.status === "change").length,
@@ -8414,7 +8484,8 @@ ${base}`
       baseline,
       targetPending,
       fieldLabels,
-      ...targetDeployStatus ? { targetDeployStatus } : {}
+      ...targetDeployStatus ? { targetDeployStatus } : {},
+      ...hasLookupCandidates(lookupCandidates) ? { lookupCandidates } : {}
     };
   }
   function composedFieldCodes(after) {

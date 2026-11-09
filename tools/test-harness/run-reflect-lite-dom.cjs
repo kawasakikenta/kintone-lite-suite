@@ -56,7 +56,14 @@ const mockEngine = `
     });
     return { sourceFieldCodes: mock.sourceFieldCodes || [], targetFieldCodes: mock.targetFieldCodes || [], sourceSystemFieldCodes: mock.sourceSystemFieldCodes || [], baseline: { connection: 'sample-' + opts.targetAppId, source: {}, target: {} }, entries, totalSections: entries.length, changedSections: entries.filter(e => e.status === 'change').length,
       sameSections: entries.filter(e => e.status === 'same').length, errorSections: entries.filter(e => !['change', 'same'].includes(e.status)).length,
-      ...(mock.targetPending ? { targetPending: mock.targetPending } : {}) };
+      ...(mock.targetPending ? { targetPending: mock.targetPending } : {}),
+      // 参照先変換の候補。入力済みの参照先変換に旧IDがあるものは候補にしない（実エンジンと同じ）。
+      ...(mock.lookupCandidates ? (() => {
+        const entered = opts.lookupMap || {};
+        const candidates = (mock.lookupCandidates.candidates || []).filter(item => !Object.prototype.hasOwnProperty.call(entered, item.from));
+        const conflicts = (mock.lookupCandidates.conflicts || []).filter(item => !Object.prototype.hasOwnProperty.call(entered, item.from));
+        return candidates.length || conflicts.length ? { lookupCandidates: { candidates, conflicts } } : {};
+      })() : {}) };
   }
   export async function preflightLookupMapStandalone() { return { ok: true, missing: [] }; }
   export async function runApplyPreviewStandalone(opts, status, progress) {
@@ -94,14 +101,38 @@ const mockEngine = `
   }
 `;
 
+// 全反映先の事前確認のエンジン側。反映先ごとの行は mock.precheckPlan[appId] で上書きできる。中止（runControl）を受けたら以降は未実行（中止）にする。
+const mockRollout = `
+  import { isCancelRequested } from ${JSON.stringify(path.join(TOOL, 'src/runControl.ts'))};
+  export function createRecentFileDownloader() { return async () => new Blob(['']); }
+  export async function precheckRolloutTargetsStandalone(params) {
+    const mock = window.__reflectMock;
+    mock.prechecks.push({ options: params.options, targets: params.targets.map(target => ({ ...target })), lastWrite: params.lastWrite || null });
+    if (mock.precheckThrows) { await new Promise(resolve => setTimeout(resolve, 30)); throw new Error(mock.precheckThrows); }
+    const rows = [];
+    for (const target of params.targets) {
+      await new Promise(resolve => setTimeout(resolve, mock.precheckDelay ?? 15));
+      const plan = (mock.precheckPlan || {})[target.appId];
+      const base = { appId: target.appId, guestId: target.guestId || '', name: '営業所' + target.appId, state: 'diff', changedLabels: ['フィールド設定', 'ビュー設定'], attentionLabels: [], changeCount: 3, removalCount: 0, pending: 'clean', pendingLabels: [], reason: '', lookupCandidates: 0, lookupConflicts: 0, at: Date.now() };
+      const row = isCancelRequested()
+        ? { ...base, name: '', state: 'notrun', changedLabels: [], changeCount: 0, pending: '', reason: '中止したため確認していません' }
+        : { ...base, ...(plan || {}) };
+      rows.push(row);
+      if (params.onProgress) params.onProgress(rows.length, params.targets.length, row);
+    }
+    return rows;
+  }
+`;
+
 async function bundle() {
   const result = await esbuild.build({
     absWorkingDir: TOOL, entryPoints: ['src/entries/reflect-lite-ui.ts'], bundle: true, write: false,
     format: 'iife', globalName: 'ReflectHarness', platform: 'browser', target: ['chrome110'], logLevel: 'silent',
     plugins: [{ name: 'reflect-fixtures', setup(build) {
       build.onResolve({ filter: /reflect-standalone\.js$/ }, () => ({ path: 'reflect-engine', namespace: 'fixture' }));
-      build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({
-        contents: `export { reflectResultMatchesOptions } from ${JSON.stringify(path.join(TOOL, 'src/tabs/reflect-standalone.ts'))};\n` + mockEngine,
+      build.onResolve({ filter: /reflect-rollout-standalone\.js$/ }, () => ({ path: 'reflect-rollout', namespace: 'fixture' }));
+      build.onLoad({ filter: /.*/, namespace: 'fixture' }, args => ({
+        contents: args.path === 'reflect-rollout' ? mockRollout : `export { reflectResultMatchesOptions } from ${JSON.stringify(path.join(TOOL, 'src/tabs/reflect-standalone.ts'))};\n` + mockEngine,
         loader: 'js', resolveDir: TOOL
       }));
     } }]
@@ -110,7 +141,7 @@ async function bundle() {
 }
 
 const fixture = `
-window.__reflectMock = { previews: [], applies: [], mode: 'mixed', lookups: [], lookupDelay: {},
+window.__reflectMock = { previews: [], applies: [], prechecks: [], mode: 'mixed', lookups: [], lookupDelay: {},
   apps: { '101': { name: '営業テンプレート', code: 'sales' }, '202': { name: '東京営業所', code: '' }, '303': { name: '旧名称アプリ' }, '404': { name: '検証環境アプリ' }, '505': { name: '大阪営業所' } } };
 window.kintone = { app: { getId: () => 202 }, api: Object.assign(async (url, method, params) => {
   const mock = window.__reflectMock;
@@ -1820,8 +1851,8 @@ async function main() {
           targetTop: Math.round(target.top - box.top), targetBottom: Math.round(target.bottom - box.top), hintVisible: !!document.querySelector('.kus-lp__hint')?.offsetParent };
       });
       assert.ok(geometry.canvasHeight >= minimum && geometry.dockHeight <= geometry.rootHeight * 0.4 && geometry.overflow <= 1 && !geometry.hintVisible, `${width}×${height}（最終確認）で本文の領域が足りない: ${JSON.stringify(geometry)}`);
-      if (width >= 1024) assert.ok(geometry.targetBottom <= geometry.canvasHeight, `${width}×${height}で書き込み先がスクロールしないと見えない: ${JSON.stringify(geometry)}`);
-      else assert.ok(geometry.targetTop < geometry.canvasHeight, `${width}×${height}で書き込み先が見えない: ${JSON.stringify(geometry)}`);
+      // 書き込み先のブロックは、320×420 のような小さな画面でもスクロールせずに全体が見える（先頭に置き、カードの見出しは読み上げ専用にする）。
+      assert.ok(geometry.targetBottom <= geometry.canvasHeight, `${width}×${height}で書き込み先がスクロールしないと見えない: ${JSON.stringify(geometry)}`);
       await page.screenshot({ path: path.join(OUT, `lowheight-confirm-${width}x${height}.png`) });
     }
     await page.setViewportSize({ width: 1440, height: 1000 });
@@ -1882,9 +1913,10 @@ async function main() {
     await compare();
     await button('差分ありだけ選択').click();
     assert.equal(await run().isEnabled(), true, '配布する操作デモも単独で動作する');
+    await require('./reflect-precheck-scenarios.cjs')({ page, script, fixture, out: OUT, errors });
     await require('./reflect-engine-scenarios.cjs')({ page, esbuild, tool: TOOL, out: OUT });
     assert.deepEqual(errors, []);
-    fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({ passed: true, sizes, checks: ['guided workflow', 'setup blockers', 'app URL input', 'lookup map lines', 'preset export and import', 'no write on compare', 'busy lock', 'scope reuse', 'freshness', 'search and status filters', 'keyboard focus', 'JSON source and errors', 'partial results and retry', 'result report export', 'post-apply verification', 'result invalidation on target change', 'result invalidation on JSON replacement', 'terminology (反映元/反映先)', 'app name lookup', 'scope descriptions and replace badges', 'field settings notice', 'summary table navigation', 'per-section results and undo guidance', 'responsive geometry', 'markdown plan and record', 'rollout queue', 'rollout result card and log', 'rollout presets', 'restore source label'], pageErrors: errors }, null, 2));
+    fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({ passed: true, sizes, checks: ['guided workflow', 'setup blockers', 'app URL input', 'lookup map lines', 'preset export and import', 'no write on compare', 'busy lock', 'scope reuse', 'freshness', 'search and status filters', 'keyboard focus', 'JSON source and errors', 'partial results and retry', 'result report export', 'post-apply verification', 'result invalidation on target change', 'result invalidation on JSON replacement', 'terminology (反映元/反映先)', 'app name lookup', 'scope descriptions and replace badges', 'field settings notice', 'summary table navigation', 'per-section results and undo guidance', 'responsive geometry', 'markdown plan and record', 'rollout queue', 'rollout result card and log', 'rollout presets', 'restore source label', 'rollout precheck', 'lookup candidates'], pageErrors: errors }, null, 2));
     console.log('PASS reflect-lite: workflow, terminology, app names, scope hints, summary table, setup blockers, URL input, lookup lines, presets, freshness, filters, JSON, partial results, per-section results, result export, markdown plan/record, rollout to multiple apps, restore source label, post-apply check, keyboard, 5 viewport sizes');
     console.log(`Artifacts: ${OUT}`);
   } catch (error) {
