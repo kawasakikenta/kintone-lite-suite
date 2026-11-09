@@ -60,6 +60,7 @@ import {
   type DeployOutcomeCounts
 } from '../deploy/display.js';
 import { buildDeployPlanMarkdown, buildDeployRecordMarkdown, stringifyDeployResultJson } from '../deploy/report.js';
+import { pickPublishRestoreOptions, prepareSourceRestore, type PublishRestoreOption } from '../deploy/sourceRestore.js';
 import {
   attachCardHelp,
   copyTextToClipboard,
@@ -72,6 +73,7 @@ import {
   makeDialog,
   makeInput,
   makeNote,
+  makeSelect,
   type AppTableRow
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
@@ -1023,7 +1025,17 @@ export function mountDeployLitePanel() {
   const copyRecordBtn = makeButton('記録をコピー', 'sub');
   const retryBtn = makeButton('失敗・未実行だけ選び直す', 'sub');
   const openSettingsBtn = makeButton('アプリの設定画面を開く', 'sub');
-  resultTools.append(saveJsonBtn, saveRecordBtn, copyRecordBtn, retryBtn, openSettingsBtn);
+  // バックアップから戻す: 「反映元アプリから本番へ」に切り替え、反映元をそのバックアップ（メモリ上の JSON）、反映先をそのアプリにして段階 1 を表示する。
+  let restoreOptions: PublishRestoreOption[] = [];
+  const restoreSelect = makeSelect([]);
+  restoreSelect.setAttribute('aria-label', 'バックアップから戻すアプリ');
+  restoreSelect.dataset.deployRestoreApp = 'true';
+  restoreSelect.hidden = true;
+  const restoreBtn = makeButton('バックアップから戻す', 'sub');
+  restoreBtn.dataset.deployRestore = 'true';
+  restoreBtn.title = '保存したバックアップとの差分を確認します（この操作では書き込みません）';
+  restoreBtn.hidden = true;
+  resultTools.append(saveJsonBtn, saveRecordBtn, copyRecordBtn, retryBtn, restoreSelect, restoreBtn, openSettingsBtn);
   resultCard.body.append(resultHead, resultPills, resultNotes, progressHost, resultTools);
   const resultEmpty = el('div', 'kus-dp-empty', 'まだ実行していません。対象を選び、変更を確認してから実行してください。');
 
@@ -1081,6 +1093,19 @@ export function mountDeployLitePanel() {
     resultNotes.appendChild(el('div', 'kus-dp-info', undoGuidance(mode)));
     retryBtn.disabled = busy || !retryableOutcomes(result.apps).length;
     retryBtn.hidden = !retryableOutcomes(result.apps).length;
+    const chosen = restoreSelect.value;
+    restoreOptions = pickPublishRestoreOptions(result);
+    restoreSelect.replaceChildren(...restoreOptions.map((option, index) => {
+      const node = document.createElement('option');
+      node.value = String(index);
+      node.textContent = formatDeployApp(option);
+      return node;
+    }));
+    if (chosen && Number(chosen) < restoreOptions.length) restoreSelect.value = chosen;
+    restoreSelect.hidden = restoreOptions.length < 2;
+    restoreSelect.disabled = busy;
+    restoreBtn.hidden = !restoreOptions.length;
+    restoreBtn.disabled = busy;
     openSettingsBtn.hidden = result.apps.length !== 1;
     saveJsonBtn.disabled = busy;
     saveRecordBtn.disabled = busy;
@@ -1124,6 +1149,14 @@ export function mountDeployLitePanel() {
     refreshReview();
     showStage('setup');
     panel.setStatus(`失敗・未実行の ${retry.length} アプリを対象に選び直しました。未公開の変更を確認し直してください。`, 'info');
+  });
+  restoreBtn.addEventListener('click', () => {
+    const option = restoreOptions[Number(restoreSelect.value) || 0];
+    if (!option || busy) return;
+    const prepared = prepareSourceRestore(option.request);
+    if (!prepared.ok) { panel.setStatus(prepared.message, 'err'); return; }
+    switchFlow('source');
+    sourceFlow.startRestore(option.request);
   });
   openSettingsBtn.addEventListener('click', () => {
     const last = memory.lastRun;

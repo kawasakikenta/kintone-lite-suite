@@ -3,8 +3,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   applySelection,
+  carryOverSession,
   clearOverrides,
   createSourceSession,
+  describeCarryOver,
+  hasCarryOverLoss,
   hasJsonOverride,
   hasOverride,
   recomposeSession,
@@ -115,5 +118,67 @@ describe('修正の保存', () => {
     expect(hasJsonOverride(s, 'fieldSettings')).toBe(true);
     setJsonOverride(s, 'fieldSettings', undefined);
     expect(hasJsonOverride(s, 'fieldSettings')).toBe(false);
+  });
+});
+
+describe('carryOverSession（書き込み前に止まった後の抽出し直し）', () => {
+  const edit = (id: string, pointer: string) => change(id, { editables: [{ pointer, label: pointer, value: 'v', editor: { type: 'text' } }] });
+  const modelOf = (changes: SelectableChange[]): SectionSelectionModel => ({ sectionKey: 'fieldSettings', label: 'フィールド設定', before: {}, after: {}, jsonEditable: true, changes });
+  function make(changes: SelectableChange[], key = 'fieldSettings') {
+    const m = modelOf(changes);
+    return createSourceSession({
+      signature: 'sig', opts: { sourceAppId: '1', targetAppId: '2', scopes: [key] },
+      identities: { source: { appId: '1', name: 's', code: '', guestId: '' }, target: { appId: '2', name: 't', code: '', guestId: '' } },
+      sourceEnvironment: 'production',
+      preview: { totalSections: 1, changedSections: 1, sameSections: 0, errorSections: 0, entries: [plan(key)], baseline: {} as any, sourceFieldCodes: [], targetFieldCodes: [], sourceSystemFieldCodes: [] }
+    }, { ...deps, buildModel: () => m });
+  }
+
+  it('同じ change.id の選択と、同じ pointer の入力欄の修正を引き継ぎ、今回だけの変更は既定（選ぶ）にする', () => {
+    const previous = make([edit('a', '/a/label'), change('b'), change('c')]);
+    applySelection(previous, ['b'], false);
+    setOverride(previous, 'fieldSettings', '/a/label', 'お客様名', 'v');
+    const next = make([edit('a', '/a/label'), change('b'), change('c'), change('d')]);
+    const summary = carryOverSession(next, previous);
+    expect([...next.selected.fieldSettings]).toEqual(['a', 'c', 'd']);
+    expect(next.states.fieldSettings.overrides).toEqual({ '/a/label': 'お客様名' });
+    expect(summary).toEqual({ selectionKept: 2, selectionLost: 0, overridesKept: 1, overridesLost: 0, jsonLost: 0 });
+    expect(hasCarryOverLoss(summary)).toBe(false);
+    expect(describeCarryOver(summary)).toBe('前回の選択 2 件・入力欄の修正 1 件を引き継ぎました。');
+  });
+
+  it('更新後の差分に無い選択・入力欄の修正・JSON での修正は、引き継げなかった件数として数える', () => {
+    const previous = make([edit('a', '/a/label'), edit('b', '/b/label'), change('c')]);
+    setOverride(previous, 'fieldSettings', '/a/label', 'A', 'v');
+    setOverride(previous, 'fieldSettings', '/b/label', 'B', 'v');
+    setJsonOverride(previous, 'fieldSettings', { properties: {} });
+    const next = make([edit('a', '/a/label'), change('c')]);
+    const summary = carryOverSession(next, previous);
+    expect([...next.selected.fieldSettings]).toEqual(['a', 'c']);
+    expect(next.states.fieldSettings.overrides).toEqual({ '/a/label': 'A' });
+    expect(next.states.fieldSettings.json).toBeUndefined();
+    expect(summary).toEqual({ selectionKept: 2, selectionLost: 1, overridesKept: 1, overridesLost: 1, jsonLost: 1 });
+    expect(hasCarryOverLoss(summary)).toBe(true);
+    expect(describeCarryOver(summary)).toBe('前回の選択 2 件・入力欄の修正 1 件を引き継ぎました。引き継げなかったもの: 選択 1 件・入力欄の修正 1 件・JSON での修正 1 項目（更新後の差分に無い、または JSON のため）。選び直してください。');
+  });
+
+  it('選んだ変更が必要とする変更が外れていたら、一緒に選ぶ。前回の項目が今回の差分に無いときは、その選択を引き継げなかった件数にする', () => {
+    const previous = make([change('a'), change('b', { requires: ['a'] })]);
+    applySelection(previous, ['a'], false);
+    previous.selected.fieldSettings.add('b');
+    const next = make([change('a'), change('b', { requires: ['a'] })]);
+    carryOverSession(next, previous);
+    expect([...next.selected.fieldSettings].sort()).toEqual(['a', 'b']);
+    const other = createSourceSession({
+      signature: 'sig', opts: { sourceAppId: '1', targetAppId: '2', scopes: ['layoutSettings'] },
+      identities: { source: { appId: '1', name: 's', code: '', guestId: '' }, target: { appId: '2', name: 't', code: '', guestId: '' } },
+      sourceEnvironment: 'production',
+      preview: { totalSections: 1, changedSections: 0, sameSections: 1, errorSections: 0, entries: [plan('layoutSettings', 'same')], baseline: {} as any, sourceFieldCodes: [], targetFieldCodes: [], sourceSystemFieldCodes: [] }
+    }, deps);
+    expect(carryOverSession(other, previous)).toMatchObject({ selectionKept: 0, selectionLost: 1 });
+  });
+
+  it('引き継ぐものが無いときの案内', () => {
+    expect(describeCarryOver({ selectionKept: 0, selectionLost: 0, overridesKept: 0, overridesLost: 0, jsonLost: 0 })).toBe('前回の選択と修正はありませんでした。');
   });
 });

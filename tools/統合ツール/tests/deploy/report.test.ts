@@ -84,7 +84,7 @@ describe('buildDeployPlanMarkdown', () => {
     expect(revert).not.toContain('## 削除されるフィールド');
     expect(revert).toContain('中止前のプレビューの設定');
     expect(revert).toContain('まとめて反映（すべて成功したときだけ本番へ反映）');
-    expect(revert).toContain('破棄した変更は、バックアップJSONをプレビュー反映で読み込むと戻せます。');
+    expect(revert).toContain('破棄した変更は、結果画面の「バックアップから戻す」で、プレビューに戻せます。');
   });
 
   it('変更の要約が多いときは項目ごとに 50 件で切る', () => {
@@ -162,6 +162,11 @@ describe('buildDeployResultJson', () => {
     expect(json.logs).toEqual(result.logs);
     expect(json.backup?.fileName).toBe('本番反映前バックアップ_3アプリ_20260101_000000.json');
     expect(json.cancelled).toBe(false);
+    // バックアップ JSON の本体（content）は、JS/CSS の本文を含み得るため結果 JSON に含めない
+    const withContent = { ...result, backup: { ...result.backup!, content: { kind: 'kintone-deploy-backup', version: 1, generatedAt: '', mode: 'deploy', environment: 'production', scopes: [], bundles: [{ appId: '101', secret: 'BODY' }] } as any } };
+    expect(stringifyDeployResultJson(withContent)).not.toMatch(/BODY|bundles|"content"/);
+    expect(buildDeployResultJson(withContent).backup).toEqual(buildDeployResultJson(result).backup);
+    expect(withContent.backup.content).toBeDefined();
     const text = stringifyDeployResultJson(result);
     expect(JSON.parse(text).message).toContain('3 アプリ中 1 アプリを反映しました。');
   });

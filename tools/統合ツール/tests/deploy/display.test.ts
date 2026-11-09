@@ -78,7 +78,8 @@ describe('操作の表示', () => {
   it('取り消し方とバックアップの説明', () => {
     expect(undoGuidance('deploy')).toContain('本番への反映は取り消せません');
     expect(undoGuidance('deploy')).toContain('削除したフィールドの値は戻りません');
-    expect(undoGuidance('revert')).toBe('破棄した変更は、バックアップJSONをプレビュー反映で読み込むと戻せます。');
+    expect(undoGuidance('deploy')).toContain('「バックアップから戻す」');
+    expect(undoGuidance('revert')).toBe('破棄した変更は、結果画面の「バックアップから戻す」で、プレビューに戻せます。');
     expect(backupDescription('deploy', 4)).toBe('反映前の本番設定（4 アプリ分。変更のあるJS/CSSはファイル本体も含む）をJSONで保存してから反映します。');
     expect(backupDescription('revert', 4)).toContain('中止前のプレビューの設定（4 アプリ分）');
   });
