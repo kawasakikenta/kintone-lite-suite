@@ -797,7 +797,9 @@ module.exports = async function verifyDeploySourceEngine({ page, script, out, on
     assert.match(await progress('layoutSettings').innerText(), /失敗[\s\S]*指定したフィールドが存在しません。/);
     assert.match(await progress('viewSettings').innerText(), /未実行/);
     assert.match(await page.locator('[data-deploy-skipped]').innerText(), /本番へは反映していません[\s\S]*反映先プレビューへの書き込みが完了しなかった項目があるため（レイアウト設定: 失敗、ビュー設定: 未実行）/);
-    assert.match(await page.locator('[data-deploy-skipped-note]').innerText(), /反映先プレビューには書き込み済みです/);
+    // フィールド設定は書き込めた（レイアウト設定で失敗）ので、一部だけ書き込まれていると示す（「書き込み済み」「続けて本番へ反映できます」とは言わない）
+    assert.match(await page.locator('[data-deploy-skipped-note]').innerText(), /反映先プレビューには一部だけ書き込まれています。差分を取得し直して現在の状態を確認してください。/);
+    assert.doesNotMatch(await page.locator('[data-deploy-skipped-note]').innerText(), /書き込み済みです|続けて本番へ反映できます/);
     assert.match(await page.locator('[data-backup-production="none"]').innerText(), /保存していません/);
     await shot('i-write-failed');
     ok('source engine: write failure skips the deploy');

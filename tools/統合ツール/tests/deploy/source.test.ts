@@ -7,6 +7,7 @@ import type { SourceDeployOptions } from '../../src/deploy/sourceTypes';
 import type { DeployAppUpdate } from '../../src/deploy/types';
 import { __resetRunControlForTests, beginRun, requestCancel } from '../../src/runControl';
 import { makeWorld } from '../reflect/compose-world';
+import { previewWriteState } from '../../src/reflect/applyOutcome';
 
 const POLL = { initialMs: 1, maxMs: 2, timeoutMs: 5000 };
 const state = (selected: string[], overrides: Record<string, unknown> = {}): SectionSelectionState => ({ selected, overrides });
@@ -96,8 +97,30 @@ describe('runSourceToProductionStandalone: プレビューへ書き込み、続�
     expect(result.deploySkipped).toContain('書き込みが完了しなかった項目があるため');
     expect(result.deploySkipped).toContain('フィールド設定: 失敗');
     expect(result.deploySkipped).toContain('レイアウト設定: 未実行');
+    // フィールドの追加（1 回目の書き込み）は済んでいるので、一部だけ書き込まれていると示す
+    expect(result.deploySkipped).toContain('反映先プレビューには一部だけ書き込まれています。');
     expect(requestsOf(world)).toEqual([]);
     expect(world.apps['2'].production.fieldSettings.properties.added).toBeUndefined();
+  });
+
+  it('1 件も書き込めないまま失敗したときは、反映先プレビューは変わっていないと示す（書き込み済みとは言わない）', async () => {
+    const world = makeWorld({ onWrite: () => { throw new Error('サーバーが書き込みを拒否しました'); } });
+    const { result } = await run(world);
+    expect(result.apply.sections.map(section => section.status)).toEqual(['ng', 'pending', 'pending', 'pending']);
+    expect(result.apply.sections[0].partiallyWritten).toBeUndefined();
+    expect(previewWriteState(result.apply.sections)).toBe('none');
+    expect(result.deploySkipped).toContain('反映先プレビューは変わっていません。');
+    expect(result.deploySkipped).not.toContain('一部だけ');
+    expect(result.deploySkipped).not.toContain('書き込み済み');
+    expect(world.apps['2'].preview.fieldSettings.properties.added).toBeUndefined();
+  });
+
+  it('項目の途中（フィールドの追加のあとの更新）で失敗したときは、その項目に書き込み済みの操作があるものとして数える', async () => {
+    let writes = 0;
+    const world = makeWorld({ onWrite: () => { writes += 1; if (writes === 2) throw new Error('サーバーが書き込みを拒否しました'); } });
+    const { result } = await run(world);
+    expect(result.apply.sections[0]).toMatchObject({ status: 'ng', partiallyWritten: true });
+    expect(previewWriteState(result.apply.sections)).toBe('partial');
   });
 
   it('書き込みを中止したら、例外にせず結果で返し、本番へは反映しない', async () => {
@@ -109,6 +132,7 @@ describe('runSourceToProductionStandalone: プレビューへ書き込み、続�
     expect(result.apply.sections.some(section => section.status === 'pending')).toBe(true);
     expect(result.deploy).toBeUndefined();
     expect(result.deploySkipped).toContain('中止');
+    expect(result.deploySkipped).toContain('一部だけ更新されている可能性があります');
     expect(requestsOf(world)).toEqual([]);
   });
 
@@ -176,7 +200,7 @@ describe('runSourceToProductionStandalone: プレビューへ書き込み、続�
     expect(result.apply.sections.every(section => section.status === 'ok')).toBe(true);
     expect(result.deploy).toBeUndefined();
     expect(result.deploySkipped).toContain('書き込みの後にほかの更新が入ったため');
-    expect(result.deploySkipped).toContain(`revision ${result.apply.finalRevision} → ${Number(result.apply.finalRevision) + 1}`);
+    expect(result.deploySkipped).toContain(`設定の更新番号 revision ${result.apply.finalRevision} → ${Number(result.apply.finalRevision) + 1}`);
     expect(result.deployInspection).toMatchObject({ state: 'changes' });
     expect(requestsOf(world)).toEqual([]);
   });
@@ -187,7 +211,7 @@ describe('runSourceToProductionStandalone: プレビューへ書き込み、続�
     expect(result.apply.sections.every(section => section.status === 'ok')).toBe(true);
     expect(result.deploy).toBeUndefined();
     expect(result.deploySkipped).toContain('本番が更新されたため');
-    expect(result.deploySkipped).toContain('本番の revision 10 → 12');
+    expect(result.deploySkipped).toContain('本番の設定の更新番号 revision 10 → 12');
     expect(requestsOf(world)).toEqual([]);
   });
 

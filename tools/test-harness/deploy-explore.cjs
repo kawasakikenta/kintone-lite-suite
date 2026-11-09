@@ -10,8 +10,9 @@
 //   - POST /preview/app/deploy.json は非同期（PROCESSING → SUCCESS / FAIL / CANCEL。まとめて依頼して 1 件 FAIL なら全件 CANCEL）。反映処理中の書き込みはエラー。
 //   - フィールドの種類の変更、選択肢に無い初期値、存在しないフィールドを参照する一覧・レイアウト・計算式などは、kintone と同じようにエラー。
 //
-// 製品の不具合・使いにくさ・文言の問題は「既知の問題（findings）」として記録する。失敗させずに一覧で出し（severity が critical のものだけ失敗にする）、
-// .iter-shots/deploy-explore/results.json に保存する。画面は同じディレクトリのスクリーンショットに保存する。
+// 直した問題は通常の検査（失敗させるもの）にしてある。まだ直していない製品の不具合・使いにくさ・文言の問題だけを「既知の問題（findings）」として記録する。
+// 既知の問題は失敗させずに一覧で出し（severity が critical のものだけ失敗にする）、.iter-shots/deploy-explore/results.json に保存する。
+// 画面は同じディレクトリのスクリーンショットに保存する。
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -934,12 +935,10 @@ function registerScenarios(scenario, ctx) {
     const perSection = await counts();
     const total = Object.values(perSection).reduce((sum, value) => sum + Number(value.split('/')[1]), 0);
     const reported = Number(/変更 (\d+) 件/.exec(status)[1]);
-    expectOr(total === reported, 'source-count-mismatch', 'low', '差分の抽出後の「変更 N 件」と、各項目の「選んだ変更 x/y」の合計が一致しない', {
-      repro: '業務アプリ（フィールド・ビュー・プロセス・権限など 16 項目）を全項目で抽出する。',
-      expected: '抽出結果の「変更 N 件」と、項目ごとの選択できる変更の合計が同じ（または違う単位だと分かる説明がある）。',
-      actual: `要約は「変更 ${reported} 件」、項目ごとの選択できる変更の合計は ${total} 件（レイアウト・権限・通知などは配列全体が 1 件）。`,
-      files: ['tools/統合ツール/src/deploy/sourceDisplay.ts（describeExtractionSummary）', 'tools/統合ツール/src/reflect/selectionModel.ts']
-    });
+    // 「変更 N 件」は、項目ごとの「選んだ変更 x/y」の y の合計（選べる変更の数）にそろえる。単位の違いは「?」の吹き出しで説明する。
+    assert.equal(reported, total, `「変更 ${reported} 件」と、項目ごとの選べる変更の合計 ${total} 件が一致する`);
+    await page.locator('[data-extract-summary]').locator('xpath=ancestor::*[contains(@class,"kus-lp__card")][1]').getByRole('button', { name: /説明を表示/ }).click();
+    assert.match(await panelText(), /「変更 N 件」は、下の項目で選べる変更の数です。レイアウト・アクセス権・通知・JS\/CSS の一覧などは、配置や一覧の全体を 1 件と数えます。/, '単位の違いを説明する');
     assert.equal(await page.locator('[data-target-pending="clean"]').count(), 1);
     await shot('source-extract-all');
     ok('source: 全 16 項目を抽出（GET のみ・書き込みなし）');
@@ -985,12 +984,7 @@ function registerScenarios(scenario, ctx) {
     await editCard('viewSettings').locator('[data-action="json-apply"]').click();
     assert.equal(await editCard('viewSettings').locator('[data-json-active]').isVisible(), true);
     await shot('source-granular-edit');
-    expectOr(!/反映する変更を選んでください/.test(stageStatus), 'status-stale-after-extract', 'low', '段階 3（内容を修正）でも、状態欄が差分の抽出直後の文言（「反映する変更を選んでください」）のまま残る', {
-      repro: '差分を抽出 → 変更を選ぶ → 内容の修正へ → 内容の修正へ進む。画面下の状態欄を見る。',
-      expected: '今の段階に合った文言になる、または消える。',
-      actual: `内容を修正の段階で状態欄は「${stageStatus}」のまま。`,
-      files: ['tools/統合ツール/src/entries/deploy-source-ui.ts（setStatus）']
-    });
+    assert.equal(stageStatus, '内容を確認し、必要なら直してください。まだ書き込んでいません。', '段階 3 では状態欄もその段階の文言にする（抽出直後の文言を残さない）');
     await toConfirm();
     assert.match(await fact('sections').innerText(), /反映する項目（5 項目）/);
     await shot('source-granular-confirm');
@@ -1115,51 +1109,31 @@ function registerScenarios(scenario, ctx) {
     assert.ok(r.checkedAfterSelect.includes(T('status/options/保留')), '初期値だけを選ぶと、必要な選択肢の追加も一緒に選ぶ');
     assert.equal(r.tone, 'ok', r.status);
     assert.equal(r.errors.length, 0);
-    // 2. 入力欄で、選択肢にない初期値を入力 → kintone が拒否。画面は事前に止めるか
+    // 2. 入力欄で、選択肢にない初期値を入力 → 入力欄の段階で止め（最終確認へ進めない）、書き込みの前に分かる
     r = await combo([T('status/defaultValue')], { edit: async () => { await editRow('fieldSettings', '/properties/status/defaultValue').locator('input').fill('存在しない選択肢'); await editRow('fieldSettings', '/properties/status/defaultValue').locator('input').press('Tab'); } });
-    if (r.blocked) ok('source: 選択肢にない初期値は事前に止める');
-    else {
-      assert.equal(r.errors.length, 1, '選択肢にない初期値は kintone が拒否する');
-      assert.match(r.errors[0], /^CB_VA01/);
-      assert.match(r.result, /初期値「存在しない選択肢」は選択肢にありません/, '拒否の理由を画面に示す');
-      finding('source-default-not-in-options', 'medium', '入力欄で、選択肢にない初期値を入力しても、事前には止まらず、書き込みの失敗で初めて分かる', {
-        repro: '差分で「ステータス / 初期値」を選び、内容を修正で初期値の入力欄に、選択肢にない値（存在しない選択肢）を入力して最終確認 → 実行。',
-        expected: '入力欄・JSON の段階で「選択肢にありません」と示して最終確認へ進めない（初期値の入力欄が選択肢の候補を出す）。',
-        actual: `最終確認まで進み、バックアップを保存したあとの書き込みで kintone が拒否する。結果: ${r.status}`,
-        files: ['tools/統合ツール/src/deploy/sourceSession.ts', 'tools/統合ツール/src/reflect/selectionModel.ts（編集欄の検証）', 'tools/統合ツール/src/entries/deploy-source-edit.ts']
-      });
-    }
-    // 3. 計算式だけ（反映先に無い追加フィールドを参照）
+    assert.equal(r.blocked, true, '選択肢にない初期値は最終確認へ進めない');
+    assert.equal(r.stage, 'edit');
+    assert.match(r.blockers, /フィールド設定: .*の初期値「存在しない選択肢」が選択肢にありません。/);
+    assert.equal((await snapshot()).writes.length, 0, '書き込みの前に止まる（バックアップも保存しない）');
+    await shot('source-default-not-in-options');
+    // 初期値を選択肢のどれかに直すと進める（ラジオボタンの初期値も、選択肢のどれかである必要がある）
+    await editRow('fieldSettings', '/properties/status/defaultValue').locator('input').fill('保留');
+    await editRow('fieldSettings', '/properties/status/defaultValue').locator('input').press('Tab');
+    assert.equal(await button('最終確認に進む').isDisabled(), false, '初期値が選択肢（連動して選んだ「保留」）のどれかになれば進める');
+    // 3. 計算式だけ（反映先に無い追加フィールドを参照）→ 参照する追加フィールドの追加も一緒に選ぶ（初期値と選択肢の連動と同じ）
     r = await combo([T('total/expression')]);
-    if (r.blocked) ok('source: 計算式が参照する追加フィールドは事前に止める');
-    else {
-      assert.equal(r.okWrites, 0);
-      assert.match(r.result, /計算式で使われているフィールド「shipping」が見つかりません/, '拒否の理由（kintone の検証エラーの詳細）を画面に示す');
-      finding('source-calc-requires-added-field', 'medium', '計算式を選んでも、計算式が参照する追加フィールド（反映先に無い）を連動して選ばず、書き込みの失敗で初めて分かる', {
-        repro: '差分で「合計 / 計算式」だけを選ぶ（反映元の計算式は反映先に無い「送料」を参照）→ 内容の修正 → 最終確認 → 実行。',
-        expected: '選択画面で「送料」の追加も一緒に選ぶ（初期値と選択肢の連動と同じ）、または進めない理由を示す。',
-        actual: `最終確認まで進み、バックアップを保存したあとの書き込みで kintone が拒否する（${r.errors[0]}）。結果: ${r.status}`,
-        files: ['tools/統合ツール/src/reflect/selectionModel.ts（requires の算出）', 'tools/統合ツール/src/reflect/standalonePlan.ts（reflectRequiredFields）']
-      });
-      if (/書き込み済みです/.test(r.result) && r.okWrites === 0) finding('deploy-skipped-note-says-written', 'medium', '書き込みが 1 件も成功していないのに、結果に「反映先プレビューには書き込み済みです。「プレビューの変更を公開」から、続けて本番へ反映できます。」と出る', {
-        repro: '上の「計算式だけ」の失敗の結果画面（本番へは反映していません）の注記を見る。',
-        expected: '1 件も書き込めていないときは「書き込み済み」「続けて本番へ反映できます」を出さない（プレビューは変わっていない）。',
-        actual: '失敗した項目が 1 件・成功 0 件でも、注記は常に「反映先プレビューには書き込み済みです。…続けて本番へ反映できます。」。',
-        files: ['tools/統合ツール/src/entries/deploy-source-ui.ts（deploySkipped の注記）']
-      });
-    }
-    // 4. 一覧の絞り込み条件・レコード権限の条件が、追加しないフィールド（地域）を参照
+    assert.ok(r.checkedAfterSelect.includes(T('shipping')), '計算式を選ぶと、参照する追加フィールド（送料）の追加も一緒に選ぶ');
+    assert.equal(r.errors.length, 0, '連動して選んだので、kintone に拒否されない');
+    assert.equal(r.tone, 'ok', r.status);
+    assert.match(r.result, /1 項目を反映先プレビューへ反映し/);
+    // 4. 一覧の絞り込み条件・レコード権限の条件が、追加しないフィールド（地域）を参照 → 参照する追加フィールドの追加も一緒に選ぶ
     for (const [id, label] of [['viewSettings:/views/全件/filterCond', '一覧の絞り込み条件'], ['recordPermissions:/rights', 'レコード権限の条件']]) {
       r = await combo([id]);
-      if (r.blocked) { ok(`source: ${label}が参照する追加フィールドは事前に止める`); continue; }
-      assert.equal(r.okWrites, 0, label);
-      finding(`source-query-requires-added-field-${id.split(':')[0]}`, 'medium', `${label}が、反映先に無い追加フィールド（地域）を参照していても事前には止まらず、書き込みの失敗で初めて分かる`, {
-        repro: `差分で「${id}」だけを選び（フィールド設定の「地域」の追加は選ばない）、最終確認 → 実行。`,
-        expected: '表示フィールド（fields）を選んだときと同じように、「参照するフィールド「region」が反映先にありません」と示して進めない。',
-        actual: `最終確認まで進み、書き込みで kintone が拒否する（${r.errors[0]}）。表示フィールドは事前に止まる。`,
-        files: ['tools/統合ツール/src/reflect/standalonePlan.ts（reflectRequiredFields が views は fields・date・title だけ、recordPermissions・perRecord・action の filterCond は対象外）']
-      });
+      assert.ok(r.checkedAfterSelect.includes(T('region')), `${label}を選ぶと、参照する追加フィールド（地域）の追加も一緒に選ぶ`);
+      assert.equal(r.errors.length, 0, `${label}: 連動して選んだので、kintone に拒否されない`);
+      assert.equal(r.tone, 'ok', r.status);
     }
+    ok('source: 初期値・計算式・条件が参照する追加フィールドは、書き込みの前に止めるか連動して選ぶ');
     // 5. 事前に止める組み合わせ（表示フィールド・レイアウト・フィールド権限・グラフ）は理由が分かること
     for (const [id, field] of [['viewSettings:/views/全件/fields', 'region'], ['layoutSettings:/layout', 'shipping'], ['fieldAcl:/rights', 'shipping'], ['reportSettings:/reports/地域別', 'region']]) {
       r = await combo([id]);
@@ -1176,27 +1150,39 @@ function registerScenarios(scenario, ctx) {
   });
 
   scenario('source: 反映先が反映処理中・競合・書き込みの途中で更新', async () => {
-    // a. 反映先が前回の反映を処理中
+    // a. 反映先が前回の反映を処理中: 抽出の時点で示し、最終確認へ進めない（処理が終わってから抽出し直す）
     await reset(businessWorld());
     await page.evaluate(() => window.__k.startProcessing(['202']));
     await extract({ scopes: allScopes() });
-    const note = await page.locator('[data-target-pending]').innerText();
-    const warned = /処理中/.test(note) || /処理中/.test(await statusText());
+    const processingMessage = '反映先は前回の反映を kintone が処理中です。完了してから抽出し直してください。';
+    assert.match(await page.locator('[data-target-deploy-status="processing"]').innerText(), /反映先は反映処理中です[\s\S]*反映先は前回の反映を kintone が処理中です。完了してから抽出し直してください。/, '抽出結果に示す');
+    const selectable = Object.values(await counts()).reduce((sum, value) => sum + Number(value.split('/')[1]), 0);
+    assert.equal(await statusText(), `差分のある項目 15・差分なし 1（変更 ${selectable} 件）。${processingMessage}まだ書き込んでいません。`);
+    assert.equal(await statusTone(), 'warn');
+    assert.equal(await button('内容の修正へ').isDisabled(), true, '処理中の反映先では、先へ進めない');
+    assert.match(await dockText(), new RegExp(`次に進むには：${processingMessage}`));
+    assert.match(await page.locator('[data-select-blockers]').innerText(), /反映先は前回の反映を kintone が処理中です/);
+    assert.equal((await snapshot()).writes.length, 0);
+    // 処理が終わったら、抽出し直して進める
+    await page.evaluate(() => window.__k.finishProcessing(['202']));
+    await button('対象を変更').click();
+    await button('抽出し直す').click(); await idle();
+    assert.equal(await page.locator('[data-target-deploy-status]').count(), 0, '処理中でなければ注記は出ない');
     await chooseOnly(['fieldSettings:/properties/customer/required']);
+    assert.equal(await button('内容の修正へ').isDisabled(), false);
+    // 抽出のあとで処理中になった場合（確認できない）は、書き込みで拒否され、1 件も書き込めていないので「プレビューは変わっていません」と示す
     await toEdit(); await toConfirm();
-    const confirmText = await page.locator('#kus-ds-stage-confirm').innerText();
-    const warnedAtConfirm = /処理中/.test(confirmText);
+    await page.evaluate(() => window.__k.startProcessing(['202']));
     await runSource('202');
     const now = await assertOnlyAllowedWrites('反映先が処理中');
     assert.equal(now.deploys.length, 0);
     assert.deepEqual(writeLabels(now), ['PUT /app/form/fields.json (拒否)']);
     assert.match(await page.locator('#kus-ds-stage-result').innerText(), /アプリの設定を反映中のため、設定を変更できません。/, '失敗の理由を画面に示す');
-    expectOr(warned || warnedAtConfirm, 'source-target-processing-unnoticed', 'medium', '反映先アプリが前回の反映の処理中でも、抽出・選択・最終確認まで進めて、書き込みで初めて失敗する', {
-      repro: '反映先 #202 が kintone で反映処理中（deploy.json が PROCESSING）の状態で、差分を抽出 → 変更を 1 件選ぶ → 最終確認 → 実行。',
-      expected: '抽出（または最終確認）の時点で「反映先が反映処理中です」と示す（「プレビューの変更を公開」の確認では示している）。',
-      actual: `抽出後の注記は「${note.replace(/\s+/g, ' ').slice(0, 80)}」で、最終確認にも示されない。実行してバックアップを保存したあと、最初の書き込みが GAIA_AD01 で拒否される。`,
-      files: ['tools/統合ツール/src/reflect/targetPending.ts', 'tools/統合ツール/src/tabs/reflect-standalone.ts']
-    });
+    const noWritten = await page.locator('[data-deploy-skipped-note]').innerText();
+    assert.match(noWritten, /反映先プレビューへの書き込みが完了しなかった項目があるため[\s\S]*反映先プレビューは変わっていません。/);
+    assert.doesNotMatch(noWritten, /書き込み済み|一部だけ|続けて本番へ反映できます/, '1 件も書き込めていないのに「書き込み済み」と言わない');
+    assert.equal(await page.locator('[data-deploy-skipped-note]').getAttribute('data-preview-write'), 'none');
+    ok('source: 反映先が反映処理中なら抽出で示して進めない・書き込めなかったときは「変わっていません」');
     // b. 書き込みの途中で、別の利用者が反映先のプレビューを更新（2 件目の書き込みが GAIA_CO02）
     await reset(businessWorld());
     await extract({ scopes: allScopes() });
@@ -1211,6 +1197,10 @@ function registerScenarios(scenario, ctx) {
     const text = await page.locator('#kus-ds-stage-result').innerText();
     assert.match(text, /revision 競合/);
     assert.match(text, /本番へは反映していません/);
+    // 1 項目は書き込めた（残りは書き込めていない）ので、「一部だけ書き込まれています」と示す
+    const partialNote = await page.locator('[data-deploy-skipped-note]').innerText();
+    assert.match(partialNote, /反映先プレビューには一部だけ書き込まれています。差分を取得し直して現在の状態を確認してください。/);
+    assert.doesNotMatch(partialNote, /反映先プレビューには書き込み済みです|続けて本番へ反映できます/);
     assert.match(await statusText(), /^3 項目中 1 項目を反映先プレビューへ反映しました。失敗 1 項目、未実行 1 項目/);
     await shot('source-conflict-mid-write');
     ok('source: 書き込みの途中の競合');
@@ -1423,13 +1413,15 @@ function registerPublish(scenario, ctx) {
 
   scenario('publish: 反映処理中の書き込みはエラー（反映元アプリから本番へ）', async () => {
     await reset(businessWorld());
-    await page.evaluate(() => window.__k.startProcessing(['202']));
+    // 抽出の時点で反映先が処理中だと、抽出結果に示して先へ進めない（source のシナリオで検証）。ここは抽出のあとに処理中になった場合
     await extract({ scopes: allScopesFor() });
-    console.log('  抽出時:', (await statusText()).replace(/\s+/g, ' '));
     await chooseOnlyFirst();
     await toEdit(); await toConfirm();
+    await page.evaluate(() => window.__k.startProcessing(['202']));
     await runSource('202');
     const now = await snapshot();
+    assert.deepEqual(writeLabels(now), ['PUT /app/form/fields.json (拒否)']);
+    assert.equal(now.deploys.length, 0);
     console.log('  書き込み:', writeLabels(now), '結果:', (await statusText()).replace(/\s+/g, ' '));
     await shot('source-while-processing');
   });
@@ -1587,6 +1579,8 @@ function registerScale(scenario, ctx) {
     await shot('scale-publish-review');
     await timed('操作: 「選択を解除」→「変更ありをすべて選択」', async () => { await button('選択を解除').click(); await button('変更ありをすべて選択').click(); });
     await timed('操作: 「最終確認に進む」', async () => { await toPublishConfirm(); });
+    // 1 アプリずつで件数が多いときは、所要時間の目安を最終確認に示す
+    assert.match(await page.locator('[data-serial-estimate]').innerText(), new RegExp(`^1 アプリずつ反映すると、1 件あたり数秒、全体で約 ${Math.round(N * 3 / 60)} 分かかる見込みです。`));
     await shot('scale-publish-confirm');
     const heapBefore = await page.evaluate(() => performance.memory ? performance.memory.usedJSHeapSize : 0);
     const run = await timed(`反映（${N} アプリ・1 アプリずつ・完了待ちの間隔は 1/50）`, async () => { await armPublish(N); await publishRunButton().click(); await idle(); });
@@ -1598,15 +1592,10 @@ function registerScale(scenario, ctx) {
     assert.equal(now.deploys.length, N, '1 アプリずつ依頼する');
     const perApp = run.ms / N;
     metrics['規模: 1 アプリあたりの所要時間（縮めた待ちの場合）'] = `${perApp.toFixed(1)} ms`;
-    // 実際の待ち: 各アプリの完了待ちは最初の確認まで 1 秒（既定）かかる。実際の kintone の処理時間は含まない下限。
-    metrics['規模: 実際の待ちでの下限の目安（1 アプリずつ）'] = `約 ${Math.round((perApp - 1000 / 50 + 1000) * N / 60000 * 10) / 10} 分（1 件 ${Math.round(perApp - 20 + 1000)} ms 以上）`;
+    // 実際の待ち: 各アプリの完了待ちは最初の確認まで 0.3 秒（既定）かかる。実際の kintone の処理時間は含まない下限。
+    metrics['規模: 実際の待ちでの下限の目安（1 アプリずつ）'] = `約 ${Math.round((perApp - 300 / 50 + 300) * N / 60000 * 10) / 10} 分（1 件 ${Math.round(perApp - 300 / 50 + 300)} ms 以上）`;
     metrics['規模: 反映後の JS ヒープ'] = `${Math.round((await page.evaluate(() => performance.memory ? performance.memory.usedJSHeapSize : 0)) / 1048576)} MB（反映前 ${Math.round(heapBefore / 1048576)} MB）`;
-    finding('publish-serial-floor', 'low', `「1 アプリずつ反映」は、${N} アプリだと完了待ちの間隔だけで約 ${Math.round(N * 1.1 / 60)} 分以上かかる（まとめて反映は最大 300 件）`, {
-      repro: `${N} アプリの未公開の変更を、既定の「1 アプリずつ反映」で本番へ反映する。`,
-      expected: '件数が多いときの所要時間の目安を最終確認に示す、または完了待ちの最初の確認を早める。',
-      actual: `完了待ちは 1 件ごとに最初の確認まで 1 秒（既定）。合成 kintone（処理 20 ms）でも 1 件 約 ${Math.round(perApp - 20 + 1000)} ms、${N} 件で約 ${Math.round(N * (perApp - 20 + 1000) / 60000 * 10) / 10} 分。確認（${N} アプリ・応答 25 ms）は ${Math.round(insp.ms / 1000)} 秒（GET ${getCount} 回）。`,
-      files: ['tools/統合ツール/src/deploy/poll.ts（DEFAULT_DEPLOY_POLL）', 'tools/統合ツール/src/tabs/deploy-standalone.ts（INSPECT_CONCURRENCY）']
-    });
+    metrics['規模: 確認（GET の回数 / 時間）'] = `${getCount} 回 / ${Math.round(insp.ms / 1000)} 秒`;
     assert.equal(await statusText(), `${N} アプリを本番へ反映しました。`);
     await shot('scale-publish-result');
     const resultRows = await page.locator('.kus-dp-result-item').count();
@@ -1640,6 +1629,8 @@ function registerUx(scenario, ctx) {
     const clipped = [...root.querySelectorAll('*')].filter(node => {
       const style = getComputedStyle(node);
       if (!['auto', 'scroll', 'hidden'].includes(style.overflowX)) return false;
+      // 「主な操作へ移動」は、フォーカスするまで見えないように切り取っている（意図した動作）
+      if (node.classList.contains('kus-ds-skip')) return false;
       if (node.scrollWidth <= node.clientWidth + 1 || !node.clientWidth) return false;
       if (node.tagName === 'TABLE' || node.querySelector('table') || node.closest('table') || node.tagName === 'TEXTAREA' || node.tagName === 'INPUT' || node.tagName === 'PRE' || node.closest('pre')) return false;
       return true;
@@ -1702,7 +1693,7 @@ function registerUx(scenario, ctx) {
     metrics['横はみ出し（5 サイズ × 画面）'] = lines.length ? lines : 'なし';
     metrics['切れて読めない入れ物（5 サイズ × 画面）'] = clipped.length ? [...new Set(clipped.map(item => item.replace(/^(\d+px) [^:]+: /, '$1 ')))] : 'なし';
     if (lines.length) finding('layout-overflow', 'medium', '画面幅によっては、パネルや中身が横にはみ出す', { repro: '画面幅 320 / 390 / 768 / 1024px で、各段階を表示する。', expected: '横はみ出しなし。', actual: lines.slice(0, 8).join(' / '), files: ['tools/統合ツール/src/entries/deploy-source-style.ts', 'tools/統合ツール/src/entries/litePanelTheme.ts'] });
-    if (clipped.length) finding('layout-clipped-320', 'low', '画面幅 320px で、見出し下の「操作」の選択肢（「プレビューの変更を公開」）が右端で切れ、読み切れない', { repro: '画面幅 320px で「本番反映」を開く（どの段階でも）。', expected: '選択肢が折り返す、または横にスクロールできると分かる。', actual: [...new Set(clipped.map(item => item.replace(/^(\d+px) [^:]+: /, '$1 ')))].slice(0, 3).join(' / '), files: ['tools/統合ツール/src/entries/deploy-lite-ui.ts（操作の切り替え）'] });
+    assert.deepEqual(clipped, [], '画面幅 320px でも「操作」の選択肢が切れずに折り返す');
     if (!lines.length && !clipped.length) ok('ux: 5 つの画面幅で横はみ出しなし');
   });
   async function editJson() {
@@ -1733,6 +1724,18 @@ function registerUx(scenario, ctx) {
     return -1;
   }
   const keyboardStats = { seen: 0, noFocusRing: new Set() };
+  /** 段階の先頭の「主な操作へ移動」へ Tab で届き、押すと下部の固定フッターの主な操作へフォーカスが移る。 */
+  async function skipToPrimary(stageName, primaryName) {
+    await tab(stageName).focus();
+    await page.keyboard.press('Tab');
+    const link = await page.evaluate(() => ({ skip: document.activeElement?.hasAttribute('data-skip-to-primary'), text: document.activeElement?.textContent }));
+    assert.deepEqual(link, { skip: true, text: '主な操作へ移動' }, `${stageName}: 段階の先頭の次の Tab で「主な操作へ移動」に届く`);
+    assert.equal((await active()).visible, true, 'スキップリンクはフォーカスしたとき見える');
+    await page.keyboard.press('Enter');
+    const now = await active();
+    assert.ok(now.tag === 'button' && primaryName.test(now.name), `${stageName}: 押すと主な操作（${primaryName}）へフォーカスが移る: ${now.name}`);
+    keyboardStats.seen += 2;
+  }
 
   scenario('ux: キーボードだけの操作（反映元アプリから本番へ・5 段階）', async () => {
     await reset(businessWorld());
@@ -1749,7 +1752,8 @@ function registerUx(scenario, ctx) {
     n = await tabTo(a => a.tag === 'button' && /差分を抽出する/.test(a.name));
     assert.ok(n > 0, '「差分を抽出する」まで Tab で届く');
     metrics['キーボード: 「反映先アプリID」から「差分を抽出する」までの Tab の回数'] = n;
-    expectOr(n <= 12, 'keyboard-many-tab-stops-setup', 'low', 'キーボードだけで操作すると、反映先アプリIDから「差分を抽出する」まで Tab を 20 回以上押す（反映する項目のチップ 16 個などを通る）', { repro: '反映先アプリIDに入力したあと、Tab だけで「差分を抽出する」まで進む。', expected: '主要な操作へ短く移れる。', actual: `${n} 回。`, files: ['tools/統合ツール/src/entries/deploy-source-ui.ts'] });
+    // 長い入力は、段階の先頭の「主な操作へ移動」で飛ばせる（Tab を押す回数ではなく、先頭のスキップリンクで主な操作へ移る）
+    await skipToPrimary('対象を選ぶ', /差分を抽出する/);
     await page.keyboard.press('Enter');
     await idle();
     assert.equal(await tab('差分を選ぶ').getAttribute('aria-selected'), 'true', await statusText());
@@ -1765,7 +1769,7 @@ function registerUx(scenario, ctx) {
     n = await tabTo(a => a.tag === 'button' && /内容の修正へ/.test(a.name));
     assert.ok(n > 0, '「内容の修正へ」まで Tab で届く');
     metrics['キーボード: 段階 2 で選んだ行から「内容の修正へ」までの Tab の回数'] = n;
-    expectOr(n <= 30, 'keyboard-many-tab-stops', 'low', 'キーボードだけで操作すると、差分を選ぶ段階（段階 2）から「内容の修正へ」に進むまでに Tab を何十回も押す', { repro: '段階 2 で行を 1 つ選んだあと、Tab だけで「内容の修正へ」を押す。', expected: '次へ進むボタンへ早く移れる（下部の固定ボタンへ移るショートカット、または項目ごとに畳んでおく）。', actual: `${n} 回（開いたカードの行・グループごとのチェックボックスをすべて通る）。` , files: ['tools/統合ツール/src/entries/deploy-source-select.ts']});
+    await skipToPrimary('差分を選ぶ', /内容の修正へ/);
     await page.keyboard.press('Enter');
     assert.equal(await tab('内容を修正').getAttribute('aria-selected'), 'true');
     n = await tabTo(a => a.tag === 'button' && /最終確認に進む/.test(a.name), { max: 200 });
@@ -1884,13 +1888,13 @@ function registerUx(scenario, ctx) {
       hasResult: /本番へ反映しました/.test(reopened)
     };
     metrics['開き直し: 公開の結果を出したあと'] = state;
-    expectOr(state.hasResult, 'reopen-loses-result', 'low', '結果を出したあとに「閉じる」で閉じて開き直すと、前回の結果（成功・失敗の一覧・バックアップのファイル名）が見えなくなる', {
-      repro: '「プレビューの変更を公開」で 1 アプリを本番へ反映 → 結果画面で「閉じる」→ もう一度ツールを開く。',
-      expected: '同じページを開いている間は、前回の結果をもう一度見られる（少なくとも、結果JSON・記録を保存していない場合に、閉じる前に確認する）。',
-      actual: `開き直すと操作は「${state.flow === 'source' ? '反映元アプリから本番へ' : 'プレビューの変更を公開'}」に戻り、結果は表示されない。`,
-      files: ['tools/統合ツール/src/entries/deploy-lite-ui.ts（memory2。パネルを閉じると破棄）']
-    });
-    await shot('ux-reopen-result');
+    // 閉じて開き直したとき（同じページの間）は、直前の操作とその結果を表示する（メモリだけ。永続ストレージは使わない）
+    assert.equal(state.flow, 'publish', '直前の操作（プレビューの変更を公開）で開く');
+    assert.equal(state.resultShown, 'true', '結果の段階で開く');
+    assert.equal(state.hasResult, true, '前回の結果（成功・失敗の一覧）を表示する');
+    assert.match(reopened, /App 101/);
+    assert.equal(await page.evaluate(() => Object.keys(document.documentElement.__kusDeployLiteMemory || {}).sort().join()), 'publish,source', '同じページの間だけ、メモリ（ページの要素）に持つ。永続ストレージは使わない');
+    await shot('publish-ux-reopen-result');
     // 反映元アプリから本番へ: 差分を選んだ状態で閉じて開き直す → 抽出結果は残らない（再読み込みで消える）
     await reset(businessWorld());
     await extract({ scopes: allScopes() });
@@ -1906,9 +1910,27 @@ function registerUx(scenario, ctx) {
       selectStageEnabled: !(await tab('差分を選ぶ').isDisabled())
     };
     metrics['開き直し: 差分を選んだ状態で閉じたあと'] = reopenedSource;
-    expectOr(reopenedSource.sourceId === '101' && reopenedSource.targetId === '202', 'reopen-source-inputs', 'low', '差分を選ぶ途中で閉じて開き直すと、入力した反映元・反映先のアプリIDが残らない', { repro: '反映元 101・反映先 202 を入力して差分を抽出 → 閉じる → もう一度開く。', expected: '入力した ID は残る（抽出結果は残らなくてよい）。', actual: `反映元「${reopenedSource.sourceId}」、反映先「${reopenedSource.targetId}」。` });
+    assert.equal(reopenedSource.sourceId, '101', '入力した反映元は残る');
+    assert.equal(reopenedSource.targetId, '202', '入力した反映先は残る');
+    assert.match(await statusText(), /前回の入力を残しています。抽出した差分は引き継がないため、「差分を抽出する」で抽出し直してください。/, '抽出し直しを促す');
     assert.equal(reopenedSource.selectStageEnabled, false, '抽出結果は残らない（古い差分で書き込まない）');
     assert.equal((await snapshot()).writes.length, 0);
+    // 反映元アプリから本番へ: 実行して結果を出したあと閉じて開き直す → 直前の操作とその結果を表示する
+    await reset(businessWorld());
+    await extract({ scopes: [['レイアウト設定', false], ['ビュー設定', false]] });
+    await selectNone('fieldSettings');
+    await rowCheck('fieldSettings:/properties/customer/required').check();
+    await toEdit(); await toConfirm();
+    await runSource('202');
+    const resultStatus = await statusText();
+    await button('閉じる').click();
+    await page.addScriptTag({ content: toolScript });
+    await page.waitForSelector('#kus-deploy-lite');
+    assert.equal(await radio('反映元アプリから本番へ').isChecked(), true, '直前の操作（反映元アプリから本番へ）で開く');
+    assert.equal(await tab('結果').getAttribute('aria-selected'), 'true', '結果の段階で開く');
+    assert.equal(await statusText(), resultStatus, '前回の結果の状態を表示する');
+    assert.match(await panelText(), /1 項目を反映先プレビューへ反映し、1 アプリを本番へ反映しました。/);
+    assert.equal((await snapshot()).writes.length, 1, '開き直しでは書き込まない');
     // 実行中に閉じる
     await reset({ ...publishWorld({ count: 1 }), processMs: 2500 }, { flow: 'publish' });
     await setTargets(['101']);
@@ -1951,13 +1973,15 @@ function registerWording(scenario, ctx) {
       { id: 'wording-preview-english', severity: 'low', title: '「プレビュー」ではなく英語の preview が画面に出る', test: ({ line }) => /(?<![A-Za-z/_.-])preview(?![A-Za-z/_.-])/i.test(line) && !/GAIA|k\/v1|\.json|api/.test(line) },
       { id: 'wording-target-in-publish', severity: 'low', title: '「プレビューの変更を公開」の画面で、ガイドが使わないとしている「反映先」を使っている', test: ({ flow, line }) => flow === 'publish' && /反映先/.test(line) },
       { id: 'wording-target-app-in-source', severity: 'low', title: '「反映元アプリから本番へ」の画面で、ガイドが使わないとしている「対象アプリ」を使っている', test: ({ flow, line }) => flow === 'source' && /対象アプリ/.test(line) && !/反映する|対象アプリの/.test('') },
-      { id: 'wording-guest-id', severity: 'low', title: '「ゲストスペースID」ではなく「ゲストID」と表示している（入力欄の短い placeholder 以外）', test: ({ line }) => /ゲストID/.test(line) && !/（任意）/.test(line) },
-      { id: 'wording-revision', severity: 'low', title: '「revision」という語が、かみ砕いた説明なしで画面に出る（表の見出し・結果の行）', test: ({ line }) => /revision/i.test(line) && !/revision 競合|は最新ではありません/.test(line) },
+      // 直した問題（見つかったら失敗させる）
+      { id: 'wording-guest-id', severity: 'low', strict: true, title: '「ゲストスペースID」ではなく「ゲストID」と表示している（入力欄の短い placeholder 以外）', test: ({ line }) => /ゲストID/.test(line) && !/（任意）/.test(line) },
+      { id: 'wording-revision', severity: 'low', strict: true, title: '「revision」という語が、かみ砕いた語（設定の更新番号）なしで画面に出る（表の見出し・結果の行）', test: ({ line }) => /revision/i.test(line.replace(/更新番号\s*[（(]?\s*revision\s*[）)]?/gi, '')) && !/revision 競合|は最新ではありません/.test(line) },
       { id: 'wording-internal-id', severity: 'low', title: '内部の識別子・API 名が、かみ砕いた語なしで画面に出る', test: ({ line }) => /fileKey|_fetchError|customize\.json|\b(PUT|POST)\b|GAIA_|CB_[A-Z]{2}\d/.test(line) && !/（|\(/.test(line.slice(0, 0)) }
     ];
     for (const rule of rules) {
       const hits = [...lines.values()].filter(item => rule.test(item));
       if (!hits.length) continue;
+      if (rule.strict) assert.fail(`${rule.title}: ${hits.slice(0, 6).map(item => `「${item.line.slice(0, 90)}」（${[...item.screens][0]}）`).join(' / ')}`);
       finding(rule.id, rule.severity, rule.title, {
         expected: 'docs/ui-writing-guide.md の用語・書き方に合わせる。',
         actual: hits.slice(0, 6).map(item => `「${item.line.slice(0, 90)}」（${[...item.screens][0]}）`).join(' / ') + (hits.length > 6 ? ` ほか ${hits.length - 6} 件` : ''),

@@ -37,6 +37,7 @@ import {
   deployModeText,
   deployRunLabel,
   describeBatchMode,
+  describeSerialDuration,
   describeDeployOptions,
   describeDeployMessage,
   describeDeployStatus,
@@ -77,8 +78,9 @@ import {
   type AppTableRow
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
-import { createProgressView, el, firstLines, setButtonText, type ProgressView } from './deployProgressView.js';
+import { createProgressView, el, firstLines, makeSkipLink, setButtonText, type ProgressView } from './deployProgressView.js';
 import { createSourceFlow } from './deploy-source-ui.js';
+import { sharedMemory } from './deployMemory.js';
 import { appendReflectItems } from './reflectPlanView.js';
 import { guestIdFromPagePath } from '../reflect/liteSetup.js';
 import { buildAppFilenameLabel, buildExportFilename, downloadText, summarizeList } from '../utils.js';
@@ -108,7 +110,8 @@ interface DeployMemory {
   lastRun: RunSnapshot | null;
 }
 
-const memory: DeployMemory = { flow: 'source', targets: [], mode: 'deploy', batchMode: 'sequential', stopOnError: true, lastRun: null };
+/** 閉じて開き直したときに引き継ぐ入力と直前の結果（メモリだけ。deployMemory.ts） */
+const memory: DeployMemory = sharedMemory<DeployMemory>('publish', { flow: 'source', targets: [], mode: 'deploy', batchMode: 'sequential', stopOnError: true, lastRun: null }).state;
 
 interface InspectionState {
   apps: DeployAppInspection[];
@@ -351,7 +354,7 @@ function renderAppDetail(host: HTMLElement, app: DeployAppInspection, mode: Depl
   const body = el('div', 'kus-dp-detail');
   const text = deployModeText(mode);
   if (app.contentSame) {
-    body.appendChild(el('div', 'kus-dp-info', '設定の内容は同じです（revision だけが異なります）。'));
+    body.appendChild(el('div', 'kus-dp-info', '設定の内容は同じです。設定の更新番号（revision）だけが異なります。'));
   }
   const removed = app.removedFields || [];
   if (removed.length && mode === 'deploy') {
@@ -625,7 +628,7 @@ export function mountDeployLitePanel() {
   listCard.actions.append(selectChangedBtn, clearSelectionBtn);
   const tableWrap = el('div', 'kus-dp-table-wrap');
   const table = el('table', 'kus-dp-table');
-  table.innerHTML = '<thead><tr><th scope="col">選択</th><th scope="col">アプリ</th><th scope="col">状態</th><th scope="col">変更のある項目</th><th scope="col">削除</th><th scope="col">revision</th><th scope="col">詳細</th></tr></thead>';
+  table.innerHTML = '<thead><tr><th scope="col">選択</th><th scope="col">アプリ</th><th scope="col">状態</th><th scope="col">変更のある項目</th><th scope="col">削除</th><th scope="col">更新番号（本番 → プレビュー）</th><th scope="col">詳細</th></tr></thead>';
   const tbody = el('tbody');
   table.appendChild(tbody);
   tableWrap.appendChild(table);
@@ -677,7 +680,7 @@ export function mountDeployLitePanel() {
     tdItems.dataset.label = '変更のある項目';
     const labels = changedSectionLabels(app);
     tdItems.textContent = labels.length ? labels.join('、') : '－';
-    if (app.contentSame) tdItems.appendChild(el('span', 'kus-dp-app-sub', '設定の内容は同じです（revision だけが異なります）'));
+    if (app.contentSame) tdItems.appendChild(el('span', 'kus-dp-app-sub', '設定の内容は同じです（更新番号だけが異なります）'));
 
     const tdDel = el('td', 'kus-dp-c-del');
     tdDel.dataset.label = '削除';
@@ -687,7 +690,7 @@ export function mountDeployLitePanel() {
     tdDel.textContent = app.state === 'changes' ? `${removedCount} 件${removedFields ? ` / フィールド ${removedFields} 件（値も削除）` : ''}` : '－';
 
     const tdRev = el('td', 'kus-dp-c-rev');
-    tdRev.dataset.label = 'revision';
+    tdRev.dataset.label = '更新番号（本番 → プレビュー）';
     tdRev.textContent = app.productionRevision || app.previewRevision ? formatRevisionPair(app) : '－';
 
     const tdAct = el('td', 'kus-dp-c-act');
@@ -963,6 +966,8 @@ export function mountDeployLitePanel() {
     targetFact.dd.appendChild(el('div', 'kus-dp-targets', summarizeList(targets.map((app) => formatDeployApp(app)))));
     const method = fact('method', '反映の方法');
     method.dd.textContent = `${describeBatchMode(currentBatchMode())}（${describeStopPolicy(currentBatchMode(), currentStopOnError())}）`;
+    const duration = describeSerialDuration(currentBatchMode(), targets.length);
+    if (duration) { const note = el('div', 'kus-dp-quiet', duration); note.dataset.serialEstimate = 'true'; method.dd.appendChild(note); }
     const removedText = describeRemovedSettings(totals);
     const changes = fact('changes', '削除される設定', removedText ? 'danger' : '');
     changes.dd.textContent = removedText
@@ -1068,7 +1073,7 @@ export function mountDeployLitePanel() {
     if (unverified.length) {
       const note = el('div', 'kus-dp-warn');
       note.dataset.deployUnverified = String(unverified.length);
-      note.textContent = `注意: ${unverified.length} アプリは${mode === 'revert' ? '中止' : '反映'}後の状態（revision）が本番とプレビューで一致しませんでした（${unverified.slice(0, 5).map((app) => `App ${app.appId}`).join('、')}${unverified.length > 5 ? ` ほか ${unverified.length - 5} アプリ` : ''}）。アプリの設定画面で確認してください。`;
+      note.textContent = `注意: ${unverified.length} アプリは${mode === 'revert' ? '中止' : '反映'}後の設定の更新番号（revision）が本番とプレビューで一致しませんでした（${unverified.slice(0, 5).map((app) => `App ${app.appId}`).join('、')}${unverified.length > 5 ? ` ほか ${unverified.length - 5} アプリ` : ''}）。アプリの設定画面で確認してください。`;
       resultNotes.appendChild(note);
     }
     const backup = result.backup;
@@ -1327,6 +1332,10 @@ export function mountDeployLitePanel() {
   workspace.appendChild(nav);
   for (const def of stageDefs) canvas.appendChild(stages[def.id]);
   workspace.appendChild(canvas);
+  // 各段階の先頭に「主な操作へ移動」（キーボードで、下部の固定フッターの主な操作へ移る）
+  stages.setup.prepend(makeSkipLink(() => nextBtn, () => dockActions));
+  stages.review.prepend(makeSkipLink(() => confirmBtn, () => dockActions));
+  stages.confirm.prepend(makeSkipLink(() => (runBtn.disabled ? (ack.checkbox.checked ? confirmInput : ack.checkbox) : runBtn), () => dockActions));
   [stages.setup, stages.review, stages.confirm, stages.result].forEach((scope) => attachCardHelp(scope));
 
   const noInputSubmit = document.createElement('button');

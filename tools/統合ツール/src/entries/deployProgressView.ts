@@ -25,6 +25,26 @@ export function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = ''
   return node;
 }
 
+/**
+ * 段階の先頭に置く「主な操作へ移動」。キーボードで、段階の長い入力・一覧を飛ばして、下部の固定フッターの主な操作へ移る。
+ * 普段は見えず、フォーカスしたときだけ表示する。主な操作が押せない（無効）ときは、フッターの押せる操作、無ければ進めない理由へ移る。
+ */
+export function makeSkipLink(primary: () => HTMLElement | null, dock: () => HTMLElement): HTMLButtonElement {
+  const button = el('button', 'kus-ds-skip', '主な操作へ移動');
+  button.type = 'button';
+  button.dataset.skipToPrimary = 'true';
+  button.addEventListener('click', () => {
+    const wanted = primary();
+    const target = wanted && !(wanted as HTMLButtonElement).disabled && !wanted.hidden ? wanted
+      : dock().querySelector<HTMLElement>('button:not([disabled]):not([hidden]), input:not([disabled])')
+      ?? dock().querySelector<HTMLElement>('.kus-dp-dock-copy');
+    if (!target) return;
+    if (!target.hasAttribute('tabindex') && !/^(BUTTON|INPUT|A)$/.test(target.tagName)) target.tabIndex = -1;
+    target.focus({ preventScroll: false });
+  });
+  return button;
+}
+
 export function setButtonText(button: HTMLButtonElement, text: string) {
   const span = button.querySelector('span');
   if (span) span.textContent = text; else button.textContent = text;
@@ -98,8 +118,8 @@ export function createProgressView(host: HTMLElement, mode: DeployMode, initial:
     if (message) item.appendChild(el('div', 'kus-dp-result-item__message', message));
     const outcome = row.outcome;
     if (outcome && outcome.status === 'success') {
-      const revisions = `本番のrevision: ${outcome.productionRevisionBefore || '－'} → ${outcome.productionRevisionAfter || '－'}（プレビュー ${outcome.previewRevision || '－'}）`;
-      const verified = outcome.verified === true ? '反映後の確認: 本番とプレビューが一致' : outcome.verified === false ? '反映後の確認: 本番とプレビューのrevisionが一致しません。アプリの設定画面で確認してください' : '反映後の確認: できませんでした';
+      const revisions = `本番の設定の更新番号: ${outcome.productionRevisionBefore || '－'} → ${outcome.productionRevisionAfter || '－'}（プレビュー ${outcome.previewRevision || '－'}）`;
+      const verified = outcome.verified === true ? '反映後の確認: 本番とプレビューが一致' : outcome.verified === false ? '反映後の確認: 本番とプレビューの設定の更新番号が一致しません。アプリの設定画面で確認してください' : '反映後の確認: できませんでした';
       item.appendChild(el('div', `kus-dp-result-item__meta${outcome.verified === false ? ' kus-dp-result-item__meta--warn' : ''}`, `${revisions} / ${verified}`));
     }
     return item;

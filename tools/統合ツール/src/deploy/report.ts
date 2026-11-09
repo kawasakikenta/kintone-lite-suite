@@ -68,9 +68,9 @@ export interface DeployPlanInput {
 function appendAppDetails(lines: string[], app: DeployAppInspection, mode: DeployMode, headingLevel: string): void {
   lines.push(`${headingLevel} ${appHeading(app)}`, '');
   lines.push(`- 状態: ${esc(inspectStateLabel(app.state))}`);
-  lines.push(`- revision: ${esc(formatRevisionPair(app))}`);
+  lines.push(`- 設定の更新番号（revision）: ${esc(formatRevisionPair(app))}`);
   if (app.error) lines.push(`- 理由: ${esc(app.error)}`);
-  if (app.state === 'changes' && app.contentSame) lines.push('- 設定の内容は同じです（revision だけが異なります）');
+  if (app.state === 'changes' && app.contentSame) lines.push('- 設定の内容は同じです（設定の更新番号（revision）だけが異なります）');
   for (const warning of app.warnings || []) lines.push(`- 注意: ${esc(warning)}`);
   if (mode === 'deploy') {
     for (const field of app.removedFields || []) {
@@ -125,7 +125,7 @@ export function buildDeployPlanMarkdown(input: DeployPlanInput): string {
   const removedText = describeRemovedSettings(totals);
   if (removedText) lines.push('', `削除される設定: ${esc(removedText)}`);
   lines.push('');
-  lines.push('| アプリ | 状態 | 実行 | 変更のある項目 | 削除 | revision（本番 → プレビュー） |');
+  lines.push('| アプリ | 状態 | 実行 | 変更のある項目 | 削除 | 更新番号（本番 → プレビュー） |');
   lines.push('| --- | --- | --- | --- | ---: | --- |');
   for (const app of input.apps) {
     const run = targets.includes(app) ? '対象' : app.state === 'clean' ? '対象外（反映不要）' : selected.has(deployAppKey(app)) ? '対象外（確認が必要）' : '対象外';
@@ -193,7 +193,7 @@ export function buildDeployRecordMarkdown(input: DeployRecordInput): string {
   lines.push(`- 取り消し方: ${esc(undoGuidance(result.mode))}`, '');
 
   lines.push('## アプリ別の結果', '');
-  lines.push('| アプリ | 結果 | 理由 | 本番の revision（前 → 後） | プレビューの revision | 反映後の確認 |');
+  lines.push('| アプリ | 結果 | 理由 | 本番の更新番号（前 → 後） | プレビューの更新番号 | 反映後の確認 |');
   lines.push('| --- | --- | --- | --- | --- | --- |');
   for (const app of result.apps) {
     lines.push(`| ${cell(formatDeployApp(app))} | ${cell(describeDeployStatus(app.status, result.mode).text)} | ${cell(describeDeployMessage(app.message))} | ${cell(`${app.productionRevisionBefore || '－'} → ${app.productionRevisionAfter || '－'}`)} | ${cell(app.previewRevision)} | ${cell(verifiedLabel(app))} |`);

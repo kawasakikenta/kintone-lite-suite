@@ -7,6 +7,7 @@
  */
 
 import { SECTION_DEFS, SYSTEM_FIELD_TYPES } from '../constants.js';
+import { extractExpressionFieldCodes } from '../kintone-query.js';
 import { APP_SETTINGS_LABELS } from './sections.js';
 import { comparableCustomizePayload, type CustomizeFileResolution } from './customizeFiles.js';
 import { reclassifyLayoutRemovals, retainedItemNames, summarizeReflectItems } from './changeSummary.js';
@@ -23,9 +24,31 @@ const KINDS = ['js', 'css'] as const;
 const UPLOAD_WARNING = /^\d+ 件のファイル（合計 .+）を反映先へアップロードしてから設定します。$/;
 
 const isNonEmptyString = (value: unknown): value is string => typeof value === 'string' && value !== '';
+/** 選択肢（options）を持ち、初期値が選択肢のどれかである必要があるフィールドの種類 */
+const CHOICE_FIELD_TYPES: ReadonlySet<string> = new Set(['DROP_DOWN', 'RADIO_BUTTON', 'CHECK_BOX', 'MULTI_SELECT']);
 
-/** フィールド設定の変更の検査。反映先にあるフィールドの削除・種類やコードの変更は、このツールでは行わない。 */
-function checkFieldSettings(before: any, after: any, fieldLabels: Record<string, string>): string[] {
+/** 選択肢を持つフィールドの初期値が、送る設定の選択肢にあるか検査する（kintone は書き込みで拒否する）。問題を利用者向けの文で返す。 */
+function checkChoiceDefault(label: string, definition: Record<string, any>): string[] {
+  if (!CHOICE_FIELD_TYPES.has(definition.type) || !isPlainObject(definition.options)) return [];
+  const options = definition.options as Record<string, unknown>;
+  const defaults = definition.defaultValue;
+  const hint = '初期値は、送る設定の選択肢のどれかにしてください。';
+  if (definition.type === 'DROP_DOWN' || definition.type === 'RADIO_BUTTON') {
+    if (defaults === undefined || defaults === '' || defaults === null) return definition.type === 'RADIO_BUTTON' ? [`${label}の初期値がありません。ラジオボタンは、初期値を選択肢のどれかにする必要があります。`] : [];
+    if (typeof defaults !== 'string') return [`${label}の初期値の形式が不正です。${hint}`];
+    return own(options, defaults) ? [] : [`${label}の初期値「${defaults}」が選択肢にありません。${hint}`];
+  }
+  if (defaults === undefined || defaults === null) return [];
+  if (!Array.isArray(defaults)) return [`${label}の初期値の形式が不正です（選択肢の配列にしてください）。`];
+  return defaults.filter(value => typeof value !== 'string' || !own(options, value)).map(value => `${label}の初期値「${String(value)}」が選択肢にありません。${hint}`);
+}
+
+/**
+ * フィールド設定の変更の検査。反映先にあるフィールドの削除・種類やコードの変更は、このツールでは行わない。
+ * 送る設定の中で、選択肢にない初期値と、送る設定に無いフィールドを参照する計算式も止める（kintone は書き込みで拒否する）。
+ * knownFieldCodes は反映元・反映先のどちらかに実在するフィールドコード。計算式からは、これと一致した語だけを参照とみなす。
+ */
+function checkFieldSettings(before: any, after: any, fieldLabels: Record<string, string>, knownFieldCodes?: ReadonlySet<string> | readonly string[]): string[] {
   const issues: string[] = [];
   const name = (code: string, parent?: string) => `フィールド「${parent ? `${fieldDisplayName(parent, fieldLabels)} › ` : ''}${fieldDisplayName(code, fieldLabels)}」`;
   const compare = (beforeFields: Record<string, any>, afterFields: Record<string, any>, parent?: string) => {
@@ -34,6 +57,7 @@ function checkFieldSettings(before: any, after: any, fieldLabels: Record<string,
       if (definition.code !== undefined && definition.code !== code) issues.push(`${name(code, parent)}のフィールドコードは変更できません（${code} → ${String(definition.code)}）。`);
       const current = own(beforeFields, code) ? beforeFields[code] : undefined;
       if (isPlainObject(current) && current.type !== definition.type) issues.push(`${name(code, parent)}の種類は変更できません（${String(current.type)} → ${definition.type}）。`);
+      issues.push(...checkChoiceDefault(name(code, parent), definition));
       if (definition.type === 'SUBTABLE') {
         if (!isPlainObject(definition.fields)) issues.push(`${name(code, parent)}のテーブル内のフィールド定義（fields）がありません。`);
         else compare(isPlainObject(current?.fields) ? current.fields : {}, definition.fields, code);
@@ -45,15 +69,32 @@ function checkFieldSettings(before: any, after: any, fieldLabels: Record<string,
   };
   if (!isPlainObject(after?.properties)) return ['フィールド設定の properties がありません。'];
   compare(isPlainObject(before?.properties) ? before.properties : {}, after.properties);
+  if (knownFieldCodes) {
+    const known = knownFieldCodes instanceof Set ? knownFieldCodes : new Set(knownFieldCodes);
+    const present = new Set<string>();
+    const collect = (fields: Record<string, any>) => { for (const [code, definition] of Object.entries(fields)) { present.add(code); if (isPlainObject(definition) && definition.type === 'SUBTABLE' && isPlainObject(definition.fields)) collect(definition.fields); } };
+    collect(after.properties);
+    const checkExpressions = (fields: Record<string, any>, parent?: string) => {
+      for (const [code, definition] of Object.entries(fields)) {
+        if (!isPlainObject(definition)) continue;
+        if (isNonEmptyString(definition.expression)) {
+          const missing = extractExpressionFieldCodes(definition.expression, known).filter(ref => ref !== code && !present.has(ref));
+          if (missing.length) issues.push(`${name(code, parent)}の計算式が、反映先に無いフィールド${missing.map(ref => `「${fieldDisplayName(ref, fieldLabels)}」`).join('、')}を参照しています。${missing.length > 1 ? 'これらの追加' : 'その追加'}も一緒に選ぶか、計算式を反映しないでください。`);
+        }
+        if (definition.type === 'SUBTABLE' && isPlainObject(definition.fields)) checkExpressions(definition.fields, code);
+      }
+    };
+    checkExpressions(after.properties);
+  }
   return issues;
 }
 
 /** 反映後の設定が、その項目の PUT 形として書き込める形か検査し、問題を利用者向けの文で返す。 */
-export function checkComposedAfter(sectionKey: string, before: any, after: any, fieldLabels: Record<string, string> = {}): string[] {
+export function checkComposedAfter(sectionKey: string, before: any, after: any, fieldLabels: Record<string, string> = {}, knownFieldCodes?: ReadonlySet<string> | readonly string[]): string[] {
   const fail = (message: string) => [message];
   if (!isPlainObject(after)) return fail('反映後の設定はオブジェクトである必要があります。');
   switch (sectionKey) {
-    case 'fieldSettings': return checkFieldSettings(before, after, fieldLabels);
+    case 'fieldSettings': return checkFieldSettings(before, after, fieldLabels, knownFieldCodes);
     case 'layoutSettings':
       return Array.isArray(after.layout) && after.layout.every(isPlainObject) ? [] : fail('レイアウトの形式が不正です（layout は行の配列である必要があります）。');
     case 'viewSettings': case 'reportSettings': case 'actionSettings': {
@@ -105,9 +146,9 @@ export function checkComposedAfter(sectionKey: string, before: any, after: any, 
  * checkComposedAfter に加え、既定の計画との関係の検査。
  * JS/CSS の 4 つの一覧は、反映元に合わせた内容か反映先のままのどちらかだけ（ファイルのアップロードが必要で、直せないため）。
  */
-export function checkComposedAgainstPlan(plan: ReflectSectionPlan, after: any, fieldLabels: Record<string, string> = {}): string[] {
+export function checkComposedAgainstPlan(plan: ReflectSectionPlan, after: any, fieldLabels: Record<string, string> = {}, knownFieldCodes?: ReadonlySet<string> | readonly string[]): string[] {
   if (!plan.values) return ['設定値を取得できていないため、選択・修正した内容から書き込み内容を作れません。'];
-  const issues = checkComposedAfter(plan.sectionKey, plan.values.before, after, fieldLabels);
+  const issues = checkComposedAfter(plan.sectionKey, plan.values.before, after, fieldLabels, knownFieldCodes);
   if (issues.length || plan.sectionKey !== 'customizeSettings') return issues;
   for (const platform of PLATFORMS) for (const kind of KINDS) {
     const list = after[platform][kind];
@@ -144,7 +185,7 @@ function fieldOperations(before: any, after: any, endpoint: string): { operation
  * 既定の計画の blockers（取得失敗・種類の違いなど）・warnings・behavior は引き継ぎ、operations・changes・items・requiredFields は after' から導く。
  * 形が不正な after' は status 'error' と blockers で示す（書き込み内容は作らない）。
  */
-export function buildPlanFromComposedAfter(plan: ReflectSectionPlan, after: any, fieldLabels: Record<string, string> = {}): ReflectSectionPlan {
+export function buildPlanFromComposedAfter(plan: ReflectSectionPlan, after: any, fieldLabels: Record<string, string> = {}, knownFieldCodes?: ReadonlySet<string> | readonly string[]): ReflectSectionPlan {
   const key = plan.sectionKey;
   const result: ReflectSectionPlan = {
     sectionKey: key, label: plan.label, status: 'same', message: '', behavior: plan.behavior, changes: [], changeCount: 0, removalCount: 0,
@@ -158,7 +199,7 @@ export function buildPlanFromComposedAfter(plan: ReflectSectionPlan, after: any,
   };
   if (!plan.values) return fail(['設定値を取得できていないため、選択・修正した内容から書き込み内容を作れません。']);
   const before = plan.values.before;
-  const issues = checkComposedAgainstPlan(plan, after, fieldLabels);
+  const issues = checkComposedAgainstPlan(plan, after, fieldLabels, knownFieldCodes);
   if (issues.length) return fail(issues);
   const def = SECTION_DEFS.find(item => item.key === key);
   const endpoint = key === 'appSettings' ? SECTION_DEFS.find(item => item.key === 'appSettings')?.endpoint || '/app/settings.json' : def?.endpoint;
@@ -206,7 +247,7 @@ export function buildPlanFromComposedAfter(plan: ReflectSectionPlan, after: any,
     result.removalCount = changes.filter(change => change.kind === '削除').length;
     if (putAfter && result.changeCount) result.operations.push({ method: 'PUT', endpoint, body: after, label: key === 'appSettings' ? plan.label : def!.label, ...(uploads.length ? { uploads } : {}) });
     if (uploads.length && result.changeCount) result.fileUploads = uploads;
-    const required = reflectRequiredFields(key, after);
+    const required = reflectRequiredFields(key, after, knownFieldCodes);
     if (required !== undefined) result.requiredFields = required;
     if (result.blockers.length) result.status = 'error';
     else result.status = result.operations.length ? 'change' : 'same';

@@ -6,7 +6,7 @@
  * 状態に反映して、選択のたびに送る設定と計画を作り直す。エンジン（selection.ts / reflect-standalone.ts）は deps で差し替えられる。
  */
 
-import { buildSectionSelectionModel, defaultSelectionState } from '../reflect/selection.js';
+import { attachFieldAdditionRequires, buildSectionSelectionModel, defaultSelectionState } from '../reflect/selection.js';
 import { composeReflectSelectionStandalone, type PreviewReflectResult, type ReflectIdentities, type ReflectOptions } from '../tabs/reflect-standalone.js';
 import type { ComposedReflectSelection, SectionSelectionModel, SectionSelectionState, SelectableChange } from '../reflect/selectionTypes.js';
 import { buildRequirementIndex, dependentsToDeselect, requiredToSelect, type RequirementIndex } from './sourceDisplay.js';
@@ -78,6 +78,8 @@ export function createSourceSession(input: CreateSessionInput, deps: SourceSessi
       modelErrors[entry.sectionKey] = String(error?.message || error || '不明なエラー');
     }
   }
+  // 計算式・条件が参照する追加フィールドは、その追加も一緒に選ぶ（項目をまたぐ連動）
+  attachFieldAdditionRequires(models, [...(preview.sourceFieldCodes || []), ...(preview.sourceSystemFieldCodes || []), ...(preview.targetFieldCodes || [])]);
   return {
     id: ++sessionSeq,
     signature: input.signature,

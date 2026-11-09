@@ -2518,7 +2518,7 @@
     tableScroll.className = "kus-lp__apptable-scroll";
     const table = document.createElement("table");
     const thead = document.createElement("thead");
-    thead.innerHTML = '<tr><th class="kus-lp__apptable-no" scope="col">#</th><th scope="col">アプリID</th><th scope="col">ゲストID</th><th class="kus-lp__apptable-acts-h" scope="col">操作</th></tr>';
+    thead.innerHTML = '<tr><th class="kus-lp__apptable-no" scope="col">#</th><th scope="col">アプリID</th><th scope="col">ゲストスペースID</th><th class="kus-lp__apptable-acts-h" scope="col">操作</th></tr>';
     table.appendChild(thead);
     const tbody = document.createElement("tbody");
     table.appendChild(tbody);
@@ -2677,13 +2677,13 @@
       const tdAct = document.createElement("td");
       tdAct.className = "kus-lp__apptable-acts";
       const app = makeInput({ placeholder: opts.appPlaceholder || "アプリID（カンマ区切りで複数可）", ariaLabel: "アプリID" });
-      const guest = makeInput({ placeholder: opts.guestPlaceholder || "空欄=通常スペース", ariaLabel: "ゲストID" });
+      const guest = makeInput({ placeholder: opts.guestPlaceholder || "空欄=通常スペース", ariaLabel: "ゲストスペースID" });
       app.value = appId;
       guest.value = guestId;
       const name = document.createElement("div");
       name.className = "kus-lp__apptable-name";
       const copyBtn = makeButton("↑コピー", "sub");
-      copyBtn.title = "上の行のアプリID・ゲストIDをこの行へコピー";
+      copyBtn.title = "上の行のアプリID・ゲストスペースIDをこの行へコピー";
       const dupBtn = makeButton("複製", "sub");
       dupBtn.title = "この行を下に複製";
       const delBtn = makeButton("×", "ghost");
