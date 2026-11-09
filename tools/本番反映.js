@@ -1816,6 +1816,8 @@ ${base}`
   var AGGREGATION_TYPE_JP = {
     COUNT: "レコード数",
     SUM: "合計",
+    // kintone の API が返す値は AVERAGE（AVG は旧来の表記として残す）
+    AVERAGE: "平均",
     AVG: "平均",
     MAX: "最大値",
     MIN: "最小値"

@@ -604,6 +604,34 @@ describe('diff/xlsx-export', () => {
     ]);
   });
 
+  it('shows the mapping itself (not the action name) as the value of an added or removed field mapping on enriched rows', async () => {
+    // enrichDiffRows を通した行は、アクション配下のすべての行に entityKind='appAction' が付く。
+    const mappingRow = (type: 'removed' | 'added', destField: string) => ({
+      sectionKey: 'actionSettings', type, arrayKey: 'destField', arrayKeyValue: destField,
+      entityKind: 'appAction', entityLabel: '物件を複製', entityCode: '物件を複製',
+      path: 'actionSettings.actions.物件を複製.mappings[0]',
+      ...(type === 'removed' ? { left: { srcType: 'FIELD', srcField: '取得価額', destField } } : { right: { srcType: 'FIELD', srcField: '取得価額', destField } })
+    });
+    const bundle = (destField: string) => ({ sections: { actionSettings: { actions: { 物件を複製: { name: '物件を複製', mappings: [{ srcType: 'FIELD', srcField: '取得価額', destField }] } } } } });
+    const blob = buildDiffXlsxBlobWithSafeDefault({
+      sourceBundle: bundle('取得価額'),
+      targetBundle: bundle('税抜取得価額'),
+      rows: [
+        mappingRow('removed', '取得価額'),
+        mappingRow('added', '税抜取得価額'),
+        // アクション自体の追加は、これまでどおりアクション名を値にする
+        { sectionKey: 'actionSettings', type: 'added', entityKind: 'appAction', entityLabel: '請求書作成', entityCode: '請求書作成', path: 'actionSettings.actions.請求書作成', right: { name: '請求書作成', mappings: [] } }
+      ]
+    });
+    const list = await readWorksheetByName(blob, '変更一覧');
+    const before = worksheetInlineTexts(list, 'F', 2);
+    const after = worksheetInlineTexts(list, 'G', 2);
+    expect(before[0]).toContain('コピー元フィールド: 取得価額');
+    expect(after[1]).toContain('コピー先フィールド: 税抜取得価額');
+    expect(before.concat(after).filter((text) => text === 'アプリアクション「物件を複製」')).toEqual([]);
+    expect(after[2]).toBe('アプリアクション「請求書作成」');
+  });
+
   it('keeps the app action name as the target when a field mapping is added or removed', async () => {
     const sourceBundle = {
       sections: {
