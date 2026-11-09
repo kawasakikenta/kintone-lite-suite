@@ -76,6 +76,9 @@ export function compareDeploySection(sectionKey: string, production: any, previe
   return { sectionKey, label, status: 'change', items, counts };
 }
 
+/** レコードの値を持たないフィールドの種類（削除しても値は失われない）。 */
+const NO_VALUE_FIELD_TYPES: ReadonlySet<string> = new Set(['GROUP', 'REFERENCE_TABLE']);
+
 interface FlatField { code: string; label: string; type: string; table?: string }
 
 /** フィールド設定（properties）を、テーブル内のフィールドも含めて平らにする。 */
@@ -102,13 +105,14 @@ function flattenFields(fieldSettings: any): FlatField[] {
  * 本番にあり、プレビューに無いフィールドを返す（システムフィールドは除く）。
  * 本番へ反映するとそのフィールドのレコードの値も削除され、元に戻せない。
  * 削除されるテーブルの中のフィールドは、テーブルの削除に含まれるため別に数えない。
+ * グループ・関連レコード一覧はレコードの値を持たないため含めない（フィールド設定の変更の要約には「削除」として出る）。
  */
 export function findRemovedFields(productionFieldSettings: any, previewFieldSettings: any): DeployRemovedField[] {
   const production = flattenFields(productionFieldSettings), preview = flattenFields(previewFieldSettings);
   const previewCodes = new Set(preview.map(field => field.code));
   const productionCodes = new Set(production.map(field => field.code));
   const removedTables = new Set(production.filter(field => !field.table && field.type === 'SUBTABLE' && !previewCodes.has(field.code)).map(field => field.code));
-  const removed = production.filter(field => !SYSTEM_FIELD_TYPES.has(field.type) && !previewCodes.has(field.code) && !(field.table && removedTables.has(field.table)));
+  const removed = production.filter(field => !SYSTEM_FIELD_TYPES.has(field.type) && !NO_VALUE_FIELD_TYPES.has(field.type) && !previewCodes.has(field.code) && !(field.table && removedTables.has(field.table)));
   // コードだけを変えたように見える候補。1 つの新しいフィールドを複数の削除の候補にしない。
   const claimed = new Set<string>();
   return removed.map((field) => {

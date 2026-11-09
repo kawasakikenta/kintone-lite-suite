@@ -88,6 +88,10 @@ describe('findRemovedFields', () => {
     expect(findRemovedFields(production, { properties: {} })).toEqual([]);
   });
 
+  it('値を持たないグループ・関連レコード一覧は除く（値の残るフィールドだけを数える）', () => {
+    const production = { properties: { g: { type: 'GROUP', code: 'g', label: '見出し' }, rel: { type: 'REFERENCE_TABLE', code: 'rel', label: '関連' }, memo: { type: 'MULTI_LINE_TEXT', code: 'memo', label: 'メモ' } } };
+    expect(findRemovedFields(production, { properties: {} }).map(field => field.code)).toEqual(['memo']);
+  });
   it('同じ種類・同じ表示名で本番に無いコードがプレビューにあれば possibleRename に入れる', () => {
     const production = properties(field('cust_name', '顧客名'), field('amount', '金額', 'NUMBER'), field('memo', 'メモ'));
     const preview = properties(field('customer_name', '顧客名'), field('amount_text', '金額'), field('memo2', '別のメモ'));
