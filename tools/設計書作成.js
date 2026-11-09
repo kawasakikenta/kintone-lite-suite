@@ -12048,6 +12048,17 @@
     new RegExp(`^fieldsettings\\.properties${ENTITY_PATH_SEGMENT}(?:\\.fields${ENTITY_PATH_SEGMENT})?\\.options${ENTITY_PATH_SEGMENT}$`)
   ];
 
+  // src/kintone-enums.ts
+  var GROUP_PER_JP = {
+    YEAR: "年",
+    QUARTER: "四半期",
+    MONTH: "月",
+    WEEK: "週",
+    DAY: "日",
+    HOUR: "時",
+    MINUTE: "分"
+  };
+
   // src/runControl.ts
   var RUN_CANCELLED_MESSAGE = "利用者の操作で中止しました";
   var RunCancelledError = class extends Error {
@@ -13098,6 +13109,8 @@
   };
   var MD_PROCESS_ASSIGNEE_TYPE_LABELS = {
     ONE: "1人選出（候補から1人）",
+    // kintone の REST API が返す値は ANY（ANYONE は旧来の表記）
+    ANY: "候補の誰でも（先着）",
     ANYONE: "候補の誰でも（先着）",
     ALL: "全員（全員の処理が必要）"
   };
@@ -13281,15 +13294,16 @@ ${body}`;
     if (lookup && typeof lookup === "object") {
       const app = lookup.relatedApp?.app ? `App ${lookup.relatedApp.app}` : lookup.relatedApp?.code ? `コード ${lookup.relatedApp.code}` : "参照先不明";
       const key = lookup.relatedKeyField ? ` キー \`${lookup.relatedKeyField}\`` : "";
-      const mappings = Array.isArray(lookup.fieldMappings) ? lookup.fieldMappings.length : 0;
-      notes.push(`ルックアップ: ${app}${key}${mappings ? ` / 転記 ${mappings}項目` : ""}`);
+      const mappingList = Array.isArray(lookup.fieldMappings) ? lookup.fieldMappings : [];
+      const copies = mappingList.map((m) => `\`${m?.field ?? ""}\` ← \`${m?.relatedField ?? ""}\``).join("、");
+      notes.push(`ルックアップ: ${app}${key}${mappingList.length ? ` / 転記 ${mappingList.length}項目（${copies}）` : ""}`);
     }
     const ref = f.referenceTable;
     if (ref && typeof ref === "object") {
       const app = ref.relatedApp?.app ? `App ${ref.relatedApp.app}` : ref.relatedApp?.code ? `コード ${ref.relatedApp.code}` : "参照先不明";
       const cond = ref.condition?.field && ref.condition?.relatedField ? ` 条件 \`${ref.condition.field}\` = \`${ref.condition.relatedField}\`` : "";
-      const shown = Array.isArray(ref.displayFields) ? ref.displayFields.length : 0;
-      notes.push(`関連レコード: ${app}${cond}${shown ? ` / 表示 ${shown}項目` : ""}${ref.size ? ` / ${ref.size}件表示` : ""}`);
+      const shownList = Array.isArray(ref.displayFields) ? ref.displayFields : [];
+      notes.push(`関連レコード: ${app}${cond}${shownList.length ? ` / 表示 ${shownList.length}項目（${shownList.map((code) => `\`${code}\``).join("、")}）` : ""}${ref.size ? ` / ${ref.size}件表示` : ""}`);
     }
     if (f.unit) notes.push(`単位: ${decodeHtmlEntities(f.unit)}${f.unitPosition === "BEFORE" ? "（前）" : f.unitPosition === "AFTER" ? "（後）" : ""}`);
     if (f.digit === true || f.digit === "true") notes.push("桁区切りあり");
@@ -13337,7 +13351,8 @@ ${body}`;
     ));
     subtables.forEach((tbl) => {
       parts.push("");
-      parts.push(`#### テーブル: \`${tbl.code}\` — ${mdLine(stripHtmlToText(tbl.label || ""))}`);
+      const tableLabel = mdLine(stripHtmlToText(tbl.label || ""));
+      parts.push(`#### テーブル: \`${tbl.code}\`${tableLabel ? ` — ${tableLabel}` : ""}`);
       parts.push("");
       const subRows = Object.values(tbl.fields || {}).map((f) => [
         f.code || "",
@@ -13353,7 +13368,7 @@ ${body}`;
     });
     return parts.join("\n");
   }
-  function mdRenderLayoutItem(item, depth = 0) {
+  function mdRenderLayoutItem(item, depth = 0, fields = {}) {
     const indent = "  ".repeat(depth);
     const out = [];
     if (!item) return out;
@@ -13370,17 +13385,19 @@ ${body}`;
     } else if (item.type === "SUBTABLE") {
       out.push(`${indent}- テーブル: \`${item.code}\``);
     } else if (item.type === "GROUP") {
-      out.push(`${indent}- グループ: \`${item.code}\` — ${mdLine(stripHtmlToText(item.label || ""))}`);
+      const groupLabel = mdLine(stripHtmlToText(item.label || fields?.[item.code]?.label || ""));
+      out.push(`${indent}- グループ: \`${item.code}\`${groupLabel ? ` — ${groupLabel}` : ""}`);
       (item.layout || []).forEach((child) => {
-        out.push(...mdRenderLayoutItem(child, depth + 1));
+        out.push(...mdRenderLayoutItem(child, depth + 1, fields));
       });
     }
     return out;
   }
-  function mdRenderLayoutSettings(sec) {
+  function mdRenderLayoutSettings(sec, sections = {}) {
     const layout = sec?.layout || [];
     const lines = [];
-    layout.forEach((item) => lines.push(...mdRenderLayoutItem(item)));
+    const fields = sections?.fieldSettings?.properties || {};
+    layout.forEach((item) => lines.push(...mdRenderLayoutItem(item, 0, fields)));
     return lines.join("\n");
   }
   function mdRenderViewSettings(sec) {
@@ -13391,6 +13408,11 @@ ${body}`;
       const builtinNote = v.builtinType ? mdLookupLabel(MD_VIEW_BUILTIN_LABELS, v.builtinType) || v.builtinType : "";
       const extras = [];
       if (v.customView || v.html) extras.push("カスタムHTMLあり");
+      if (v.type === "CALENDAR") {
+        if (v.date) extras.push(`日付: \`${v.date}\``);
+        if (v.title) extras.push(`タイトル: \`${v.title}\``);
+      }
+      if (v.device === "DESKTOP") extras.push("PC版のみ");
       if (v.pager === false) extras.push("ページャー無効");
       if (v.paginationStyle) {
         const paginationLabel = mdLookupLabel(MD_PAGINATION_LABELS, v.paginationStyle) || v.paginationStyle;
@@ -13417,10 +13439,11 @@ ${body}`;
       r.name || "",
       MD_REPORT_CHART_LABELS[r.chartType] || r.chartType || "",
       mdLookupLabel(MD_REPORT_CHART_MODE_LABELS, r.chartMode),
-      (r.groups || []).map((g) => g.code).filter(Boolean).join(" / "),
+      // 期間で分類するグラフは、フィールドに期間（月など）を添える
+      (r.groups || []).filter((g) => g?.code).map((g) => `${g.code}${g.per ? `（${mdLookupLabel(GROUP_PER_JP, g.per)}）` : ""}`).join(" / "),
       (r.aggregations || []).map((a) => {
         const typeLabel = mdLookupLabel(MD_AGGREGATION_TYPE_LABELS, a.type);
-        return `${typeLabel}（${a.code || ""}）`;
+        return a.code ? `${typeLabel}（${a.code}）` : typeLabel;
       }).join(" / "),
       r.filterCond || "",
       r.periodicReport?.active ? "定期実行あり" : ""
@@ -13469,10 +13492,11 @@ ${body}`;
     const rows = plugins.map((p) => [
       p.id || "",
       p.name || "",
+      p.enabled === false ? "無効" : p.enabled === true ? "有効" : "",
       p.version || "",
       p.description || ""
     ]);
-    return mdTable(["プラグインID", "名称", "バージョン", "説明"], rows);
+    return mdTable(["プラグインID", "名称", "状態", "バージョン", "説明"], rows);
   }
   function mdRenderCustomizeSettings(sec) {
     const parts = [];
@@ -13507,9 +13531,12 @@ ${body}`;
       a.index ?? "",
       a.destApp ? a.destApp.code || a.destApp.app || "" : "",
       Array.isArray(a.entities) && a.entities.length ? mdEntityList(a.entities) : "すべてのユーザー",
-      String((a.mappings || []).length)
+      String((a.mappings || []).length),
+      // コピー元 → コピー先（レコードの URL は srcType が RECORD_URL でコピー元のフィールドが無い）
+      (a.mappings || []).map((m) => `${m?.srcType === "RECORD_URL" ? "レコードのURL" : `\`${m?.srcField ?? ""}\``} → \`${m?.destField ?? ""}\``).join("\n"),
+      a.filterCond || ""
     ]);
-    return mdTable(["アクション名", "表示順", "連携先アプリ", "利用できるユーザー", "マッピング数"], rows);
+    return mdTable(["アクション名", "表示順", "連携先アプリ", "利用できるユーザー", "マッピング数", "コピー項目（コピー元 → コピー先）", "実行条件"], rows);
   }
   function mdRenderAclRights(rights, columns) {
     if (!Array.isArray(rights) || rights.length === 0) return "";
@@ -13650,6 +13677,14 @@ ${body}`;
     reminderNotifications: mdRenderReminderNotifications,
     categories: mdRenderCategories
   };
+  function mdAllFieldDefinitions(fields) {
+    const all = [];
+    Object.values(fields || {}).forEach((field) => {
+      all.push(field);
+      if (field?.type === "SUBTABLE" && field.fields) all.push(...Object.values(field.fields));
+    });
+    return all;
+  }
   function mdBundleSummary(bundle) {
     const sections = bundle?.sections || {};
     const rows = [];
@@ -13660,9 +13695,10 @@ ${body}`;
       if (!field || field.type !== "SUBTABLE" || !field.fields) return sum;
       return sum + Object.keys(field.fields).length;
     }, 0);
-    const requiredCount = fieldValues.filter((field) => !!field?.required).length;
-    const lookupCount = fieldValues.filter((field) => !!field?.lookup).length;
-    const referenceCount = fieldValues.filter((field) => !!field?.referenceTable).length;
+    const allFieldValues = mdAllFieldDefinitions(fields);
+    const requiredCount = allFieldValues.filter((field) => !!field?.required).length;
+    const lookupCount = allFieldValues.filter((field) => !!field?.lookup).length;
+    const referenceCount = allFieldValues.filter((field) => !!field?.referenceTable).length;
     const viewCount = Object.keys(sections.viewSettings?.views || {}).length;
     const reportCount = Object.keys(sections.reportSettings?.reports || {}).length;
     const stateCount = Object.keys(sections.processSettings?.states || {}).length;
@@ -13689,7 +13725,7 @@ ${body}`;
   }
   function mdDesignReviewPoints(bundle) {
     const sections = bundle?.sections || {};
-    const fields = Object.values(sections.fieldSettings?.properties || {});
+    const fields = mdAllFieldDefinitions(sections.fieldSettings?.properties || {});
     const points = [];
     const lookupCount = fields.filter((field) => !!field?.lookup).length;
     const calcCount = fields.filter((field) => !!(field?.expression || field?.formula)).length;
@@ -13708,21 +13744,13 @@ ${body}`;
   function mdSectionHasData(sec) {
     return !!sec && typeof sec === "object" && Object.keys(sec).some((key) => key !== "_fetchError" && key !== "_partial");
   }
-  function mdDesignSectionRows(bundle) {
+  function mdDesignSectionRows(bundle, snapshotByKey) {
     const sections = bundle?.sections || {};
     return SECTION_DEFS.filter((def) => sections[def.key]).map((def) => {
       const sec = sections[def.key];
-      let count = "";
       if (sec?._fetchError && !mdSectionHasData(sec)) return [def.label, def.key, "取得失敗"];
-      if (def.key === "fieldSettings") count = Object.keys(sec?.properties || {}).length;
-      else if (def.key === "viewSettings") count = Object.keys(sec?.views || {}).length;
-      else if (def.key === "reportSettings") count = Object.keys(sec?.reports || {}).length;
-      else if (def.key === "processSettings") count = Object.keys(sec?.states || {}).length;
-      else if (def.key === "pluginSettings") count = (sec?.plugins || []).length;
-      else if (Array.isArray(sec?.rights)) count = sec.rights.length;
-      else if (Array.isArray(sec?.notifications)) count = sec.notifications.length;
-      else count = sec && typeof sec === "object" ? Object.keys(sec).length : "";
-      return [def.label, def.key, count === "" ? "-" : String(count)];
+      const count = snapshotByKey?.get(def.key)?.count;
+      return [def.label, def.key, count == null ? "-" : String(count)];
     });
   }
   function mdFetchedAt(value) {
@@ -13799,7 +13827,7 @@ ${body}`;
     lines.push("");
     lines.push(mdDesignReviewPoints(bundle));
     lines.push("");
-    const sectionRows = mdDesignSectionRows(bundle);
+    const sectionRows = mdDesignSectionRows(bundle, snapshotByKey);
     if (sectionRows.length) {
       lines.push("## 出力セクション");
       lines.push("");
@@ -13826,7 +13854,7 @@ ${body}`;
         lines.push(`（部分取得: ${snapshotSection.detail}）`);
         if (renderer) {
           try {
-            rendered = renderer(sec) || "";
+            rendered = renderer(sec, sections) || "";
           } catch {
             rendered = "";
           }
@@ -13840,7 +13868,7 @@ ${body}`;
         if (!includeRawJson) lines.push("", "（原文JSONは rawJson:false のため省略されています）");
       } else {
         try {
-          rendered = renderer(sec) || "";
+          rendered = renderer(sec, sections) || "";
         } catch {
           rendered = "";
         }

@@ -149,6 +149,60 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  browser-explore:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            tools/統合ツール/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm run setup
+          npx --no-install playwright install --with-deps chromium
+
+      - name: Explore field and JS/CSS settings
+        run: npm run test:field-jsconfig-explore -- --browser chromium
+
+      - name: Explore settings export and design documents
+        run: npm run test:settings-design-explore -- --browser chromium
+
+      - name: Explore preview reflection
+        run: npm run test:reflect-explore -- --browser chromium
+
+      - name: Explore production deployment
+        run: npm run test:deploy-explore -- --browser chromium --skip-scale
+
+      - name: Explore diff comparison
+        run: npm run test:diff-explore -- --browser chromium
+
+      - name: Explore ER diagram
+        run: npm run test:er-explore -- --browser chromium
+
+      - name: Explore record tools and process diagram
+        run: npm run test:record-explore -- --browser chromium
+
+      - name: Save exploration evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-explore-results
+          path: .iter-shots/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
+
   browser-compare:
     needs: verify
     if: needs.verify.outputs.comparisons != '[]'

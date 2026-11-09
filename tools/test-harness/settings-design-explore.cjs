@@ -311,6 +311,24 @@ async function main() {
   assert.deepEqual(hasSecret(aiText), [], 'AI向けMarkdown にも載せない');
   assert.deepEqual(hasSecret(jsonText).length > 0, true, '設計書JSON は設定の写しとして従来どおり含める（設定取得の JSON と同じ）');
   ok('設計書: Markdown・AI向けMarkdown にプラグインの設定値・JS/CSS 本文を載せない');
+  // ---- Markdown 設計書の内容（Excel・取得状態と一致するか） ----
+  const mdRow = (text, key) => text.split('\n').find(line => line.startsWith('| ') && line.includes(`| ${key} |`));
+  const statusPart = mdText.slice(mdText.indexOf('## 取得状態'), mdText.indexOf('## 目次'));
+  const outputPart = mdText.slice(mdText.indexOf('## 出力セクション'), mdText.indexOf('## アプリ設定'));
+  for (const key of ['customizeSettings', 'categories', 'layoutSettings', 'pluginSettings', 'fieldSettings', 'processSettings']) {
+    const statusCount = mdRow(statusPart, key).split('|')[4].trim();
+    assert.equal(mdRow(outputPart, key).split('|')[3].trim(), statusCount === '不明' ? '-' : statusCount, `Markdown: 出力セクションの件数が取得状態と同じ（${key}）`);
+  }
+  assert.match(mdText, /\| ルックアップ数 \| 2 \|/, 'Markdown: ルックアップ数はテーブル内を含み、Excel と同じ');
+  assert.match(mdText, /\| plugin3plugin3plugin3plugin3plugin3 \| 一括更新ツール \| 無効 \|/, 'Markdown: プラグインの有効状態');
+  assert.match(mdText, /\| 承認待ち \| 3 \| 候補の誰でも（先着） \|/, 'Markdown: 作業者の選び方 ANY');
+  assert.match(mdText, /\| 月別受注 \| 折れ線グラフ \| 通常 \| close_date（月） \| 合計（weighted） \/ 件数 \|/, 'Markdown: グラフの分類の期間と件数');
+  assert.match(mdText, /日付: `close_date` \/ タイトル: `deal_title`/, 'Markdown: カレンダー一覧の日付・タイトル');
+  assert.match(mdText, /- グループ: `grp_basic` — 案件情報/, 'Markdown: レイアウトのグループ名');
+  assert.match(mdText, /#### テーブル: `tasks`\n/, 'Markdown: 名前の無いテーブル見出しに「 — 」を付けない');
+  assert.match(mdText, /転記 2項目（`customer_name` ← `customer_name`、`cust_rank` ← `rank`）/, 'Markdown: ルックアップのコピー項目');
+  assert.match(mdText, /`customer_code` → `customer_code`<br>`deal_title` → `quote_subject`<br>レコードのURL → `deal_url`/, 'Markdown: アクションのコピー項目');
+  ok('設計書 Markdown: 件数が取得状態・Excel と一致、プラグイン有効状態、ANY、グラフの期間と件数、カレンダー、グループ名、コピー項目');
   const sheets = readXlsx(xlsxFile.buffer);
   const defRows = sheets['項目定義'];
   assert.equal(defRows.find(row => row[3] === 'grp_basic')[2], '案件情報', '項目定義: グループの名前（コードでなく表示名）');
@@ -510,11 +528,6 @@ async function main() {
     ok(`設計書 50 アプリ: Excel ZIP ${metrics.designXlsxZip50.ms}ms・Markdown ZIP ${metrics.designMdZip50.ms}ms（ヒープ ${metrics.designXlsxZip50.heapMB}MB）`);
   }
 
-  // 既知の問題（このハーネスで確かめたが、担当外のため直していないもの）
-  finding('design-md-counts', 'medium', 'Markdown 設計書の「出力セクション」の件数が、取得状態・サマリーと食い違う（JS/CSS設定 3 件 / 7 件、カテゴリ設定 2 件 / 3 件、ルックアップ数が Excel と違う）', { where: 'src/diff/export.ts bundleToMarkdown' });
-  finding('design-md-plugin-enabled', 'medium', 'Markdown 設計書のプラグイン表に有効状態（enabled）が出ない（Excel には出る）', { where: 'src/diff/export.ts mdRenderPluginSettings' });
-  finding('design-md-assignee-any', 'low', 'プロセス管理の作業者の選び方 ANY と、グラフの集計 AVERAGE が、Markdown 設計書で日本語にならない（Excel は直した）', { where: 'src/diff/export.ts MD_AGGREGATION_TYPE_LABELS・作業者の選び方' });
-  finding('design-md-calendar-chart', 'low', 'Markdown 設計書で、カレンダー一覧の日付・タイトルフィールドが出ず、グラフの集計が「件数（）」になる', { where: 'src/diff/export.ts' });
   fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({ checks, metrics, findings }, null, 2));
   console.log(`\n${checks.length} 件の検査が成功しました。既知の問題 ${findings.length} 件（${OUT}/results.json）`);
   await browser.close();
