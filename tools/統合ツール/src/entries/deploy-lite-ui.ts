@@ -75,6 +75,8 @@ import {
   type AppTableRow
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
+import { createProgressView, el, firstLines, setButtonText, type ProgressView } from './deployProgressView.js';
+import { createSourceFlow } from './deploy-source-ui.js';
 import { appendReflectItems } from './reflectPlanView.js';
 import { guestIdFromPagePath } from '../reflect/liteSetup.js';
 import { buildAppFilenameLabel, buildExportFilename, downloadText, summarizeList } from '../utils.js';
@@ -92,7 +94,11 @@ interface RunSnapshot {
   stopOnError: boolean;
 }
 
+/** 操作の切り替え: source = 反映元アプリから本番へ（既定）、publish = プレビューの変更を公開（従来の流れ） */
+type DeployFlow = 'source' | 'publish';
+
 interface DeployMemory {
+  flow: DeployFlow;
   targets: AppTableRow[];
   mode: DeployMode;
   batchMode: DeployBatchMode;
@@ -100,7 +106,7 @@ interface DeployMemory {
   lastRun: RunSnapshot | null;
 }
 
-const memory: DeployMemory = { targets: [], mode: 'deploy', batchMode: 'sequential', stopOnError: true, lastRun: null };
+const memory: DeployMemory = { flow: 'source', targets: [], mode: 'deploy', batchMode: 'sequential', stopOnError: true, lastRun: null };
 
 interface InspectionState {
   apps: DeployAppInspection[];
@@ -329,156 +335,10 @@ function ensureStyles() {
   document.head.appendChild(st);
 }
 
-// =============================================================================
-// DOM の小さな部品
-// =============================================================================
-
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = ''): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text) node.textContent = text;
-  return node;
-}
-
-function setButtonText(button: HTMLButtonElement, text: string) {
-  const span = button.querySelector('span');
-  if (span) span.textContent = text; else button.textContent = text;
-}
-
-function firstLines(message: string | undefined, max = 6): string {
-  return String(message || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(0, max).join('\n');
-}
-
-function formatStamp(at: number | Date): string {
-  const date = at instanceof Date ? at : new Date(at);
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}/${p(date.getMonth() + 1)}/${p(date.getDate())} ${p(date.getHours())}:${p(date.getMinutes())}:${p(date.getSeconds())}`;
-}
-
-// =============================================================================
-// 実行中・実行後の一覧（数千件でも固まらない）
-// =============================================================================
-
-interface ProgressRow {
-  appId: string;
-  guestId: string;
-  name: string;
-  status: DeployAppStatus;
-  message?: string;
-  outcome?: DeployAppOutcome;
-}
-
-interface ProgressView {
-  update(update: DeployAppUpdate): void;
-  setOutcomes(apps: readonly DeployAppOutcome[]): void;
-  rows(): ProgressRow[];
-  counts(): DeployOutcomeCounts;
-  flush(): void;
-  dispose(): void;
-}
-
-/**
- * アプリごとの状態の一覧。通知は一定間隔にまとめて描画する。
- * 件数が多いとき（DEPLOY_RESULT_FULL_LIMIT 超）は、全行を描かず、要約（件数）＋問題のある行＋処理中の行だけを出す。
- */
-function createProgressView(host: HTMLElement, mode: DeployMode, initial: readonly ProgressRow[]): ProgressView {
-  host.replaceChildren();
-  const rows = new Map<string, ProgressRow>();
-  for (const row of initial) rows.set(deployAppKey(row), { ...row });
-  const summary = el('div', 'kus-dp-progress__summary');
-  summary.setAttribute('role', 'status');
-  summary.setAttribute('aria-live', 'polite');
-  summary.setAttribute('aria-atomic', 'true');
-  const omitted = el('div', 'kus-dp-progress__omitted');
-  const list = el('ul', 'kus-dp-result-list');
-  host.append(summary, omitted, list);
-  let timer = 0;
-  let disposed = false;
-
-  function buildItem(row: ProgressRow): HTMLLIElement {
-    const display = describeDeployStatus(row.status, mode);
-    const item = el('li', `kus-dp-result-item kus-dp-result-item--${display.tone}`);
-    item.dataset.deployApp = row.appId;
-    item.dataset.deployGuest = row.guestId;
-    item.dataset.deployStatus = row.status;
-    const head = el('div', 'kus-dp-result-item__head');
-    const state = el('span', `kus-dp-result-state kus-dp-result-state--${display.tone}`);
-    const icon = el('span');
-    icon.setAttribute('aria-hidden', 'true');
-    icon.textContent = display.icon;
-    state.append(icon, document.createTextNode(display.text));
-    head.append(state, el('strong', '', formatDeployApp(row)));
-    item.appendChild(head);
-    const message = describeDeployMessage(row.message).split('\n').slice(0, 8).join('\n');
-    if (message) item.appendChild(el('div', 'kus-dp-result-item__message', message));
-    const outcome = row.outcome;
-    if (outcome && outcome.status === 'success') {
-      const revisions = `本番のrevision: ${outcome.productionRevisionBefore || '－'} → ${outcome.productionRevisionAfter || '－'}（プレビュー ${outcome.previewRevision || '－'}）`;
-      const verified = outcome.verified === true ? '反映後の確認: 本番とプレビューが一致' : outcome.verified === false ? '反映後の確認: 本番とプレビューのrevisionが一致しません。アプリの設定画面で確認してください' : '反映後の確認: できませんでした';
-      item.appendChild(el('div', `kus-dp-result-item__meta${outcome.verified === false ? ' kus-dp-result-item__meta--warn' : ''}`, `${revisions} / ${verified}`));
-    }
-    return item;
-  }
-
-  function render() {
-    if (disposed) return;
-    timer = 0;
-    const all = [...rows.values()];
-    const counts = countOutcomes(all);
-    summary.textContent = describeRunProgress(counts);
-    let visible = all;
-    if (all.length > DEPLOY_RESULT_FULL_LIMIT) {
-      const problems = all.filter((row) => isProblemStatus(row.status));
-      const active = all.filter((row) => row.status === 'checking' || row.status === 'deploying');
-      visible = [...problems.slice(0, DEPLOY_RESULT_FULL_LIMIT), ...active.slice(0, 20)];
-    }
-    const hidden = all.length - visible.length;
-    omitted.textContent = hidden > 0
-      ? `ほか ${hidden} アプリは一覧に表示していません（内訳は上の件数。全件は「結果JSONを保存」で確認できます）。`
-      : '';
-    omitted.hidden = hidden <= 0;
-    list.replaceChildren(...visible.map(buildItem));
-  }
-
-  function schedule() {
-    if (timer || disposed) return;
-    timer = window.setTimeout(render, 80);
-  }
-
-  render();
-  return {
-    update(update) {
-      const row = rows.get(deployAppKey(update));
-      if (!row) return;
-      row.status = update.status;
-      if (update.message !== undefined) row.message = update.message;
-      schedule();
-    },
-    setOutcomes(apps) {
-      for (const outcome of apps) {
-        const key = deployAppKey(outcome);
-        const row = rows.get(key) || { appId: outcome.appId, guestId: outcome.guestId, name: outcome.name, status: outcome.status };
-        row.name = outcome.name || row.name;
-        row.status = outcome.status;
-        row.message = outcome.message;
-        row.outcome = outcome;
-        rows.set(key, row);
-      }
-      if (timer) { window.clearTimeout(timer); timer = 0; }
-      render();
-    },
-    rows: () => [...rows.values()].map((row) => ({ ...row })),
-    counts: () => countOutcomes([...rows.values()]),
-    flush() {
-      if (timer) window.clearTimeout(timer);
-      render();
-    },
-    dispose() {
-      disposed = true;
-      if (timer) window.clearTimeout(timer);
-    }
-  };
-}
+const FLOW_SUBTITLES: Record<DeployFlow, string> = {
+  source: '反映元アプリとの差分を選んで、反映先のプレビューへ書き込み、続けて本番へ反映します。',
+  publish: 'プレビューの未公開の変更を確認してから、本番へ反映します。'
+};
 
 // =============================================================================
 // 変更の詳細（開いたときに描画する）
@@ -558,10 +418,10 @@ export function mountDeployLitePanel() {
   const panel = createLitePanel({
     id: 'kus-deploy-lite',
     title: '本番反映',
-    subtitle: 'プレビューの未公開の変更を確認してから、本番へ反映します。',
+    subtitle: FLOW_SUBTITLES[memory.flow],
     accent: 'deploy',
     badges: [{ label: '本番の設定を変更', tone: 'production' }],
-    hint: '<strong>本番のアプリ設定を変更します。</strong>プレビューとの差分と削除される設定を確認し、反映前の本番設定をバックアップしてから実行します。',
+    hint: '<strong>本番のアプリ設定を変更します。</strong>反映前に差分と削除される設定を確認し、反映前の設定をバックアップしてから実行します。',
     wide: true
   });
   const runLite = <T,>(busyMsg: string, fn: () => Promise<T>, okMsg?: string) => liteRun(panel, busyMsg, async () => {
@@ -1434,8 +1294,6 @@ export function mountDeployLitePanel() {
   workspace.appendChild(nav);
   for (const def of stageDefs) canvas.appendChild(stages[def.id]);
   workspace.appendChild(canvas);
-  if (hint) hint.insertAdjacentElement('afterend', workspace); else panel.body.insertBefore(workspace, panel.body.firstChild);
-  panel.body.appendChild(dock);
   [stages.setup, stages.review, stages.confirm, stages.result].forEach((scope) => attachCardHelp(scope));
 
   const noInputSubmit = document.createElement('button');
@@ -1480,6 +1338,8 @@ export function mountDeployLitePanel() {
     const blocked = (activeStage === 'setup' && !!blocker) || (activeStage === 'review' && fresh && !!inspection && selectionBlockers(inspection.apps, selected, mode).length > 0);
     dockCopy.replaceChildren();
     dockCopy.append(el('strong', '', dockTitle()), el('span', `kus-dp-dock-msg${blocked ? ' kus-dp-dock-reason' : ''}`, message));
+    // 操作の切り替えで見えていない流れは、共有のステータス欄・主操作を触らない。
+    if (memory.flow !== 'publish') return;
     panel.result.hidden = activeStage === 'confirm';
     // 入力欄での Enter が、本番への書き込みを始めてはならない（確認画面・結果画面では何も実行しない）。
     panel.setPrimaryAction(activeStage === 'setup' ? nextBtn : activeStage === 'review' ? confirmBtn : noInputSubmit);
@@ -1512,6 +1372,7 @@ export function mountDeployLitePanel() {
     nav.inert = value;
     // 実行中の進捗（読み上げ対象）を残すため、結果の段階は inert にしない。操作は下の一括無効化で防ぐ。
     for (const def of stageDefs) stages[def.id].inert = value && def.id !== 'result';
+    if (value) sourceFlow.setBusy(true);
     if (value) {
       panel.root.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement | HTMLTextAreaElement>('input,button,select,textarea').forEach((control) => {
         // 処理中でも押せる必要がある「中止」ボタンと、kintone 画面を確認するための折りたたみ「－」は無効化しない。
@@ -1526,17 +1387,69 @@ export function mountDeployLitePanel() {
     try {
       disabledBefore.forEach((disabled, control) => { control.disabled = disabled; });
       disabledBefore.clear();
+      sourceFlow.setBusy(false);
       refreshDetailSummary();
       renderResultCard();
       refreshReview();
-      navButtons[activeStage].focus({ preventScroll: true });
+      if (memory.flow === 'publish') navButtons[activeStage].focus({ preventScroll: true });
     } finally {
       setPanelBusy(value);
     }
   };
 
+  // ---------------------------------------------------------------------------
+  // 操作の切り替え: 反映元アプリから本番へ（既定）／プレビューの変更を公開（従来の流れ）
+  // ---------------------------------------------------------------------------
+  const flowbar = el('div', 'kus-ds-flowbar');
+  flowbar.appendChild(el('span', 'kus-ds-flowbar__label', '操作'));
+  const flowGroup = el('div', 'kus-ds-flowbar__group');
+  flowGroup.setAttribute('role', 'radiogroup');
+  flowGroup.setAttribute('aria-label', '操作の切り替え');
+  const flowInputs = {} as Record<DeployFlow, HTMLInputElement>;
+  const flowName = `${panel.root.id}-flow`;
+  for (const [id, label] of [['source', '反映元アプリから本番へ'], ['publish', 'プレビューの変更を公開']] as const) {
+    const wrap = el('label', 'kus-ds-flow');
+    const input = document.createElement('input');
+    input.type = 'radio';
+    input.name = flowName;
+    input.value = id;
+    input.checked = memory.flow === id;
+    input.setAttribute('aria-label', label);
+    input.dataset.flow = id;
+    wrap.append(input, document.createTextNode(label));
+    flowGroup.appendChild(wrap);
+    flowInputs[id] = input;
+    input.addEventListener('change', () => { if (input.checked) switchFlow(id); });
+  }
+  flowbar.appendChild(flowGroup);
+  const subtitleEl = panel.root.querySelector('.kus-lp__subtitle');
+
+  /** 見せる流れだけを DOM に置く（見えない流れの要素を残さない）。実行中は切り替えない。 */
+  function mountFlow(flow: DeployFlow) {
+    const next = flow === 'source' ? { workspace: sourceFlow.workspace, dock: sourceFlow.dock } : { workspace, dock };
+    const other = flow === 'source' ? { workspace, dock } : { workspace: sourceFlow.workspace, dock: sourceFlow.dock };
+    other.workspace.remove();
+    other.dock.remove();
+    if (!flowbar.isConnected) {
+      if (hint) hint.insertAdjacentElement('afterend', flowbar); else panel.body.insertBefore(flowbar, panel.body.firstChild);
+    }
+    flowbar.insertAdjacentElement('afterend', next.workspace);
+    panel.body.appendChild(next.dock);
+    if (subtitleEl) subtitleEl.textContent = FLOW_SUBTITLES[flow];
+    flowInputs[flow].checked = true;
+    next.dock.append(panel.status, panel.result);
+    if (flow === 'source') sourceFlow.activate(); else { sourceFlow.deactivate(); refreshWorkflow(); }
+  }
+  function switchFlow(flow: DeployFlow) {
+    if (busy) { flowInputs[memory.flow].checked = true; return; }
+    memory.flow = flow;
+    mountFlow(flow);
+    panel.setStatus('', 'neutral');
+  }
+
   panel.root.addEventListener('kus-lite-dispose', () => { progressView?.dispose(); }, { once: true });
 
+  const sourceFlow = createSourceFlow(panel);
   ready = true;
   clearConfirmation();
   refreshDetailSummary();
@@ -1547,8 +1460,11 @@ export function mountDeployLitePanel() {
     runningMode = memory.lastRun.result.mode;
     progressView = createProgressView(progressHost, memory.lastRun.result.mode, []);
     progressView.setOutcomes(memory.lastRun.result.apps);
-    if (memory.lastRun.result.logs?.length) panel.setResult(memory.lastRun.result.logs.join('\n'));
   }
   showStage(memory.lastRun ? 'result' : 'setup');
-  if (memory.lastRun) panel.setStatus(describeRunResult(memory.lastRun.result).text, describeRunResult(memory.lastRun.result).tone);
+  mountFlow(memory.flow);
+  if (memory.flow === 'publish' && memory.lastRun) {
+    if (memory.lastRun.result.logs?.length) panel.setResult(memory.lastRun.result.logs.join('\n'));
+    panel.setStatus(describeRunResult(memory.lastRun.result).text, describeRunResult(memory.lastRun.result).tone);
+  }
 }
