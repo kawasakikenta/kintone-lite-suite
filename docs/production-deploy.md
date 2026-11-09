@@ -145,8 +145,8 @@ kintone の REST API では、フィールドコードを変えただけの変�
 
 ## 公式 API の参照
 
-- [アプリの設定を運用環境に反映する](https://cybozu.dev/ja/kintone/docs/rest-api/apps/deploy-app-settings/)（`POST /k/v1/preview/app/deploy.json`。`revision` の指定、`revert` による変更の中止）
-- [アプリの設定の反映状況を取得する](https://cybozu.dev/ja/kintone/docs/rest-api/apps/get-app-deploy-status/)（`GET /k/v1/preview/app/deploy.json`。`PROCESSING` / `SUCCESS` / `FAIL` / `CANCEL`）
+- [アプリの設定を運用環境へ反映する](https://cybozu.dev/ja/kintone/docs/rest-api/apps/settings/deploy-app-settings/)（`POST /k/v1/preview/app/deploy.json`。最大 300 件、ゲストスペースは同じゲストスペースのアプリだけ。`revision` が実際と一致しなければエラーで設定は変わらない。`revert: true` で変更の中止。1 件でも失敗すると、指定したすべてのアプリが実行前の設定に戻る。完了前に設定を変更する API を実行するとエラー。API トークン認証可・アプリ管理権限が必要）
+- [アプリの設定の運用環境への反映状況を確認する](https://cybozu.dev/ja/kintone/docs/rest-api/apps/settings/get-app-deploy-status/)（`GET /k/v1/preview/app/deploy.json`。最大 300 件。`PROCESSING` / `SUCCESS` / `FAIL` / `CANCEL`（他のアプリの失敗による取り消し））
 
 実環境での未確認の項目は [次にやる作業（T7）](next-tasks.md) にまとめています。
 
