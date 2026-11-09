@@ -11,6 +11,7 @@ import { REFLECT_SECTION_KEYS } from '../reflect/sections.js';
 import { inspectTargetPendingChanges, type ReflectTargetPending } from '../reflect/targetPending.js';
 import { pushReflectErrorLog as pushErrorLog, type ApplySectionOutcome } from '../reflect/applyOutcome.js';
 import { RUN_CANCELLED_MESSAGE, isRunCancelledError } from '../runControl.js';
+import type { ComposedReflectSelection, SectionSelectionState } from '../reflect/selectionTypes.js';
 
 export interface ReflectOptions {
   sourceAppId: string; sourceGuestId?: string; sourcePreview?: boolean; sourceBundle?: unknown;
@@ -26,6 +27,8 @@ export interface PreviewReflectResult {
   /** 反映元のシステムフィールド（フィールド設定の反映では追加されない）のコード。参照不足の案内に使う */
   sourceSystemFieldCodes: string[];
   targetPending?: ReflectTargetPending;
+  /** フィールドコード → 表示名（反映先と反映元から。差分の選択・修正の表示に使う） */
+  fieldLabels?: Record<string, string>;
 }
 /** 反映の進捗通知。項目ごとに running → ok / ng / skip、中断で残った項目は pending。 */
 export interface ReflectSectionUpdate { sectionKey: string; label: string; status: 'running' | 'ok' | 'ng' | 'skip' | 'pending'; message?: string; /** 利用者の「中止」で途中で止まった項目（status は ng） */ stopped?: boolean }
@@ -197,8 +200,17 @@ export async function previewReflectStandalone(opts: ReflectOptions, setStatus: 
   };
 }
 
+/**
+ * 差分の選択・修正の状態から、項目ごとの送る設定と計画を作り直す（純粋。通信しない）。
+ * states に無い項目は既定の選択（すべて選択・修正なし）とする。仮実装: 実装担当が置き換える。
+ */
+export function composeReflectSelectionStandalone(preview: PreviewReflectResult, states: Record<string, SectionSelectionState>): ComposedReflectSelection {
+  void preview; void states;
+  throw new Error('composeReflectSelectionStandalone は未実装です');
+}
+
 export async function runApplyPreviewStandalone(
-  opts: ReflectOptions & { stopOnError?: boolean; doBackup?: boolean; doDeploy?: boolean; reviewBaseline: ReflectBaseline; onSectionUpdate?: (update: ReflectSectionUpdate) => void },
+  opts: ReflectOptions & { stopOnError?: boolean; doBackup?: boolean; doDeploy?: boolean; reviewBaseline: ReflectBaseline; onSectionUpdate?: (update: ReflectSectionUpdate) => void; /** 項目ごとの送る設定（差分の選択・修正の結果）。無い項目は既定の計画どおり */ composed?: Record<string, any> },
   setStatus: (message: string, error?: boolean) => void, onProgress: (logs: string[]) => void
 ): Promise<{ logs: string[]; sections: ApplySectionOutcome[]; backup?: ReflectBackup; /** 最後の書き込み後の反映先プレビューの revision（書き込みが無ければ確認時のまま） */ finalRevision: string; /** 利用者の中止で途中停止した（未実行の項目は pending、途中まで書いた項目は ng で示す） */ cancelled?: boolean }> {
   if (!opts.reviewBaseline) throw new Error('反映前に差分を取得して確認してください。');
