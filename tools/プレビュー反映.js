@@ -37,6 +37,7 @@
   var ICONS = Object.freeze({
     diff: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>',
     reflect: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>',
+    deploy: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 16.5c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.8.7-2.1-.1-2.9-.8-.8-2.1-.8-2.9-.1z"/><path d="M12 15l-3-3a22 22 0 0 1 2-3.9A12.9 12.9 0 0 1 22 2c0 2.7-.8 7.5-6 11a22 22 0 0 1-4 2z"/><path d="M9 12H4s.6-3 2-4c1.6-1.1 5 0 5 0"/><path d="M12 15v5s3-.6 4-2c1.1-1.6 0-5 0-5"/></svg>',
     field: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>',
     jsconfig: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
     er: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="6" cy="6" rx="3" ry="2"/><ellipse cx="18" cy="6" rx="3" ry="2"/><ellipse cx="12" cy="18" rx="3" ry="2"/><path d="M8.5 7.5l2 7"/><path d="M15.5 7.5l-2 7"/><path d="M9 6h6"/></svg>',
@@ -83,6 +84,22 @@
       usageOrder: 2,
       onboardingOrder: 2,
       badge: { tone: "caution", label: "要確認", icon: "2" }
+    },
+    {
+      key: "deploy",
+      group: "change",
+      groupLabel: "変更・反映",
+      icon: ICONS.deploy,
+      label: "本番反映",
+      desc: "プレビューの未公開の変更を確認し、バックアップを取ってから本番へ反映します。",
+      tabs: ["deploy"],
+      tab: "deploy",
+      priority: "medium",
+      riskLevel: "danger",
+      recommendedFor: ["プレビュー反映後の公開", "本番への一括反映"],
+      usageOrder: 2.5,
+      onboardingOrder: 2.5,
+      badge: { tone: "caution", label: "要確認", icon: "!" }
     },
     {
       key: "field",
@@ -635,6 +652,63 @@
     return legacyCopy(text);
   }
 
+  // src/kintone-query.ts
+  function querySyntaxText(query) {
+    const text = String(query || "");
+    let syntax = "";
+    let quoted = false;
+    for (let index = 0; index < text.length; index++) {
+      const char = text[index];
+      if (quoted) {
+        if (char === "\\" && index + 1 < text.length) index++;
+        else if (char === '"') quoted = false;
+        syntax += " ";
+        continue;
+      }
+      if (char === '"') {
+        quoted = true;
+        syntax += " ";
+      } else {
+        syntax += char;
+      }
+    }
+    return syntax;
+  }
+  var QUERY_KEYWORDS = /* @__PURE__ */ new Set(["and", "or", "not", "in", "like", "order", "by", "asc", "desc", "limit", "offset"]);
+  var NUMBER_TOKEN = /^[+-]?\d+(?:\.\d+)?$/;
+  var CALL_PATTERN = /([^\s()=!<>,+\-*/&^;:%]+)\s*\(([^()]*)\)/g;
+  var QUERY_SPLIT = /[^\s()=!<>,]+/g;
+  var EXPRESSION_SPLIT = /[^\s()=!<>,+\-*/&^;:%]+/g;
+  function uniqueKnownTokens(text, split, known) {
+    const found = /* @__PURE__ */ new Set();
+    for (const token of text.match(split) || []) {
+      if (NUMBER_TOKEN.test(token) || QUERY_KEYWORDS.has(token.toLowerCase())) continue;
+      if (known.has(token)) found.add(token);
+    }
+    return [...found];
+  }
+  function withoutFunctionCalls(syntax) {
+    let current = syntax;
+    for (let pass = 0; pass < 8; pass++) {
+      const next = current.replace(CALL_PATTERN, (match, name) => QUERY_KEYWORDS.has(name.toLowerCase()) ? match.replace(/\(/g, " ").replace(/\)/g, " ") : " ".repeat(match.length));
+      if (next === current) break;
+      current = next;
+    }
+    return current;
+  }
+  function extractQueryFieldCodes(query, knownCodes) {
+    const known = knownCodes instanceof Set ? knownCodes : new Set(knownCodes);
+    if (!known.size) return [];
+    return uniqueKnownTokens(withoutFunctionCalls(querySyntaxText(query)), QUERY_SPLIT, known);
+  }
+  function extractExpressionFieldCodes(expression, knownCodes) {
+    const known = knownCodes instanceof Set ? knownCodes : new Set(knownCodes);
+    if (!known.size) return [];
+    const syntax = querySyntaxText(expression);
+    const withoutNames = syntax.replace(/([^\s()=!<>,+\-*/&^;:%]+)(\s*\()/g, (_match, name, paren) => " ".repeat(name.length) + paren);
+    return uniqueKnownTokens(withoutNames, EXPRESSION_SPLIT, known);
+  }
+
   // src/runControl.ts
   var RUN_CANCELLED_MESSAGE = "利用者の操作で中止しました";
   var RunCancelledError = class extends Error {
@@ -793,6 +867,8 @@
   ]);
   var RECORD_CURSOR_PATH = "/records/cursor.json";
   var FILE_UPLOAD_PATH = "/file.json";
+  var APP_DEPLOY_PATH = "/app/deploy.json";
+  var DEPLOY_APPS_PER_REQUEST = 300;
   var apiGetMetrics = {
     calls: 0,
     retries: 0,
@@ -813,12 +889,13 @@
   function isRecordDataMutationPath(path) {
     return RECORD_DATA_MUTATION_PATHS.has(normalizeApiResourcePath(path));
   }
-  function assertAllowsMutatingRestCall(prefix, path, method) {
+  function assertAllowsMutatingRestCall(prefix, path, method, options = {}) {
     const m = String(method || "").toUpperCase();
     if (m === "GET" || m === "HEAD" || m === "OPTIONS") return;
     if (m !== "POST" && m !== "PUT" && m !== "DELETE" && m !== "PATCH") return;
     const rel = String(path || "").replace(/\\/g, "/");
     if (rel.includes(DEPLOY_PATH_SNIPPET)) {
+      if (options.allowAppDeploy === true && path === APP_DEPLOY_PATH && m === "POST" && isPreviewRestPrefix(prefix)) return;
       throw new Error(ERR_NO_DEPLOY_API);
     }
     if (normalizeApiResourcePath(rel) === RECORD_CURSOR_PATH && (m === "POST" || m === "DELETE")) {
@@ -971,6 +1048,27 @@ ${base}`
     const value = res?.revision;
     if (value == null || value === "") return "";
     return String(value);
+  }
+  var APP_ID_PATTERN = /^[1-9]\d*$/;
+  function assertDeployGuestId(guestId) {
+    const g = String(guestId || "").trim();
+    if (g && !APP_ID_PATTERN.test(g)) throw new Error("ゲストスペースIDは正の整数で指定してください。");
+  }
+  async function fetchAppDeployStatus(guestId, appIds) {
+    assertDeployGuestId(guestId);
+    if (!Array.isArray(appIds) || !appIds.length) return [];
+    if (appIds.length > DEPLOY_APPS_PER_REQUEST) throw new Error(`一度に確認できるアプリは ${DEPLOY_APPS_PER_REQUEST} 件までです（${appIds.length} 件指定されました）。`);
+    const ids = appIds.map((id) => String(id ?? "").trim());
+    const invalid = ids.find((id) => !APP_ID_PATTERN.test(id));
+    if (invalid !== void 0) throw new Error(`アプリIDは正の整数で指定してください（${invalid || "空"}）。`);
+    const res = await apiGet(buildApiPrefix(guestId, true), APP_DEPLOY_PATH, { apps: ids });
+    if (!res || !Array.isArray(res.apps)) throw new Error("反映状況の応答形式が不正です（apps がありません）。");
+    return res.apps.map((row) => {
+      const app = String(row?.app ?? "").trim();
+      const status = typeof row?.status === "string" ? row.status : "";
+      if (!app || !status) throw new Error("反映状況の応答形式が不正です（app または status がありません）。");
+      return { app, status };
+    });
   }
   function sanitizeBundleMeta(meta) {
     const out = { sectionRevisions: {} };
@@ -1435,8 +1533,8 @@ ${base}`
   function assertCompleteReflectBackup(bundle, scopes) {
     const incomplete = scopes.filter((key) => !isCompleteReflectSection(bundle?.sections?.[key]));
     if (!incomplete.length) return;
-    const labels2 = incomplete.map(reflectSectionLabel);
-    throw new Error(`バックアップを完全に取得できなかったため反映を中止しました。対象: ${labels2.join("、")}。差分を取得し直してから再実行してください。`);
+    const labels = incomplete.map(reflectSectionLabel);
+    throw new Error(`バックアップを完全に取得できなかったため反映を中止しました。対象: ${labels.join("、")}。差分を取得し直してから再実行してください。`);
   }
   function assertReflectBaselineMatches(baseline, opts, source, target) {
     if (!baseline || baseline.connection !== connectionKey(opts)) {
@@ -2365,18 +2463,18 @@ ${base}`
     if (Array.isArray(value)) return clip(value.map((item) => isObj(item) || Array.isArray(item) ? stable(item) : String(item)).join("、"));
     return clip(stable(value));
   }
-  function labelOnly(code, hint, labels2) {
+  function labelOnly(code, hint, labels) {
     if (typeof hint === "string" && hint) return hint;
-    return dictGet(labels2, code) || code;
+    return dictGet(labels, code) || code;
   }
-  function fieldName(code, labels2, hint) {
-    const label = labelOnly(code, hint, labels2);
+  function fieldName(code, labels, hint) {
+    const label = labelOnly(code, hint, labels);
     return label && label !== code ? `${label}（${code}）` : code;
   }
   function entityOf(element) {
     return isObj(element) && isObj(element.entity) ? element.entity : element;
   }
-  function entityText(entity, labels2) {
+  function entityText(entity, labels) {
     if (!isObj(entity)) return typeof entity === "string" ? entity : "（不明）";
     const type = String(entity.type || ""), code = String(entity.code ?? entity.login ?? "");
     const name = String(entity.name || "");
@@ -2387,7 +2485,7 @@ ${base}`
     if (type === "ALL" || type === "EVERYONE") return "全員";
     if (type === "LOGIN_USER") return "ログインユーザー";
     if (type === "CREATOR" || type === "MODIFIER") return code ? `${dictGet(ENTITY_TYPE_JP, type)}「${code}」` : dictGet(ENTITY_TYPE_JP, type);
-    if (type === "FIELD_ENTITY" || type === "CUSTOM_FIELD") return `フィールド値「${fieldName(code, labels2)}」`;
+    if (type === "FIELD_ENTITY" || type === "CUSTOM_FIELD") return `フィールド値「${fieldName(code, labels)}」`;
     const typeText = type === "DEPARTMENT" || type === "DEPT" ? "組織" : dictGet(ENTITY_TYPE_JP, type) ?? (type || "対象");
     const display = name && code && name !== code ? `${name}（${code}）` : name || code || "（未設定）";
     return `${typeText}「${display}」`;
@@ -2405,13 +2503,13 @@ ${base}`
     const joined = items.join("、"), text = clip(joined);
     return text !== joined && items.length > 1 ? `${text}（計 ${items.length} 件）` : text;
   };
-  function elementText(key, element, labels2, section) {
+  function elementText(key, element, labels, section) {
     if (!isObj(element)) {
       const text = String(element);
-      return key === "fields" && section === "viewSettings" ? fieldName(text, labels2) : clip(text);
+      return key === "fields" && section === "viewSettings" ? fieldName(text, labels) : clip(text);
     }
-    if (key === "groups") return `${fieldName(String(element.code ?? ""), labels2)}${element.per ? ` ${dictGet(GROUP_PER_JP, String(element.per)) ?? element.per}単位` : ""}`;
-    if (key === "aggregations") return `${dictGet(AGGREGATION_TYPE_JP, String(element.type)) ?? element.type ?? ""}${element.code ? ` ${fieldName(String(element.code), labels2)}` : ""}`.trim();
+    if (key === "groups") return `${fieldName(String(element.code ?? ""), labels)}${element.per ? ` ${dictGet(GROUP_PER_JP, String(element.per)) ?? element.per}単位` : ""}`;
+    if (key === "aggregations") return `${dictGet(AGGREGATION_TYPE_JP, String(element.type)) ?? element.type ?? ""}${element.code ? ` ${fieldName(String(element.code), labels)}` : ""}`.trim();
     if (key === "sorts") return `${dictGet(REPORT_SORT_BY_JP, String(element.by)) ?? element.by ?? ""} ${dictGet(REPORT_SORT_ORDER_JP, String(element.order)) ?? element.order ?? ""}`.trim();
     if (key === "mappings") {
       const from = element.srcType === "RECORD_URL" ? "レコードのURL" : element.srcField ?? element.sourceField ?? "";
@@ -2419,10 +2517,10 @@ ${base}`
       return `${from} → ${to}`;
     }
     if (key === "fieldMappings") return `${element.field ?? ""} ← ${element.relatedField ?? ""}`;
-    if (isObj(element.entity) || element.type && own(element, "code") && !element.name) return entityText(entityOf(element), labels2);
+    if (isObj(element.entity) || element.type && own(element, "code") && !element.name) return entityText(entityOf(element), labels);
     return clip(String(element.name ?? element.code ?? element.id ?? stable(element)));
   }
-  function arrayLine(key, label, before, after, labels2, section) {
+  function arrayLine(key, label, before, after, labels, section) {
     const pool2 = /* @__PURE__ */ new Map();
     for (const element of before) {
       const k = stable(element);
@@ -2443,7 +2541,7 @@ ${base}`
       }
       return false;
     });
-    const text = (items) => listText(items.map((element) => elementText(key, element, labels2, section)));
+    const text = (items) => listText(items.map((element) => elementText(key, element, labels, section)));
     if (!added.length && !removed.length) return `${label}: 並び順のみ変更`;
     const parts = [];
     if (added.length) parts.push(`追加 ${text(added)}`);
@@ -2469,7 +2567,7 @@ ${base}`
     if (removed.length) parts.push(`削除 ${listText(removed)}`);
     return [`${label}: ${parts.join(" / ")}`];
   }
-  function entityListLines(label, beforeList, afterList, labels2) {
+  function entityListLines(label, beforeList, afterList, labels) {
     const permissionText = (element) => {
       if (!isObj(element)) return "";
       const on = [];
@@ -2493,16 +2591,16 @@ ${base}`
     for (const element of beforeList) {
       const peer = queues.get(entityKey(element))?.shift();
       if (peer === void 0) {
-        removed.push(entityText(entityOf(element), labels2));
+        removed.push(entityText(entityOf(element), labels));
         continue;
       }
       matched.add(peer);
       if (same(element, peer)) continue;
       const keys = /* @__PURE__ */ new Set([...Object.keys(isObj(element) ? element : {}), ...Object.keys(isObj(peer) ? peer : {})]);
       const diffs = [...keys].filter((key) => !["entity", "type", "code", "name"].includes(key) && !same(get(element, key), get(peer, key))).map((key) => `${labelOfProp(key)} ${fmt(get(element, key), key)} → ${fmt(get(peer, key), key)}`);
-      if (diffs.length) changed.push(`${label} ${entityText(entityOf(element), labels2)}: ${diffs.join("、")}`);
+      if (diffs.length) changed.push(`${label} ${entityText(entityOf(element), labels)}: ${diffs.join("、")}`);
     }
-    const added = afterList.filter((element) => !matched.has(element)).map((element) => `${entityText(entityOf(element), labels2)}${permissionText(element)}`);
+    const added = afterList.filter((element) => !matched.has(element)).map((element) => `${entityText(entityOf(element), labels)}${permissionText(element)}`);
     const lines = [];
     const parts = [];
     if (added.length) parts.push(`追加 ${listText(added)}`);
@@ -2546,7 +2644,7 @@ ${base}`
     }
     return lines;
   }
-  var entitiesSpecial = (labels2) => (before, after, label) => entityListLines(label, list(before), list(after), labels2);
+  var entitiesSpecial = (labels) => (before, after, label) => entityListLines(label, list(before), list(after), labels);
   function fieldBrief(definition) {
     if (!isObj(definition)) return [];
     const out = [];
@@ -2557,13 +2655,13 @@ ${base}`
     else if (isObj(definition.options) && Object.keys(definition.options).length) out.push(`選択肢 ${Object.keys(definition.options).length}件`);
     return out.slice(0, 2);
   }
-  function fieldItems(before, after, labels2, push) {
+  function fieldItems(before, after, labels, push) {
     const bp = get(before, "properties"), ap = get(after, "properties");
     if (!isObj(bp) || !isObj(ap)) throw new Error("フィールド設定の形式が不正です。");
     const walk = (b, a, parentLabel) => {
       for (const code of [...Object.keys(a), ...Object.keys(b).filter((key) => !own(a, key))]) {
         const bd = get(b, code), ad = get(a, code), definition = ad ?? bd;
-        const label = labelOnly(code, get(definition, "label"), labels2);
+        const label = labelOnly(code, get(definition, "label"), labels);
         const withCode = label !== code ? `${label}（${code}）` : code;
         const name = parentLabel ? `${parentLabel} / ${withCode}` : withCode;
         if (bd === void 0 || ad === void 0) {
@@ -2573,14 +2671,14 @@ ${base}`
         const ignore = /* @__PURE__ */ new Set(["fields"]);
         const bc = get(bd, "code"), ac = get(ad, "code");
         if (bc === void 0 || ac === void 0 || bc === ac) ignore.add("code");
-        const lines = attrLines(bd, ad, { ignore, over: FIELD_ATTR_LABELS, typeDict: FIELD_TYPE_JP, labels: labels2, section: "fieldSettings", special: { options: (x, y, l) => optionLines(x, y, l) } });
+        const lines = attrLines(bd, ad, { ignore, over: FIELD_ATTR_LABELS, typeDict: FIELD_TYPE_JP, labels, section: "fieldSettings", special: { options: (x, y, l) => optionLines(x, y, l) } });
         if (lines.length) push("変更", name, lines);
         if (isObj(bd.fields) || isObj(ad.fields)) walk(isObj(bd.fields) ? bd.fields : {}, isObj(ad.fields) ? ad.fields : {}, label);
       }
     };
     walk(bp, ap, null);
   }
-  function scanLayout(layout, labels2) {
+  function scanLayout(layout, labels) {
     const placed = /* @__PURE__ */ new Map();
     const plain = /* @__PURE__ */ new Map();
     const place = (node, where) => {
@@ -2604,10 +2702,10 @@ ${base}`
           });
         } else if (node.type === "GROUP" && typeof node.code === "string") {
           place(node, `${prefix}${i + 1}行目`);
-          walk(list(node.layout), `グループ「${fieldName(node.code, labels2, node.label)}」`);
+          walk(list(node.layout), `グループ「${fieldName(node.code, labels, node.label)}」`);
         } else if (node.type === "SUBTABLE" && typeof node.code === "string") {
           place(node, `${prefix}${i + 1}行目`);
-          const table = `テーブル「${fieldName(node.code, labels2)}」`;
+          const table = `テーブル「${fieldName(node.code, labels)}」`;
           list(node.fields).forEach((child, j) => {
             if (isObj(child) && typeof child.code === "string" && child.code) place(child, `${table}の${j + 1}番目`);
             else if (isObj(child)) addPlain(child);
@@ -2618,17 +2716,17 @@ ${base}`
     walk(list(layout), "");
     return { placed, plain };
   }
-  function layoutItems(before, after, labels2, push) {
+  function layoutItems(before, after, labels, push) {
     const bl = get(before, "layout"), al = get(after, "layout");
     if (!Array.isArray(bl) || !Array.isArray(al)) throw new Error("レイアウトの形式が不正です。");
-    const b = scanLayout(bl, labels2), a = scanLayout(al, labels2);
+    const b = scanLayout(bl, labels), a = scanLayout(al, labels);
     let count = 0;
     const emit = (kind, name, details) => {
       count += 1;
       push(kind, name, details);
     };
     for (const [code, now] of a.placed) {
-      const nameOf = (placed) => fieldName(code, labels2, placed.node.type === "GROUP" ? placed.node.label : void 0);
+      const nameOf = (placed) => fieldName(code, labels, placed.node.type === "GROUP" ? placed.node.label : void 0);
       const prev = b.placed.get(code);
       if (!prev) {
         emit("追加", nameOf(now), [`配置: ${now.where}`]);
@@ -2642,10 +2740,10 @@ ${base}`
         const x = get(prev.node.size, key), y = get(now.node.size, key);
         if (String(x ?? "") !== String(y ?? "")) lines.push(`${labelFor(key, LAYOUT_ATTR_LABELS)}: ${px(x)} → ${px(y)}`);
       }
-      lines.push(...attrLines(prev.node, now.node, { ignore: /* @__PURE__ */ new Set(["code", "type", "size", "layout", "fields", "elementId"]), over: LAYOUT_ATTR_LABELS, labels: labels2 }));
+      lines.push(...attrLines(prev.node, now.node, { ignore: /* @__PURE__ */ new Set(["code", "type", "size", "layout", "fields", "elementId"]), over: LAYOUT_ATTR_LABELS, labels }));
       if (lines.length) emit("変更", nameOf(now), lines);
     }
-    for (const [code, prev] of b.placed) if (!a.placed.has(code)) emit("削除", fieldName(code, labels2, prev.node.type === "GROUP" ? prev.node.label : void 0), [`配置: ${prev.where} → なし`]);
+    for (const [code, prev] of b.placed) if (!a.placed.has(code)) emit("削除", fieldName(code, labels, prev.node.type === "GROUP" ? prev.node.label : void 0), [`配置: ${prev.where} → なし`]);
     const plainLines = { 削除: [], 追加: [], 変更: [] };
     for (const type of /* @__PURE__ */ new Set([...b.plain.keys(), ...a.plain.keys()])) {
       const x = b.plain.get(type) || [], y = a.plain.get(type) || [], name = dictGet(LAYOUT_PLAIN_LABELS, type) ?? type;
@@ -2654,21 +2752,21 @@ ${base}`
         continue;
       }
       const texts = (items) => items.map((item) => String(item.label ?? ""));
-      if (type === "LABEL" && !same(texts(x), texts(y))) plainLines.変更.push(arrayLine("label", `${name}の内容`, texts(x), texts(y), labels2, "layoutSettings"));
+      if (type === "LABEL" && !same(texts(x), texts(y))) plainLines.変更.push(arrayLine("label", `${name}の内容`, texts(x), texts(y), labels, "layoutSettings"));
       const sizes = (items) => items.map((item) => stable(item.size ?? null));
       if (!same(sizes(x), sizes(y))) plainLines.変更.push(`${name}の大きさを変更`);
     }
     for (const kind of ["削除", "変更", "追加"]) if (plainLines[kind].length) emit(kind, "ラベル・スペース・罫線", plainLines[kind]);
     if (!count && !same(bl, al)) emit("変更", "レイアウト", ["行や要素の並びを変更"]);
   }
-  function namedItems(sectionKey, before, after, labels2, push) {
+  function namedItems(sectionKey, before, after, labels, push) {
     const property = sectionKey === "viewSettings" ? "views" : sectionKey === "reportSettings" ? "reports" : "actions";
     const bm = get(before, property), am = get(after, property);
     if (!isObj(bm) || !isObj(am)) throw new Error("設定の形式が不正です。");
     const over = sectionKey === "viewSettings" ? VIEW_ATTR_LABELS : sectionKey === "reportSettings" ? REPORT_ATTR_LABELS : ACTION_ATTR_LABELS;
     const special = {
       index: (x, y, label) => [`${label}: ${ordinal(x)} → ${ordinal(y)}`],
-      entities: entitiesSpecial(labels2),
+      entities: entitiesSpecial(labels),
       destApp: (x, y, label) => [
         ...same(get(x, "app"), get(y, "app")) ? [] : [`${label}: ${fmt(get(x, "app"))} → ${fmt(get(y, "app"))}`],
         ...same(get(x, "code"), get(y, "code")) ? [] : [`${label}のアプリコード: ${fmt(get(x, "code"))} → ${fmt(get(y, "code"))}`]
@@ -2695,7 +2793,7 @@ ${base}`
       }
       const ignore = /* @__PURE__ */ new Set(["id"]);
       if (get(bv, "name") === void 0 || get(av, "name") === void 0 || get(bv, "name") === get(av, "name")) ignore.add("name");
-      const lines = attrLines(bv, av, { ignore, over, typeDict: VIEW_TYPE_JP, labels: labels2, section: sectionKey, special });
+      const lines = attrLines(bv, av, { ignore, over, typeDict: VIEW_TYPE_JP, labels, section: sectionKey, special });
       if (lines.length) push("変更", name, lines);
     }
   }
@@ -2737,19 +2835,19 @@ ${base}`
     if (rule.includeSubs === true) on.push("配下を含む");
     return [on.length ? `許可: ${listText(on)}` : "許可: なし", ...extra];
   }
-  function processItems(before, after, labels2, push) {
+  function processItems(before, after, labels, push) {
     if (!isObj(before) || !isObj(after)) throw new Error("プロセス管理の形式が不正です。");
     if (before.enable !== after.enable) push("変更", "プロセス管理", [`有効化: ${fmt(before.enable, "enable")} → ${fmt(after.enable, "enable")}`]);
     const assignee = (x, y) => {
       const lines = [];
       if (get(x, "type") !== get(y, "type")) lines.push(`作業者の選択方式: ${fmt(get(x, "type"), "type", PROCESS_ASSIGNEE_TYPE_JP)} → ${fmt(get(y, "type"), "type", PROCESS_ASSIGNEE_TYPE_JP)}`);
-      return [...lines, ...entityListLines("作業者", list(get(x, "entities")), list(get(y, "entities")), labels2)];
+      return [...lines, ...entityListLines("作業者", list(get(x, "entities")), list(get(y, "entities")), labels)];
     };
     const bs = isObj(before.states) ? before.states : {}, as = isObj(after.states) ? after.states : {};
     const stateBrief = (state3) => {
       const out = ["種類: 状態"];
       const entities = list(get(get(state3, "assignee"), "entities"));
-      if (entities.length) out.push(`作業者: ${listText(entities.map((entity) => entityText(entityOf(entity), labels2)))}`);
+      if (entities.length) out.push(`作業者: ${listText(entities.map((entity) => entityText(entityOf(entity), labels)))}`);
       return out;
     };
     for (const name of [...Object.keys(as), ...Object.keys(bs).filter((key) => !own(as, key))]) {
@@ -2758,56 +2856,56 @@ ${base}`
         push(av === void 0 ? "削除" : "追加", name, stateBrief(av ?? bv));
         continue;
       }
-      const lines = attrLines(bv, av, { ignore: /* @__PURE__ */ new Set(["name"]), over: { index: "表示順", assignee: "作業者" }, labels: labels2, section: "processSettings", special: { index: (x, y, label) => [`${label}: ${ordinal(x)} → ${ordinal(y)}`], assignee } });
+      const lines = attrLines(bv, av, { ignore: /* @__PURE__ */ new Set(["name"]), over: { index: "表示順", assignee: "作業者" }, labels, section: "processSettings", special: { index: (x, y, label) => [`${label}: ${ordinal(x)} → ${ordinal(y)}`], assignee } });
       if (lines.length) push("変更", name, lines);
     }
     const actionKey = (action) => `${action.name ?? ""}\0${action.from ?? ""}\0${action.to ?? ""}`;
     const actionName = (action) => `${action.name ?? "（名称なし）"}（${action.from ?? "?"} → ${action.to ?? "?"}）`;
-    const actionSpecial = { executableUser: (x, y) => entityListLines("実行者", list(get(x, "entities")), list(get(y, "entities")), labels2) };
+    const actionSpecial = { executableUser: (x, y) => entityListLines("実行者", list(get(x, "entities")), list(get(y, "entities")), labels) };
     ruleItems(list(before.actions), list(after.actions), {
       key: actionKey,
       name: actionName,
       sectionName: "アクション",
       orderName: "アクションの並び",
       brief: (action) => ["種類: アクション", ...action.filterCond ? [`条件: ${fmt(action.filterCond)}`] : []],
-      diff: (x, y) => attrLines(x, y, { ignore: /* @__PURE__ */ new Set(["name", "from", "to"]), over: PROCESS_ACTION_LABELS, labels: labels2, section: "processSettings", special: actionSpecial })
+      diff: (x, y) => attrLines(x, y, { ignore: /* @__PURE__ */ new Set(["name", "from", "to"]), over: PROCESS_ACTION_LABELS, labels, section: "processSettings", special: actionSpecial })
     }, push);
   }
-  function aclItems(sectionKey, before, after, labels2, push) {
+  function aclItems(sectionKey, before, after, labels, push) {
     const br = get(before, "rights"), ar = get(after, "rights");
     if (!Array.isArray(br) || !Array.isArray(ar)) throw new Error("権限の形式が不正です。");
-    const special = { entities: entitiesSpecial(labels2) };
+    const special = { entities: entitiesSpecial(labels) };
     if (sectionKey === "appAcl") {
       ruleItems(br, ar, {
         sectionName: "アプリ権限",
         key: (rule) => entityKey(rule),
-        name: (rule) => entityText(entityOf(rule), labels2),
+        name: (rule) => entityText(entityOf(rule), labels),
         brief: (rule) => permissionBrief(rule),
-        diff: (x, y) => attrLines(x, y, { ignore: /* @__PURE__ */ new Set(["entity"]), labels: labels2, section: sectionKey })
+        diff: (x, y) => attrLines(x, y, { ignore: /* @__PURE__ */ new Set(["entity"]), labels, section: sectionKey })
       }, push);
     } else if (sectionKey === "recordPermissions") {
       ruleItems(br, ar, {
         sectionName: "レコード権限",
         key: (rule) => String(rule.filterCond ?? ""),
         name: (rule) => rule.filterCond ? `条件「${clip(String(rule.filterCond), 60)}」` : "条件なし（すべてのレコード）",
-        brief: (rule) => rule.entities?.length ? entityListLines("対象", [], list(rule.entities), labels2) : ["対象なし"],
-        diff: (x, y) => attrLines(x, y, { ignore: /* @__PURE__ */ new Set(["filterCond"]), labels: labels2, section: sectionKey, special, over: { entities: "対象" } })
+        brief: (rule) => rule.entities?.length ? entityListLines("対象", [], list(rule.entities), labels) : ["対象なし"],
+        diff: (x, y) => attrLines(x, y, { ignore: /* @__PURE__ */ new Set(["filterCond"]), labels, section: sectionKey, special, over: { entities: "対象" } })
       }, push);
     } else {
       ruleItems(br, ar, {
         sectionName: "フィールド権限",
         key: (rule) => typeof rule.code === "string" && rule.code ? rule.code : null,
-        name: (rule) => fieldName(String(rule.code), labels2),
-        brief: (rule) => rule.entities?.length ? entityListLines("対象", [], list(rule.entities), labels2) : ["対象なし"],
-        diff: (x, y) => attrLines(x, y, { ignore: /* @__PURE__ */ new Set(["code"]), labels: labels2, section: sectionKey, special, over: { entities: "対象" } })
+        name: (rule) => fieldName(String(rule.code), labels),
+        brief: (rule) => rule.entities?.length ? entityListLines("対象", [], list(rule.entities), labels) : ["対象なし"],
+        diff: (x, y) => attrLines(x, y, { ignore: /* @__PURE__ */ new Set(["code"]), labels, section: sectionKey, special, over: { entities: "対象" } })
       }, push);
     }
     extraItems(before, after, /* @__PURE__ */ new Set(["rights"]), push);
   }
-  function timingText(timing, labels2) {
+  function timingText(timing, labels) {
     if (!isObj(timing)) return fmt(timing);
     const parts = [];
-    if (timing.code) parts.push(fieldName(String(timing.code), labels2));
+    if (timing.code) parts.push(fieldName(String(timing.code), labels));
     if (timing.daysLater !== void 0 && timing.daysLater !== "") parts.push(describeReminderOffset("days", timing.daysLater) ?? `${timing.daysLater}日`);
     if (timing.hoursLater !== void 0 && timing.hoursLater !== "") parts.push(describeReminderOffset("hours", timing.hoursLater) ?? `${timing.hoursLater}時間`);
     if (timing.time) parts.push(String(timing.time));
@@ -2822,20 +2920,20 @@ ${base}`
       push("変更", labelOfProp(key), [`${fmt(bv, key)} → ${fmt(av, key)}`]);
     }
   }
-  function notificationItems(sectionKey, before, after, labels2, push) {
+  function notificationItems(sectionKey, before, after, labels, push) {
     const bn = get(before, "notifications"), an = get(after, "notifications");
     if (!Array.isArray(bn) || !Array.isArray(an)) throw new Error("通知の形式が不正です。");
-    const targets = entitiesSpecial(labels2);
+    const targets = entitiesSpecial(labels);
     if (sectionKey === "notifications") {
       ruleItems(bn, an, {
         sectionName: "通知",
         key: (rule) => entityKey(rule),
-        name: (rule) => entityText(entityOf(rule), labels2),
+        name: (rule) => entityText(entityOf(rule), labels),
         brief: (rule) => {
           const on = Object.keys(rule).filter((key) => key !== "entity" && key !== "includeSubs" && rule[key] === true).map((key) => labelOfProp(key));
           return [on.length ? `通知する: ${listText(on)}` : "通知する条件なし"];
         },
-        diff: (x, y) => attrLines(x, y, { ignore: /* @__PURE__ */ new Set(["entity"]), labels: labels2, section: sectionKey })
+        diff: (x, y) => attrLines(x, y, { ignore: /* @__PURE__ */ new Set(["entity"]), labels, section: sectionKey })
       }, push);
     } else {
       const reminder = sectionKey === "reminderNotifications";
@@ -2844,16 +2942,16 @@ ${base}`
         key: (rule) => typeof rule.title === "string" && rule.title ? rule.title : null,
         name: (rule) => String(rule.title),
         brief: (rule) => [
-          ...reminder ? [`通知するタイミング: ${timingText(rule.timing, labels2)}`] : [],
+          ...reminder ? [`通知するタイミング: ${timingText(rule.timing, labels)}`] : [],
           ...rule.filterCond ? [`絞り込み条件: ${fmt(rule.filterCond)}`] : [],
-          ...list(rule.targets).length ? entityListLines("通知先", [], list(rule.targets), labels2) : ["通知先なし"]
+          ...list(rule.targets).length ? entityListLines("通知先", [], list(rule.targets), labels) : ["通知先なし"]
         ],
         diff: (x, y) => attrLines(x, y, {
           ignore: /* @__PURE__ */ new Set(["title"]),
-          labels: labels2,
+          labels,
           section: sectionKey,
           over: { targets: "通知先", filterCond: "絞り込み条件", timing: "通知するタイミング" },
-          special: { targets, timing: (p, q, label) => [`${label}: ${timingText(p, labels2)} → ${timingText(q, labels2)}`] }
+          special: { targets, timing: (p, q, label) => [`${label}: ${timingText(p, labels)} → ${timingText(q, labels)}`] }
         })
       }, push);
     }
@@ -2874,7 +2972,7 @@ ${base}`
     walk(categories, []);
     return out;
   }
-  function categoryItems(before, after, labels2, push) {
+  function categoryItems(before, after, labels, push) {
     if (!isObj(before) || !isObj(after)) throw new Error("カテゴリーの形式が不正です。");
     if (before.enabled !== after.enabled) push("変更", "カテゴリー機能", [`有効状態: ${fmt(before.enabled, "enabled")} → ${fmt(after.enabled, "enabled")}`]);
     const b = categoryPaths(before.categories), a = categoryPaths(after.categories);
@@ -2884,7 +2982,7 @@ ${base}`
         push("追加", path, ["カテゴリーを追加"]);
         continue;
       }
-      const lines = attrLines(strip(b.get(path)), strip(node), { over: { index: "表示順", name: "名前", label: "名前" }, labels: labels2, special: { index: (x, y, label) => [`${label}: ${ordinal(x)} → ${ordinal(y)}`] } });
+      const lines = attrLines(strip(b.get(path)), strip(node), { over: { index: "表示順", name: "名前", label: "名前" }, labels, special: { index: (x, y, label) => [`${label}: ${ordinal(x)} → ${ordinal(y)}`] } });
       if (lines.length) push("変更", path, lines);
     }
     for (const path of b.keys()) if (!a.has(path)) push("削除", path, ["カテゴリーを削除"]);
@@ -2950,7 +3048,7 @@ ${base}`
       }
     }
   }
-  function appSettingsItems(before, after, labels2, push) {
+  function appSettingsItems(before, after, labels, push) {
     if (!isObj(before) || !isObj(after)) throw new Error("アプリ設定の形式が不正です。");
     const order = Object.keys(APP_SETTING_LABELS);
     const keys = [...order, ...[.../* @__PURE__ */ new Set([...Object.keys(before), ...Object.keys(after)])].filter((key) => !order.includes(key) && key !== "revision")];
@@ -2963,7 +3061,7 @@ ${base}`
       if (key === "titleField") {
         details = [
           ...kv("選択方法", get(bv, "selectionMode"), get(av, "selectionMode"), (value) => fmt(value, "selectionMode")),
-          ...kv("フィールド", get(bv, "code"), get(av, "code"), (value) => value ? fieldName(String(value), labels2) : "（なし）")
+          ...kv("フィールド", get(bv, "code"), get(av, "code"), (value) => value ? fieldName(String(value), labels) : "（なし）")
         ];
       } else if (key === "numberPrecision") {
         details = [
@@ -2974,12 +3072,12 @@ ${base}`
       } else if (key === "firstMonthOfFiscalYear") {
         details = [`${bv === void 0 ? "（なし）" : `${bv}月`} → ${av === void 0 ? "（なし）" : `${av}月`}`];
       } else if (isObj(bv) && isObj(av)) {
-        details = attrLines(bv, av, { labels: labels2 });
+        details = attrLines(bv, av, { labels });
       } else details = [`${fmt(bv, key)} → ${fmt(av, key)}`];
       push("変更", name, details.length ? details : [`${fmt(bv, key)} → ${fmt(av, key)}`]);
     }
   }
-  function genericItems(before, after, labels2, push) {
+  function genericItems(before, after, labels, push) {
     if (!isObj(before) && !isObj(after)) {
       if (!same(before, after)) push("変更", "設定", [`${fmt(before)} → ${fmt(after)}`]);
       return;
@@ -2990,13 +3088,13 @@ ${base}`
       if (same(bv, av)) continue;
       const name = labelOfProp(key);
       const arrayish = (value) => Array.isArray(value) || value === void 0;
-      const lines = arrayish(bv) && arrayish(av) ? [arrayLine(key, name, list(bv), list(av), labels2, "")] : isObj(bv) && isObj(av) ? attrLines(bv, av, { labels: labels2 }) : [`${fmt(bv, key)} → ${fmt(av, key)}`];
+      const lines = arrayish(bv) && arrayish(av) ? [arrayLine(key, name, list(bv), list(av), labels, "")] : isObj(bv) && isObj(av) ? attrLines(bv, av, { labels }) : [`${fmt(bv, key)} → ${fmt(av, key)}`];
       push(bv === void 0 ? "追加" : av === void 0 ? "削除" : "変更", name, lines.length ? lines : ["内容を変更"]);
     }
   }
   var KIND_ORDER = { 削除: 0, 変更: 1, 追加: 2, 保持: 3 };
   function summarizeReflectItems(sectionKey, before, after, context = {}) {
-    const labels2 = context.fieldLabels;
+    const labels = context.fieldLabels;
     const run = (build) => {
       const items2 = [];
       const push = (kind, name, details) => {
@@ -3009,33 +3107,33 @@ ${base}`
     const specific = (push) => {
       switch (sectionKey) {
         case "fieldSettings":
-          return fieldItems(before, after, labels2, push);
+          return fieldItems(before, after, labels, push);
         case "layoutSettings":
-          return layoutItems(before, after, labels2, push);
+          return layoutItems(before, after, labels, push);
         case "viewSettings":
         case "reportSettings":
         case "actionSettings":
-          return namedItems(sectionKey, before, after, labels2, push);
+          return namedItems(sectionKey, before, after, labels, push);
         case "processSettings":
-          return processItems(before, after, labels2, push);
+          return processItems(before, after, labels, push);
         case "appAcl":
         case "recordPermissions":
         case "fieldAcl":
-          return aclItems(sectionKey, before, after, labels2, push);
+          return aclItems(sectionKey, before, after, labels, push);
         case "notifications":
         case "perRecordNotifications":
         case "reminderNotifications":
-          return notificationItems(sectionKey, before, after, labels2, push);
+          return notificationItems(sectionKey, before, after, labels, push);
         case "categories":
-          return categoryItems(before, after, labels2, push);
+          return categoryItems(before, after, labels, push);
         case "pluginSettings":
           return pluginItems(before, after, push);
         case "customizeSettings":
           return customizeItems(before, after, push);
         case "appSettings":
-          return appSettingsItems(before, after, labels2, push);
+          return appSettingsItems(before, after, labels, push);
         default:
-          return genericItems(before, after, labels2, push);
+          return genericItems(before, after, labels, push);
       }
     };
     let items;
@@ -3043,7 +3141,7 @@ ${base}`
       items = run(specific);
     } catch {
       try {
-        items = run((push) => genericItems(before, after, labels2, push));
+        items = run((push) => genericItems(before, after, labels, push));
       } catch {
         items = [];
       }
@@ -3125,17 +3223,17 @@ ${base}`
     return names;
   }
   function reflectFieldLabels(...bundles) {
-    const labels2 = /* @__PURE__ */ Object.create(null);
+    const labels = /* @__PURE__ */ Object.create(null);
     const collect = (properties) => {
       if (!isObj(properties)) return;
       for (const [code, definition] of Object.entries(properties)) {
         if (!isObj(definition)) continue;
-        if (typeof definition.label === "string" && definition.label) labels2[code] = definition.label;
+        if (typeof definition.label === "string" && definition.label) labels[code] = definition.label;
         if (definition.type === "SUBTABLE") collect(definition.fields);
       }
     };
     for (const bundle of bundles) collect(bundle?.sections?.fieldSettings?.properties);
-    return labels2;
+    return labels;
   }
 
   // src/reflect/standalonePlan.ts
@@ -3145,12 +3243,12 @@ ${base}`
   var object = (value) => !!value && typeof value === "object" && !Array.isArray(value);
   var equal = (a, b) => stableReflectStringify(a) === stableReflectStringify(b);
   var valueText = (value) => value === void 0 ? "（なし）" : typeof value === "string" ? value : JSON.stringify(value);
-  var labels = { properties: "フィールド", layout: "配置", views: "一覧", reports: "グラフ", actions: "アクション", rights: "アクセス権", notifications: "通知", categories: "カテゴリー", label: "表示名", required: "必須", unique: "重複禁止", options: "選択肢", defaultValue: "初期値", type: "種類", index: "表示順", filterCond: "絞り込み", sort: "並び順", enable: "有効", states: "状態", scope: "適用範囲", fields: "フィールド", desktop: "PC", mobile: "モバイル" };
+  var diffPathLabels = { properties: "フィールド", layout: "配置", views: "一覧", reports: "グラフ", actions: "アクション", rights: "アクセス権", notifications: "通知", categories: "カテゴリー", label: "表示名", required: "必須", unique: "重複禁止", options: "選択肢", defaultValue: "初期値", type: "種類", index: "表示順", filterCond: "絞り込み", sort: "並び順", enable: "有効", states: "状態", scope: "適用範囲", fields: "フィールド", desktop: "PC", mobile: "モバイル" };
   var nameKeyedContainers = /* @__PURE__ */ new Set(["properties", "fields", "views", "reports", "actions", "states", "categories", "options"]);
   function diffValues(before, after, path, output, keysAreNames = false) {
     if (equal(before, after)) return;
     if (object(before) && object(after)) {
-      for (const key of /* @__PURE__ */ new Set([...Object.keys(before), ...Object.keys(after)])) diffValues(own2(before, key) ? before[key] : void 0, own2(after, key) ? after[key] : void 0, [...path, !keysAreNames && own2(labels, key) ? labels[key] : key], output, !keysAreNames && nameKeyedContainers.has(key));
+      for (const key of /* @__PURE__ */ new Set([...Object.keys(before), ...Object.keys(after)])) diffValues(own2(before, key) ? before[key] : void 0, own2(after, key) ? after[key] : void 0, [...path, !keysAreNames && own2(diffPathLabels, key) ? diffPathLabels[key] : key], output, !keysAreNames && nameKeyedContainers.has(key));
     } else if (Array.isArray(before) && Array.isArray(after)) {
       const queues = /* @__PURE__ */ new Map(), taken = /* @__PURE__ */ new Set();
       after.forEach((value, index) => {
@@ -3276,21 +3374,67 @@ ${base}`
     appendMissing(target, result);
     return result;
   }
-  var FIELD_DEPENDENT_SECTIONS = ["layoutSettings", "viewSettings", "reportSettings", "actionSettings", "appSettings", "fieldAcl", "reminderNotifications", "processSettings"];
+  var FIELD_DEPENDENT_SECTIONS = ["layoutSettings", "viewSettings", "reportSettings", "actionSettings", "appSettings", "fieldAcl", "reminderNotifications", "processSettings", "recordPermissions", "perRecordNotifications"];
   function reflectInspectionScopes(scopes) {
     return [.../* @__PURE__ */ new Set([...scopes, ...scopes.some((key) => FIELD_DEPENDENT_SECTIONS.includes(key)) ? ["fieldSettings"] : []])];
   }
-  function reflectSelectionBlockers(entries, scopes, sourceFields, targetFields, sourceSystemFields = []) {
+  function reflectSelectionBlockers(entries, scopes, sourceFields, targetFields, sourceSystemFields = [], addableSourceFields = []) {
     const selected = entries.filter((entry) => scopes.includes(entry.sectionKey));
     const available = /* @__PURE__ */ new Set([...targetFields, ...scopes.includes("fieldSettings") && !selected.find((entry) => entry.sectionKey === "fieldSettings")?.blockers.length ? sourceFields : []]);
     const system = new Set(sourceSystemFields);
+    const addable = new Set(addableSourceFields);
     const issues = selected.flatMap((entry) => entry.blockers.map((message) => `${entry.label}: ${message}`));
     for (const entry of selected) for (const code of entry.requiredFields || []) {
       if (available.has(code)) continue;
       if (system.has(code)) issues.push(`${entry.label}: 参照するフィールド「${code}」は反映元のシステムフィールド（レコード番号・ステータス・カテゴリーなど）ですが、反映先に同じコードがありません。反映先でフィールドコードを合わせる、またはプロセス管理・カテゴリーを有効にしてから再取得するか、この項目を除外してください。`);
+      else if (scopes.includes("fieldSettings") && addable.has(code)) issues.push(`${entry.label}: 参照するフィールド「${code}」が反映先にありません。反映元にあるフィールドなので、フィールド設定で「${code}」の追加も選ぶか、この項目を除外してください。`);
       else issues.push(`${entry.label}: 参照するフィールド「${code}」が反映先にありません。フィールド設定も反映対象に含めるか、この項目を除外してください。`);
     }
     return [...new Set(issues)];
+  }
+  function reflectRequiredFields(key, after, knownFieldCodes) {
+    const known = knownFieldCodes ? knownFieldCodes instanceof Set ? knownFieldCodes : new Set(knownFieldCodes) : void 0;
+    const queryCodes = (...queries) => known ? queries.flatMap((query) => extractQueryFieldCodes(query, known)) : [];
+    const unique = (codes) => [...new Set(codes)];
+    if (key === "viewSettings") {
+      if (!object(after?.views)) return [];
+      return unique(Object.values(after.views).flatMap((view) => [
+        ...view?.type === "LIST" ? view.fields || [] : view?.type === "CALENDAR" ? [view.date, view.title].filter(Boolean) : [],
+        ...queryCodes(view?.filterCond, view?.sort)
+      ]).filter((code) => !["$id", "$revision"].includes(code)));
+    }
+    if (key === "actionSettings") return unique([...extractActionRequiredFields(after?.actions), ...queryCodes(...Object.values(object(after?.actions) ? after.actions : {}).map((action) => action?.filterCond))]);
+    if (key === "reportSettings") return unique([...extractReportRequiredFields(after?.reports), ...queryCodes(...Object.values(object(after?.reports) ? after.reports : {}).map((report) => report?.filterCond))]);
+    if (key === "recordPermissions" || key === "perRecordNotifications") {
+      const list2 = key === "recordPermissions" ? after?.rights : after?.notifications;
+      return unique(queryCodes(...(Array.isArray(list2) ? list2 : []).map((item) => item?.filterCond)));
+    }
+    if (key === "fieldAcl") return [...new Set((after?.rights || []).map((right) => String(right?.code || "")).filter((code) => code && !["$id", "$revision"].includes(code)))];
+    if (key === "reminderNotifications") return unique([
+      ...(after?.notifications || []).flatMap((item) => [item?.timing?.code, ...(item?.targets || []).filter((target) => target?.entity?.type === "FIELD_ENTITY").map((target) => target.entity.code)]).map((code) => String(code || "")).filter((code) => !!code),
+      ...queryCodes(...(Array.isArray(after?.notifications) ? after.notifications : []).map((item) => item?.filterCond))
+    ]);
+    if (key === "processSettings") {
+      if (!object(after?.states)) return void 0;
+      return unique([
+        ...Object.values(after.states).flatMap((state3) => (state3?.assignee?.entities || []).filter((item) => item?.entity?.type === "FIELD_ENTITY").map((item) => String(item.entity.code || ""))).filter((code) => !!code),
+        ...queryCodes(...(Array.isArray(after?.actions) ? after.actions : []).map((action) => action?.filterCond))
+      ]);
+    }
+    if (key === "layoutSettings") {
+      const codes = [];
+      const walk = (nodes) => {
+        for (const node of nodes) {
+          if (node.code) codes.push(String(node.code));
+          if (Array.isArray(node.fields)) walk(node.fields);
+          if (Array.isArray(node.layout)) walk(node.layout);
+        }
+      };
+      walk(Array.isArray(after?.layout) ? after.layout : []);
+      return [...new Set(codes)];
+    }
+    if (key === "appSettings") return after?.titleField?.selectionMode === "MANUAL" && typeof after.titleField.code === "string" && after.titleField.code ? [after.titleField.code] : void 0;
+    return void 0;
   }
   var settingValue = (value) => typeof value === "number" ? String(value) : Array.isArray(value) ? value.map(settingValue) : object(value) ? Object.fromEntries(Object.entries(value).map(([name, item]) => [name, settingValue(item)])) : value;
   function buildAppSettingsPlan(plan, source, target, options) {
@@ -3302,7 +3446,7 @@ ${base}`
       if (!Object.keys(after).length) throw new Error("反映元に比較できる一般設定がありません（古い設定JSONの可能性があります）。");
       if (after.titleField?.selectionMode === "MANUAL") {
         if (typeof after.titleField.code !== "string" || !after.titleField.code) throw new Error("レコードのタイトルに使うフィールドが指定されていません。");
-        plan.requiredFields = [after.titleField.code];
+        plan.requiredFields = reflectRequiredFields("appSettings", after);
       }
       diffValues(before, after, [], plan.changes);
       for (const change of plan.changes) if (change.kind === "削除") change.kind = "変更";
@@ -3320,6 +3464,7 @@ ${base}`
       if (plan.changeCount) plan.operations.push({ method: "PUT", endpoint: SECTION_DEFS.find((item) => item.key === "appSettings")?.endpoint || "/app/settings.json", body: after, label: plan.label });
       plan.status = plan.operations.length ? "change" : "same";
       plan.message = plan.operations.length ? `変更 ${plan.changeCount}件 / 削除 ${plan.removalCount}件 / ${plan.behavior}` : "書き込み不要（一致）";
+      plan.values = { before: deepClone(before), after: deepClone(after) };
     } catch (error) {
       if (isRunCancelledError(error)) throw error;
       plan.status = "error";
@@ -3420,10 +3565,8 @@ ${base}`
         before = { [property]: to };
         after = { [property]: combined };
         plan.behavior = preserve ? "追加・更新（反映先だけの設定は保持）" : "全置換（反映元にない設定を削除）";
-        if (preserve) for (const name of Object.keys(to).filter((name2) => !own2(from, name2))) plan.changes.push({ kind: "保持", path: `${labels[property]} / ${name}`, before: valueText(to[name]), after: "内容を保持（表示順は反映元の後）" });
-        if (key === "viewSettings") plan.requiredFields = [...new Set(Object.values(combined).flatMap((view) => view.type === "LIST" ? view.fields || [] : view.type === "CALENDAR" ? [view.date, view.title].filter(Boolean) : []).filter((code) => !["$id", "$revision"].includes(code)))];
-        if (key === "actionSettings") plan.requiredFields = extractActionRequiredFields(combined);
-        if (key === "reportSettings") plan.requiredFields = extractReportRequiredFields(combined);
+        if (preserve) for (const name of Object.keys(to).filter((name2) => !own2(from, name2))) plan.changes.push({ kind: "保持", path: `${diffPathLabels[property]} / ${name}`, before: valueText(to[name]), after: "内容を保持（表示順は反映元の後）" });
+        plan.requiredFields = reflectRequiredFields(key, after, options.knownFieldCodes);
       } else if (key === "pluginSettings") {
         if (!Array.isArray(source.plugins) || !Array.isArray(target.plugins)) throw new Error("プラグイン一覧の形式が不正です。");
         const existing = new Set(target.plugins.map((item) => item.id));
@@ -3485,23 +3628,15 @@ ${base}`
           if (uploads.length) plan.warnings.push(`${uploads.length} 件のファイル（合計 ${formatBytes(uploads.reduce((sum, upload) => sum + upload.byteSize, 0))}）を反映先へアップロードしてから設定します。`);
           if (uploads.length && resolution?.targetUnavailable.length) plan.warnings.push(`反映先の ${resolution.targetUnavailable.map((item) => `「${item.name}」（${item.reason}）`).join("、")} の本体を確認できなかったため、同じ内容のファイルがあっても再利用せずアップロードします。`);
         }
-        if (key === "fieldAcl") plan.requiredFields = [...new Set((after.rights || []).map((right) => String(right?.code || "")).filter((code) => code && !["$id", "$revision"].includes(code)))];
-        if (key === "reminderNotifications") plan.requiredFields = [...new Set((after.notifications || []).flatMap((item) => [item?.timing?.code, ...(item?.targets || []).filter((target2) => target2?.entity?.type === "FIELD_ENTITY").map((target2) => target2.entity.code)]).map((code) => String(code || "")).filter((code) => !!code))];
-        if (key === "processSettings" && object(after.states)) plan.requiredFields = [...new Set(Object.values(after.states).flatMap((state3) => (state3?.assignee?.entities || []).filter((item) => item?.entity?.type === "FIELD_ENTITY").map((item) => String(item.entity.code || ""))).filter((code) => !!code))];
+        if (key === "fieldAcl" || key === "reminderNotifications" || key === "processSettings" || key === "recordPermissions" || key === "perRecordNotifications") {
+          const required = reflectRequiredFields(key, after, options.knownFieldCodes);
+          if (required) plan.requiredFields = required;
+        }
         if (key === "layoutSettings") {
           if (!Array.isArray(source.layout) || !Array.isArray(target.layout)) throw new Error("レイアウトの形式が不正です。");
           after.layout = mergeLayout(source.layout, target.layout, plan);
           plan.behavior = "配置を更新（反映先だけのフィールド配置は保持）";
-          const codes = [];
-          const walk = (nodes) => {
-            for (const node of nodes) {
-              if (node.code) codes.push(String(node.code));
-              if (Array.isArray(node.fields)) walk(node.fields);
-              if (Array.isArray(node.layout)) walk(node.layout);
-            }
-          };
-          walk(after.layout);
-          plan.requiredFields = [...new Set(codes)];
+          plan.requiredFields = reflectRequiredFields("layoutSettings", after);
         }
       }
       const shownBefore = comparable2 ? comparable2(before) : before, shownAfter = comparable2 ? comparable2(after) : after;
@@ -3516,6 +3651,11 @@ ${base}`
       plan.removalCount = plan.changes.filter((change) => change.kind === "削除").length;
       if (key !== "fieldSettings" && key !== "pluginSettings" && plan.changeCount) plan.operations.push({ method: "PUT", endpoint: def.endpoint, body: after, label: def.label, ...uploads.length ? { uploads } : {} });
       if (uploads.length && plan.changeCount) plan.fileUploads = uploads;
+      plan.values = { before: deepClone(before), after: deepClone(after) };
+      if (key === "customizeSettings") {
+        plan.values.fileNames = { ...customizeFileNames(source, target) };
+        plan.values.fileHashes = { ...options.customizeFiles?.hashes || {} };
+      }
       if (plan.blockers.length) plan.status = "error";
       else plan.status = plan.operations.length ? "change" : "same";
       plan.message = plan.blockers.length ? plan.blockers.join("\n") : plan.operations.length ? `変更 ${plan.changeCount}件 / 削除 ${plan.removalCount}件 / ${plan.behavior}` : `書き込み不要${plan.changes.some((change) => change.kind === "保持") ? "（反映先だけの設定は保持）" : "（一致）"}`;
@@ -3712,6 +3852,344 @@ ${base}`
     return out;
   }
 
+  // src/reflect/selectionPointer.ts
+  var own3 = (target, key) => Object.prototype.hasOwnProperty.call(target, key);
+  var isPlainObject = (value) => !!value && typeof value === "object" && !Array.isArray(value);
+  function stableJson(value) {
+    const sort = (input) => Array.isArray(input) ? input.map(sort) : isPlainObject(input) ? Object.fromEntries(Object.keys(input).sort().map((key) => [key, sort(input[key])])) : input;
+    return JSON.stringify(sort(value)) ?? "undefined";
+  }
+  var sameValue = (a, b) => stableJson(a) === stableJson(b);
+
+  // src/reflect/selectionLabels.ts
+  function fieldDisplayName(code, fieldLabels, hint) {
+    const label = typeof hint === "string" && hint ? hint : own3(fieldLabels, code) ? fieldLabels[code] : "";
+    return label && label !== code ? `${label}（${code}）` : code;
+  }
+  var VIEW_LABELS = {
+    fields: "表示フィールド",
+    sort: "並び順",
+    filterCond: "絞り込み条件",
+    type: "一覧の種類",
+    date: "日付フィールド",
+    title: "タイトルフィールド",
+    html: "HTML",
+    pager: "ページ送りの表示",
+    device: "表示するデバイス",
+    builtinType: "標準一覧の種類",
+    index: "表示順",
+    name: "名前",
+    views: "一覧"
+  };
+  var REPORT_LABELS = {
+    chartType: "グラフの種類",
+    chartMode: "モード",
+    groups: "分類",
+    aggregations: "集計",
+    sorts: "並び順",
+    filterCond: "絞り込み条件",
+    periodicReport: "定期レポート",
+    index: "表示順",
+    name: "名前",
+    reports: "グラフ"
+  };
+  var ACTION_LABELS = {
+    filterCond: "実行条件",
+    entities: "実行できる対象",
+    destApp: "コピー先アプリ",
+    mappings: "フィールド対応",
+    index: "表示順",
+    name: "名前",
+    actions: "アクション"
+  };
+  var PROCESS_LABELS = {
+    enable: "プロセス管理の有効化",
+    states: "ステータス",
+    actions: "アクション",
+    assignee: "作業者",
+    index: "表示順",
+    name: "名前"
+  };
+  var CATEGORY_LABELS = {
+    enabled: "カテゴリー機能",
+    categories: "カテゴリー",
+    children: "下の階層のカテゴリー",
+    index: "表示順",
+    name: "名前"
+  };
+  var CUSTOMIZE_LABELS = { scope: "適用範囲", desktop: "PC", mobile: "モバイル", js: "JS", css: "CSS" };
+  var OTHER_TOP_LABELS = {
+    appAcl: { rights: "アプリのアクセス権" },
+    fieldAcl: { rights: "フィールドのアクセス権" },
+    recordPermissions: { rights: "レコードのアクセス権" },
+    notifications: { notifications: "通知" },
+    perRecordNotifications: { notifications: "レコード条件通知" },
+    reminderNotifications: { notifications: "リマインダー通知" },
+    layoutSettings: { layout: "レイアウト" },
+    pluginSettings: { plugins: "プラグイン" }
+  };
+  var SECTION_KEY_LABELS = {
+    viewSettings: VIEW_LABELS,
+    reportSettings: REPORT_LABELS,
+    actionSettings: ACTION_LABELS,
+    processSettings: PROCESS_LABELS,
+    categories: CATEGORY_LABELS,
+    customizeSettings: CUSTOMIZE_LABELS,
+    appSettings: APP_SETTINGS_LABELS,
+    fieldSettings: FIELD_SETTING_LABELS,
+    ...OTHER_TOP_LABELS
+  };
+  var MONTH_OPTIONS = Array.from({ length: 12 }, (_value, index) => [String(index + 1), `${index + 1}月`]);
+
+  // src/reflect/selectionPlan.ts
+  var NAMED_PROPERTY = { viewSettings: "views", reportSettings: "reports", actionSettings: "actions" };
+  var PLATFORMS2 = ["desktop", "mobile"];
+  var KINDS2 = ["js", "css"];
+  var UPLOAD_WARNING = /^\d+ 件のファイル（合計 .+）を反映先へアップロードしてから設定します。$/;
+  var isNonEmptyString = (value) => typeof value === "string" && value !== "";
+  var CHOICE_FIELD_TYPES = /* @__PURE__ */ new Set(["DROP_DOWN", "RADIO_BUTTON", "CHECK_BOX", "MULTI_SELECT"]);
+  function checkChoiceDefault(label, definition) {
+    if (!CHOICE_FIELD_TYPES.has(definition.type) || !isPlainObject(definition.options)) return [];
+    const options = definition.options;
+    const defaults = definition.defaultValue;
+    const hint = "初期値は、送る設定の選択肢のどれかにしてください。";
+    if (definition.type === "DROP_DOWN" || definition.type === "RADIO_BUTTON") {
+      if (defaults === void 0 || defaults === "" || defaults === null) return definition.type === "RADIO_BUTTON" ? [`${label}の初期値がありません。ラジオボタンは、初期値を選択肢のどれかにする必要があります。`] : [];
+      if (typeof defaults !== "string") return [`${label}の初期値の形式が不正です。${hint}`];
+      return own3(options, defaults) ? [] : [`${label}の初期値「${defaults}」が選択肢にありません。${hint}`];
+    }
+    if (defaults === void 0 || defaults === null) return [];
+    if (!Array.isArray(defaults)) return [`${label}の初期値の形式が不正です（選択肢の配列にしてください）。`];
+    return defaults.filter((value) => typeof value !== "string" || !own3(options, value)).map((value) => `${label}の初期値「${String(value)}」が選択肢にありません。${hint}`);
+  }
+  function checkFieldSettings(before, after, fieldLabels, knownFieldCodes) {
+    const issues = [];
+    const name = (code, parent) => `フィールド「${parent ? `${fieldDisplayName(parent, fieldLabels)} › ` : ""}${fieldDisplayName(code, fieldLabels)}」`;
+    const compare = (beforeFields, afterFields, parent) => {
+      for (const [code, definition] of Object.entries(afterFields)) {
+        if (!isPlainObject(definition) || !isNonEmptyString(definition.type)) {
+          issues.push(`${name(code, parent)}の定義に種類（type）がありません。`);
+          continue;
+        }
+        if (definition.code !== void 0 && definition.code !== code) issues.push(`${name(code, parent)}のフィールドコードは変更できません（${code} → ${String(definition.code)}）。`);
+        const current = own3(beforeFields, code) ? beforeFields[code] : void 0;
+        if (isPlainObject(current) && current.type !== definition.type) issues.push(`${name(code, parent)}の種類は変更できません（${String(current.type)} → ${definition.type}）。`);
+        issues.push(...checkChoiceDefault(name(code, parent), definition));
+        if (definition.type === "SUBTABLE") {
+          if (!isPlainObject(definition.fields)) issues.push(`${name(code, parent)}のテーブル内のフィールド定義（fields）がありません。`);
+          else compare(isPlainObject(current?.fields) ? current.fields : {}, definition.fields, code);
+        }
+      }
+      for (const code of Object.keys(beforeFields)) {
+        if (!own3(afterFields, code)) issues.push(`${name(code, parent)}を削除する設定は反映できません（このツールではフィールドを削除しません）。`);
+      }
+    };
+    if (!isPlainObject(after?.properties)) return ["フィールド設定の properties がありません。"];
+    compare(isPlainObject(before?.properties) ? before.properties : {}, after.properties);
+    if (knownFieldCodes) {
+      const known = knownFieldCodes instanceof Set ? knownFieldCodes : new Set(knownFieldCodes);
+      const present = /* @__PURE__ */ new Set();
+      const collect = (fields) => {
+        for (const [code, definition] of Object.entries(fields)) {
+          present.add(code);
+          if (isPlainObject(definition) && definition.type === "SUBTABLE" && isPlainObject(definition.fields)) collect(definition.fields);
+        }
+      };
+      collect(after.properties);
+      const checkExpressions = (fields, parent) => {
+        for (const [code, definition] of Object.entries(fields)) {
+          if (!isPlainObject(definition)) continue;
+          if (isNonEmptyString(definition.expression)) {
+            const missing = extractExpressionFieldCodes(definition.expression, known).filter((ref) => ref !== code && !present.has(ref));
+            if (missing.length) issues.push(`${name(code, parent)}の計算式が、反映先に無いフィールド${missing.map((ref) => `「${fieldDisplayName(ref, fieldLabels)}」`).join("、")}を参照しています。${missing.length > 1 ? "これらの追加" : "その追加"}も一緒に選ぶか、計算式を反映しないでください。`);
+          }
+          if (definition.type === "SUBTABLE" && isPlainObject(definition.fields)) checkExpressions(definition.fields, code);
+        }
+      };
+      checkExpressions(after.properties);
+    }
+    return issues;
+  }
+  function checkComposedAfter(sectionKey, before, after, fieldLabels = {}, knownFieldCodes) {
+    const fail = (message) => [message];
+    if (!isPlainObject(after)) return fail("反映後の設定はオブジェクトである必要があります。");
+    switch (sectionKey) {
+      case "fieldSettings":
+        return checkFieldSettings(before, after, fieldLabels, knownFieldCodes);
+      case "layoutSettings":
+        return Array.isArray(after.layout) && after.layout.every(isPlainObject) ? [] : fail("レイアウトの形式が不正です（layout は行の配列である必要があります）。");
+      case "viewSettings":
+      case "reportSettings":
+      case "actionSettings": {
+        const property = NAMED_PROPERTY[sectionKey], container = after[property];
+        if (!isPlainObject(container)) return fail(`${property} の設定がありません。`);
+        const issues = [];
+        for (const [name, value] of Object.entries(container)) {
+          if (!isPlainObject(value)) {
+            issues.push(`${name}: 設定の形式が不正です。`);
+            continue;
+          }
+          if (sectionKey !== "viewSettings") continue;
+          if (!["LIST", "CALENDAR", "CUSTOM"].includes(value.type)) issues.push(`${name}: 一覧の種類を取得できません。`);
+          else if (value.type === "LIST" && (!Array.isArray(value.fields) || value.fields.some((code) => typeof code !== "string"))) issues.push(`${name}: 一覧のフィールド定義が不完全です。`);
+          else if (value.type === "CUSTOM" && typeof value.html !== "string") issues.push(`${name}: カスタマイズ一覧のHTMLがありません。`);
+        }
+        return issues;
+      }
+      case "pluginSettings": {
+        if (!Array.isArray(after.plugins) || after.plugins.some((id) => !isNonEmptyString(id))) return fail("プラグイン一覧の形式が不正です。");
+        const removed = (Array.isArray(before?.plugins) ? before.plugins : []).filter((id) => !after.plugins.includes(id));
+        return removed.length ? fail(`プラグインを外す設定は反映できません（${removed.join("、")}）。`) : [];
+      }
+      case "customizeSettings": {
+        const issues = [];
+        if (!["ALL", "ADMIN", "NONE"].includes(after.scope)) issues.push("JS/CSSの適用範囲が不正です。");
+        for (const platform of PLATFORMS2) for (const kind of KINDS2) {
+          const list2 = after[platform]?.[kind];
+          if (!Array.isArray(list2) || list2.some((item) => !item || (item.type === "URL" ? !isNonEmptyString(item.url) : item.type === "FILE" ? !isNonEmptyString(item.file?.fileKey) : true))) issues.push(`${platform}/${kind}: JS/CSS一覧の形式が不正です。`);
+        }
+        return issues;
+      }
+      case "appAcl":
+      case "fieldAcl":
+      case "recordPermissions":
+        return Array.isArray(after.rights) ? [] : fail("rights の設定がありません。");
+      case "notifications":
+      case "perRecordNotifications":
+        return Array.isArray(after.notifications) ? [] : fail("notifications の設定がありません。");
+      case "reminderNotifications":
+        if (!Array.isArray(after.notifications)) return fail("notifications の設定がありません。");
+        return after.notifications.length && !isNonEmptyString(after.timezone) ? fail("リマインダー通知のタイムゾーンがありません。") : [];
+      case "categories":
+        return typeof after.enabled === "boolean" && isPlainObject(after.categories) ? [] : fail("カテゴリーの enabled / categories がありません。");
+      case "processSettings":
+        return typeof after.enable === "boolean" && (!after.enable || isPlainObject(after.states) && Array.isArray(after.actions)) ? [] : fail("プロセス管理の enable / states / actions の形式が不正です。");
+      case "appSettings":
+        if (after.titleField !== void 0 && !isPlainObject(after.titleField)) return fail("レコードのタイトルの設定形式が不正です。");
+        return after.titleField?.selectionMode === "MANUAL" && !isNonEmptyString(after.titleField.code) ? fail("レコードのタイトルに使うフィールドが指定されていません。") : [];
+      default:
+        return [];
+    }
+  }
+  function checkComposedAgainstPlan(plan, after, fieldLabels = {}, knownFieldCodes) {
+    if (!plan.values) return ["設定値を取得できていないため、選択・修正した内容から書き込み内容を作れません。"];
+    const issues = checkComposedAfter(plan.sectionKey, plan.values.before, after, fieldLabels, knownFieldCodes);
+    if (issues.length || plan.sectionKey !== "customizeSettings") return issues;
+    for (const platform of PLATFORMS2) for (const kind of KINDS2) {
+      const list2 = after[platform][kind];
+      if (!sameValue(list2, plan.values.after?.[platform]?.[kind]) && !sameValue(list2, plan.values.before?.[platform]?.[kind])) issues.push(`${platform}/${kind}: JS/CSSの一覧は、反映元に合わせるか反映先のままにするかのどちらかだけ選べます（ファイルの内容は直せません）。`);
+    }
+    return issues;
+  }
+  function fieldOperations(before, after, endpoint) {
+    const beforeProps = before.properties, afterProps = after.properties;
+    const adds = /* @__PURE__ */ Object.create(null), updates = /* @__PURE__ */ Object.create(null);
+    for (const [code, value] of Object.entries(afterProps)) {
+      if (SYSTEM_FIELD_TYPES.has(value?.type)) continue;
+      if (!own3(beforeProps, code)) adds[code] = value;
+      else if (value.type === "SUBTABLE") {
+        const current = beforeProps[code];
+        const addedFields = Object.fromEntries(Object.entries(value.fields).filter(([child]) => !own3(current.fields || {}, child)));
+        if (Object.keys(addedFields).length) adds[code] = { type: "SUBTABLE", code, fields: addedFields };
+        const updatedFields = Object.fromEntries(Object.entries(value.fields).filter(([child, childDef]) => own3(current.fields || {}, child) && !sameValue(childDef, current.fields[child])));
+        const { fields: _nextFields, ...nextTable } = value, { fields: _currentFields, ...currentTable } = current;
+        if (Object.keys(updatedFields).length || !sameValue(nextTable, currentTable)) updates[code] = { ...nextTable, fields: updatedFields };
+      } else if (!sameValue(value, beforeProps[code])) updates[code] = value;
+    }
+    const operations = [];
+    const add = Object.keys(adds).length, update = Object.keys(updates).length;
+    if (add) operations.push({ method: "POST", endpoint, body: { properties: adds }, label: "フィールド追加" });
+    if (update) operations.push({ method: "PUT", endpoint, body: { properties: updates }, label: "フィールド更新" });
+    return { operations, add, update };
+  }
+  function buildPlanFromComposedAfter(plan, after, fieldLabels = {}, knownFieldCodes) {
+    const key = plan.sectionKey;
+    const result = {
+      sectionKey: key,
+      label: plan.label,
+      status: "same",
+      message: "",
+      behavior: plan.behavior,
+      changes: [],
+      changeCount: 0,
+      removalCount: 0,
+      warnings: [...plan.warnings],
+      blockers: [...plan.blockers],
+      operations: [],
+      ...plan.fieldStats ? { fieldStats: { ...plan.fieldStats } } : {},
+      ...plan.values ? { values: plan.values } : {}
+    };
+    const fail = (messages) => {
+      for (const message of messages) if (!result.blockers.includes(message)) result.blockers.push(message);
+      result.status = "error";
+      result.message = result.blockers.join("\n");
+      return result;
+    };
+    if (!plan.values) return fail(["設定値を取得できていないため、選択・修正した内容から書き込み内容を作れません。"]);
+    const before = plan.values.before;
+    const issues = checkComposedAgainstPlan(plan, after, fieldLabels, knownFieldCodes);
+    if (issues.length) return fail(issues);
+    const def = SECTION_DEFS.find((item) => item.key === key);
+    const endpoint = key === "appSettings" ? SECTION_DEFS.find((item) => item.key === "appSettings")?.endpoint || "/app/settings.json" : def?.endpoint;
+    if (!endpoint) return fail(["この項目は反映に対応していません。"]);
+    const retained = plan.changes.filter((change) => change.kind === "保持").map((change) => ({ ...change }));
+    const changes = [...retained];
+    const uploads = [];
+    let shownBefore = before, shownAfter = after;
+    let putAfter = true;
+    try {
+      if (key === "fieldSettings") {
+        const built = fieldOperations(before, after, endpoint);
+        result.operations.push(...built.operations);
+        result.fieldStats = { add: built.add, update: built.update, tgtOnly: plan.fieldStats?.tgtOnly ?? 0 };
+        putAfter = false;
+      } else if (key === "pluginSettings") {
+        const additions = after.plugins.filter((id) => !before.plugins.includes(id));
+        if (additions.length) result.operations.push({ method: "POST", endpoint, body: { ids: additions }, label: "プラグイン追加" });
+        putAfter = false;
+      } else if (key === "customizeSettings") {
+        const defaultAfter = plan.values.after;
+        const resolution = { files: {}, hashes: plan.values.fileHashes || {}, blobs: /* @__PURE__ */ new Map(), targetBlobs: /* @__PURE__ */ new Map(), targetUnavailable: [] };
+        const names = plan.values.fileNames || {};
+        for (const platform of PLATFORMS2) for (const kind of KINDS2) {
+          const list2 = after[platform][kind];
+          if (sameValue(list2, defaultAfter?.[platform]?.[kind])) uploads.push(...(plan.fileUploads || []).filter((upload) => upload.platform === platform && upload.kind === kind).map((upload) => ({ ...upload })));
+        }
+        shownBefore = comparableCustomizePayload(before, resolution, names);
+        shownAfter = comparableCustomizePayload(after, resolution, names);
+        const rest = result.warnings.filter((message) => !UPLOAD_WARNING.test(message));
+        result.warnings = uploads.length ? [`${uploads.length} 件のファイル（合計 ${formatBytes(uploads.reduce((sum, upload) => sum + upload.byteSize, 0))}）を反映先へアップロードしてから設定します。`, ...rest] : rest;
+      }
+      diffValues(shownBefore, shownAfter, [], changes);
+      if (key === "layoutSettings") reclassifyLayoutRemovals(changes, shownBefore?.layout, shownAfter?.layout, fieldLabels);
+      if (key === "appSettings") {
+        for (const change of changes) if (change.kind === "削除") change.kind = "変更";
+        for (const change of changes) {
+          const [head, ...rest] = change.path.split(" / ");
+          change.path = [APP_SETTINGS_LABELS[head] || head, ...rest].join(" / ");
+        }
+      }
+      try {
+        result.items = summarizeReflectItems(key, shownBefore, shownAfter, key === "appSettings" ? { fieldLabels } : { fieldLabels, retained: retainedItemNames(key, changes, fieldLabels) });
+      } catch {
+        result.items = [];
+      }
+      result.changes = changes;
+      result.changeCount = changes.filter((change) => change.kind !== "保持").length;
+      result.removalCount = changes.filter((change) => change.kind === "削除").length;
+      if (putAfter && result.changeCount) result.operations.push({ method: "PUT", endpoint, body: after, label: key === "appSettings" ? plan.label : def.label, ...uploads.length ? { uploads } : {} });
+      if (uploads.length && result.changeCount) result.fileUploads = uploads;
+      const required = reflectRequiredFields(key, after, knownFieldCodes);
+      if (required !== void 0) result.requiredFields = required;
+      if (result.blockers.length) result.status = "error";
+      else result.status = result.operations.length ? "change" : "same";
+      result.message = result.blockers.length ? result.blockers.join("\n") : result.operations.length ? `変更 ${result.changeCount}件 / 削除 ${result.removalCount}件 / ${result.behavior}` : key === "appSettings" ? "書き込み不要（一致）" : `書き込み不要${changes.some((change) => change.kind === "保持") ? "（反映先だけの設定は保持）" : "（一致）"}`;
+    } catch (error) {
+      return fail([error?.message || String(error)]);
+    }
+    return result;
+  }
+
   // src/tabs/reflect-standalone.ts
   function reflectResultMatchesOptions(report, options) {
     if (!report?.source || !report.target) return false;
@@ -3812,7 +4290,22 @@ ${base}`
     const sourceGuestId = opts.sourceBundle ? String(opts.sourceBundle?.guestId || "") : opts.sourceGuestId || "";
     return resolveCustomizeFiles(sourceSection, targetSection, { sourceGuestId, targetGuestId: opts.targetGuestId || "" });
   }
-  async function previewReflectStandalone(opts, setStatus) {
+  function knownFieldCodesOf(source, target) {
+    return [.../* @__PURE__ */ new Set([...listReflectFieldCodes(source), ...listReflectFieldCodes(target)])];
+  }
+  async function inspectTargetDeployStatus(opts) {
+    try {
+      const rows = await fetchAppDeployStatus(opts.targetGuestId || "", [opts.targetAppId]);
+      const row = rows.find((item) => item.app === String(opts.targetAppId));
+      if (!row) return { state: "unknown", message: "反映先が反映処理中か確認できませんでした（反映状況に反映先がありません）。" };
+      if (row.status === "PROCESSING") return { state: "processing", message: "反映先は前回の反映を kintone が処理中です。完了してから抽出し直してください。" };
+      return { state: "idle", message: "反映先は反映処理中ではありません。" };
+    } catch (error) {
+      if (isRunCancelledError(error)) throw error;
+      return { state: "unknown", message: `反映先が反映処理中か確認できませんでした（${error?.message != null ? String(error.message).split("\n")[0] : String(error)}）。` };
+    }
+  }
+  async function previewReflectStandalone(opts, setStatus, options = {}) {
     const invalid = reflectConnectionError(opts);
     if (invalid) throw new Error(invalid);
     const scopes = orderedScopes(opts.scopes);
@@ -3820,8 +4313,14 @@ ${base}`
     setStatus("反映先の未公開の変更を確認中…");
     const targetPending = await inspectTargetPendingChanges({ targetAppId: opts.targetAppId, targetGuestId: opts.targetGuestId, scopes: reflectInspectionScopes(scopes) }, target);
     const customizeFiles = await resolveReflectCustomizeFiles(opts, scopes, source, target, setStatus);
+    let targetDeployStatus;
+    if (options.checkTargetDeployStatus) {
+      setStatus("反映先の反映状況を確認中…");
+      targetDeployStatus = await inspectTargetDeployStatus(opts);
+    }
     const fieldLabels = reflectFieldLabels(target, source);
-    const entries = scopes.map((key) => buildReflectSectionPlan(key, source.sections?.[key], target.sections?.[key], { ...opts, customizeFiles, fieldLabels }));
+    const knownFieldCodes = knownFieldCodesOf(source, target);
+    const entries = scopes.map((key) => buildReflectSectionPlan(key, source.sections?.[key], target.sections?.[key], { ...opts, customizeFiles, fieldLabels, knownFieldCodes }));
     const baseline = captureReflectBaseline({ ...opts, scopes: reflectInspectionScopes(scopes) }, source, target);
     for (const entry of entries.filter((entry2) => !entry2.blockers.length)) {
       try {
@@ -3855,8 +4354,19 @@ ${base}`
       targetFieldCodes: listReflectFieldCodes(target),
       sourceSystemFieldCodes: listReflectSystemFieldCodes(source),
       baseline,
-      targetPending
+      targetPending,
+      fieldLabels,
+      ...targetDeployStatus ? { targetDeployStatus } : {}
     };
+  }
+  function composedFieldCodes(after) {
+    const properties = after?.properties;
+    if (!properties || typeof properties !== "object") return [];
+    return Object.entries(properties).filter(([, definition]) => !SYSTEM_FIELD_TYPES.has(definition?.type)).flatMap(([code, definition]) => [code, ...Object.keys(definition?.type === "SUBTABLE" && definition.fields && typeof definition.fields === "object" ? definition.fields : {})]);
+  }
+  function addableFieldCodes(plans) {
+    const fieldSettings = plans.find((plan) => plan.sectionKey === "fieldSettings");
+    return fieldSettings && !fieldSettings.blockers.length && fieldSettings.values ? composedFieldCodes(fieldSettings.values.after) : [];
   }
   async function runApplyPreviewStandalone(opts, setStatus, onProgress) {
     if (!opts.reviewBaseline) throw new Error("反映前に差分を取得して確認してください。");
@@ -3869,8 +4379,12 @@ ${base}`
     let revision = assertReflectBaselineMatches(opts.reviewBaseline, { ...opts, scopes }, source, target);
     const customizeFiles = await resolveReflectCustomizeFiles(opts, scopes, source, target, setStatus);
     const fieldLabels = reflectFieldLabels(target, source);
-    const plans = scopes.map((key) => buildReflectSectionPlan(key, source.sections?.[key], target.sections?.[key], { ...opts, customizeFiles, fieldLabels }));
-    const issues = reflectSelectionBlockers(plans, scopes, listReflectFieldCodes(source, true), listReflectFieldCodes(target), listReflectSystemFieldCodes(source));
+    const knownFieldCodes = knownFieldCodesOf(source, target);
+    const defaultPlans = scopes.map((key) => buildReflectSectionPlan(key, source.sections?.[key], target.sections?.[key], { ...opts, customizeFiles, fieldLabels, knownFieldCodes }));
+    const composed = opts.composed;
+    const plans = composed ? defaultPlans.map((plan) => Object.prototype.hasOwnProperty.call(composed, plan.sectionKey) ? buildPlanFromComposedAfter(plan, composed[plan.sectionKey], fieldLabels, knownFieldCodes) : plan) : defaultPlans;
+    const sourceFields = composed && Object.prototype.hasOwnProperty.call(composed, "fieldSettings") ? composedFieldCodes(composed.fieldSettings) : listReflectFieldCodes(source, true);
+    const issues = reflectSelectionBlockers(plans, scopes, sourceFields, listReflectFieldCodes(target), listReflectSystemFieldCodes(source), addableFieldCodes(defaultPlans));
     if (issues.length) throw new Error(`反映前の検査で停止しました。まだ書き込んでいません。
 ${issues.join("\n")}`);
     if (plans.some((plan) => plan.requiredFields?.length)) revision = assertReflectBaselineMatches(opts.reviewBaseline, { ...opts, scopes, targetDependencies: ["fieldSettings"] }, source, target);
@@ -4006,7 +4520,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         }
         const message = `${error.message || String(error)}${written.length ? `
 （この項目では ${written.join("・")} まで書き込み済みです。差分を取得し直して現在の状態を確認してください）` : ""}`;
-        sections.push({ ...outcome, status: "ng", message });
+        sections.push({ ...outcome, status: "ng", message, ...written.length ? { partiallyWritten: true } : {} });
         notify(plan, "ng", message);
         pushReflectErrorLog(logs, `NG ${plan.label}: ${message}`, message);
         if (opts.stopOnError !== false || error.stopReflection || isRevisionConflictError(error)) {
@@ -4239,6 +4753,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   var ACCENTS = {
     diff: { from: "#1d4ed8", via: "#2563eb", to: "#0ea5e9", chip: "#dbeafe", ring: "rgba(37,99,235,.16)" },
     reflect: { from: "#b91c1c", via: "#dc2626", to: "#f97316", chip: "#fee2e2", ring: "rgba(220,38,38,.18)" },
+    deploy: { from: "#4c0519", via: "#881337", to: "#be123c", chip: "#ffe4e6", ring: "rgba(136,19,55,.22)" },
     field: { from: "#6d28d9", via: "#7c3aed", to: "#a855f7", chip: "#ede9fe", ring: "rgba(124,58,237,.18)" },
     jsconfig: { from: "#0f766e", via: "#0d9488", to: "#22d3ee", chip: "#ccfbf1", ring: "rgba(13,148,136,.18)" },
     settings: { from: "#0369a1", via: "#0284c7", to: "#22d3ee", chip: "#e0f2fe", ring: "rgba(2,132,199,.18)" },
@@ -5942,7 +6457,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     return "";
   }
   function summarizePostApplyCheck(input) {
-    const list2 = (labels2) => labels2.slice(0, 5).join("、") + (labels2.length > 5 ? ` ほか ${labels2.length - 5} 件` : "");
+    const list2 = (labels) => labels.slice(0, 5).join("、") + (labels.length > 5 ? ` ほか ${labels.length - 5} 件` : "");
     if (input.errorLabels.length) return { tone: "warn", message: `反映後の再確認：${input.errorLabels.length} 項目を取得できませんでした（${list2(input.errorLabels)}）。取得し直して確認してください。` };
     if (input.changedLabels.length) return { tone: "warn", message: `反映後の再確認：${input.changedLabels.length} 項目に差分が残っています（${list2(input.changedLabels)}）。内容を確認して再反映してください。` };
     return { tone: "ok", message: `反映後の再確認：${input.scopeCount} 項目はすべて反映元と一致しています。本番への公開は反映先の設定画面で行います。` };
@@ -6217,15 +6732,15 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     host.appendChild(root2);
   }
   function appendReflectUploads(host, plan) {
-    const labels2 = formatUploadList(plan.fileUploads);
-    if (!labels2.length) return;
+    const labels = formatUploadList(plan.fileUploads);
+    if (!labels.length) return;
     const box = document.createElement("div");
     box.className = "kus-rl-uploads";
     box.dataset.reflectUploads = "true";
     const title = document.createElement("strong");
-    title.textContent = `反映先へアップロードするファイル（${labels2.length} 件）`;
+    title.textContent = `反映先へアップロードするファイル（${labels.length} 件）`;
     const list2 = document.createElement("ul");
-    for (const label of labels2) {
+    for (const label of labels) {
       const li = document.createElement("li");
       li.textContent = label;
       list2.appendChild(li);
@@ -8871,9 +9386,9 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       const stamp = formatReflectDateTime(last.at);
       const hasIssue = last.ng > 0 || last.stopped > 0 || last.pending > 0;
       const tone = hasIssue ? "color:#9a3412" : "color:#065f46";
-      const labelSummary = (title, labels2) => labels2.length ? `<div>${title}: ${escapeHtml(labels2.slice(0, 5).join(" / "))}${labels2.length > 5 ? ` ほか ${labels2.length - 5} 件` : ""}</div>` : "";
+      const labelSummary = (title, labels) => labels.length ? `<div>${title}: ${escapeHtml(labels.slice(0, 5).join(" / "))}${labels.length > 5 ? ` ほか ${labels.length - 5} 件` : ""}</div>` : "";
       const failedSummary = labelSummary("失敗", last.failedLabels) + labelSummary("途中で停止", last.stoppedLabels);
-      lastResultBody.innerHTML = `<div style="${tone};font-weight:600">${last.cancelled ? "⚠ 中止しました。書き込み済みの分は反映先に残っています" : hasIssue ? "⚠ 一部の項目を反映できませんでした" : `✓ ${last.ok} 項目を反映しました`}</div><div>反映先 #${escapeHtml(last.appId || "-")} / 成功 ${last.ok} / 失敗 ${last.ng}${last.stopped ? ` / 途中で停止 ${last.stopped}` : ""}${last.pending ? ` / 未実行 ${last.pending}` : ""}</div>` + failedSummary + `<div>${stamp}</div>` + (hasIssue ? `<div style="margin-top:4px">${last.cancelled ? "差分を取得し直して現在の状態を確認してから、" : ""}「失敗・未実行だけ選択」で対象を絞って再実行してください。</div>` : '<div style="margin-top:4px">変わったのは反映先のプレビューだけです。本番へ公開するには、反映先の設定画面で公開してください。</div>');
+      lastResultBody.innerHTML = `<div style="${tone};font-weight:600">${last.cancelled ? "⚠ 中止しました。書き込み済みの分は反映先に残っています" : hasIssue ? "⚠ 一部の項目を反映できませんでした" : `✓ ${last.ok} 項目を反映しました`}</div><div>反映先 #${escapeHtml(last.appId || "-")} / 成功 ${last.ok} / 失敗 ${last.ng}${last.stopped ? ` / 途中で停止 ${last.stopped}` : ""}${last.pending ? ` / 未実行 ${last.pending}` : ""}</div>` + failedSummary + `<div>${stamp}</div>` + (hasIssue ? `<div style="margin-top:4px">${last.cancelled ? "差分を取得し直して現在の状態を確認してから、" : ""}「失敗・未実行だけ選択」で対象を絞って再実行してください。</div>` : '<div style="margin-top:4px">変わったのは反映先のプレビューだけです。本番へ公開するには、反映先の設定画面で公開するか、「本番反映」ツールを使ってください。</div>');
       renderApplySectionResults(lastResultSections, last.report.sections);
       const guidance = describeUndoGuidance(last.report.targetPending);
       undoNote.textContent = guidance.text;
@@ -9035,7 +9550,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         panel.setStatus(`${ok + ng + outcome.counts.stopped + pending} 項目中 ${ok} 項目を反映しました。失敗 ${ng} 項目${pending ? `、未実行 ${pending} 項目` : ""}${outcome.failureNote ? `（${outcome.failureNote}）` : ""}。「失敗・未実行だけ選択」で再実行してください。`, "warn");
         return;
       }
-      panel.setStatus(`${outcome.counts.ok} 項目を反映先プレビューへ反映しました。本番へ公開するには、「反映先の設定画面を開く」から kintone の設定画面で公開してください。`, "ok");
+      panel.setStatus(`${outcome.counts.ok} 項目を反映先プレビューへ反映しました。本番へ公開するには、「反映先の設定画面を開く」から kintone の設定画面で公開するか、「本番反映」ツールを使ってください。`, "ok");
     });
     const nav = document.createElement("nav");
     nav.className = "kus-rl-nav";

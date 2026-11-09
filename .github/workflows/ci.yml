@@ -124,6 +124,9 @@ jobs:
       - name: Test preview reflection
         run: npm run test:reflect-dom -- --browser chromium
 
+      - name: Test production deployment
+        run: npm run test:deploy-dom -- --browser chromium
+
       - name: Test lite tool workflows
         run: npm run test:lite-workflows -- --browser chromium
 

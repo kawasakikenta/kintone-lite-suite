@@ -7,7 +7,7 @@
 
 ## 1. 概要と読み方
 
-kintone-lite-suite は、kintone の設定比較・プレビュー反映・設計書/ER図出力・レコード運用を **11本の単機能 lite bundle**（`tools/*.js`）として配布するリポジトリで、正規ソースは `tools/統合ツール/src/`（TypeScript 約9.2万行）にあります。
+kintone-lite-suite は、kintone の設定比較・プレビュー反映・本番反映・設計書/ER図出力・レコード運用を **12本の単機能 lite bundle**（`tools/*.js`）として配布するリポジトリで、正規ソースは `tools/統合ツール/src/`（TypeScript 約9.2万行）にあります。
 
 本資料は **核心設計（アーキテクチャと主要な設計判断）＋ 安全性設計** を対象にし、差分比較ツールについては `engine.ts` などの実装から判定条件・閾値・キー候補を抜き出しています。コード上の値と `docs/` の説明が食い違う箇所は、実装側を優先して注記しています。
 
@@ -23,13 +23,13 @@ kintone-lite-suite は、kintone の設定比較・プレビュー反映・設�
 
 ## 2. 全体アーキテクチャ
 
-1つの TypeScript ソースツリーから esbuild で 11 本の自己完結 IIFE（ES2020）を生成し、各 bundle は kintone ページ上で同一オリジンの REST API を呼ぶ、サーバーを持たないブラウザ内処理の構成です。統合版（`統合ツール.js`）は廃止済みで、ビルド時に残っていれば削除されます。
+1つの TypeScript ソースツリーから esbuild で 12 本の自己完結 IIFE（ES2020）を生成し、各 bundle は kintone ページ上で同一オリジンの REST API を呼ぶ、サーバーを持たないブラウザ内処理の構成です。統合版（`統合ツール.js`）は廃止済みで、ビルド時に残っていれば削除されます。
 
 ```mermaid
 flowchart TB
   subgraph build["ビルドパイプライン"]
     direction LR
-    Source["正規ソース（TypeScript）<br/>tools/統合ツール/src・約9.2万行"] --> Build["build.js ＋ esbuild<br/>CSS同梱・IIFE・ES2020"] --> Bundle["配布 bundle（11本）<br/>tools/*.js・生成物、手編集禁止"]
+    Source["正規ソース（TypeScript）<br/>tools/統合ツール/src・約9.2万行"] --> Build["build.js ＋ esbuild<br/>CSS同梱・IIFE・ES2020"] --> Bundle["配布 bundle（12本）<br/>tools/*.js・生成物、手編集禁止"]
   end
   subgraph runtime["bundle の内部（kintone ページ上で実行、サーバーなし）"]
     direction TB
@@ -55,7 +55,7 @@ flowchart TB
 | kintone 画面ガード | 全エントリが `isKintonePage()`（`window.kintone.api` と `window.kintone.app` の存在）を満たすときだけ起動し、それ以外はアラートのみ | `src/kintoneGuard.ts` |
 | ブラウザストレージ禁止 | `localStorage` / `sessionStorage` / `indexedDB` / `document.cookie` を `src/` 全体で禁止し、`check:no-browser-storage` がビルド前に文字列検査で落とす。レビュー状態・比較条件は JSON ファイルで持ち運ぶ | `scripts/check-no-browser-storage.cjs` |
 | 外部依存は実行時動的読込＋縮退 | 本番 bundle に npm パッケージを同梱しない。JSZip・Cytoscape・Dagre 等は CDN から動的読込し、代替 URL・30秒タイムアウト・簡易表示を用意。差分比較の Excel は自前生成で CDN 非依存 | `constants.ts`、`jszipLoader.ts`、`diff/xlsx-builder.ts` |
-| 安全な書き込み | 設定の変更系 REST（POST/PUT/DELETE/PATCH）は `/v1/preview` を含む prefix へのみ許可。例外はレコード API 4パス、`/records/cursor.json`、別アプリの JS/CSS を渡すための `POST /file.json`（一時ファイル作成のみ）。`app/deploy.json` は無条件に拒否 | `api.ts` `assertAllowsMutatingRestCall` |
+| 安全な書き込み | 設定の変更系 REST（POST/PUT/DELETE/PATCH）は `/v1/preview` を含む prefix へのみ許可。例外はレコード API 4パス、`/records/cursor.json`、別アプリの JS/CSS を渡すための `POST /file.json`（一時ファイル作成のみ）。`app/deploy.json` は原則拒否し、本番反映ツールの `requestAppDeploy` だけが preview prefix の `/app/deploy.json` へ POST できる（完全一致・自動再試行なし） | `api.ts` `assertAllowsMutatingRestCall`・`requestAppDeploy` |
 | 共有モジュールの波及 | `litePanelTheme.ts`・`kintoneGuard.ts`・`design-xlsx.ts`・`er.ts`・`diff/export.ts` の `bundleToMarkdown` は複数 bundle から参照され、1箇所の変更が最大 10 本の生成 JS に波及する | `tools/統合ツール/AGENTS.md` |
 
 ## 3. 共通基盤の設計
@@ -70,7 +70,7 @@ flowchart TB
 | 読み取り再試行 | `apiGet` は最大 3 回。対象は HTTP 408 / 409 / 425 / 429 / 500 / 502 / 503 / 504、`error.code` に NETWORK / TIMEOUT / ECONNRESET、または message に network / timeout を含むもの。待機は `min(3000ms, 500ms × 2^attempt)` ＋ 0〜200ms のジッター |
 | 書き込み再試行 | PUT / POST は最大 3 回。5xx とネットワーク系のみ再試行。4xx は副作用が確定している可能性があるため不可（冪等な PUT の 408 / 429 だけ例外）。DELETE は再試行しない |
 | 中止と応答待ち上限 | `runControl.ts`: パネルの「中止」が `requestCancel()` を呼ぶと、`apiGet` / `apiPut` / `apiPost` / `apiDelete` は次の試行の前に `RunCancelledError` を投げ、再試行の待機も打ち切る。GET は `raceWithCancel` で進行中でも中止・120 秒の応答待ち上限（`code: 'TIMEOUT'` として再試行対象）で打ち切る。書き込みは進行中のリクエストを打ち切らない（サーバー側で確定したか分からなくなるため）。`fetch` を使う JS/CSS 本文（60 秒）・ファイル本体（120 秒）・アップロードは AbortSignal で中止する。`fetchBundle` と補助取得は中止を `_fetchError` に畳まず呼び出し元へ伝える |
-| 本番書込ガード | `assertAllowsMutatingRestCall`: (1) `app/deploy.json` を含むパスは無条件に拒否（デプロイは管理画面で手動） (2) `/records/cursor.json` の POST / DELETE とレコード 4 パス（`/record.json` `/records.json` `/record/status.json` `/records/status.json`）は本番 prefix でのみ許可し、preview prefix なら拒否 (3) `/file.json` への POST（呼び出し元が渡すパスとの完全一致、本番 prefix のみ）はファイルアップロード用に許可し、PUT / DELETE は拒否 (4) それ以外の POST / PUT / DELETE / PATCH は prefix が `/v1/preview` を含むときだけ許可。 |
+| 本番書込ガード | `assertAllowsMutatingRestCall`: (1) `app/deploy.json` を含むパスは拒否。例外は本番反映ツール専用の `requestAppDeploy` が内部の許可フラグ付きで呼ぶ、preview prefix の `/app/deploy.json` への POST（パスの完全一致のみ。`apiPost` / `apiPut` など汎用の経路からは拒否） (2) `/records/cursor.json` の POST / DELETE とレコード 4 パス（`/record.json` `/records.json` `/record/status.json` `/records/status.json`）は本番 prefix でのみ許可し、preview prefix なら拒否 (3) `/file.json` への POST（呼び出し元が渡すパスとの完全一致、本番 prefix のみ）はファイルアップロード用に許可し、PUT / DELETE は拒否 (4) それ以外の POST / PUT / DELETE / PATCH は prefix が `/v1/preview` を含むときだけ許可。 |
 | revision 競合 | `isRevisionConflictError`: エラーコード `GAIA_CO02`、または message が表の下の正規表現 (A) に一致。`decorateRevisionConflict` が「取得後に別の更新が入ったため中止」という利用者向け文を付けて再送出 |
 | 設定バンドル取得 `fetchBundle` | `SECTION_DEFS`（18 セクション）を並列 3 で取得し、応答順ではなく入力順で格納。失敗したセクションは `{ _fetchError: message }` に置き換えて続行。`appInfo`（`/app.json`）は `previewEndpoint: false` のため常に運用 prefix。各応答の `revision` は `meta.sectionRevisions` へ |
 | 応答の正規化 | `normalizeSettingsSection`: キーを辞書順に並べ替え、応答ルート直下の `META_KEYS`（revision / creator / createdAt / modifier / modifiedAt）を除去。ネストした同名キーは残す |
@@ -477,7 +477,7 @@ COMPOSITE_ARRAY_RULES のパス正規表現
 
 | 層 | ガード | 判定・実装 |
 | --- | --- | --- |
-| 書かない | 本番設定への書き込み禁止 | `assertAllowsMutatingRestCall`: 設定系の変更は `/v1/preview` prefix のみ。`app/deploy.json` は常に拒否（デプロイは管理画面）。レコード API 4 パス、cursor、別アプリの JS/CSS を渡す `POST /file.json`（一時ファイル作成のみ）だけが本番許可 |
+| 書かない | 本番設定への書き込み禁止 | `assertAllowsMutatingRestCall`: 設定系の変更は `/v1/preview` prefix のみ。`app/deploy.json` は本番反映ツールの `requestAppDeploy`（preview prefix・POST・完全一致・自動再試行なし）以外は拒否。レコード API 4 パス、cursor、別アプリの JS/CSS を渡す `POST /file.json`（一時ファイル作成のみ）だけが本番許可 |
 | 書かない | kintone 画面外での起動拒否 | `runOnKintonePage`: `window.kintone.api` と `window.kintone.app` がなければアラートのみ |
 | 書かない | URL へ入る ID の形式検査 | App ID・ゲスト ID・スペース ID は `^[1-9]\d*$` または `^\d+$` を取得前に検査（`/k/guest/{id}/v1` へそのまま入るため） |
 | 黙って上書きしない | revision による楽観ロック | 設定 PUT/POST に GET 時の revision を添付。`GAIA_CO02` を `decorateRevisionConflict` が利用者向け文に変換。プレビュー反映は実行直前に全セクションを再取得して内容と revision の完全一致を要求（第 11 章） |

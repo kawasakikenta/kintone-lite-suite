@@ -12,7 +12,7 @@ if (!process.env.npm_execpath) {
   console.error('npm run test:all から実行してください。');
   process.exit(1);
 }
-const suites = ['check', 'test:output-layouts', 'test:lite-shared', 'test:record-metadata', 'test:record-quality', 'test:lite-workflows', 'test:reflect-dom',
+const suites = ['check', 'test:output-layouts', 'test:lite-shared', 'test:record-metadata', 'test:record-quality', 'test:lite-workflows', 'test:reflect-dom', 'test:deploy-dom',
   'test:diff-multi-dom', 'test:diff-pairs-dom', 'test:diff-pair-folders-dom', 'test:diff-compare', 'test:er-compare'];
 const results = [];
 for (const suite of suites) {

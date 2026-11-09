@@ -6,6 +6,7 @@ import {
   pushReflectErrorLog,
   collectRetrySectionKeys,
   summarizeApplyOutcome,
+  previewWriteState,
   type ApplySectionOutcome
 } from '../../src/reflect/applyOutcome.js';
 
@@ -112,5 +113,29 @@ describe('summarizeApplyOutcome', () => {
 
   it('空配列はすべて 0', () => {
     expect(summarizeApplyOutcome([])).toEqual({ ok: 0, ng: 0, stopped: 0, pending: 0, skip: 0 });
+  });
+});
+
+describe('previewWriteState: 反映先プレビューへの書き込みの状況', () => {
+  const section = (status: ApplySectionOutcome['status'], extra: Partial<ApplySectionOutcome> = {}): ApplySectionOutcome => ({ sectionKey: status, label: status, status, ...extra });
+
+  it('1 件も書き込めていなければ none（すべて失敗・未実行・変更なし）', () => {
+    expect(previewWriteState([section('ng'), section('pending'), section('pending')])).toBe('none');
+    expect(previewWriteState([section('skip'), section('skip')])).toBe('none');
+    expect(previewWriteState([])).toBe('none');
+  });
+
+  it('一部だけ成功し、失敗・未実行が残っていれば partial', () => {
+    expect(previewWriteState([section('ok'), section('ng'), section('pending')])).toBe('partial');
+    expect(previewWriteState([section('ok'), section('pending')])).toBe('partial');
+  });
+
+  it('失敗した項目でも、その中で書き込み済みの操作がある・途中で停止したときは書き込みがあるものと数える', () => {
+    expect(previewWriteState([section('ng', { partiallyWritten: true }), section('pending')])).toBe('partial');
+    expect(previewWriteState([section('ng', { stopped: true }), section('pending')])).toBe('partial');
+  });
+
+  it('失敗・未実行が残らず、成功があれば all', () => {
+    expect(previewWriteState([section('ok'), section('skip'), section('ok')])).toBe('all');
   });
 });
