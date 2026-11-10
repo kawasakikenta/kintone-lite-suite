@@ -3,6 +3,7 @@
 import { SECTION_DEFS } from '../constants.js';
 import { esc, downloadText, downloadBlob, selectedScopeKeys, buildExportFilename, buildAppFilenameLabel, extractAppNameFromBundle } from '../utils.js';
 import { fetchBundle, buildApiPrefix, apiGet, fetchAppsInSpace } from '../api.js';
+import { PLUGIN_CONFIG_OMITTED_KIND, markPluginConfigOmitted } from '../pluginConfigMarker.js';
 import { extractAppIdFromInput, extractGuestIdFromInput } from '../handlers/diffFocus.js';
 import { loadJSZipLite } from '../jszipLoader.js';
 import { RUN_CANCELLED_MESSAGE, isRunCancelledError } from '../runControl.js';
@@ -50,6 +51,17 @@ function omittedCustomizeBodyCount(bundle: any): number {
   const files = bundle?.sections?.customizeSettings?._partial?.files;
   return Array.isArray(files) ? files.length : 0;
 }
+
+/** プラグインの設定値を含めずに保存したプラグインの数（含めた場合・プラグインが無い場合は 0）。 */
+function omittedPluginConfigCount(bundle: any): number {
+  const partial = bundle?.sections?.pluginSettings?._partial;
+  return partial?.kind === PLUGIN_CONFIG_OMITTED_KIND ? Number(partial.omittedPlugins || 0) : 0;
+}
+
+/** 設定値を含める・含めないの表示（結果表・INDEX.md・確認画面で同じ言い回しにする）。 */
+export const PLUGIN_CONFIG_INCLUDED_NOTE = 'プラグインの設定値を含みます（API キーなどの機微な値を含む場合があります）';
+export const PLUGIN_CONFIG_OMITTED_NOTE = 'プラグインの設定値は含めていません（プラグインの一覧だけを保存）';
+export const CUSTOMIZE_BODY_SENSITIVE_NOTE = 'JS/CSSファイルの本文を含みます（API トークンなどが書かれている場合があります）';
 
 /** ZIP 内のアプリごとの名前（設定JSONとJS/CSSフォルダで共通）。 */
 function zipEntryBaseName(bundle: any, guestId: string, preview: boolean): string {
@@ -180,6 +192,8 @@ export interface SettingsMarkdownIndexInput {
   preview?: boolean;
   scopes?: string[];
   scopeLabels?: string[];
+  /** プラグインの設定値を含めたか。プラグインを取得しないときは未指定。 */
+  pluginConfig?: 'included' | 'omitted';
   apps?: Array<{
     appId: string;
     appName?: string;
@@ -188,6 +202,7 @@ export interface SettingsMarkdownIndexInput {
     sections?: { ok: number; ng: number };
     failedSections?: Array<{ key: string; label?: string; error?: string }>;
     omittedCustomizeBodies?: number;
+    omittedPluginConfigs?: number;
     customizeFiles?: { folder: string; saved: number; failed: number; files?: SettingsExportCustomizeFile[] };
   }>;
 }
@@ -206,6 +221,9 @@ export function buildSettingsMarkdownIndex(input: SettingsMarkdownIndexInput): s
     `- 対象アプリ数: ${apps.length}件`,
     `- 対象セクション: ${scopeText}`
   ];
+  if (input?.pluginConfig === 'included') lines.push(`- プラグインの設定値: ${PLUGIN_CONFIG_INCLUDED_NOTE}。共有する前に内容を確認してください`);
+  if (input?.pluginConfig === 'omitted') lines.push(`- プラグインの設定値: ${PLUGIN_CONFIG_OMITTED_NOTE}`);
+  if ((input?.scopes || []).includes('customizeSettings') || (input?.scopeLabels || []).includes(sectionLabel('customizeSettings'))) lines.push(`- JS/CSSファイルの本文: 各アプリの JSON に含みます（API トークンなどが書かれている場合があります。共有する前に内容を確認してください）`);
   if (totalOmitted > 0) {
     lines.push(`- JS/CSS本文省略合計: ${totalOmitted}件（サイズ上限・非テキスト等のため本文を省略し fileKey のみ記録）`);
   }
@@ -224,6 +242,7 @@ export function buildSettingsMarkdownIndex(input: SettingsMarkdownIndexInput): s
     if (omitted > 0) {
       notes.push(`JS/CSS本文省略 ${omitted}件`);
     }
+    if (Number(app?.omittedPluginConfigs || 0) > 0) notes.push(`プラグインの設定値は含めず ${app.omittedPluginConfigs}件`);
     if (app?.customizeFiles) {
       notes.push(`JS/CSSファイル保存 ${app.customizeFiles.saved}件${app.customizeFiles.failed ? `（失敗 ${app.customizeFiles.failed}件）` : ''}`);
     }
@@ -244,8 +263,9 @@ export interface SettingsExportRowSummary {
   note?: string;
 }
 
-export function renderSettingsExportSummaryHtml(rows: SettingsExportRowSummary[], scopes: string[]) {
+export function renderSettingsExportSummaryHtml(rows: SettingsExportRowSummary[], scopes: string[], notes: string[] = []) {
   const labels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k).join(', ');
+  const noteHtml = notes.map((text) => `<div style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#fffbeb;color:#78350f">${esc(text)}</div>`).join('');
   const body = rows
     .map(
       (r) => `<tr>
@@ -260,6 +280,7 @@ export function renderSettingsExportSummaryHtml(rows: SettingsExportRowSummary[]
     .join('');
   return `
     <div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">対象セクション: ${esc(labels || '-')}</div>
+    ${noteHtml}
     <table style="width:100%;font-size:11px;border-collapse:collapse">
       <thead><tr><th scope="col" style="text-align:left;padding:4px">アプリID</th><th scope="col">アプリ名</th><th scope="col">ゲスト</th><th scope="col">取得OK</th><th scope="col">取得NG</th><th scope="col">メモ</th></tr></thead>
       <tbody>${body || '<tr><td colspan="6">結果なし</td></tr>'}</tbody>
@@ -414,11 +435,13 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
   const fileLayout: CustomizeFileLayout = opts.customizeFileLayout || 'slot';
   if (!CUSTOMIZE_FILE_LAYOUTS.some(([value]) => value === fileLayout)) throw new Error(`JS/CSSファイルのフォルダ分けの指定が正しくありません: ${fileLayout}`);
   const fileOrderPrefix = !!opts.customizeFileOrderPrefix;
+  // プラグインの設定値を取得しないのは、プラグインを取得するときだけ意味がある。
+  const pluginConfigState: 'included' | 'omitted' | undefined = scopes.includes('pluginSettings') ? (opts.excludePluginConfig ? 'omitted' : 'included') : undefined;
 
   const preview = !!opts.preview;
 
-  // ZIP は全アプリの取得後に生成する。JSZip を読み込めない環境（CSP・ネットワーク制限）では、
-  // 時間のかかる取得を始める前に中止して、取得結果を無駄にしない。
+  // ZIP は全アプリの取得後に生成する。ZIP の実装は同梱で通信しないが、取得の前に準備しておき、
+  // 準備に失敗したときに取得結果を無駄にしない。
   const JSZipCtor = mode === 'zip' ? await loadJSZipLite() : null;
 
   const bundles = [];
@@ -438,6 +461,7 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
         guestId,
         preview,
         sections: scopes,
+        skipPluginConfig: pluginConfigState === 'omitted',
         onProgress: (p, l) =>
           setStatus(`設定取得中 ${i + 1}/${targets.length}: アプリ ${appId}${guestNote} ${Math.round(p * 100)}% (${l})`)
       });
@@ -450,6 +474,8 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
     }
     // 取得途中で中止された bundle は、取得失敗のセクションが混じった完全でない結果なので保存しない。
     if (scopes.some((key) => isCancelledSectionError(bundle?.sections?.[key]?._fetchError))) { stoppedAt = i; break; }
+    // 設定値を含めない場合は、読み込む側が取得失敗や削除と取り違えないよう、そのことを設定に記録する。
+    if (pluginConfigState === 'omitted') markPluginConfigOmitted(bundle);
     let customizeFiles: AppCustomizeFiles | null = null;
     if (includeCustomizeFiles) {
       try {
@@ -487,6 +513,8 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
       noteParts.push(`一部セクション取得失敗あり: ${failedKeys.map(sectionLabel).join('、')}`);
     }
     if (omittedBodies) noteParts.push(`JS/CSS本文を省略したファイル ${omittedBodies}件`);
+    const omittedPlugins = omittedPluginConfigCount(bundle);
+    if (omittedPlugins) noteParts.push(`プラグインの設定値は含めず ${omittedPlugins}件`);
     const filesNote = customizeFilesNote(customizeFiles);
     if (filesNote) noteParts.push(filesNote);
     rows.push({
@@ -496,6 +524,7 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
       okCount,
       ngCount,
       omittedBodies,
+      omittedPlugins,
       savedFiles: customizeFiles?.saved || 0,
       failedFiles: customizeFiles?.failed || 0,
       note: noteParts.join(' / ') || 'OK'
@@ -508,7 +537,7 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
     throw createCancelReport(0, targets.length, [`未実行（中止）: ${notRunLabels.join(', ')}`, '何も保存していません']);
   }
   for (const t of notRun) {
-    rows.push({ appId: t.appId, appName: '', guestId: t.guestId, okCount: 0, ngCount: 0, omittedBodies: 0, savedFiles: 0, failedFiles: 0, note: '未実行（中止）' });
+    rows.push({ appId: t.appId, appName: '', guestId: t.guestId, okCount: 0, ngCount: 0, omittedBodies: 0, omittedPlugins: 0, savedFiles: 0, failedFiles: 0, note: '未実行（中止）' });
   }
   const cancelNote = notRun.length ? `${formatCancelledHeadline(stoppedAt, targets.length)}。取得済みの ${bundles.length}アプリだけを保存しました。` : '';
   const guestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];
@@ -526,7 +555,8 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
         label: SECTION_DEFS.find((s) => s.key === key)?.label || key,
         error: sectionFetchError(bundle.sections?.[key])
       })),
-      omittedCustomizeBodies: rows[i].omittedBodies
+      omittedCustomizeBodies: rows[i].omittedBodies,
+      ...(rows[i].omittedPlugins ? { omittedPluginConfigs: rows[i].omittedPlugins } : {})
     };
   });
   const payload = {
@@ -537,6 +567,7 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
     preview,
     scopes,
     scopeLabels,
+    ...(pluginConfigState ? { pluginConfig: pluginConfigState } : {}),
     appCount: bundles.length,
     failedAppCount,
     omittedCustomizeBodies: rows.reduce((sum, row) => sum + row.omittedBodies, 0),
@@ -553,6 +584,12 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
   const failedFiles = rows.reduce((sum, row) => sum + row.failedFiles, 0);
   const filesFailureNote = failedFiles ? `。JS/CSSファイル ${failedFiles}件は取得できませんでした（理由は結果表と manifest.json に記録しています）` : '';
   const hasWarning = failedSections > 0 || omittedBodies > 0 || failedFiles > 0 || notRun.length > 0;
+  const configOmitted = rows.reduce((sum, row) => sum + (row.omittedPlugins || 0), 0);
+  const configNote = pluginConfigState === 'omitted' ? (configOmitted ? '。プラグインの設定値は含めていません' : '') : '';
+  const resultNotes = [
+    ...(pluginConfigState === 'included' ? [PLUGIN_CONFIG_INCLUDED_NOTE] : pluginConfigState === 'omitted' ? [PLUGIN_CONFIG_OMITTED_NOTE] : []),
+    ...(scopes.includes('customizeSettings') ? [CUSTOMIZE_BODY_SENSITIVE_NOTE] : [])
+  ];
 
   if (mode === 'zip') {
     const zip = new JSZipCtor();
@@ -569,6 +606,7 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
         fetchedAt: bundle.fetchedAt || '',
         sections: { ok: rows[i].okCount, ng: rows[i].ngCount },
         omittedCustomizeBodies: rows[i].omittedBodies,
+        ...(rows[i].omittedPlugins ? { omittedPluginConfigs: rows[i].omittedPlugins } : {}),
         failedSections: failedSections.map((key) => ({
           key,
           label: SECTION_DEFS.find((s) => s.key === key)?.label || key,
@@ -591,6 +629,7 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
           preview: payload.preview,
           scopes: payload.scopes,
           scopeLabels,
+          ...(pluginConfigState ? { pluginConfig: pluginConfigState } : {}),
           appCount: bundles.length,
           failedAppCount: entries.filter((entry) => entry.sections.ng > 0).length,
           omittedCustomizeBodies: omittedBodies,
@@ -618,6 +657,7 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
         preview: payload.preview,
         scopes: payload.scopes,
         scopeLabels,
+        ...(pluginConfigState ? { pluginConfig: pluginConfigState } : {}),
         apps: entries
       })
     );
@@ -628,11 +668,11 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
     const zipBlob = await zip.generateAsync({ type: 'blob' });
     downloadBlob(buildExportFilename('設定一括取得', 'zip', { appLabel: settingsExportLabel(bundles) }), zipBlob);
     const countText = includeCustomizeFiles ? `${bundles.length}アプリ・JS/CSSファイル ${savedFiles}件` : `${bundles.length}アプリ`;
-    setStatus(`${cancelNote}設定一括取得ZIPを保存しました（${countText}）${failureNote}${omittedNote}${filesFailureNote}`, hasWarning);
-    return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes) };
+    setStatus(`${cancelNote}設定一括取得ZIPを保存しました（${countText}）${failureNote}${omittedNote}${filesFailureNote}${configNote}`, hasWarning);
+    return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes, resultNotes) };
   }
 
   downloadText(buildExportFilename('設定一括取得', 'json', { appLabel: settingsExportLabel(bundles) }), JSON.stringify(payload, null, 2), 'application/json');
-  setStatus(`${cancelNote}設定一括取得JSONを保存しました（${bundles.length}アプリ）${failureNote}${omittedNote}`, hasWarning);
-  return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes) };
+  setStatus(`${cancelNote}設定一括取得JSONを保存しました（${bundles.length}アプリ）${failureNote}${omittedNote}${configNote}`, hasWarning);
+  return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes, resultNotes) };
 }

@@ -13,6 +13,9 @@ import type { ReflectTargetPending } from '../reflect/targetPending.js';
 import { countOutcomes, describeDeployMessage, describeDeployStatus, describeRunResult, formatDeployApp } from './display.js';
 import { buildDeployResultJson, type DeployResultJson } from './report.js';
 import { describeDeploySkippedFollowUp, describeSourceResult, sourceUndoGuidance, summarizeItemKinds, type SourceResultMessage } from './sourceDisplay.js';
+import type { LookupMapCandidates } from '../reflect/lookupCandidates.js';
+import { LOOKUP_CANDIDATES_TEXT, describeLookupConflict, describeSourceLookupCandidate } from './sourceLookup.js';
+import { describeVerifyResult, verifySideFor, verifyState, type SourceVerifyResult, type VerifyState } from './sourceVerify.js';
 import type { SourceDeployGoal, SourceDeployResult } from './sourceTypes.js';
 
 const ITEMS_PER_SECTION_LIMIT = 50;
@@ -51,12 +54,16 @@ export interface SourceRecordInput {
   preserveTargetOnly: boolean;
   lookupMap: Record<string, string>;
   targetPending?: ReflectTargetPending;
+  /** 実行したときに、参照先変換に入れないまま反映した、参照先アプリの違い（候補・食い違い） */
+  lookupCandidates?: LookupMapCandidates;
   allowPendingChanges?: boolean;
   /** 実行した項目の選択・修正の内容 */
   sections: readonly SourceRecordSection[];
   startedAt: string;
   finishedAt: string;
   result: SourceDeployResult;
+  /** 「反映後の内容を確認する」の結果（確認していなければ無い） */
+  verification?: SourceVerifyResult | null;
 }
 
 /** 本番への反映の要約（goal が production で反映を依頼したときだけ）。 */
@@ -123,6 +130,15 @@ export function buildSourceDeployRecordMarkdown(input: SourceRecordInput): strin
   }
   lines.push(`- 取り消し方: ${esc(sourceUndoGuidance(input.goal, input.targetPending))}`, '');
 
+  const candidates = input.lookupCandidates;
+  if (candidates && (candidates.candidates.length || candidates.conflicts.length)) {
+    lines.push('## 注意: 参照先変換の候補', '');
+    lines.push(`- ${esc(LOOKUP_CANDIDATES_TEXT)}`);
+    for (const candidate of candidates.candidates) lines.push(`- 候補: ${esc(describeSourceLookupCandidate(candidate))}`);
+    for (const conflict of candidates.conflicts) lines.push(`- 食い違い（自動では入れません）: ${esc(describeLookupConflict(conflict))}`);
+    lines.push('');
+  }
+
   lines.push('## 項目別の結果', '');
   lines.push('| 項目 | 選んだ変更 | 修正した値 | 結果 | 理由 |');
   lines.push('| --- | --- | --- | --- | --- |');
@@ -147,6 +163,7 @@ export function buildSourceDeployRecordMarkdown(input: SourceRecordInput): strin
   }
   lines.push('');
 
+  appendVerification(lines, input);
   lines.push('## 項目別の変更の要約', '');
   for (const section of input.sections) {
     const kinds = summarizeItemKinds(section.items);
@@ -161,6 +178,37 @@ export function buildSourceDeployRecordMarkdown(input: SourceRecordInput): strin
     lines.push('');
   }
   return `${lines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd()}\n`;
+}
+
+const VERIFY_ROWS_LIMIT = 100;
+const VERIFY_SIDE_LABEL = { production: '本番', preview: '反映先のプレビュー' } as const;
+
+/** 記録の「反映後の内容の確認」。確認していないときは、確認できる結果なら「確認していません」と残す。 */
+function appendVerification(lines: string[], input: SourceRecordInput): void {
+  const verification = input.verification;
+  if (!verification) {
+    if (verifySideFor(input.result, input.goal)) lines.push('## 反映後の内容の確認', '', '- 確認していません（結果の「反映後の内容を確認する」で、選んだ変更が意図した値で入っているか確認できます）。', '');
+    return;
+  }
+  const message = describeVerifyResult(verification);
+  lines.push('## 反映後の内容の確認', '');
+  lines.push(`- 確認した日時: ${esc(formatStamp(verification.checkedAt))}`);
+  lines.push(`- 確認した設定: ${VERIFY_SIDE_LABEL[verification.side]}`);
+  lines.push(`- 結果: ${esc(message.text)}`);
+  lines.push(`- 件数: 選んだ変更 ${verification.total}・意図した値で反映 ${verification.reflected}・反映されていない ${verification.mismatches.length}・確認できない ${verification.unknownCount}（修正した値 ${verification.editedTotal} 件のうち ${verification.editedReflected} 件が反映）`);
+  for (const note of verification.notes) lines.push(`- 注意: ${esc(note)}`);
+  lines.push('- 選ばなかった変更が反映先に残っているのは正常なため、確認の対象にしていません。', '');
+  if (verification.mismatches.length) {
+    lines.push('### 反映されていない変更', '', '| 場所 | 期待した値 | 現在の値 |', '| --- | --- | --- |');
+    for (const item of verification.mismatches.slice(0, VERIFY_ROWS_LIMIT)) lines.push(`| ${cell(item.place)} | ${cell(item.expectedText)} | ${cell(item.currentText)} |`);
+    if (verification.mismatches.length > VERIFY_ROWS_LIMIT) lines.push(`| ほか ${verification.mismatches.length - VERIFY_ROWS_LIMIT} 件 | | |`);
+    lines.push('');
+  }
+  if (verification.unknown.length) {
+    lines.push('### 確認できなかった変更', '');
+    for (const item of verification.unknown) lines.push(`- ${esc(item.sectionLabel)}: ${item.count} 件（${esc(item.reason)}）`);
+    lines.push('');
+  }
 }
 
 // =============================================================================
@@ -188,9 +236,19 @@ export interface SourceDeployResultJson {
   deploy?: DeployResultJson;
   deploySkipped?: string;
   deploySummary?: ReturnType<typeof countOutcomes>;
+  /** 反映後の内容の確認（確認していれば） */
+  verification?: SourceVerifyResultJson;
+  /** 参照先変換に入れないまま反映した、参照先アプリの違い（あれば） */
+  lookupCandidates?: LookupMapCandidates;
 }
 
-export function buildSourceDeployResultJson(input: Pick<SourceRecordInput, 'goal' | 'source' | 'target' | 'sections' | 'startedAt' | 'finishedAt' | 'result'>): SourceDeployResultJson {
+export interface SourceVerifyResultJson extends SourceVerifyResult {
+  /** all: 選んだ変更はすべて反映されている / mismatch: 反映されていない変更がある / unknown: 確認できない */
+  state: VerifyState;
+  message: string;
+}
+
+export function buildSourceDeployResultJson(input: Pick<SourceRecordInput, 'goal' | 'source' | 'target' | 'sections' | 'startedAt' | 'finishedAt' | 'result' | 'verification' | 'lookupCandidates'>): SourceDeployResultJson {
   const { result } = input;
   return {
     kind: 'kintone-source-deploy-result',
@@ -211,7 +269,9 @@ export function buildSourceDeployResultJson(input: Pick<SourceRecordInput, 'goal
       logs: [...(result.apply.logs || [])]
     },
     ...(result.deploy ? { deploy: buildDeployResultJson(result.deploy), deploySummary: countOutcomes(result.deploy.apps) } : {}),
-    ...(result.deploySkipped ? { deploySkipped: result.deploySkipped } : {})
+    ...(result.deploySkipped ? { deploySkipped: result.deploySkipped } : {}),
+    ...(input.lookupCandidates && (input.lookupCandidates.candidates.length || input.lookupCandidates.conflicts.length) ? { lookupCandidates: input.lookupCandidates } : {}),
+    ...(input.verification ? { verification: { ...input.verification, state: verifyState(input.verification), message: describeVerifyResult(input.verification).text } } : {})
   };
 }
 

@@ -9,6 +9,11 @@
  * `tools/ER図.js` から読み込む。各版の生成 HTML、デスクトップ/モバイル
  * スクリーンショット、検査結果 JSON、比較用 index.html を出力する。
  *
+ * after（描画ライブラリを HTML に同梱した版）は、file:// 以外の通信をすべて遮断した
+ * ブラウザで検査する。before（CDN 版）は、CDN をローカルの実体へ差し替え、SRI を
+ * 再計算した検証用コピーで検査する。どちらの版かは、生成 HTML に `<script src>` が
+ * あるかで見分ける。
+ *
  * Usage:
  *   node tools/test-harness/run-er-diagram-compare.cjs
  *
@@ -278,10 +283,25 @@ function vendorKeyForUrl(url) {
   return '';
 }
 
+/** 生成 HTML が外部の script を読み込むか（CDN 版）。同梱版は false。 */
+function hasExternalScript(html) {
+  return /<script\b[^>]*\ssrc\s*=/i.test(html);
+}
+
+/** CSP の script-src に許可している外部ホスト（同梱版は空）。 */
+function cspScriptHosts(html) {
+  const csp = (html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]*)"/) || [])[1] || '';
+  const scriptSrc = (csp.split(';').map((part) => part.trim()).find((part) => part.startsWith('script-src')) || '');
+  return scriptSrc.split(/\s+/).filter((token) => /^https?:\/\//.test(token));
+}
+
 function makeLocalViewerHtml(htmlFile, localVendors) {
+  const original = fs.readFileSync(htmlFile, 'utf8');
+  // 同梱版は原本をそのまま検査する（差し替える外部 script が無い）。
+  if (!hasExternalScript(original)) return htmlFile;
   // CDNのmin版をnpm配布の非min版で置き換える場合も、差し替えた実体をSRIで検査する。
   // 製品が出力した原本は保持し、レイアウト検証専用のコピーだけを変更する。
-  const html = fs.readFileSync(htmlFile, 'utf8').replace(/<script\b[^>]*\bsrc="([^"]+)"[^>]*>/gi, (tag, url) => {
+  const html = original.replace(/<script\b[^>]*\bsrc="([^"]+)"[^>]*>/gi, (tag, url) => {
     const source = localVendors[vendorKeyForUrl(url)];
     if (!source) return tag;
     const digest = 'sha384-' + crypto.createHash('sha384').update(source).digest('base64');
@@ -293,9 +313,27 @@ function makeLocalViewerHtml(htmlFile, localVendors) {
   return localFile;
 }
 
-async function configureViewerRoutes(page, localVendors, blockLibraries) {
+/**
+ * ページごとの通信の扱い。
+ * - offline: 同梱版の検査。file: / data: / blob: 以外はすべて遮断し、試みた URL を blocked に記録する。
+ * - それ以外（CDN 版）: ライブラリの CDN をローカルの実体へ差し替える。
+ */
+function makeRouting(localVendors, offline) {
+  return { localVendors, offline, blocked: [] };
+}
+
+async function configureViewerRoutes(page, routing, blockLibraries) {
   await page.route('**/*', async (route) => {
     const url = route.request().url();
+    if (routing.offline) {
+      if (/^(?:file|data|blob|about):/i.test(url)) {
+        await route.continue();
+        return;
+      }
+      routing.blocked.push(url);
+      await route.abort();
+      return;
+    }
     if (!isLibraryCdnUrl(url)) {
       await route.continue();
       return;
@@ -306,8 +344,8 @@ async function configureViewerRoutes(page, localVendors, blockLibraries) {
       return;
     }
     const key = vendorKeyForUrl(url);
-    if (key && localVendors[key]) {
-      await route.fulfill({ status: 200, contentType: 'application/javascript; charset=utf-8', body: localVendors[key] });
+    if (key && routing.localVendors[key]) {
+      await route.fulfill({ status: 200, contentType: 'application/javascript; charset=utf-8', body: routing.localVendors[key] });
       return;
     }
     await route.continue();
@@ -567,11 +605,11 @@ async function exerciseZoomControls(page) {
   };
 }
 
-async function inspectDiagramZoom(browser, variant, htmlFile, localVendors, outDir) {
+async function inspectDiagramZoom(browser, variant, htmlFile, routing, outDir) {
   const context = await browser.newContext({ viewport: BROWSER_ZOOM_BASE_VIEWPORT });
   const page = await context.newPage();
   const errors = collectPageErrors(page, `${variant}-diagram-zoom`);
-  await configureViewerRoutes(page, localVendors, false);
+  await configureViewerRoutes(page, routing, false);
   await page.goto(pathToFileURL(htmlFile).href, { waitUntil: 'load' });
   const canvasReady = await waitForDiagram(page);
   const levels = [];
@@ -602,7 +640,7 @@ async function inspectDiagramZoom(browser, variant, htmlFile, localVendors, outD
   return { canvasReady, errors, levels, controls };
 }
 
-async function inspectBrowserZoom(browser, variant, htmlFile, localVendors, outDir) {
+async function inspectBrowserZoom(browser, variant, htmlFile, routing, outDir) {
   const levels = [];
   for (const percent of BROWSER_ZOOM_LEVELS) {
     const scale = percent / 100;
@@ -617,7 +655,7 @@ async function inspectBrowserZoom(browser, variant, htmlFile, localVendors, outD
     });
     const page = await context.newPage();
     const errors = collectPageErrors(page, `${variant}-browser-zoom-${percent}`);
-    await configureViewerRoutes(page, localVendors, false);
+    await configureViewerRoutes(page, routing, false);
     await page.goto(pathToFileURL(htmlFile).href, { waitUntil: 'load' });
     const canvasReady = await waitForDiagram(page);
     const state = await inspectScaleState(page, percent);
@@ -672,12 +710,12 @@ async function exerciseFullDensity(page, screenshotFile) {
   };
 }
 
-async function captureViewport(browser, variant, htmlFile, viewport, localVendors, outDir, options = {}) {
+async function captureViewport(browser, variant, htmlFile, viewport, routing, outDir, options = {}) {
   const context = await browser.newContext({ viewport });
   const page = await context.newPage();
   const label = `${variant}-${viewport.width}x${viewport.height}`;
   const errors = collectPageErrors(page, label);
-  await configureViewerRoutes(page, localVendors, false);
+  await configureViewerRoutes(page, routing, false);
   await page.addInitScript(() => { window.__ER_XSS_EXECUTED__ = 0; });
   await page.goto(pathToFileURL(htmlFile).href, { waitUntil: 'load' });
   const canvasReady = await waitForDiagram(page);
@@ -704,7 +742,7 @@ async function captureViewport(browser, variant, htmlFile, viewport, localVendor
   };
 }
 
-async function inspectResponsiveViewports(browser, variant, htmlFile, localVendors, outDir, existingResults) {
+async function inspectResponsiveViewports(browser, variant, htmlFile, routing, outDir, existingResults) {
   const viewports = [];
   for (const viewport of RESPONSIVE_VIEWPORTS) {
     const key = `${viewport.width}x${viewport.height}`;
@@ -714,7 +752,7 @@ async function inspectResponsiveViewports(browser, variant, htmlFile, localVendo
       variant,
       htmlFile,
       viewport,
-      localVendors,
+      routing,
       outDir,
       { includeFullDensity: false }
     );
@@ -727,11 +765,11 @@ function unknownLayoutHash() {
   return Buffer.from(JSON.stringify({ l: UNKNOWN_LAYOUT }), 'utf8').toString('base64');
 }
 
-async function inspectUnknownLayout(browser, variant, htmlFile, localVendors, outDir) {
+async function inspectUnknownLayout(browser, variant, htmlFile, routing, outDir) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
   const errors = collectPageErrors(page, `${variant}-unknown-layout`);
-  await configureViewerRoutes(page, localVendors, false);
+  await configureViewerRoutes(page, routing, false);
   await page.goto(`${pathToFileURL(htmlFile).href}#${unknownLayoutHash()}`, { waitUntil: 'load' });
   const canvasReady = await waitForDiagram(page);
   await page.waitForTimeout(500);
@@ -760,12 +798,24 @@ async function inspectUnknownLayout(browser, variant, htmlFile, localVendors, ou
   return { canvasReady, errors, ...dom };
 }
 
-async function inspectCdnFallback(browser, variant, htmlFile, localVendors, outDir) {
+/**
+ * 描画ライブラリを初期化できなかったときの案内表の検査。
+ * - 同梱版: 同梱した cytoscape の script を空にした検証用コピーを、通信を遮断して開く。
+ * - CDN 版（before）: CDN の応答を空にして開く。
+ */
+async function inspectLibraryFallback(browser, variant, htmlFile, routing, outDir) {
+  let target = htmlFile;
+  if (routing.offline) {
+    const broken = fs.readFileSync(htmlFile, 'utf8').replace(/(<script id="er-lib-cytoscape">)[\s\S]*?(<\/script>)/, '$1$2');
+    assert.notEqual(broken, fs.readFileSync(htmlFile, 'utf8'), '同梱した cytoscape の script 要素が見つかりません');
+    target = htmlFile.replace(/\.html$/, '-library-broken.html');
+    fs.writeFileSync(target, broken, 'utf8');
+  }
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
-  const errors = collectPageErrors(page, `${variant}-cdn-blocked`);
-  await configureViewerRoutes(page, localVendors, true);
-  await page.goto(pathToFileURL(htmlFile).href, { waitUntil: 'load' });
+  const errors = collectPageErrors(page, `${variant}-library-fallback`);
+  await configureViewerRoutes(page, routing, true);
+  await page.goto(pathToFileURL(target).href, { waitUntil: 'load' });
   await page.waitForSelector('#topbar', { state: 'attached', timeout: 15000 }).catch(() => {});
   await page.waitForTimeout(700);
   const fallback = await page.evaluate(() => {
@@ -775,7 +825,7 @@ async function inspectCdnFallback(browser, variant, htmlFile, localVendors, outD
       return rect.width > 0 && rect.height > 0 && style.display !== 'none'
         && style.visibility !== 'hidden' && Number(style.opacity || 1) > 0;
     };
-    const messagePattern = /(?:ER図|Cytoscape|描画|外部|ライブラリ|CDN).*(?:表示でき|読み込|取得|利用でき|失敗|再読み込み)|(?:読み込|取得).*(?:ライブラリ|Cytoscape).*(?:失敗|でき)/i;
+    const messagePattern = /(?:ER図|Cytoscape|描画|外部|ライブラリ|CDN).*(?:表示でき|描画でき|読み込|取得|利用でき|初期化でき|失敗|再読み込み)|(?:読み込|取得).*(?:ライブラリ|Cytoscape).*(?:失敗|でき)/i;
     const preferred = [
       '#er-library-fallback', '#er-runtime-fallback', '#er-load-error',
       '[data-er-fallback]', '[data-er-runtime-error]', '#cy [role="alert"]',
@@ -783,34 +833,192 @@ async function inspectCdnFallback(browser, variant, htmlFile, localVendors, outD
     ];
     const candidates = [...new Set(preferred.flatMap((selector) => [...document.querySelectorAll(selector)]))];
     const hit = candidates.find((element) => visible(element) && messagePattern.test(String(element.textContent || '')));
+    const text = String(hit?.textContent || '').replace(/\s+/g, ' ').trim();
+    // 案内の見出しが、操作バーなどの画面部品に隠れずに見えていること
+    const heading = hit?.querySelector('h1');
+    let headingReachable = false;
+    if (heading) {
+      const rect = heading.getBoundingClientRect();
+      const top = document.elementFromPoint(rect.left + Math.min(40, rect.width / 2), rect.top + rect.height / 2);
+      headingReachable = rect.top >= 0 && !!top && heading.contains(top);
+    }
+    const lingering = ['#topbar', '#overview', '#legend', '#zoom-ctrl'].filter((selector) => {
+      const element = document.querySelector(selector);
+      return element && visible(element);
+    });
     return {
       visible: !!hit,
+      headingReachable,
+      lingeringControls: lingering,
       selector: hit ? preferred.find((selector) => {
         try { return hit.matches(selector); } catch (_) { return false; }
       }) || hit.tagName.toLowerCase() : '',
-      text: String(hit?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 500)
+      text: text.slice(0, 500),
+      rows: hit ? hit.querySelectorAll('tbody tr').length : 0
     };
   });
-  const screenshotFile = path.join(outDir, `${variant}-cdn-fallback.png`);
+  const screenshotFile = path.join(outDir, `${variant}-library-fallback.png`);
   await page.screenshot({ path: screenshotFile, fullPage: false, animations: 'disabled' });
   await context.close();
-  // CDN遮断テストは空の代替レスポンスを返す。SRIが正しく有効な場合に限り
-  // Chromiumが出すdigest不一致は、フォールバックを起動させる期待イベント。
+  // CDN 版は空の応答を返すため、SRI が有効なら Chromium が digest 不一致を出す。これは案内表を出させるための期待イベント。
   const unexpectedErrors = errors.filter((message) => !/Failed to find a valid digest in the 'integrity' attribute/.test(message));
-  return { ...fallback, errors: unexpectedErrors, screenshot: path.basename(screenshotFile) };
+  return { ...fallback, mentionsCdn: /CDN/.test(fallback.text), errors: unexpectedErrors, screenshot: path.basename(screenshotFile) };
+}
+
+/**
+ * 生成 HTML の原本を、通信をすべて遮断したブラウザで開いて描画できるか。
+ * 同梱版は描画でき、遮断中に試みた通信が 0 件であること。CDN 版は描画できないはず（比較用に記録するだけ）。
+ */
+async function inspectOfflineRender(browser, variant, htmlFile, outDir) {
+  const html = fs.readFileSync(htmlFile, 'utf8');
+  const routing = makeRouting({}, true);
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await context.newPage();
+  const errors = collectPageErrors(page, `${variant}-offline`);
+  await configureViewerRoutes(page, routing, false);
+  await page.goto(pathToFileURL(htmlFile).href, { waitUntil: 'load' });
+  const canvasReady = await waitForDiagram(page);
+  const nodeCount = await page.evaluate(() => {
+    try { return (typeof cy !== 'undefined' ? cy : window.cy).nodes().length; } catch (_) { return 0; }
+  });
+  const screenshotFile = path.join(outDir, `${variant}-offline.png`);
+  await page.screenshot({ path: screenshotFile, fullPage: false, animations: 'disabled' });
+  await context.close();
+  return {
+    canvasReady,
+    nodeCount,
+    errors,
+    blockedRequests: routing.blocked,
+    externalScript: hasExternalScript(html),
+    cspScriptHosts: cspScriptHosts(html),
+    htmlBytes: Buffer.byteLength(html),
+    screenshot: path.basename(screenshotFile)
+  };
+}
+
+/**
+ * 図の画面の「出力 → 編集済みHTMLを保存」で保存した HTML が、通信なしで単体で開けること。
+ * 保存前に関連の種類を 1 つ非表示にし、開き直したときに表示状態も戻ることを確かめる。
+ */
+async function inspectEditedHtmlSave(browser, variant, htmlFile, outDir) {
+  const routing = makeRouting({}, true);
+  const context = await browser.newContext({ acceptDownloads: true, viewport: { width: 1440, height: 900 } });
+  const page = await context.newPage();
+  const errors = collectPageErrors(page, `${variant}-edited-save`);
+  await configureViewerRoutes(page, routing, false);
+  await page.goto(pathToFileURL(htmlFile).href, { waitUntil: 'load' });
+  const canvasReady = await waitForDiagram(page);
+  await page.evaluate(() => { window.toggleRelationKind('LOOKUP'); });
+  await page.locator('#export-menu .tb-menu-btn').click();
+  const downloadPromise = page.waitForEvent('download', { timeout: 20000 });
+  await page.getByRole('button', { name: /編集済みHTMLを保存/ }).click();
+  const download = await downloadPromise;
+  const savedFile = path.join(outDir, `${variant}-edited-saved.html`);
+  await download.saveAs(savedFile);
+  await context.close();
+
+  const saved = fs.readFileSync(savedFile, 'utf8');
+  const reopenRouting = makeRouting({}, true);
+  const reopenContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const reopen = await reopenContext.newPage();
+  const reopenErrors = collectPageErrors(reopen, `${variant}-edited-reopen`);
+  await configureViewerRoutes(reopen, reopenRouting, false);
+  await reopen.goto(pathToFileURL(savedFile).href, { waitUntil: 'load' });
+  const reopenCanvasReady = await waitForDiagram(reopen);
+  const restored = await reopen.evaluate(() => {
+    const button = document.getElementById('rel-lookup-btn') || document.querySelector('[data-rel-kind="LOOKUP"]');
+    return { lookupButtonFound: !!button, lookupHidden: button ? !button.classList.contains('active') : null };
+  });
+  await reopen.screenshot({ path: path.join(outDir, `${variant}-edited-reopen.png`), fullPage: false, animations: 'disabled' });
+  await reopenContext.close();
+  return {
+    canvasReady,
+    reopenCanvasReady,
+    errors: [...errors, ...reopenErrors],
+    blockedRequests: [...routing.blocked, ...reopenRouting.blocked],
+    savedBytes: Buffer.byteLength(saved),
+    externalScript: hasExternalScript(saved),
+    cspScriptHosts: cspScriptHosts(saved),
+    libraryScripts: [...saved.matchAll(/<script id="(er-lib-[a-z-]+)">/g)].map((match) => match[1]),
+    keepsEditState: saved.includes('__ER_EDIT_STATE__'),
+    restored
+  };
+}
+
+/**
+ * 「ER図を開く」（別タブ表示）で開いた画面が、通信をすべて遮断した状態でも描画できること。
+ * 生成側のページ（モック kintone）も同じ遮断下に置き、別タブ（blob URL）で図を開く。
+ */
+async function inspectOpenFlowOffline(browser, variant, bundleSource, fixture, outDir) {
+  const routing = makeRouting({}, true);
+  const context = await browser.newContext({ viewport: { width: 1200, height: 900 } });
+  await context.route('**/*', async (route) => {
+    const url = route.request().url();
+    if (url.startsWith('https://mock.cybozu.com/')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/html; charset=utf-8',
+        body: '<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>Mock kintone</title></head><body><main id="mock-kintone"></main></body></html>'
+      });
+      return;
+    }
+    if (/^(?:file|data|blob|about):/i.test(url)) {
+      await route.continue();
+      return;
+    }
+    routing.blocked.push(url);
+    await route.abort();
+  });
+  const page = await context.newPage();
+  const errors = collectPageErrors(page, `${variant}-open-flow`);
+  await page.goto(`https://mock.cybozu.com/k/${SOURCE_APP_ID}/`, { waitUntil: 'domcontentloaded' });
+  await installMockKintone(page, fixture);
+  await page.addScriptTag({ content: bundleSource });
+  const root = page.locator('#kus-er-lite');
+  await root.waitFor({ state: 'visible', timeout: 15000 });
+  await root.locator('.kus-lp__row').filter({ hasText: '起点ID' }).first().locator('input').first().fill(SOURCE_APP_ID);
+  await root.getByRole('radio', { name: 'ER図を開く', exact: true }).check();
+  await root.getByRole('button', { name: '内容を確認する', exact: true }).click();
+  const popupPromise = context.waitForEvent('page', { timeout: 20000 });
+  await root.getByRole('button', { name: 'ER図を開く', exact: true }).click();
+  const popup = await popupPromise;
+  const popupErrors = collectPageErrors(popup, `${variant}-open-flow-popup`);
+  await popup.waitForURL(/^blob:/, { timeout: 30000 }).catch(() => {});
+  const canvasReady = await popup.locator('#cy canvas').first().waitFor({ state: 'attached', timeout: 30000 })
+    .then(() => true)
+    .catch(() => false);
+  await popup.waitForTimeout(600);
+  const nodeCount = await popup.evaluate(() => {
+    try { return (typeof cy !== 'undefined' ? cy : window.cy).nodes().length; } catch (_) { return 0; }
+  }).catch(() => 0);
+  const screenshotFile = path.join(outDir, `${variant}-open-flow.png`);
+  await popup.screenshot({ path: screenshotFile, fullPage: false, animations: 'disabled' }).catch(() => {});
+  const popupUrl = popup.url();
+  await context.close();
+  return {
+    canvasReady,
+    nodeCount,
+    popupUrlKind: popupUrl.split(':')[0],
+    errors: [...errors, ...popupErrors],
+    blockedRequests: routing.blocked,
+    screenshot: path.basename(screenshotFile)
+  };
 }
 
 async function runVariant(browser, variant, bundleSource, fixture, localVendors, outDir, includeScaleMatrix = false) {
   console.log(`[ER compare] ${variant}: HTML 生成中...`);
   const generated = await generateDiagramHtml(browser, variant, bundleSource, fixture, outDir);
   const originalHtmlFile = generated.htmlFile;
+  // 生成 HTML が外部 script を読み込まない（同梱版）なら通信を遮断して検査し、CDN 版ならローカルの実体へ差し替える。
+  const selfContained = !hasExternalScript(fs.readFileSync(originalHtmlFile, 'utf8'));
+  const routing = makeRouting(localVendors, selfContained);
   generated.htmlFile = makeLocalViewerHtml(originalHtmlFile, localVendors);
   const desktop = await captureViewport(
     browser,
     variant,
     generated.htmlFile,
     { width: 1440, height: 900 },
-    localVendors,
+    routing,
     outDir
   );
   const mobile = await captureViewport(
@@ -818,23 +1026,30 @@ async function runVariant(browser, variant, bundleSource, fixture, localVendors,
     variant,
     generated.htmlFile,
     { width: 390, height: 844 },
-    localVendors,
+    routing,
     outDir
   );
-  const unknownLayout = await inspectUnknownLayout(browser, variant, generated.htmlFile, localVendors, outDir);
-  const cdnFallback = await inspectCdnFallback(browser, variant, originalHtmlFile, localVendors, outDir);
+  const unknownLayout = await inspectUnknownLayout(browser, variant, generated.htmlFile, routing, outDir);
+  const offline = await inspectOfflineRender(browser, variant, originalHtmlFile, outDir);
+  const libraryFallback = await inspectLibraryFallback(browser, variant, originalHtmlFile, routing, outDir);
+  const openFlowOffline = selfContained
+    ? await inspectOpenFlowOffline(browser, variant, bundleSource, clone(fixture), outDir)
+    : null;
+  const editedSave = selfContained
+    ? await inspectEditedHtmlSave(browser, variant, originalHtmlFile, outDir)
+    : null;
   const diagramZoom = includeScaleMatrix
-    ? await inspectDiagramZoom(browser, variant, generated.htmlFile, localVendors, outDir)
+    ? await inspectDiagramZoom(browser, variant, generated.htmlFile, routing, outDir)
     : null;
   const browserZoom = includeScaleMatrix
-    ? await inspectBrowserZoom(browser, variant, generated.htmlFile, localVendors, outDir)
+    ? await inspectBrowserZoom(browser, variant, generated.htmlFile, routing, outDir)
     : null;
   const responsive = includeScaleMatrix
     ? await inspectResponsiveViewports(
       browser,
       variant,
       generated.htmlFile,
-      localVendors,
+      routing,
       outDir,
       new Map([
         [`${mobile.viewport.width}x${mobile.viewport.height}`, mobile],
@@ -844,15 +1059,20 @@ async function runVariant(browser, variant, bundleSource, fixture, localVendors,
     : null;
   return {
     html: path.basename(generated.htmlFile),
+    selfContained,
     generatorErrors: generated.errors,
     apiCalls: generated.apiCalls,
     desktop,
     mobile,
     unknownLayout,
-    cdnFallback,
+    offline,
+    libraryFallback,
+    openFlowOffline,
+    editedSave,
     diagramZoom,
     browserZoom,
-    responsive
+    responsive,
+    blockedRequests: routing.blocked
   };
 }
 
@@ -862,7 +1082,12 @@ function runtimeErrors(result) {
     ...result.desktop.errors,
     ...result.mobile.errors,
     ...result.unknownLayout.errors,
-    ...result.cdnFallback.errors,
+    ...result.libraryFallback.errors,
+    ...(result.selfContained ? [
+      ...result.offline.errors,
+      ...(result.openFlowOffline?.errors || []),
+      ...(result.editedSave?.errors || [])
+    ] : []),
     ...(result.diagramZoom?.errors || []),
     ...(result.browserZoom?.levels || []).flatMap((level) => level.errors || []),
     ...(result.responsive?.viewports || []).flatMap((viewport) => viewport.errors || [])
@@ -893,7 +1118,27 @@ function validateAfter(after) {
   }
 
   if (!after.unknownLayout.normalized) failures.push('未知の hash レイアウトが既知の安全なレイアウトへ正規化されません');
-  if (!after.cdnFallback.visible) failures.push('CDN 不通時の表示可能なフォールバック案内が見つかりません');
+  if (!after.selfContained) failures.push('生成 HTML が外部 script を読み込んでいます（描画ライブラリが同梱されていません）');
+  if (after.offline.externalScript) failures.push('生成 HTML に <script src> が残っています');
+  if (after.offline.cspScriptHosts.length) failures.push(`CSP の script-src に外部ホストが残っています: ${after.offline.cspScriptHosts.join(', ')}`);
+  if (!after.offline.canvasReady || after.offline.nodeCount < 2) failures.push('通信をすべて遮断した状態で ER 図を描画できません');
+  if (after.offline.blockedRequests.length) failures.push(`通信を遮断した状態で外部への通信が試みられました: ${after.offline.blockedRequests.join(', ')}`);
+  if (after.blockedRequests.length) failures.push(`検査中に外部への通信が試みられました: ${[...new Set(after.blockedRequests)].join(', ')}`);
+  const openFlow = after.openFlowOffline;
+  if (!openFlow?.canvasReady || openFlow.nodeCount < 2) failures.push('「ER図を開く」の別タブが、通信を遮断した状態で描画できません');
+  if (openFlow?.blockedRequests.length) failures.push(`「ER図を開く」で外部への通信が試みられました: ${openFlow.blockedRequests.join(', ')}`);
+  const saved = after.editedSave;
+  if (!saved?.canvasReady || !saved.reopenCanvasReady) failures.push('「編集済みHTMLを保存」の保存と開き直しが、通信を遮断した状態で描画できません');
+  if (saved && (saved.externalScript || saved.cspScriptHosts.length || saved.libraryScripts.length !== 3)) {
+    failures.push('保存した編集済みHTMLが単体で動く形（描画ライブラリ3件を同梱・外部 script なし）になっていません');
+  }
+  if (saved && (!saved.keepsEditState || saved.restored.lookupHidden !== true)) failures.push('保存した編集済みHTMLを開き直しても、保存時の表示状態（非表示にした関連の種類）が戻りません');
+  if (saved?.blockedRequests.length) failures.push(`編集済みHTMLの保存・開き直しで外部への通信が試みられました: ${saved.blockedRequests.join(', ')}`);
+  if (!after.libraryFallback.visible) failures.push('描画ライブラリを初期化できないときの案内（取得済みアプリの表）が見つかりません');
+  if (!after.libraryFallback.headingReachable || after.libraryFallback.lingeringControls.length) {
+    failures.push(`描画ライブラリを初期化できないときの案内が、画面部品に隠れています: ${after.libraryFallback.lingeringControls.join(', ') || '見出し'}`);
+  }
+  if (after.libraryFallback.mentionsCdn) failures.push('描画ライブラリを初期化できないときの案内が、同梱後も「CDN」を前提にしています');
 
   const diagramZoom = after.diagramZoom;
   if (!diagramZoom?.canvasReady || diagramZoom.levels.length !== DIAGRAM_ZOOM_LEVELS.length) {
@@ -975,7 +1220,10 @@ function comparisonHtml(summary) {
     layout: result.unknownLayout.normalized,
     desktopOverlap: result.desktop.overlap.noTopbarPanelOverlap,
     mobileOverlap: result.mobile.overlap.noTopbarPanelOverlap,
-    fallback: result.cdnFallback.visible,
+    fallback: result.libraryFallback.visible,
+    offline: result.selfContained && result.offline.canvasReady && result.offline.blockedRequests.length === 0,
+    openOffline: result.openFlowOffline ? result.openFlowOffline.canvasReady : null,
+    editedOffline: result.editedSave ? result.editedSave.canvasReady && result.editedSave.reopenCanvasReady : null,
     diagramZoom: result.diagramZoom
       ? result.diagramZoom.levels.every((level) => level.zoomReached && level.state.controlsUsable)
       : null,
@@ -1001,7 +1249,10 @@ function comparisonHtml(summary) {
     ['未知の hash レイアウトを正規化', 'layout'],
     ['Desktop topbar / panel 非重複', 'desktopOverlap'],
     ['Mobile topbar / panel 非重複', 'mobileOverlap'],
-    ['CDN ブロック時の案内', 'fallback'],
+    ['ライブラリを初期化できないときの案内', 'fallback'],
+    ['通信を遮断しても描画（HTML保存版）', 'offline'],
+    ['通信を遮断しても描画（ER図を開く）', 'openOffline'],
+    ['通信を遮断しても「編集済みHTMLを保存」が動く', 'editedOffline'],
     [`図ズーム ${DIAGRAM_ZOOM_LEVELS.join(' / ')}% と fit/reset`, 'diagramZoom'],
     ['ブラウザ倍率 80〜200%', 'browserZoom'],
     [`レスポンシブ幅 ${RESPONSIVE_VIEWPORTS.map((viewport) => viewport.width).join(' / ')}px`, 'responsive']
@@ -1051,8 +1302,10 @@ th,td{padding:10px 12px;border-bottom:1px solid #e9edf3;text-align:left}thead th
 <h2>レスポンシブ表示</h2>
 <table><thead><tr><th>Viewport</th><th>描画</th><th>操作</th><th>固定UI</th><th>横はみ出しなし</th></tr></thead><tbody>${responsiveRows}</tbody></table>
 <div class="grid scale-grid">${responsiveCards}</div>
-<h2>CDN ブロック時</h2>
-<div class="grid"><section class="card"><h2>Before</h2><img src="before-cdn-fallback.png" alt="Before CDN fallback"></section><section class="card"><h2>After</h2><img src="after-cdn-fallback.png" alt="After CDN fallback"></section></div>
+<h2>通信を遮断して開いたとき</h2>
+<div class="grid"><section class="card"><h2>Before（CDN 版）</h2><img src="before-offline.png" alt="Before offline"></section><section class="card"><h2>After（同梱版）</h2><img src="after-offline.png" alt="After offline"></section></div>
+<h2>描画ライブラリを初期化できないとき</h2>
+<div class="grid"><section class="card"><h2>Before</h2><img src="before-library-fallback.png" alt="Before library fallback"></section><section class="card"><h2>After</h2><img src="after-library-fallback.png" alt="After library fallback"></section></div>
 <details><summary>検査結果 JSON</summary><pre>${details}</pre></details>
 </main></body></html>`;
 }
@@ -1076,7 +1329,7 @@ async function main() {
 
   const fixture = buildMockFixture();
   const localVendors = discoverLocalVendors();
-  console.log(`[ER compare] local vendor: ${Object.keys(localVendors).join(', ') || 'なし（CDN を使用）'}`);
+  console.log(`[ER compare] local vendor（CDN 版 before の検査用）: ${Object.keys(localVendors).join(', ') || 'なし（CDN を使用）'}`);
   const browser = await launchBrowser(browserName, headed);
   let summary;
   try {

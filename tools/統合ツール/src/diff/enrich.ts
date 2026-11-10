@@ -124,9 +124,15 @@ export function fieldSettingIdentity(info: any): { settingKey: string; settingLa
         : '選択肢と並び順'
     };
   }
+  // 配列の要素は、直前の項目名に「（N件目）」を付けて示す（「初期値 / 2件目」のように項目名と要素を並べない）。
+  const parts: string[] = [];
+  for (const token of tokens as Array<string | number>) {
+    if (typeof token === 'number' && parts.length) parts[parts.length - 1] += `（${token + 1}件目）`;
+    else parts.push(fieldSettingTokenLabel(token));
+  }
   return {
     settingKey,
-    settingLabel: tokens.map(fieldSettingTokenLabel).join(' / ')
+    settingLabel: parts.join(' / ')
   };
 }
 
@@ -974,14 +980,19 @@ export function extractEntityContext(row: any, fieldLabelOf?: FieldLabelResolver
         return { entityKind: 'state', entityLabel: `${from} → ${to}`, entityCode: '', propLabel: 'ステータス名' };
       }
       if (tokens[1] === 'states' && typeof tokens[2] === 'string') {
-        return { entityKind: 'state', entityLabel: tokens[2], entityCode: tokens[2], propLabel };
+        // 作業者の設定（assignee）は、内部の項目名（エンティティ・種別）ではなく「作業者」と示す。
+        const stateProp = tokens[3] === 'assignee'
+          ? (leaf === 'entities' ? '作業者' : (leaf === 'type' ? '作業者の選び方' : propLabel))
+          : propLabel;
+        return { entityKind: 'state', entityLabel: tokens[2], entityCode: tokens[2], propLabel: stateProp };
       }
       if (tokens[1] === 'actions' && typeof tokens[2] === 'number') {
         const name = (row?.arrayKey === 'name' && row?.arrayKeyValue != null)
           ? String(row.arrayKeyValue)
           : String((payload && typeof payload === 'object' && (payload as any).name) || '');
         const label = name || `遷移 #${tokens[2] + 1}`;
-        return { entityKind: 'action', entityLabel: label, entityCode: name, propLabel };
+        const actionProp = tokens[3] === 'executableUser' && leaf === 'entities' ? '実行できるユーザー' : propLabel;
+        return { entityKind: 'action', entityLabel: label, entityCode: name, propLabel: actionProp };
       }
       return empty;
     }
@@ -1013,20 +1024,25 @@ export function extractEntityContext(row: any, fieldLabelOf?: FieldLabelResolver
     }
     case 'fieldAcl': {
       if (tokens[1] === 'rights' && typeof tokens[2] === 'number') {
+        // 権限の対象フィールド。entities 配下の行は、比較の時点で付けた親の識別子（parentArrayKey）から引く
+        // （行の値はアクセス権などの単独の値で、フィールドのコードを持たない）。
         const fc = (row?.arrayKey === 'code' && row?.arrayKeyValue != null)
           ? String(row.arrayKeyValue)
-          : String((payload && typeof payload === 'object' && (payload as any).code) || '');
+          : (row?.parentArrayKey === 'code' && row?.parentArrayKeyValue != null)
+            ? String(row.parentArrayKeyValue)
+            : String((payload && typeof payload === 'object' && (payload as any).code) || '');
+        const fcCaption = fc && fieldLabelOf ? fieldCaption(fc, fieldLabelOf(fc, row?.type)) : fc;
         // entities 配下の行：対象エンティティ（ユーザー/組織/グループ）をラベルに使う
         if (tokens[3] === 'entities') {
           let ent: any = (row?.arrayKey === 'entity' && row?.arrayKeyValue && typeof row.arrayKeyValue === 'object') ? row.arrayKeyValue : null;
           if (!ent && payload && typeof payload === 'object' && (payload as any).entity) ent = (payload as any).entity;
           const entLabel = describeAclEntity(ent);
           if (entLabel) {
-            const label = fc ? `${fc} › ${entLabel}` : entLabel;
+            const label = fcCaption ? `${fcCaption} › ${entLabel}` : entLabel;
             return { entityKind: 'fieldAclEntry', entityLabel: label, entityCode: fc || String(ent?.code || ''), propLabel };
           }
         }
-        const label = fc || `エントリー #${tokens[2] + 1}`;
+        const label = fcCaption || `エントリー #${tokens[2] + 1}`;
         return { entityKind: 'fieldAclEntry', entityLabel: label, entityCode: fc, propLabel };
       }
       return empty;
@@ -1172,7 +1188,10 @@ export function buildDiffReasonSummary(row) {
     if (fieldInfo.leafKey === 'unique') return '重複禁止設定変更';
     if (String(row.path || '').includes('.lookup.')) return 'ルックアップ設定変更';
     const isOption = fieldInfo.tailTokens[0] === 'options';
-    if (isOption || FIELD_SETTING_LABELS[fieldInfo.leafKey]) {
+    // 末尾が配列の添字（初期値の 2 件目など）のときも、途中の項目名で設定項目を特定する。
+    const knownSetting = !!FIELD_SETTING_LABELS[fieldInfo.leafKey]
+      || fieldInfo.tailTokens.some((token: string | number) => typeof token === 'string' && !!FIELD_SETTING_LABELS[token]);
+    if (isOption || knownSetting) {
       const action = row.type === 'added' ? '追加' : (row.type === 'removed' ? '削除' : '変更');
       return `${fieldSettingIdentity(fieldInfo).settingLabel} ${action}`;
     }
@@ -1233,6 +1252,12 @@ export function buildDiffReasonSummary(row) {
 
 /** レイアウトの行が指すフィールドを両側の設定から探す。size.width などは行に field の情報を持たない。 */
 function layoutFieldCaption(row, sourceBundle, targetBundle, fieldLabelOf: FieldLabelResolver): string {
+  // 追加・削除された配置は、行の値がそのフィールドの定義なので、設定の添字を引くよりも確実。
+  const own = row.type === 'removed' ? row.left : (row.type === 'added' ? row.right : null);
+  const ownCode = own && typeof own === 'object' && !Array.isArray(own) && typeof own.code === 'string' ? own.code.trim() : '';
+  if (ownCode) return `フィールド「${fieldCaption(ownCode, fieldLabelOf(ownCode, row.type))}」`;
+  // 並び順を無視した比較では、path の添字が並べ替え後の位置のため、元の設定からは引けない。誤った名前を付けない。
+  if (row._orderNormalized) return '';
   const tokens = tokenizePath(String(row.path || ''));
   const fieldAt = (bundle: any) => {
     let node = bundle?.sections?.layoutSettings;

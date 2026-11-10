@@ -13,6 +13,31 @@ export function csvImportUnsupportedFields(properties: Record<string, any>): Map
     .map(([code, field]) => [code, `${String(field?.type || '不明な種類')}${field?.expression ? '・自動計算' : ''}${targets.has(code) ? '・ルックアップのコピー先' : ''}`]));
 }
 
+/** 2026-02-30 や 13 月のように、形式は合っていても存在しない日付か（kintone は書き込み時に拒否する）。 */
+export function isCalendarDate(year: number, month: number, day: number): boolean {
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day) || month < 1 || month > 12 || day < 1) return false;
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return day <= lastDay;
+}
+
+const DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+const DATETIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-](\d{2}):?(\d{2}))?$/;
+
+/** YYYY-MM-DD の形式で、実在する日付か。 */
+export function isValidCsvDate(text: string): boolean {
+  const m = DATE_PATTERN.exec(text);
+  return !!m && isCalendarDate(Number(m[1]), Number(m[2]), Number(m[3]));
+}
+
+/** ISO 8601 の日時（時差つき可）で、日付・時・分・秒が実在するか。 */
+export function isValidCsvDateTime(text: string): boolean {
+  const m = DATETIME_PATTERN.exec(text);
+  if (!m) return false;
+  const [hour, minute, second] = [Number(m[4]), Number(m[5]), Number(m[6] ?? 0)];
+  const offsetOk = m[7] === undefined || (Number(m[7]) <= 23 && Number(m[8]) <= 59);
+  return isCalendarDate(Number(m[1]), Number(m[2]), Number(m[3])) && hour <= 23 && minute <= 59 && second <= 59 && offsetOk;
+}
+
 export function splitCsvListValue(value: unknown): string[] {
   const text = String(value ?? '').trim();
   return text ? text.split(',').map(item => item.trim()).filter(Boolean) : [];
@@ -141,14 +166,18 @@ export function planCsvImport(rows: string[][], properties: Record<string, any>)
           issue(row, label, `最大文字数（${def.maxLength}文字）を超えています`);
         }
       }
-      if (!empty && def.type === 'DATE' && !/^\d{4}-\d{2}-\d{2}$/.test(String(value).trim())) {
-        issue(row, label, '日付の形式が不正です（YYYY-MM-DD）');
+      if (!empty && def.type === 'DATE') {
+        const text = String(value).trim();
+        if (!DATE_PATTERN.test(text)) issue(row, label, '日付の形式が不正です（YYYY-MM-DD）');
+        else if (!isValidCsvDate(text)) issue(row, label, `存在しない日付です（${text}）`);
       }
       if (!empty && def.type === 'TIME' && !/^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(String(value).trim())) {
         issue(row, label, '時刻の形式が不正です（HH:MM）');
       }
-      if (!empty && def.type === 'DATETIME' && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$/.test(String(value).trim())) {
-        issue(row, label, '日時の形式が不正です（ISO 8601形式: YYYY-MM-DDTHH:MM:SSZ）');
+      if (!empty && def.type === 'DATETIME') {
+        const text = String(value).trim();
+        if (!DATETIME_PATTERN.test(text)) issue(row, label, '日時の形式が不正です（ISO 8601形式: YYYY-MM-DDTHH:MM:SSZ）');
+        else if (!isValidCsvDateTime(text)) issue(row, label, `存在しない日時です（${text}）`);
       }
       if (['RADIO_BUTTON', 'DROP_DOWN', 'CHECK_BOX', 'MULTI_SELECT'].includes(def.type)) {
         const choices = Array.isArray(value) ? value : empty ? [] : [value];

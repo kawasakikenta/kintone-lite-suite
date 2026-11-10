@@ -5,6 +5,7 @@ import { deepClone, kusConfirm, summarizeList } from '../utils.js';
 import { apiGet, apiPost, apiPut, buildApiPrefix, decorateRevisionConflict, isRevisionConflictError, pickRevision } from '../api.js';
 import { isCancelRequested, isRunCancelledError } from '../runControl.js';
 import { createCancelReport, isCancelReportError, isCancelStop } from './run-cancel-summary.js';
+import { collectFormulaRefs, rewriteFormulaRefs } from './field.js';
 
 /** アプリID・ゲストIDは数値のみ。URL パスに組み込まれるため、空でも数値でもない値は呼び出し前に止める。 */
 function assertNumericIds(appId: unknown, guestId: unknown, appLabel: string) {
@@ -296,7 +297,98 @@ export function findFieldCodeConflicts(plan: FieldApplyPlan, currentProps: Recor
   return conflicts;
 }
 
-export function buildFieldApplyConfirmText(targetAppId: string, targetGuestId: string, plan: FieldApplyPlan): string {
+export interface FieldMissingReference {
+  /** 参照している側のフィールドコード（テーブルの中は「テーブル.子」） */
+  field: string;
+  kind: 'calc' | 'lookup' | 'reference' | 'renamed';
+  /** 反映後のフォームに無いコード */
+  missing: string[];
+}
+
+const MISSING_REFERENCE_KIND_LABEL: Record<FieldMissingReference['kind'], string> = {
+  calc: '計算式',
+  lookup: 'ルックアップのコピー先',
+  reference: '関連レコード一覧の条件',
+  renamed: '計算式・コピー先など（コードを変更するフィールドを参照）'
+};
+
+/** 反映後のフォームにあるフィールドコード（現在の設定にコード変更を適用し、追加分を加えたもの）と、コード変更で無くなるコード。 */
+function finalFieldCodes(plan: FieldApplyPlan, current: Record<string, any>): { codes: Set<string>; renamedAway: Set<string> } {
+  const codes = new Set<string>();
+  const renamedAway = new Set<string>();
+  const addDef = (key: string, def: any, update: any) => {
+    const code = String(update?.code || def?.code || key);
+    codes.add(code);
+    if (code !== key) renamedAway.add(key);
+    if (def?.type === 'SUBTABLE') {
+      for (const [childKey, childDef] of Object.entries(def.fields || {}) as Array<[string, any]>) {
+        const childCode = String(update?.fields?.[childKey]?.code || childDef?.code || childKey);
+        codes.add(childCode);
+        if (childCode !== childKey) renamedAway.add(childKey);
+      }
+    }
+  };
+  for (const [key, def] of Object.entries(current)) addDef(key, def, hasOwn(plan.updates, key) ? plan.updates[key] : undefined);
+  for (const [key, def] of Object.entries(plan.adds)) addDef(key, def, undefined);
+  // 同じコードが別のフィールドに付け直された場合（入れ替え）は、無くなったことにしない
+  for (const code of codes) renamedAway.delete(code);
+  return { codes, renamedAway };
+}
+
+/** 1 つのフィールド定義が参照する、この JSON のアプリ内のフィールドコード。 */
+function referencedFieldCodes(def: any): Array<{ kind: FieldMissingReference['kind']; codes: string[] }> {
+  const out: Array<{ kind: FieldMissingReference['kind']; codes: string[] }> = [];
+  if (def?.type === 'CALC' && typeof def.expression === 'string') out.push({ kind: 'calc', codes: collectFormulaRefs(def.expression) });
+  if (def?.lookup && Array.isArray(def.lookup.fieldMappings)) out.push({ kind: 'lookup', codes: def.lookup.fieldMappings.map((item: any) => String(item?.field || '')).filter(Boolean) });
+  const condition = def?.referenceTable?.condition?.field;
+  if (typeof condition === 'string' && condition) out.push({ kind: 'reference', codes: [condition] });
+  return out;
+}
+
+/**
+ * 反映後のフォームに無いフィールドを参照する定義（計算式の参照先、ルックアップのコピー先、関連レコード一覧の条件）を洗い出す。
+ * kintone は存在しないフィールドを参照する定義を拒否するため、書き込む前に確認画面で示す。
+ * 追加・更新するフィールドは反映後のフォームと照合し、反映しない既存のフィールドは、コード変更で無くなるコードを参照している場合だけ示す。
+ */
+export function findMissingFieldReferences(plan: FieldApplyPlan, currentProps: Record<string, any>): FieldMissingReference[] {
+  const current = currentProps || {};
+  const { codes, renamedAway } = finalFieldCodes(plan, current);
+  const found: FieldMissingReference[] = [];
+  const check = (field: string, def: any, onlyRenamed: boolean) => {
+    for (const { kind, codes: refs } of referencedFieldCodes(def)) {
+      const selfCode = String(def?.code || '');
+      const missing = [...new Set(refs)].filter((code) => (onlyRenamed ? renamedAway.has(code) : !codes.has(code)) && code !== selfCode);
+      if (missing.length) found.push({ field, kind: onlyRenamed ? 'renamed' : kind, missing });
+    }
+  };
+  const visit = (key: string, def: any, onlyRenamed: boolean) => {
+    check(key, def, onlyRenamed);
+    if (def?.type === 'SUBTABLE') for (const [childKey, childDef] of Object.entries(def.fields || {})) check(`${key}.${childKey}`, childDef, onlyRenamed);
+  };
+  for (const [key, def] of Object.entries(plan.adds)) visit(key, def, false);
+  for (const [key, def] of Object.entries(plan.updates)) visit(key, def, false);
+  if (renamedAway.size) {
+    for (const [key, def] of Object.entries(current)) {
+      if (hasOwn(plan.updates, key)) continue;
+      visit(key, def, true);
+    }
+  }
+  return found;
+}
+
+/** 最終確認に示す、参照先が無いフィールドの警告（無ければ空）。 */
+export function describeMissingFieldReferences(missing: FieldMissingReference[], limit = 8): string[] {
+  if (!missing.length) return [];
+  const shown = missing.slice(0, limit).map((item) => `・${item.field}（${MISSING_REFERENCE_KIND_LABEL[item.kind]}）: ${item.missing.join('、')}`);
+  return [
+    '⚠ 次のフィールドは、反映後のフォームに無いフィールドを参照しています。kintone に拒否される可能性があります:',
+    ...shown,
+    ...(missing.length > limit ? [`…ほか ${missing.length - limit} 件`] : []),
+    '参照先のフィールドも JSON に加えるか、反映先に作ってから反映してください。'
+  ];
+}
+
+export function buildFieldApplyConfirmText(targetAppId: string, targetGuestId: string, plan: FieldApplyPlan, missing: FieldMissingReference[] = []): string {
   const addCount = Object.keys(plan.adds).length;
   const updateCount = Object.keys(plan.updates).length;
   const skipCount = plan.skippedSystem.length + plan.skippedExisting.length;
@@ -307,6 +399,7 @@ export function buildFieldApplyConfirmText(targetAppId: string, targetGuestId: s
     updateCount ? `更新: ${listCodes(plan.updates)}` : '',
     '削除 0件（このツールはフィールドを削除しません）',
     updateCount ? '更新対象は、反映先の既存の定義を反映元の内容で置き換えます。' : '',
+    ...describeMissingFieldReferences(missing),
     '本番は変わりません（公開は kintone の設定画面で行います）。実行しますか？'
   ].filter(Boolean).join('\n');
 }
@@ -333,6 +426,8 @@ interface FieldTargetInspection {
   conflicts: string[];
   /** GET で得た revision（無ければ空文字） */
   revision: string;
+  /** 反映後のフォームに無いフィールドを参照する定義（空なら問題なし） */
+  missingRefs: FieldMissingReference[];
 }
 
 /** 反映先プレビューのフィールド設定と revision を取得し、反映計画を作る（書き込みはしない）。 */
@@ -354,7 +449,8 @@ async function inspectFieldTarget(
     updateCount: Object.keys(plan.updates).length,
     skipCount: plan.skippedSystem.length + plan.skippedExisting.length,
     conflicts: findFieldCodeConflicts(plan, current.properties || ({} as any)),
-    revision: pickRevision(current)
+    revision: pickRevision(current),
+    missingRefs: findMissingFieldReferences(plan, current.properties || ({} as any))
   };
 }
 
@@ -439,7 +535,7 @@ export async function runFieldApplyStandalone(opts, setStatus) {
   const lookupMap = parseLookupMapInput(lookupMapJson);
 
   setStatus('反映先のフィールド設定を取得中...');
-  const { prefix, plan, addCount, updateCount, skipCount, conflicts, revision } = await inspectFieldTarget(tgtApp, tgtGuest, incoming, lookupMap, !!overwrite);
+  const { prefix, plan, addCount, updateCount, skipCount, conflicts, revision, missingRefs } = await inspectFieldTarget(tgtApp, tgtGuest, incoming, lookupMap, !!overwrite);
   const logs = [...plan.logs];
 
   if (!addCount && !updateCount) {
@@ -449,7 +545,7 @@ export async function runFieldApplyStandalone(opts, setStatus) {
   }
   if (conflicts.length) throw new Error(FIELD_CODE_CONFLICT_MESSAGE(conflicts));
   if (!/^\d+$/.test(revision)) throw new Error(FIELD_REVISION_MISSING_MESSAGE);
-  if (!opts.skipConfirm && !kusConfirm(buildFieldApplyConfirmText(tgtApp, tgtGuest, plan))) {
+  if (!opts.skipConfirm && !kusConfirm(buildFieldApplyConfirmText(tgtApp, tgtGuest, plan, missingRefs))) {
     setStatus('フィールド反映をキャンセルしました');
     logs.push('キャンセル');
     return logs;
@@ -495,6 +591,8 @@ export interface FieldMultiTargetResult {
   phase: 'precheck' | 'apply';
   /** 利用者向けの説明（失敗理由・競合・中止時に反映済みだった内容など） */
   message: string;
+  /** 反映後のフォームに無いフィールドを参照する定義（事前確認の結果。最終確認に警告として示す） */
+  missingRefs?: FieldMissingReference[];
 }
 
 export interface FieldMultiApplyReport {
@@ -556,8 +654,8 @@ export function findFieldMultiApplyProblem(input: { targets: FieldMultiTarget[];
 
 function singleLineMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String((error as any)?.message ?? error ?? 'エラーが発生しました');
-  // 内部ログの「NG …」行は説明の重複になるので除き、反映済みの内訳（OK …）は残す
-  return message.split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('NG ')).join(' / ');
+  // 内部ログの「NG …」行は説明の重複になるので除き、反映済みの内訳（OK …）は残す。通信の詳細（[API] GET …）は利用者向けの結果に出さない。
+  return message.split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('NG ') && !line.startsWith('[API]')).join(' / ');
 }
 
 function countByStatus(results: FieldMultiTargetResult[]): Record<FieldMultiStatus, number> {
@@ -578,7 +676,7 @@ export function buildFieldMultiConfirmText(prechecks: FieldMultiTargetResult[]):
   const sum = (key: 'add' | 'update' | 'skip') => ready.reduce((n, r) => n + r[key], 0);
   const lines = [
     ...failed.map((r) => `× ${fieldMultiLabel(r)}: 事前確認に失敗（${r.message}）`),
-    ...ready.map((r) => `○ ${fieldMultiLabel(r)}: ${describePlanCounts(r)}`),
+    ...ready.map((r) => `○ ${fieldMultiLabel(r)}: ${describePlanCounts(r)}${r.missingRefs?.length ? `\n   ⚠ 反映後のフォームに無いフィールドを参照: ${r.missingRefs.slice(0, 3).map((item) => `${item.field} → ${item.missing.join('、')}`).join(' / ')}${r.missingRefs.length > 3 ? ` ほか${r.missingRefs.length - 3}件` : ''}` : ''}`),
     ...unchanged.map((r) => `－ ${fieldMultiLabel(r)}: 変更なし（スキップ ${r.skip}）`)
   ];
   return [
@@ -586,6 +684,7 @@ export function buildFieldMultiConfirmText(prechecks: FieldMultiTargetResult[]):
     `反映する ${ready.length}件 / 変更なし ${unchanged.length}件 / 事前確認に失敗 ${failed.length}件（失敗したアプリには反映しません）`,
     `合計: 追加 ${sum('add')}件 / 更新 ${sum('update')}件 / スキップ ${sum('skip')}件`,
     '削除 0件（このツールはフィールドを削除しません）',
+    ...(ready.some((r) => r.missingRefs?.length) ? ['⚠ 参照先のフィールドが反映後のフォームに無い反映先は、kintone に拒否される可能性があります。参照先のフィールドも JSON に加えるか、反映先に作ってから反映してください。'] : []),
     '',
     summarizeList(lines),
     '',
@@ -676,7 +775,7 @@ export async function runFieldApplyMultiStandalone(
       } else if (!/^\d+$/.test(inspection.revision)) {
         results.push({ ...baseResult(target), add: 0, update: 0, skip: inspection.skipCount, status: 'failed', phase: 'precheck', message: FIELD_REVISION_MISSING_MESSAGE });
       } else {
-        const entry: FieldMultiTargetResult = { ...baseResult(target), ...counts, status: 'success', phase: 'precheck', message: '' };
+        const entry: FieldMultiTargetResult = { ...baseResult(target), ...counts, status: 'success', phase: 'precheck', message: '', ...(inspection.missingRefs.length ? { missingRefs: inspection.missingRefs } : {}) };
         results.push(entry);
         // 書き込みに使うのは計画と revision だけ。全アプリを対象にしても各アプリのフィールド設定全体を持ち続けない。
         ready.push({ target, inspection: { ...inspection, current: null }, entry });
@@ -809,11 +908,41 @@ export function planBulkRename(
   const checkDuplicate = (from: string, to: string, toCode: string) => {
     if ((finalCodes.get(toCode) || 0) > 1) collisions.push(`${from} → ${to}`);
   };
+  // コードを変えるフィールド（旧 → 新）。計算式・ルックアップのコピー先・関連レコード一覧の条件が参照するコードも、同じ規則で書き換える。
+  const codeMap = new Map<string, string>();
+  for (const [code, field] of entries) {
+    if (!field || RENAME_EXCLUDED_TYPES.has(field.type)) continue;
+    const next = rename(code);
+    if (next && next !== code) codeMap.set(code, next);
+    if (field.type === 'SUBTABLE' && field.fields && typeof field.fields === 'object') {
+      for (const [childCode, childDef] of Object.entries(field.fields) as Array<[string, any]>) {
+        if (!childDef || RENAME_EXCLUDED_TYPES.has(childDef.type)) continue;
+        const nextChild = rename(childCode);
+        if (nextChild && nextChild !== childCode) codeMap.set(childCode, nextChild);
+      }
+    }
+  }
+  /** 定義の中の参照を新しいコードへ書き換える。書き換えたら true */
+  const rewriteReferences = (def: any): boolean => {
+    let changed = false;
+    if (def.type === 'CALC' && typeof def.expression === 'string') {
+      const next = rewriteFormulaRefs(def.expression, codeMap);
+      if (next !== def.expression) { def.expression = next; changed = true; }
+    }
+    for (const mapping of Array.isArray(def.lookup?.fieldMappings) ? def.lookup.fieldMappings : []) {
+      if (mapping && typeof mapping.field === 'string' && codeMap.has(mapping.field)) { mapping.field = codeMap.get(mapping.field); changed = true; }
+    }
+    const condition = def.referenceTable?.condition;
+    if (condition && typeof condition.field === 'string' && codeMap.has(condition.field)) { condition.field = codeMap.get(condition.field); changed = true; }
+    return changed;
+  };
   for (const [code, field] of entries) {
     if (!field || RENAME_EXCLUDED_TYPES.has(field.type)) continue;
     const newCode = rename(code);
     const cloned = deepClone(field);
     let touched = false;
+    // 反映先のほかのフィールドを参照する定義は、新しいコードに合わせて書き換える（コードは変えなくても、参照先が変わるなら出力に含める）。
+    if (rewriteReferences(cloned)) touched = true;
     if (newCode !== code) {
       if (!newCode) { collisions.push(`${code} → (空)`); continue; }
       checkDuplicate(code, newCode, newCode);
@@ -827,6 +956,7 @@ export function planBulkRename(
         if (!childDef || RENAME_EXCLUDED_TYPES.has(childDef.type)) continue;
         const newChild = rename(childCode);
         const childClone = deepClone(childDef);
+        if (rewriteReferences(childClone)) touched = true;
         if (newChild !== childCode) {
           if (!newChild) {
             collisions.push(`${code}.${childCode} → (空)`);

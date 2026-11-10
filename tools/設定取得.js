@@ -264,27 +264,6 @@
 
   // src/constants.ts
   var TOOL_ID = "kintone-unified-suite-v2";
-  var EXTERNAL_LIBRARIES = Object.freeze({
-    jszip: Object.freeze({
-      version: "3.10.1",
-      cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"
-    }),
-    cytoscape: Object.freeze({
-      version: "3.28.1",
-      cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js",
-      altVersion: "3.26.0",
-      altCdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape@3.26.0/dist/cytoscape.min.js"
-    }),
-    dagre: Object.freeze({
-      version: "0.8.5",
-      cdnUrl: "https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"
-    }),
-    cytoscapeDagre: Object.freeze({
-      version: "2.5.0",
-      cdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js",
-      altCdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"
-    })
-  });
   function resolveDefaultAppId() {
     try {
       if (typeof kintone !== "undefined" && kintone?.app?.getId) {
@@ -778,6 +757,16 @@
     return legacyCopy(text);
   }
 
+  // src/pluginConfigMarker.ts
+  var PLUGIN_CONFIG_OMITTED_KIND = "pluginConfigOmitted";
+  var PLUGIN_CONFIG_OMITTED_MESSAGE = "プラグインの設定値は含めずに保存しています（プラグインの一覧だけです）";
+  function markPluginConfigOmitted(bundle) {
+    const section = bundle?.sections?.pluginSettings;
+    if (!section || typeof section !== "object" || section._fetchError || !Array.isArray(section.plugins) || !section.plugins.length) return 0;
+    section._partial = { kind: PLUGIN_CONFIG_OMITTED_KIND, message: PLUGIN_CONFIG_OMITTED_MESSAGE, omittedPlugins: section.plugins.length };
+    return section.plugins.length;
+  }
+
   // src/diff/engine.ts
   var ENTITY_PATH_SEGMENT = String.raw`(?:\.[^.[\]]+|\["(?:[^"\\]|\\.)*"\])`;
   var ENTITY_IDENTIFIER_PATH_PATTERNS = [
@@ -1234,7 +1223,7 @@
     return stats;
   }
   var BUNDLE_FETCH_CONCURRENCY = 3;
-  async function fetchBundle({ appId, guestId, preview, sections, onProgress, rawSettings = false }) {
+  async function fetchBundle({ appId, guestId, preview, sections, onProgress, rawSettings = false, skipPluginConfig = false, skipCustomizeBodies = false }) {
     const app = String(appId || "").trim();
     if (!app) throw new Error("アプリIDが必要です");
     const bundle = {
@@ -1271,7 +1260,7 @@
       bundle.sections[def.key] = value;
       if (revision) bundle.meta.sectionRevisions[def.key] = revision;
     });
-    if (!rawSettings && sections.includes("customizeSettings")) {
+    if (!rawSettings && !skipCustomizeBodies && sections.includes("customizeSettings")) {
       const cust = bundle.sections.customizeSettings;
       if (cust && !cust._fetchError) {
         try {
@@ -1295,7 +1284,7 @@
     }
     if (!rawSettings && sections.includes("pluginSettings")) {
       const plug = bundle.sections.pluginSettings;
-      if (plug && !plug._fetchError) {
+      if (plug && !plug._fetchError && !skipPluginConfig) {
         try {
           const prefix = buildApiPrefix(guestId, preview);
           const stats = await fetchPluginConfigs(plug, prefix, app);
@@ -3325,65 +3314,349 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     return { refresh, show };
   }
 
-  // src/jszipLoader.ts
-  var loadPromise = null;
-  var failedScripts = /* @__PURE__ */ new WeakSet();
-  var JSZIP_LOAD_TIMEOUT_MS = 3e4;
-  function loadJSZipLite() {
-    const w = window;
-    if (w.JSZip) return Promise.resolve(w.JSZip);
-    if (loadPromise) return loadPromise;
-    const src = EXTERNAL_LIBRARIES.jszip.cdnUrl || "";
-    loadPromise = new Promise((resolve, reject) => {
-      const existing = Array.from(document.querySelectorAll(`script[src="${src}"]`)).find((script2) => !failedScripts.has(script2));
-      const script = existing || document.createElement("script");
-      let settled = false;
-      let timer;
-      const cleanup = () => {
-        if (timer !== void 0) clearTimeout(timer);
-        script.removeEventListener("load", settle);
-        script.removeEventListener("error", onError);
-      };
-      const fail = (error) => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        failedScripts.add(script);
-        if (!existing) script.remove();
-        reject(error);
-      };
-      const settle = () => {
-        if (settled) return;
-        const ctor = w.JSZip;
-        if (!ctor) {
-          fail(new Error("JSZipのロード後もグローバル変数が見つかりません"));
-          return;
-        }
-        settled = true;
-        cleanup();
-        resolve(ctor);
-      };
-      const onError = () => fail(new Error(`JSZipの読み込みに失敗しました（${src}）。CSP やネットワーク制限を確認してください`));
-      script.addEventListener("load", settle, { once: true });
-      script.addEventListener("error", onError, { once: true });
-      timer = setTimeout(() => {
-        if (w.JSZip) settle();
-        else fail(new Error("JSZipの読み込みが30秒以内に完了しませんでした。CSP やネットワーク制限を確認して再試行してください"));
-      }, JSZIP_LOAD_TIMEOUT_MS);
-      if (!existing) {
-        try {
-          script.src = src;
-          script.async = true;
-          document.head.appendChild(script);
-        } catch (error) {
-          fail(error instanceof Error ? error : new Error(String(error)));
-        }
+  // src/archive/crc32.ts
+  var crcTable = null;
+  function getCrcTable() {
+    if (crcTable) return crcTable;
+    const table = new Uint32Array(256);
+    for (let i = 0; i < 256; i += 1) {
+      let value = i;
+      for (let bit = 0; bit < 8; bit += 1) {
+        value = value & 1 ? 3988292384 ^ value >>> 1 : value >>> 1;
       }
-    }).catch((error) => {
-      loadPromise = null;
-      throw error;
-    });
-    return loadPromise;
+      table[i] = value >>> 0;
+    }
+    crcTable = table;
+    return table;
+  }
+  var CRC32_INITIAL = 4294967295;
+  function crc32Update(state3, bytes) {
+    const table = getCrcTable();
+    let crc = state3;
+    for (let i = 0; i < bytes.length; i += 1) {
+      crc = table[(crc ^ bytes[i]) & 255] ^ crc >>> 8;
+    }
+    return crc >>> 0;
+  }
+  function crc32Finish(state3) {
+    return (state3 ^ 4294967295) >>> 0;
+  }
+
+  // src/archive/lite-zip.ts
+  var ZipLimitError = class extends RangeError {
+    constructor(message) {
+      super(message);
+      this.name = "ZipLimitError";
+    }
+  };
+  var LITE_ZIP_MAX_ENTRIES = 65535;
+  var LITE_ZIP_MAX_BYTES = 4294967294;
+  var LOCAL_HEADER_SIZE = 30;
+  var CENTRAL_HEADER_SIZE = 46;
+  var END_RECORD_SIZE = 22;
+  var FLAG_UTF8_NAME = 2048;
+  var METHOD_STORE = 0;
+  var METHOD_DEFLATE = 8;
+  var DEFAULT_MIME_TYPE = "application/zip";
+  var INCOMPRESSIBLE_EXTENSIONS = /* @__PURE__ */ new Set([
+    "zip",
+    "gz",
+    "tgz",
+    "bz2",
+    "xz",
+    "7z",
+    "rar",
+    "jar",
+    "xlsx",
+    "xlsm",
+    "docx",
+    "pptx",
+    "odt",
+    "ods",
+    "jpg",
+    "jpeg",
+    "png",
+    "gif",
+    "webp",
+    "heic",
+    "avif",
+    "mp3",
+    "m4a",
+    "aac",
+    "ogg",
+    "mp4",
+    "m4v",
+    "mov",
+    "webm",
+    "mkv",
+    "avi"
+  ]);
+  var sharedTextEncoder = null;
+  var textEncoder = {
+    encode(text) {
+      if (!sharedTextEncoder) sharedTextEncoder = new TextEncoder();
+      return sharedTextEncoder.encode(text);
+    }
+  };
+  function isBlobLike(value) {
+    const candidate = value;
+    return !!candidate && typeof candidate === "object" && typeof candidate.size === "number" && typeof candidate.slice === "function" && typeof candidate.arrayBuffer === "function";
+  }
+  function toEntryData(name, data) {
+    if (typeof data === "string") {
+      const bytes = textEncoder.encode(data);
+      return { bytes, blob: null, size: bytes.length };
+    }
+    if (isBlobLike(data)) return { bytes: null, blob: data, size: data.size };
+    if (Object.prototype.toString.call(data) === "[object ArrayBuffer]") {
+      const bytes = new Uint8Array(data);
+      return { bytes, blob: null, size: bytes.length };
+    }
+    if (ArrayBuffer.isView(data)) {
+      const bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+      return { bytes, blob: null, size: bytes.length };
+    }
+    if (Array.isArray(data)) {
+      const bytes = Uint8Array.from(data);
+      return { bytes, blob: null, size: bytes.length };
+    }
+    throw new TypeError(`ZIP に入れられない形式のデータです: ${name}`);
+  }
+  function normalizeEntryName(raw) {
+    const text = String(raw ?? "").replace(/\\/g, "/");
+    if (!text || text.includes("\0")) throw new TypeError("ZIP 内のファイル名が空か、使えない文字を含んでいます");
+    if (text.startsWith("/") || /^[A-Za-z]:\//.test(text)) {
+      throw new TypeError(`ZIP 内のファイル名は相対パスにしてください: ${text}`);
+    }
+    const trailingSlash = text.endsWith("/");
+    const segments = text.split("/").filter((segment) => segment !== "" && segment !== ".");
+    if (segments.some((segment) => segment === "..")) {
+      throw new TypeError(`ZIP 内のファイル名に .. は使えません: ${text}`);
+    }
+    if (!segments.length) throw new TypeError("ZIP 内のファイル名が空です");
+    return segments.join("/") + (trailingSlash ? "/" : "");
+  }
+  function addFolderEntry(store, folderName) {
+    if (store.get(folderName)?.isFolder) return;
+    store.set(folderName, { name: folderName, isFolder: true, bytes: null, blob: null, size: 0, modifiedAt: /* @__PURE__ */ new Date() });
+  }
+  function addParentFolders(store, name) {
+    const segments = name.replace(/\/$/, "").split("/");
+    for (let i = 1; i < segments.length; i += 1) addFolderEntry(store, `${segments.slice(0, i).join("/")}/`);
+  }
+  var LiteZipFolder = class _LiteZipFolder {
+    constructor(store, root2) {
+      __publicField(this, "store");
+      __publicField(this, "root");
+      this.store = store;
+      this.root = root2;
+    }
+    /** ファイルを追加する。同じ名前は後から追加したもので置き換える。 */
+    file(name, data) {
+      if (data === void 0 || data === null) throw new TypeError(`ZIP に入れるデータがありません: ${name}`);
+      const fullName = normalizeEntryName(this.root + String(name));
+      if (fullName.endsWith("/")) {
+        addParentFolders(this.store, fullName);
+        addFolderEntry(this.store, fullName);
+        return this;
+      }
+      const entryData = toEntryData(fullName, data);
+      addParentFolders(this.store, fullName);
+      this.store.set(fullName, { name: fullName, isFolder: false, ...entryData, modifiedAt: /* @__PURE__ */ new Date() });
+      return this;
+    }
+    /** フォルダを作り（無ければ空のフォルダとして残る）、そのフォルダへ追加できるオブジェクトを返す。 */
+    folder(name) {
+      const fullName = normalizeEntryName(`${this.root}${String(name)}/`);
+      addParentFolders(this.store, fullName);
+      addFolderEntry(this.store, fullName);
+      return new _LiteZipFolder(this.store, fullName);
+    }
+    /** ファイルを削除する。フォルダ名なら配下ごと削除する。 */
+    remove(name) {
+      let fullName = normalizeEntryName(this.root + String(name));
+      const exact = this.store.get(fullName);
+      if (exact && !exact.isFolder) {
+        this.store.delete(fullName);
+        return this;
+      }
+      if (!fullName.endsWith("/")) fullName += "/";
+      for (const key of Array.from(this.store.keys())) {
+        if (key.startsWith(fullName)) this.store.delete(key);
+      }
+      return this;
+    }
+  };
+  var deflateRawSupport = null;
+  function isDeflateRawSupported() {
+    if (deflateRawSupport !== null) return deflateRawSupport;
+    try {
+      deflateRawSupport = typeof CompressionStream === "function" && typeof Response === "function" && typeof Blob.prototype.stream === "function" && !!new CompressionStream("deflate-raw");
+    } catch {
+      deflateRawSupport = false;
+    }
+    return deflateRawSupport;
+  }
+  function extensionOf(name) {
+    const base = name.slice(name.lastIndexOf("/") + 1);
+    const dot = base.lastIndexOf(".");
+    return dot > 0 ? base.slice(dot + 1).toLowerCase() : "";
+  }
+  function shouldTryDeflate(entry) {
+    if (entry.size < 32) return false;
+    return !INCOMPRESSIBLE_EXTENSIONS.has(extensionOf(entry.name));
+  }
+  async function computeCrc32(entry) {
+    if (entry.bytes) return crc32Finish(crc32Update(CRC32_INITIAL, entry.bytes));
+    const blob = entry.blob;
+    let state3 = CRC32_INITIAL;
+    if (typeof blob.stream === "function") {
+      const reader = blob.stream().getReader();
+      try {
+        for (; ; ) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          state3 = crc32Update(state3, value);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    } else {
+      state3 = crc32Update(state3, new Uint8Array(await blob.arrayBuffer()));
+    }
+    return crc32Finish(state3);
+  }
+  async function deflateRaw(entry) {
+    const source = entry.blob || new Blob([entry.bytes]);
+    const compressed = source.stream().pipeThrough(new CompressionStream("deflate-raw"));
+    return await new Response(compressed).blob();
+  }
+  function dosDateTime(date) {
+    const year = date.getFullYear();
+    if (!Number.isFinite(year) || year < 1980) return { dosDate: 1 << 5 | 1, dosTime: 0 };
+    if (year > 2107) return { dosDate: 2107 - 1980 << 9 | 12 << 5 | 31, dosTime: 23 << 11 | 59 << 5 | 29 };
+    return {
+      dosDate: year - 1980 << 9 | date.getMonth() + 1 << 5 | date.getDate(),
+      dosTime: date.getHours() << 11 | date.getMinutes() << 5 | Math.floor(date.getSeconds() / 2)
+    };
+  }
+  function formatBytes(bytes) {
+    if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)}GB`;
+    if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)}MB`;
+    return `${Math.ceil(bytes / 1024)}KB`;
+  }
+  function entryCountError(count) {
+    return new ZipLimitError(`ZIP に入れるファイルとフォルダが ${count.toLocaleString("ja-JP")} 件あり、1 つの ZIP に入る上限（${LITE_ZIP_MAX_ENTRIES.toLocaleString("ja-JP")} 件）を超えています。対象を分けて、もう一度実行してください。`);
+  }
+  function sizeError(what, bytes) {
+    return new ZipLimitError(`${what}が ${formatBytes(bytes)} 以上になるため、ZIP を作成できません（1 つの ZIP とその中の 1 ファイルは 4GB 未満までです）。対象を分けて、もう一度実行してください。`);
+  }
+  var LiteZip = class extends LiteZipFolder {
+    constructor() {
+      super(/* @__PURE__ */ new Map(), "");
+    }
+    /** ZIP を Blob として作る。取り込んだ順にエントリを書き、1 エントリずつ読み出す。 */
+    async generateAsync(options = {}) {
+      if (options.type !== void 0 && options.type !== "blob") {
+        throw new TypeError(`ZIP の出力形式 ${String(options.type)} には対応していません`);
+      }
+      const entries = Array.from(this.store.values());
+      if (entries.length > LITE_ZIP_MAX_ENTRIES) throw entryCountError(entries.length);
+      const deflateWanted = options.compression !== "STORE" && isDeflateRawSupported();
+      const encoded = entries.map((entry) => {
+        const nameBytes = textEncoder.encode(entry.name);
+        if (nameBytes.length > 65535) {
+          throw new ZipLimitError(`ZIP 内のファイル名が長すぎます（${entry.name.slice(0, 40)}…）。名前を短くして、もう一度実行してください。`);
+        }
+        if (entry.size > LITE_ZIP_MAX_BYTES) throw sizeError(`ファイル「${entry.name}」`, entry.size);
+        return nameBytes;
+      });
+      if (!deflateWanted) {
+        let total = END_RECORD_SIZE;
+        entries.forEach((entry, index) => {
+          total += LOCAL_HEADER_SIZE + CENTRAL_HEADER_SIZE + 2 * encoded[index].length + entry.size;
+          if (total > LITE_ZIP_MAX_BYTES) throw sizeError("ZIP 全体", total);
+        });
+      }
+      const parts = [];
+      const central = [];
+      let offset = 0;
+      for (let index = 0; index < entries.length; index += 1) {
+        const entry = entries[index];
+        const nameBytes = encoded[index];
+        const { dosDate, dosTime } = dosDateTime(options.modifiedAt || entry.modifiedAt);
+        let crc = 0;
+        let method = METHOD_STORE;
+        let compressedSize = entry.size;
+        let body = null;
+        if (!entry.isFolder && entry.size > 0) {
+          crc = await computeCrc32(entry);
+          body = entry.blob || entry.bytes;
+          if (deflateWanted && shouldTryDeflate(entry)) {
+            const compressed = await deflateRaw(entry);
+            if (compressed.size < entry.size) {
+              method = METHOD_DEFLATE;
+              compressedSize = compressed.size;
+              body = compressed;
+            }
+          }
+        }
+        const local = new Uint8Array(LOCAL_HEADER_SIZE + nameBytes.length);
+        const localView = new DataView(local.buffer);
+        localView.setUint32(0, 67324752, true);
+        localView.setUint16(4, 20, true);
+        localView.setUint16(6, FLAG_UTF8_NAME, true);
+        localView.setUint16(8, method, true);
+        localView.setUint16(10, dosTime, true);
+        localView.setUint16(12, dosDate, true);
+        localView.setUint32(14, crc, true);
+        localView.setUint32(18, compressedSize, true);
+        localView.setUint32(22, entry.size, true);
+        localView.setUint16(26, nameBytes.length, true);
+        local.set(nameBytes, LOCAL_HEADER_SIZE);
+        const header = new Uint8Array(CENTRAL_HEADER_SIZE + nameBytes.length);
+        const headerView = new DataView(header.buffer);
+        headerView.setUint32(0, 33639248, true);
+        headerView.setUint16(4, 20, true);
+        headerView.setUint16(6, 20, true);
+        headerView.setUint16(8, FLAG_UTF8_NAME, true);
+        headerView.setUint16(10, method, true);
+        headerView.setUint16(12, dosTime, true);
+        headerView.setUint16(14, dosDate, true);
+        headerView.setUint32(16, crc, true);
+        headerView.setUint32(20, compressedSize, true);
+        headerView.setUint32(24, entry.size, true);
+        headerView.setUint16(28, nameBytes.length, true);
+        headerView.setUint32(38, entry.isFolder ? 16 : 0, true);
+        headerView.setUint32(42, offset, true);
+        header.set(nameBytes, CENTRAL_HEADER_SIZE);
+        central.push(header);
+        parts.push(local);
+        if (body && compressedSize > 0) parts.push(body);
+        offset += local.length + compressedSize;
+        if (offset > LITE_ZIP_MAX_BYTES) throw sizeError("ZIP 全体", offset);
+      }
+      let centralSize = 0;
+      for (const header of central) {
+        parts.push(header);
+        centralSize += header.length;
+      }
+      if (offset + centralSize + END_RECORD_SIZE > LITE_ZIP_MAX_BYTES) throw sizeError("ZIP 全体", offset + centralSize + END_RECORD_SIZE);
+      const end = new Uint8Array(END_RECORD_SIZE);
+      const endView = new DataView(end.buffer);
+      endView.setUint32(0, 101010256, true);
+      endView.setUint16(8, central.length, true);
+      endView.setUint16(10, central.length, true);
+      endView.setUint32(12, centralSize, true);
+      endView.setUint32(16, offset, true);
+      parts.push(end);
+      return new Blob(parts, { type: options.mimeType || DEFAULT_MIME_TYPE });
+    }
+  };
+
+  // src/jszipLoader.ts
+  function loadJSZipLite() {
+    return Promise.resolve(LiteZip);
   }
 
   // src/reflect/customizeFiles.ts
@@ -3479,6 +3752,13 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const files = bundle?.sections?.customizeSettings?._partial?.files;
     return Array.isArray(files) ? files.length : 0;
   }
+  function omittedPluginConfigCount(bundle) {
+    const partial = bundle?.sections?.pluginSettings?._partial;
+    return partial?.kind === PLUGIN_CONFIG_OMITTED_KIND ? Number(partial.omittedPlugins || 0) : 0;
+  }
+  var PLUGIN_CONFIG_INCLUDED_NOTE = "プラグインの設定値を含みます（API キーなどの機微な値を含む場合があります）";
+  var PLUGIN_CONFIG_OMITTED_NOTE = "プラグインの設定値は含めていません（プラグインの一覧だけを保存）";
+  var CUSTOMIZE_BODY_SENSITIVE_NOTE = "JS/CSSファイルの本文を含みます（API トークンなどが書かれている場合があります）";
   function zipEntryBaseName(bundle, guestId, preview) {
     const suffix = `${guestId ? `_ゲスト${guestId}` : ""}${preview ? "_プレビュー" : "_本番"}`;
     return `${buildAppFilenameLabel(bundle.appId, bundleAppName(bundle))}${suffix}`;
@@ -3568,6 +3848,9 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       `- 対象アプリ数: ${apps.length}件`,
       `- 対象セクション: ${scopeText}`
     ];
+    if (input?.pluginConfig === "included") lines.push(`- プラグインの設定値: ${PLUGIN_CONFIG_INCLUDED_NOTE}。共有する前に内容を確認してください`);
+    if (input?.pluginConfig === "omitted") lines.push(`- プラグインの設定値: ${PLUGIN_CONFIG_OMITTED_NOTE}`);
+    if ((input?.scopes || []).includes("customizeSettings") || (input?.scopeLabels || []).includes(sectionLabel("customizeSettings"))) lines.push(`- JS/CSSファイルの本文: 各アプリの JSON に含みます（API トークンなどが書かれている場合があります。共有する前に内容を確認してください）`);
     if (totalOmitted > 0) {
       lines.push(`- JS/CSS本文省略合計: ${totalOmitted}件（サイズ上限・非テキスト等のため本文を省略し fileKey のみ記録）`);
     }
@@ -3586,6 +3869,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       if (omitted > 0) {
         notes.push(`JS/CSS本文省略 ${omitted}件`);
       }
+      if (Number(app?.omittedPluginConfigs || 0) > 0) notes.push(`プラグインの設定値は含めず ${app.omittedPluginConfigs}件`);
       if (app?.customizeFiles) {
         notes.push(`JS/CSSファイル保存 ${app.customizeFiles.saved}件${app.customizeFiles.failed ? `（失敗 ${app.customizeFiles.failed}件）` : ""}`);
       }
@@ -3596,8 +3880,9 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     }
     return lines.join("\n") + "\n";
   }
-  function renderSettingsExportSummaryHtml(rows, scopes) {
+  function renderSettingsExportSummaryHtml(rows, scopes, notes = []) {
     const labels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k).join(", ");
+    const noteHtml = notes.map((text) => `<div style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#fffbeb;color:#78350f">${esc(text)}</div>`).join("");
     const body = rows.map(
       (r) => `<tr>
     <td>${esc(r.appId)}</td>
@@ -3610,6 +3895,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     ).join("");
     return `
     <div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">対象セクション: ${esc(labels || "-")}</div>
+    ${noteHtml}
     <table style="width:100%;font-size:11px;border-collapse:collapse">
       <thead><tr><th scope="col" style="text-align:left;padding:4px">アプリID</th><th scope="col">アプリ名</th><th scope="col">ゲスト</th><th scope="col">取得OK</th><th scope="col">取得NG</th><th scope="col">メモ</th></tr></thead>
       <tbody>${body || '<tr><td colspan="6">結果なし</td></tr>'}</tbody>
@@ -3680,6 +3966,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const fileLayout = opts.customizeFileLayout || "slot";
     if (!CUSTOMIZE_FILE_LAYOUTS.some(([value]) => value === fileLayout)) throw new Error(`JS/CSSファイルのフォルダ分けの指定が正しくありません: ${fileLayout}`);
     const fileOrderPrefix = !!opts.customizeFileOrderPrefix;
+    const pluginConfigState = scopes.includes("pluginSettings") ? opts.excludePluginConfig ? "omitted" : "included" : void 0;
     const preview = !!opts.preview;
     const JSZipCtor = mode === "zip" ? await loadJSZipLite() : null;
     const bundles = [];
@@ -3697,6 +3984,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
           guestId,
           preview,
           sections: scopes,
+          skipPluginConfig: pluginConfigState === "omitted",
           onProgress: (p, l) => setStatus(`設定取得中 ${i + 1}/${targets.length}: アプリ ${appId}${guestNote} ${Math.round(p * 100)}% (${l})`)
         });
       } catch (error) {
@@ -3712,6 +4000,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         stoppedAt = i;
         break;
       }
+      if (pluginConfigState === "omitted") markPluginConfigOmitted(bundle);
       let customizeFiles = null;
       if (includeCustomizeFiles) {
         try {
@@ -3751,6 +4040,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         noteParts.push(`一部セクション取得失敗あり: ${failedKeys.map(sectionLabel).join("、")}`);
       }
       if (omittedBodies2) noteParts.push(`JS/CSS本文を省略したファイル ${omittedBodies2}件`);
+      const omittedPlugins = omittedPluginConfigCount(bundle);
+      if (omittedPlugins) noteParts.push(`プラグインの設定値は含めず ${omittedPlugins}件`);
       const filesNote = customizeFilesNote(customizeFiles);
       if (filesNote) noteParts.push(filesNote);
       rows.push({
@@ -3760,6 +4051,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         okCount,
         ngCount,
         omittedBodies: omittedBodies2,
+        omittedPlugins,
         savedFiles: customizeFiles?.saved || 0,
         failedFiles: customizeFiles?.failed || 0,
         note: noteParts.join(" / ") || "OK"
@@ -3771,7 +4063,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       throw createCancelReport(0, targets.length, [`未実行（中止）: ${notRunLabels.join(", ")}`, "何も保存していません"]);
     }
     for (const t of notRun) {
-      rows.push({ appId: t.appId, appName: "", guestId: t.guestId, okCount: 0, ngCount: 0, omittedBodies: 0, savedFiles: 0, failedFiles: 0, note: "未実行（中止）" });
+      rows.push({ appId: t.appId, appName: "", guestId: t.guestId, okCount: 0, ngCount: 0, omittedBodies: 0, omittedPlugins: 0, savedFiles: 0, failedFiles: 0, note: "未実行（中止）" });
     }
     const cancelNote = notRun.length ? `${formatCancelledHeadline(stoppedAt, targets.length)}。取得済みの ${bundles.length}アプリだけを保存しました。` : "";
     const guestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];
@@ -3789,7 +4081,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
           label: SECTION_DEFS.find((s) => s.key === key)?.label || key,
           error: sectionFetchError(bundle.sections?.[key])
         })),
-        omittedCustomizeBodies: rows[i].omittedBodies
+        omittedCustomizeBodies: rows[i].omittedBodies,
+        ...rows[i].omittedPlugins ? { omittedPluginConfigs: rows[i].omittedPlugins } : {}
       };
     });
     const payload = {
@@ -3800,6 +4093,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       preview,
       scopes,
       scopeLabels,
+      ...pluginConfigState ? { pluginConfig: pluginConfigState } : {},
       appCount: bundles.length,
       failedAppCount,
       omittedCustomizeBodies: rows.reduce((sum, row) => sum + row.omittedBodies, 0),
@@ -3815,6 +4109,12 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const failedFiles = rows.reduce((sum, row) => sum + row.failedFiles, 0);
     const filesFailureNote = failedFiles ? `。JS/CSSファイル ${failedFiles}件は取得できませんでした（理由は結果表と manifest.json に記録しています）` : "";
     const hasWarning = failedSections > 0 || omittedBodies > 0 || failedFiles > 0 || notRun.length > 0;
+    const configOmitted = rows.reduce((sum, row) => sum + (row.omittedPlugins || 0), 0);
+    const configNote = pluginConfigState === "omitted" ? configOmitted ? "。プラグインの設定値は含めていません" : "" : "";
+    const resultNotes = [
+      ...pluginConfigState === "included" ? [PLUGIN_CONFIG_INCLUDED_NOTE] : pluginConfigState === "omitted" ? [PLUGIN_CONFIG_OMITTED_NOTE] : [],
+      ...scopes.includes("customizeSettings") ? [CUSTOMIZE_BODY_SENSITIVE_NOTE] : []
+    ];
     if (mode === "zip") {
       const zip = new JSZipCtor();
       const entries = bundles.map((bundle, i) => {
@@ -3830,6 +4130,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
           fetchedAt: bundle.fetchedAt || "",
           sections: { ok: rows[i].okCount, ng: rows[i].ngCount },
           omittedCustomizeBodies: rows[i].omittedBodies,
+          ...rows[i].omittedPlugins ? { omittedPluginConfigs: rows[i].omittedPlugins } : {},
           failedSections: failedSections2.map((key) => ({
             key,
             label: SECTION_DEFS.find((s) => s.key === key)?.label || key,
@@ -3852,6 +4153,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
             preview: payload.preview,
             scopes: payload.scopes,
             scopeLabels,
+            ...pluginConfigState ? { pluginConfig: pluginConfigState } : {},
             appCount: bundles.length,
             failedAppCount: entries.filter((entry) => entry.sections.ng > 0).length,
             omittedCustomizeBodies: omittedBodies,
@@ -3879,6 +4181,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
           preview: payload.preview,
           scopes: payload.scopes,
           scopeLabels,
+          ...pluginConfigState ? { pluginConfig: pluginConfigState } : {},
           apps: entries
         })
       );
@@ -3889,12 +4192,12 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       const zipBlob = await zip.generateAsync({ type: "blob" });
       downloadBlob(buildExportFilename("設定一括取得", "zip", { appLabel: settingsExportLabel(bundles) }), zipBlob);
       const countText = includeCustomizeFiles ? `${bundles.length}アプリ・JS/CSSファイル ${savedFiles}件` : `${bundles.length}アプリ`;
-      setStatus(`${cancelNote}設定一括取得ZIPを保存しました（${countText}）${failureNote}${omittedNote}${filesFailureNote}`, hasWarning);
-      return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes) };
+      setStatus(`${cancelNote}設定一括取得ZIPを保存しました（${countText}）${failureNote}${omittedNote}${filesFailureNote}${configNote}`, hasWarning);
+      return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes, resultNotes) };
     }
     downloadText(buildExportFilename("設定一括取得", "json", { appLabel: settingsExportLabel(bundles) }), JSON.stringify(payload, null, 2), "application/json");
-    setStatus(`${cancelNote}設定一括取得JSONを保存しました（${bundles.length}アプリ）${failureNote}${omittedNote}`, hasWarning);
-    return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes) };
+    setStatus(`${cancelNote}設定一括取得JSONを保存しました（${bundles.length}アプリ）${failureNote}${omittedNote}${configNote}`, hasWarning);
+    return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes, resultNotes) };
   }
 
   // src/entries/appSearchControl.ts
@@ -4340,6 +4643,11 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     cardFiles.body.appendChild(makeRow([fileLayout], { label: "フォルダ分け" }));
     cardFiles.body.appendChild(makeRow([fileOrder], { label: "読み込み順" }));
     cardFiles.body.appendChild(makeNote("「設定とJS/CSSファイルをZIPで保存」で、アプリごとのフォルダの中の分け方とファイル名を選びます（例: desktop/js/main.js。読み込み順を付けると desktop/js/01_main.js、フォルダを分けないと desktop_js_01_main.js）。URLで指定したJS/CSSは保存しません。", "help"));
+    const cardSensitive = makeCard({ title: "機微な値の扱い" });
+    const excludePluginConfig = makeCheck({ label: "プラグインの設定値を含めない" });
+    cardSensitive.body.appendChild(makeRow([excludePluginConfig.label], { label: "プラグイン" }));
+    cardSensitive.body.appendChild(makeNote("プラグインの設定値には API キーなどが含まれる場合があります。含めない場合も、プラグインの一覧（ID・名前・有効状態）は保存します。", "help"));
+    cardSensitive.body.appendChild(makeNote("JS/CSS設定を取得すると、ファイルの本文も保存します（API トークンなどが書かれている場合があります）。共有する前に内容を確認してください。", "help"));
     const btnJson = makeButton("JSON で保存", "primary", { icon: "↓" });
     const btnZip = makeButton("ZIP で保存", "primary", { icon: "↓" });
     const btnZipFiles = makeButton("JS/CSSファイルも ZIP で保存", "primary", { icon: "↓" });
@@ -4368,7 +4676,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const runExport = (mode, includeCustomizeFiles) => async () => {
       const { summaryHtml } = await runSettingsExportStandalone(
         mode,
-        { ...opts(), includeCustomizeFiles, customizeFileLayout: fileLayout.value, customizeFileOrderPrefix: fileOrder.value === "prefix" },
+        { ...opts(), includeCustomizeFiles, customizeFileLayout: fileLayout.value, customizeFileOrderPrefix: fileOrder.value === "prefix", excludePluginConfig: excludePluginConfig.checkbox.checked },
         // 中止の報告（「中止しました…」）は失敗ではないので警告色にする
         (m, e) => panel.setStatus(m, /^中止しました/.test(m) ? "warn" : e ? "err" : "busy")
       );
@@ -4385,15 +4693,21 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       return chips.some((c) => c.checkbox.checked) ? "" : "取得する設定を1つ以上選んでください。";
     };
     const filesExportProblem = () => exportProblem() || (chips.some((c) => c.checkbox.checked && c.checkbox.value === "customizeSettings") ? "" : "JS/CSSファイルも保存するときは、取得する設定に「JS/CSS設定」を含めてください。");
+    const scopeChecked = (key) => chips.some((c) => c.checkbox.checked && c.checkbox.value === key);
+    const sensitiveSummary = () => [
+      ...scopeChecked("pluginSettings") ? [["プラグインの設定値", excludePluginConfig.checkbox.checked ? "含めない（プラグインの一覧だけを保存）" : "含める（API キーなどの機微な値を含む場合があります）"]] : [],
+      ...scopeChecked("customizeSettings") ? [["JS/CSSファイルの本文", "JSON に含める（API トークンなどが書かれている場合があります）"]] : []
+    ];
     const exportSummary = (format) => [
       ["対象アプリ", summarizeList(appTable.getApps().map((r) => connectionSummary(r.appId, r.guestId, prev.checkbox.checked ? "プレビュー" : "本番")))],
       ["取得する設定", chips.filter((c) => c.checkbox.checked).map((c) => c.label.textContent || "").join("、")],
-      ["保存形式", format]
+      ["保存形式", format],
+      ...sensitiveSummary()
     ];
     installLiteWorkflow(panel, {
       setup: [cardTarget.card, cardScope.card],
-      advanced: [cardChips.card, cardFiles.card],
-      advancedCopy: "取得する設定を1項目ずつ選ぶとき、JS/CSSファイルの保存形式を変えるときはこちら。",
+      advanced: [cardChips.card, cardSensitive.card, cardFiles.card],
+      advancedCopy: "取得する設定を1項目ずつ選ぶとき、プラグインの設定値を含めないとき、JS/CSSファイルの保存形式を変えるときはこちら。",
       results: [summary],
       beforeRun: () => {
         summary.replaceChildren();

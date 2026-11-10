@@ -34,6 +34,25 @@ import { pickAllSettingsBundles } from '../settingsBundleImport.js';
 import { reflectSelectionBlockers } from '../reflect/standalonePlan.js';
 import { buildReflectReportMarkdown } from '../reflect/planReport.js';
 import { countRolloutLogDropped, describeRolloutLookupNotice, formatRolloutTarget, mergeRolloutTargets, parseRolloutQueue, serializeRolloutQueue, upsertRolloutLog, ROLLOUT_QUEUE_LIMIT } from '../reflect/rolloutQueue.js';
+import { precheckRolloutTargetsStandalone } from '../tabs/reflect-rollout-standalone.js';
+import {
+  buildRolloutPrecheckMarkdown,
+  countRolloutPrecheck,
+  describeRolloutPrecheckPending,
+  describeRolloutPrecheckSummary,
+  dropSameRolloutTargets,
+  filterRolloutPrecheckRows,
+  formatRolloutPrecheckTarget,
+  mergeRolloutPrecheckRows,
+  rolloutRetryTargets,
+  rolloutRowKey,
+  selectRolloutPrecheckRows,
+  ROLLOUT_PRECHECK_STATE_LABELS,
+  type RolloutPrecheckFilter,
+  type RolloutPrecheckRow,
+  type RolloutPrecheckState
+} from '../reflect/rolloutPrecheck.js';
+import { appendLookupMapCandidates, describeLookupCandidate, hasLookupCandidates, type LookupMapCandidates } from '../reflect/lookupCandidates.js';
 import { appendReflectChanges, renderReflectRoute, renderReflectSummaryTable, renderApplySectionResults, createApplyProgressView, type ApplyProgressView } from './reflectPlanView.js';
 import { REFLECT_SECTION_KEYS, reflectSectionLabel } from '../reflect/sections.js';
 import {
@@ -58,6 +77,7 @@ import {
   describeReflectSetupBlocker,
   summarizePostApplyCheck,
   guestIdFromPagePath,
+  type AppReference,
   groupReflectScopes,
   describeReflectScope,
   shouldWarnMissingFieldSettings,
@@ -68,7 +88,8 @@ import {
 } from '../reflect/liteSetup.js';
 import { createReflectAppLookupCache, formatReflectAppName, isLookupableReflectApp, REFLECT_APP_LOOKUP_FAILURE, type ReflectAppLookupOk } from '../reflect/appLookup.js';
 import { buildReflectPresetsExport, normalizeImportedReflectPresets, mergeReflectPresets, type ReflectPreset } from '../reflect/presetIo.js';
-import { buildAppFilenameLabel, buildExportFilename, downloadText, extractAppNameFromBundle, readTextFile } from '../utils.js';
+import { buildAppFilenameLabel, buildExportFilename, downloadText, extractAppNameFromBundle, readTextFile, withoutApiContextLines } from '../utils.js';
+import { sharedMemory } from './deployMemory.js';
 
 // =============================================================================
 // メモリ状態（リロードで消える。lite はブラウザ永続ストレージを使わない方針）
@@ -147,6 +168,11 @@ interface LiteMemoryState {
   /** 記録の上限を超えて省略した古い行の数（記録が欠けていることを表示するため） */
   rolloutLogDropped?: number;
   rolloutKey?: string;
+  /**
+   * 全反映先の事前確認の結果（要約だけ。設定本体は持たない）と、それを作った条件（反映元・項目・保持・参照先変換）。条件が変わったら古い結果として扱う。
+   * removed は、差分がないため続けて反映から外した反映先（記録に残す）。
+   */
+  rolloutPrecheck?: { key: string; rows: RolloutPrecheckRow[]; removed: RolloutPrecheckRow[]; at: number } | null;
   lastPreview?: PreviewSnapshot | null;
   /**
    * 現在の対象と一致しないために隠している直近の反映結果と、その実行ログ。
@@ -206,12 +232,15 @@ const REFLECT_PRESET_LIMIT = 30;
 
 /** 直近の反映結果が現在の対象と一致せず、表示を外しているときの案内。 */
 const STALE_RESULT_NOTICE = '直近の反映結果は現在の対象と異なるため表示していません。対象を戻すと表示されます。';
+/** 参照先変換に入れていない参照先アプリの違いがあるまま反映するとき、最終確認で反映先IDの入力を求める理由。 */
+const LOOKUP_CANDIDATES_REASON = '参照先変換に入れていない、参照先アプリの違いがあります（反映元の参照先アプリが、そのまま反映先に書き込まれます）';
 /** 復元中は、フィールド設定を足して再取得できない（復元のまま差分が通常の順方向に変わってしまうため）。 */
 const RESTORE_FIELD_SETTINGS_NOTE = 'バックアップから戻している間はフィールド設定を追加できません。この項目を対象から外してください。';
 
-let memoryState: LiteMemoryState = {
-  presets: []
-};
+// ツールを開き直すとスクリプトが読み込み直され、モジュール内の変数は新しくなる。入力・直前の結果・バックアップ・展開の記録を、閉じて開き直したときにも
+// 引き継げるよう、同じページが表示されている間だけ残る場所（document.documentElement）に載せる（メモリだけ。ページを読み込み直すと消え、永続化はしない）。
+// 状態は常に同じオブジェクトを書き換える（置き換えると、次に開いたときに引き継がれない）。
+const memoryState: LiteMemoryState = sharedMemory<LiteMemoryState>('reflect', { presets: [] }).state;
 
 // =============================================================================
 // クイック選択プリセット（セクション単位、フル版の reflect quick presets 相当）
@@ -478,6 +507,25 @@ const REFLECT_LITE_CSS = `
 #kus-reflect-lite .kus-rl-rollout-item--pending{border-color:#fde68a;background:#fffbeb}
 #kus-reflect-lite .kus-rl-rollout-item__head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:13px}
 #kus-reflect-lite .kus-rl-rollout-card .kus-rl-next[hidden]{display:none}
+#kus-reflect-lite .kus-rl-precheck__note{margin-top:8px;font-size:13px;line-height:1.5;color:#475569;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-precheck__note--warn{color:#9a3412;font-weight:600}
+#kus-reflect-lite .kus-rl-precheck__tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:10px 0 0}
+#kus-reflect-lite .kus-rl-precheck__tools .kus-lp__select{min-width:0;max-width:100%}
+#kus-reflect-lite .kus-rl-precheck__list{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+#kus-reflect-lite .kus-rl-precheck--stale .kus-rl-precheck__list{opacity:.6}
+#kus-reflect-lite .kus-rl-precheck-item{min-width:0;padding:8px 10px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;overflow-wrap:anywhere}
+#kus-reflect-lite .kus-rl-precheck-item--diff{border-color:#fdba74;background:#fffaf0}
+#kus-reflect-lite .kus-rl-precheck-item--same{border-color:#bbf7d0;background:#f0fdf4}
+#kus-reflect-lite .kus-rl-precheck-item--error{border-color:#fca5a5;background:#fff5f5}
+#kus-reflect-lite .kus-rl-precheck-item--attention{border-color:#fde68a;background:#fffbeb}
+#kus-reflect-lite .kus-rl-precheck-item--notrun{border-color:#cbd5e1;background:#f8fafc}
+#kus-reflect-lite .kus-rl-precheck-item__head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:13px}
+#kus-reflect-lite .kus-rl-precheck-item__meta{margin-top:4px;font-size:13px;line-height:1.5;color:#475569}
+#kus-reflect-lite .kus-rl-precheck-item__actions{margin-top:6px}
+#kus-reflect-lite .kus-rl-pill--attention{background:#fffbeb;border-color:#fcd34d;color:#92400e}
+#kus-reflect-lite .kus-rl-candidates{margin-bottom:0}
+#kus-reflect-lite .kus-rl-candidates .kus-rl-issues{margin:6px 0}
+#kus-reflect-lite .kus-rl-candidates .kus-lp__btn{margin-top:4px}
 @media(max-width:760px){
   #kus-reflect-lite .kus-rl-summary__table,#kus-reflect-lite .kus-rl-summary__table tbody{display:block}
   #kus-reflect-lite .kus-rl-summary__table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
@@ -563,6 +611,9 @@ const REFLECT_LITE_CSS = `
   #kus-reflect-lite .kus-rl-confirm-route{gap:4px;margin-bottom:8px}
   #kus-reflect-lite .kus-rl-confirm-route>div{padding:6px 10px}
   #kus-reflect-lite .kus-rl-confirm-route span{display:inline;margin:0 8px 0 0;font-size:12px}
+  /* 最終確認では、書き込み先（反映先）を先頭に置き、段階の見出しと重なるカードの見出しは読み上げ専用にして、書き込み先がスクロールなしで見えるようにする。 */
+  #kus-reflect-lite .kus-rl-stage[data-stage="confirm"] .kus-lp__card>.kus-lp__card-head{position:absolute;width:1px;height:1px;margin:0;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  #kus-reflect-lite .kus-rl-confirm-route>div:last-child{order:-1}
   #kus-reflect-lite .kus-rl-stage-head{margin:0 2px 8px}
   #kus-reflect-lite .kus-rl-stage-head h2{font-size:15px}
   #kus-reflect-lite .kus-rl-action-dock{padding:5px 12px 6px}
@@ -1644,6 +1695,339 @@ export function mountReflectLitePanel() {
     return startPreview(`次の反映先 ${formatRolloutTarget(next)} の差分を取得しました。内容を確認してから反映してください（まだ書き込んでいません）。`);
   }
 
+  // ---- 全反映先の事前確認（続けて反映する反映先の差分を、書き込まずに先に一覧にする） ----
+  const PRECHECK_PAGE = 50;
+  const precheckCard = makeCard({ title: '全反映先の事前確認', soft: true });
+  precheckCard.card.classList.add('kus-rl-precheck');
+  precheckCard.card.dataset.precheck = 'card';
+  precheckCard.card.style.display = 'none';
+  precheckCard.body.appendChild(makeNote('現在の反映先と、続けて反映する反映先のすべてについて、差分を書き込まずに先に取得して一覧にします。反映先ごとの差分確認と最終確認は、反映のときに今までどおり行います。', 'help'));
+  const precheckRunBtn = makeButton('全反映先の差分を一括確認', 'primary');
+  precheckRunBtn.dataset.precheckRun = 'all';
+  const precheckRunRow = document.createElement('div');
+  precheckRunRow.className = 'kus-lp__btn-row';
+  precheckRunRow.appendChild(precheckRunBtn);
+  const precheckNote = document.createElement('div');
+  precheckNote.className = 'kus-rl-precheck__note';
+  precheckNote.dataset.precheckNote = 'true';
+  precheckNote.setAttribute('aria-live', 'polite');
+  const precheckStaleNote = document.createElement('p');
+  precheckStaleNote.className = 'kus-rl-next kus-rl-next--warn';
+  precheckStaleNote.dataset.precheckStale = 'true';
+  precheckStaleNote.textContent = '反映元・項目・保持の設定・参照先変換のいずれかが変わったため、この結果は古くなっています。もう一度「全反映先を確認し直す」を押してください。';
+  precheckStaleNote.hidden = true;
+  const precheckResult = document.createElement('div');
+  precheckResult.dataset.precheckResult = 'true';
+  const precheckPills = document.createElement('div');
+  precheckPills.className = 'kus-rl-preview-summary';
+  precheckPills.dataset.precheckSummary = 'true';
+  const precheckFilterSelect = document.createElement('select');
+  precheckFilterSelect.className = 'kus-lp__select';
+  precheckFilterSelect.setAttribute('aria-label', '一括確認の結果を状態で絞り込み');
+  const precheckDropBtn = makeButton('差分のない反映先を外す', 'sub');
+  precheckDropBtn.dataset.precheckDrop = 'true';
+  precheckDropBtn.title = '差分なし（一致）と確認できた反映先を、続けて反映する反映先から外します（kintone には何も書き込みません）';
+  const precheckRetryBtn = makeButton('取得失敗だけ確認し直す', 'sub');
+  precheckRetryBtn.dataset.precheckRetry = 'true';
+  const precheckTools = document.createElement('div');
+  precheckTools.className = 'kus-rl-precheck__tools';
+  precheckTools.append(precheckFilterSelect, precheckDropBtn, precheckRetryBtn);
+  const precheckList = document.createElement('ul');
+  precheckList.className = 'kus-rl-precheck__list';
+  precheckList.dataset.precheckList = 'true';
+  const precheckMoreBtn = makeButton('さらに表示', 'sub');
+  precheckMoreBtn.dataset.precheckMore = 'true';
+  const precheckShare = makeDetails('事前確認の結果を記録する');
+  const precheckSaveMdBtn = makeButton('事前確認をMarkdownで保存', 'sub');
+  const precheckCopyMdBtn = makeButton('事前確認のMarkdownをコピー', 'sub');
+  precheckShare.body.appendChild(makeRow([precheckSaveMdBtn, precheckCopyMdBtn]));
+  precheckShare.body.appendChild(makeNote('承認依頼や作業記録に貼れる形式です。設定値の生JSONは含みません。', 'help'));
+  precheckResult.append(precheckPills, precheckTools, precheckList, precheckMoreBtn, precheckShare.details);
+  precheckCard.body.append(precheckRunRow, precheckNote, precheckStaleNote, precheckResult);
+  let precheckFilter: RolloutPrecheckFilter = 'all';
+  let precheckShown = PRECHECK_PAGE;
+  let precheckVersion = 0;
+  let precheckRenderKey = '';
+
+  /** 一括確認の対象（現在の反映先と、続けて反映する反映先）。入力欄に誤りがあるときは理由を返す。 */
+  function precheckTargets(): { ok: true; targets: AppReference[] } | { ok: false; error: string } {
+    const queue = currentRollout();
+    if ('error' in queue) return { ok: false, error: `続けて反映する反映先を読み取れません。${queue.error}` };
+    const appId = tgtApp.value.trim(), guestId = tgtGuest.value.trim();
+    const current: AppReference[] = appId && isLookupableReflectApp(appId, guestId) ? [{ appId, guestId }] : [];
+    return { ok: true, targets: [...current, ...queue.targets] };
+  }
+  /** 一括確認の結果を作った条件。反映先は含めない（反映先の増減では結果を捨てない）。 */
+  function precheckConditionKey() {
+    const lookup = parseLookupMapText(lookupTa.value);
+    return JSON.stringify({
+      source: sourceMode === 'json' ? ['json', sourceBundleToken, String(sourceBundleFromJson?.appId || '')] : ['app', srcApp.value.trim(), srcGuest.value.trim(), sourceEnvironment.value],
+      scopes: [...collectSelectedScopes()].sort(),
+      preserve: preserve.checkbox.checked,
+      lookup: lookup.ok ? Object.entries(lookup.value).sort() : lookupTa.value.trim()
+    });
+  }
+  /** 一括確認を始められない理由（無ければ空文字）。 */
+  function precheckBlocker(targets: readonly AppReference[]): string {
+    const first = targets[0];
+    return describeReflectSetupBlocker({
+      connectionError: first ? reflectConnectionError({ ...currentOptions(), targetAppId: first.appId, targetGuestId: first.guestId }) : '',
+      sourceMode,
+      hasSourceBundle: !!sourceBundleFromJson,
+      scopeCount: collectSelectedScopes().length,
+      lookupError: lookupMapError(parseLookupMapText(lookupTa.value))
+    });
+  }
+  const PRECHECK_PILL_CLASS: Record<RolloutPrecheckState, string> = { diff: 'change', same: 'same', attention: 'attention', error: 'error', notrun: '' };
+  const PRECHECK_ICON: Record<RolloutPrecheckState, string> = { diff: '△', same: '✓', attention: '！', error: '✕', notrun: '－' };
+
+  function renderPrecheckItem(row: RolloutPrecheckRow, isCurrent: boolean): HTMLLIElement {
+    const item = document.createElement('li');
+    item.className = `kus-rl-precheck-item kus-rl-precheck-item--${row.state}`;
+    item.dataset.precheckRow = `${row.guestId ? `${row.guestId}:` : ''}${row.appId}`;
+    item.dataset.state = row.state;
+    const head = document.createElement('div');
+    head.className = 'kus-rl-precheck-item__head';
+    const pill = document.createElement('span');
+    pill.className = `kus-rl-pill${PRECHECK_PILL_CLASS[row.state] ? ` kus-rl-pill--${PRECHECK_PILL_CLASS[row.state]}` : ''}`;
+    const icon = document.createElement('span');
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = PRECHECK_ICON[row.state];
+    pill.append(icon, document.createTextNode(ROLLOUT_PRECHECK_STATE_LABELS[row.state]));
+    const name = document.createElement('strong');
+    name.textContent = formatRolloutPrecheckTarget(row);
+    head.append(pill, name);
+    if (isCurrent) {
+      const badge = document.createElement('span');
+      badge.className = 'kus-rl-preview-mini';
+      badge.textContent = '現在の反映先';
+      head.appendChild(badge);
+    }
+    const meta = document.createElement('div');
+    meta.className = 'kus-rl-precheck-item__meta';
+    const lines: string[] = [];
+    if (row.state === 'diff') lines.push(`差分のある項目: ${row.changedLabels.join('、')}（変更 ${row.changeCount} 件 / 削除 ${row.removalCount} 件）`);
+    else if (row.state === 'same') lines.push('選んだ項目は反映元と一致しています。');
+    else if (row.state === 'attention') {
+      lines.push(`確認が必要な項目: ${row.attentionLabels.join('、')}${row.reason ? `（${row.reason}）` : ''}`);
+      if (row.changedLabels.length) lines.push(`差分のある項目: ${row.changedLabels.join('、')}`);
+    } else if (row.state === 'error') lines.push(`${row.reason}${row.attentionLabels.length ? `（対象: ${row.attentionLabels.join('、')}）` : ''}`);
+    else lines.push(row.reason);
+    if (row.pending) lines.push(`反映先プレビューの未公開の変更: ${describeRolloutPrecheckPending(row)}`);
+    if (row.lookupCandidates + row.lookupConflicts > 0) lines.push('参照先変換の候補があります（反映元と反映先で、ルックアップなどの参照先アプリが違います）。');
+    for (const text of lines) {
+      const line = document.createElement('div');
+      line.textContent = text;
+      meta.appendChild(line);
+    }
+    const actions = document.createElement('div');
+    actions.className = 'kus-rl-precheck-item__actions';
+    const open = makeButton('この反映先の差分を確認', 'sub');
+    open.dataset.precheckOpen = item.dataset.precheckRow;
+    open.setAttribute('aria-label', `反映先 ${formatRolloutPrecheckTarget(row)} の差分を確認`);
+    open.disabled = busy || !!restoreMode;
+    open.addEventListener('click', () => { openPrecheckTarget(row); });
+    actions.appendChild(open);
+    item.append(head, meta, actions);
+    return item;
+  }
+
+  /** 全反映先の事前確認のカードを、現在の入力と保存済みの結果に合わせる（行は先頭の 50 件ずつだけ描画する）。 */
+  function renderPrecheck() {
+    const info = precheckTargets();
+    const targets = info.ok ? info.targets : [];
+    const stored = memoryState.rolloutPrecheck || null;
+    const selection = stored ? selectRolloutPrecheckRows(stored.rows, targets) : { rows: [] as RolloutPrecheckRow[], unchecked: targets };
+    const show = !restoreMode && (info.ok ? targets.length >= 2 || selection.rows.length > 1 : rolloutTa.value.trim() !== '');
+    precheckCard.card.style.display = show ? 'block' : 'none';
+    if (!show) { precheckRenderKey = ''; return; }
+    const stale = !!stored && stored.key !== precheckConditionKey();
+    const blocker = 'error' in info ? info.error : precheckBlocker(targets);
+    const key = [precheckVersion, stale, precheckFilter, precheckShown, busy, blocker, targets.length, targets[0] ? rolloutRowKey(targets[0]) : '', selection.rows.length, selection.unchecked.length, stored?.removed.length || 0].join('|');
+    if (key === precheckRenderKey) return;
+    precheckRenderKey = key;
+    const counts = countRolloutPrecheck(selection.rows);
+    precheckCard.card.classList.toggle('kus-rl-precheck--stale', stale);
+    setButtonText(precheckRunBtn, selection.rows.length ? '全反映先を確認し直す' : '全反映先の差分を一括確認');
+    precheckRunBtn.disabled = busy || !!blocker;
+    precheckStaleNote.hidden = !(stale && selection.rows.length > 0);
+    const notes: string[] = [];
+    if (blocker) notes.push(`一括確認するには：${blocker}`);
+    else if (!selection.rows.length) notes.push(`現在の反映先と続けて反映する反映先、合わせて ${targets.length} 件の差分を先に取得します。書き込みは行いません。`);
+    else {
+      notes.push(describeRolloutPrecheckSummary(counts));
+      if (selection.unchecked.length) notes.push(`未確認の反映先が ${selection.unchecked.length} 件あります（「全反映先を確認し直す」で含まれます）。`);
+      if (counts.withPending) notes.push(`${counts.withPending} 件の反映先プレビューに、以前からの未公開の変更があります。`);
+    }
+    precheckNote.textContent = notes.join(' ');
+    precheckNote.classList.toggle('kus-rl-precheck__note--warn', !!blocker);
+    precheckResult.hidden = !selection.rows.length;
+    if (!selection.rows.length) return;
+    // 状態ごとの件数と、絞り込みの選択肢
+    precheckPills.replaceChildren();
+    for (const [state, count] of [['diff', counts.diff], ['same', counts.same], ['attention', counts.attention], ['error', counts.error], ['notrun', counts.notrun]] as const) {
+      if (!count && state !== 'diff' && state !== 'same') continue;
+      const pill = document.createElement('span');
+      pill.className = `kus-rl-pill${PRECHECK_PILL_CLASS[state] ? ` kus-rl-pill--${PRECHECK_PILL_CLASS[state]}` : ''}`;
+      pill.textContent = `${ROLLOUT_PRECHECK_STATE_LABELS[state]} ${count}`;
+      precheckPills.appendChild(pill);
+    }
+    const total = document.createElement('span');
+    total.className = 'kus-rl-pill';
+    total.textContent = `${counts.total} 件`;
+    precheckPills.appendChild(total);
+    if (precheckFilter !== 'all' && !counts[precheckFilter]) precheckFilter = 'all';
+    precheckFilterSelect.replaceChildren(...([['all', `すべての状態（${counts.total}）`], ...(['diff', 'same', 'attention', 'error', 'notrun'] as const).filter(state => counts[state]).map(state => [state, `${ROLLOUT_PRECHECK_STATE_LABELS[state]}（${counts[state]}）`])] as Array<[string, string]>).map(([value, label]) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      return option;
+    }));
+    precheckFilterSelect.value = precheckFilter;
+    // 操作（古い結果・実行中は押せない）
+    const queueNow = currentRollout();
+    const droppable = queueNow.ok ? dropSameRolloutTargets(queueNow.targets, selection.rows).removed.length : 0;
+    const retryable = rolloutRetryTargets(selection.rows).length;
+    precheckDropBtn.disabled = busy || stale || !droppable;
+    setButtonText(precheckDropBtn, `差分のない反映先を外す（${droppable} 件）`);
+    precheckRetryBtn.disabled = busy || stale || !retryable || !!blocker;
+    setButtonText(precheckRetryBtn, `${counts.notrun ? '取得失敗・未実行' : '取得失敗'}だけ確認し直す（${retryable} 件）`);
+    precheckSaveMdBtn.disabled = busy || stale;
+    precheckCopyMdBtn.disabled = busy || stale;
+    // 一覧は先頭から必要な分だけ描画する
+    const visible = filterRolloutPrecheckRows(selection.rows, precheckFilter);
+    const shown = visible.slice(0, precheckShown);
+    const currentKey = targets[0] ? rolloutRowKey(targets[0]) : '';
+    precheckList.replaceChildren(...shown.map(row => renderPrecheckItem(row, rolloutRowKey(row) === currentKey)));
+    const rest = visible.length - shown.length;
+    precheckMoreBtn.hidden = rest <= 0;
+    precheckMoreBtn.disabled = busy;
+    setButtonText(precheckMoreBtn, `さらに ${Math.min(PRECHECK_PAGE, rest)} 件を表示（残り ${rest} 件）`);
+  }
+  precheckFilterSelect.addEventListener('change', () => {
+    precheckFilter = precheckFilterSelect.value as RolloutPrecheckFilter;
+    precheckShown = PRECHECK_PAGE;
+    precheckVersion += 1;
+    renderPrecheck();
+  });
+  precheckMoreBtn.addEventListener('click', () => {
+    precheckShown += PRECHECK_PAGE;
+    renderPrecheck();
+  });
+  precheckRunBtn.addEventListener('click', () => { startPrecheck('all'); });
+  precheckRetryBtn.addEventListener('click', () => { startPrecheck('retry'); });
+  precheckDropBtn.addEventListener('click', () => { dropSamePrecheckTargets(); });
+
+  /** 一括確認を始める。retry は、取得失敗・未実行（中止）の反映先だけを確認し直して結果へ反映する。 */
+  function startPrecheck(mode: 'all' | 'retry') {
+    if (busy || restoreMode) return;
+    const info = precheckTargets();
+    if ('error' in info) { panel.setStatus(info.error, 'warn'); return; }
+    const blocker = precheckBlocker(info.targets);
+    if (blocker) { panel.setStatus(`一括確認できません。${blocker}`, 'warn'); return; }
+    const key = precheckConditionKey();
+    const stored = memoryState.rolloutPrecheck;
+    const reuse = mode === 'retry' && !!stored && stored.key === key ? stored : null;
+    const targets = reuse ? rolloutRetryTargets(selectRolloutPrecheckRows(reuse.rows, info.targets).rows) : info.targets;
+    if (!targets.length) { panel.setStatus('確認し直す反映先はありません。', 'info'); return; }
+    const { targetAppId: _targetAppId, targetGuestId: _targetGuestId, ...options } = currentOptions();
+    return runLite(`全反映先の差分を確認中… 0/${targets.length} 件`, async () => {
+      const rows = await precheckRolloutTargetsStandalone({
+        options, targets, lastWrite: memoryState.lastWrite,
+        onProgress: (done, total) => panel.setStatus(`全反映先の差分を確認中… ${done}/${total} 件`, 'busy')
+      });
+      memoryState.rolloutPrecheck = { key, rows: mergeRolloutPrecheckRows(reuse ? reuse.rows : [], rows), removed: reuse ? reuse.removed : [], at: Date.now() };
+      precheckVersion += 1;
+      precheckShown = PRECHECK_PAGE;
+      const all = countRolloutPrecheck(selectRolloutPrecheckRows(memoryState.rolloutPrecheck.rows, info.targets).rows);
+      const prefix = reuse ? `${rows.length} 件を確認し直しました。` : '';
+      if (all.notrun) panel.setStatus(`中止しました（${all.total - all.notrun}/${all.total} 件を確認、${all.notrun} 件は未実行（中止））。確認できた分の結果は一覧にあります。書き込みは行っていません。`, 'warn');
+      else if (all.error || all.attention) panel.setStatus(`${prefix}${describeRolloutPrecheckSummary(all)}取得失敗・確認が必要な反映先を確認してください（まだ書き込んでいません）。`, 'warn');
+      else panel.setStatus(`${prefix}${describeRolloutPrecheckSummary(all)}反映先ごとの差分確認は、反映のときに行います（まだ書き込んでいません）。`, 'ok');
+    }).then(() => { scrollWithinCanvas(precheckCard.card); });
+  }
+
+  /** 差分なし（一致）と確認できた反映先を、続けて反映する反映先から外す（kintone には書き込まない）。 */
+  function dropSamePrecheckTargets() {
+    const stored = memoryState.rolloutPrecheck;
+    if (busy || restoreMode || !stored || stored.key !== precheckConditionKey()) return;
+    const queue = currentRollout();
+    if (!queue.ok) return;
+    const selection = selectRolloutPrecheckRows(stored.rows, queue.targets);
+    const { kept, removed } = dropSameRolloutTargets(queue.targets, selection.rows);
+    if (!removed.length) { panel.setStatus('続けて反映する反映先に、差分のない反映先はありません。', 'info'); return; }
+    const removedKeys = new Set(removed.map(rolloutRowKey));
+    const removedRows = selection.rows.filter(row => removedKeys.has(rolloutRowKey(row)));
+    stored.removed = mergeRolloutPrecheckRows(stored.removed, removedRows);
+    rolloutTa.value = serializeRolloutQueue(kept);
+    precheckVersion += 1;
+    saveState();
+    refreshReviewCard();
+    const current = precheckTargets();
+    const currentRow = current.ok && current.targets[0] ? selectRolloutPrecheckRows(stored.rows, [current.targets[0]]).rows[0] : undefined;
+    panel.setStatus(`差分のない反映先 ${removed.length} 件を、続けて反映する反映先から外しました（残り ${kept.length} 件）。${currentRow?.state === 'same' ? `現在の反映先 ${formatRolloutTarget(currentRow)} にも差分はありませんが、現在の反映先は外していません。` : ''}`, 'ok');
+  }
+
+  /** 一括確認の行から、その反映先を現在の反映先にして、通常の差分確認（段階 2）へ進む。 */
+  function openPrecheckTarget(row: RolloutPrecheckRow) {
+    if (busy || restoreMode) return;
+    const picked: AppReference = { appId: row.appId, guestId: row.guestId };
+    const appId = tgtApp.value.trim(), guestId = tgtGuest.value.trim();
+    if (!(appId === picked.appId && guestId === picked.guestId)) {
+      const queue = currentRollout();
+      if ('error' in queue) { panel.setStatus(`続けて反映する反映先を読み取れません。${queue.error}`, 'warn'); return; }
+      const blocker = describeReflectSetupBlocker({
+        connectionError: reflectConnectionError({ ...currentOptions(), targetAppId: picked.appId, targetGuestId: picked.guestId }),
+        sourceMode,
+        hasSourceBundle: !!sourceBundleFromJson,
+        scopeCount: collectSelectedScopes().length,
+        lookupError: lookupMapError(parseLookupMapText(lookupTa.value))
+      });
+      if (blocker) { panel.setStatus(`反映先 ${formatRolloutTarget(picked)} へ進めません。${blocker}`, 'warn'); return; }
+      // これまでの反映先は、まだ反映していなければ、選んだ反映先と入れ替えて続けて反映する反映先へ戻す（反映先の数は変えない）。
+      const current: AppReference | null = appId && isLookupableReflectApp(appId, guestId) ? { appId, guestId } : null;
+      const done = !!current && (memoryState.rolloutKey === rolloutConditionKey() ? memoryState.rolloutLog || [] : []).some(entry => rolloutRowKey(entry) === rolloutRowKey(current) && entry.ng === 0 && entry.pending === 0 && !(entry.stopped || 0) && !entry.cancelled);
+      const rest = queue.targets.flatMap(target => rolloutRowKey(target) === rolloutRowKey(picked) ? (current && !done ? [current] : []) : [target]);
+      tgtApp.value = picked.appId;
+      tgtGuest.value = picked.guestId;
+      rolloutTa.value = serializeRolloutQueue(rest);
+      saveState();
+      refreshSameConnBanner();
+      refreshReviewCard();
+    }
+    return startPreview(`反映先 ${formatRolloutTarget(picked)} の差分を取得しました。内容を確認してから反映してください（まだ書き込んでいません）。`);
+  }
+
+  function precheckMarkdown() {
+    const stored = memoryState.rolloutPrecheck;
+    const info = precheckTargets();
+    if (!stored || !info.ok || stored.key !== precheckConditionKey()) return null;
+    const selection = selectRolloutPrecheckRows(stored.rows, info.targets);
+    if (!selection.rows.length) return null;
+    const source = sourceMode === 'json'
+      ? { appId: String(sourceBundleFromJson?.appId || ''), name: sourceBundleFromJson ? extractAppNameFromBundle(sourceBundleFromJson) : '', guestId: '' }
+      : { appId: srcApp.value.trim(), name: sourceNote.known()?.name || '', guestId: srcGuest.value.trim() };
+    return buildRolloutPrecheckMarkdown({
+      generatedAt: new Date().toISOString(),
+      source,
+      sourceEnvironment: sourceMode === 'json' ? 'json' : sourceEnvironment.value === 'preview' ? 'preview' : 'production',
+      scopes: REFLECT_SECTION_KEYS.filter(scope => collectSelectedScopes().includes(scope)),
+      preserveTargetOnly: preserve.checkbox.checked,
+      lookupMap: lookupMapValue(parseLookupMapText(lookupTa.value)),
+      rows: selection.rows,
+      removed: stored.removed,
+      uncheckedCount: selection.unchecked.length
+    });
+  }
+  precheckSaveMdBtn.addEventListener('click', () => {
+    const text = precheckMarkdown();
+    if (!text) { panel.setStatus('事前確認のMarkdownを作成できません。全反映先を確認し直してください。', 'warn'); return; }
+    const filename = buildExportFilename('プレビュー反映事前確認', 'md');
+    downloadText(filename, text, 'text/markdown');
+    panel.setStatus(`事前確認の結果を ${filename} に保存しました。`, 'ok');
+  });
+  precheckCopyMdBtn.addEventListener('click', () => { void copyMarkdown(precheckMarkdown() || undefined, '事前確認の結果'); });
+
   // ---- 実行前サマリ / 差分プレビュー ----
   const previewBtn = makeButton('差分を再取得', 'primary');
   const changedOnlyBtn = makeButton('差分ありだけ選択', 'sub');
@@ -1692,8 +2076,7 @@ export function mountReflectLitePanel() {
   function saveState() {
     // 「バックアップから戻す」の間は、復元用に自動設定した値ではなく復元前の値を保存する（開き直したとき、復元用の値が残らないように）。
     const before = restoreMode?.before;
-    memoryState = {
-      ...memoryState,
+    Object.assign(memoryState, {
       sourceAppId: (before ? before.sourceAppId : srcApp.value).trim(),
       sourceGuestId: (before ? before.sourceGuestId : srcGuest.value).trim(),
       targetAppId: tgtApp.value.trim(),
@@ -1703,7 +2086,7 @@ export function mountReflectLitePanel() {
       lookupMapText: before ? before.lookupText : lookupTa.value,
       rolloutQueueText: rolloutTa.value,
       preserveTargetOnly: before ? before.preserve : preserve.checkbox.checked
-    };
+    });
   }
 
   function currentOptions(scopes = collectSelectedScopes()) {
@@ -1850,6 +2233,39 @@ export function mountReflectLitePanel() {
     }
   }
 
+  // ---- 参照先変換の候補（反映元と反映先で参照先アプリが違うものを、入れ忘れに気づけるよう差分確認で示す） ----
+  const candidateNames = new Map<string, string>();
+  const candidateRequested = new Set<string>();
+  /** 参照先アプリの名前（分かる範囲で）。確認できていなければ空文字を返し、裏で確認して分かったら表示を更新する。 */
+  function candidateAppName(side: 'from' | 'to', id: string): string {
+    const guest = side === 'to' ? tgtGuest.value.trim() : sourceMode === 'json' ? '' : srcGuest.value.trim();
+    const key = `${guest}|${id}`;
+    const known = candidateNames.get(key) ?? appLookupCache.peek(id, guest)?.name;
+    if (known !== undefined) return known;
+    if (!candidateRequested.has(key) && isLookupableReflectApp(id, guest)) {
+      candidateRequested.add(key);
+      void appLookupCache.get(id, guest).then((result) => {
+        if (!result.ok || !panel.root.isConnected) return;
+        candidateNames.set(key, result.name);
+        refreshReviewCard();
+      });
+    }
+    return '';
+  }
+  /** 候補を参照先変換の入力欄へ加えて、同じ条件で差分を取り直す（入力済みの変換は上書きしない）。 */
+  function applyLookupCandidates(candidates: LookupMapCandidates) {
+    if (busy || restoreMode) return;
+    const state = parseLookupMapText(lookupTa.value);
+    if ('error' in state) { panel.setStatus(`参照先変換に誤りがあります。直してから候補を追加してください。${state.error}`, 'warn'); return; }
+    const { text, added } = appendLookupMapCandidates(lookupTa.value, candidates.candidates);
+    if (!added) { panel.setStatus('追加できる候補はありません（入力済みの旧IDは上書きしません）。', 'info'); return; }
+    lookupTa.value = text;
+    refreshLookupStatus();
+    saveState();
+    refreshReviewCard();
+    return startPreview(`参照先変換に候補 ${added} 件を追加して、差分を取り直しました。内容を確認してから反映してください（まだ書き込んでいません）。`);
+  }
+
   async function runPreview(scopes: string[], lookupMap: Record<string, string>, postApplyCheck = false) {
     memoryState.lastPreview = null;
     clearConfirmation();
@@ -1945,6 +2361,7 @@ export function mountReflectLitePanel() {
     if (preview?.identities && fresh) renderReflectRoute(reviewBody, preview.identities, sourceMode === 'json' ? '設定JSON' : sourceEnvironment.value === 'preview' ? 'プレビュー' : '本番', restoreRouteOptions(preview.identities));
     if (fresh && restoreMode) appendRestoreNotice(reviewBody);
     if (fresh && result) appendTargetPendingNotice(reviewBody, result.targetPending);
+    if (fresh && result) appendLookupCandidatesNotice(reviewBody, result.lookupCandidates, { nameOf: candidateAppName, apply: restoreMode ? undefined : { disabled: busy, onClick: () => { applyLookupCandidates(result.lookupCandidates!); } } });
     const info = document.createElement('div'); info.className = 'kus-rl-next ' + (blockers.length ? 'kus-rl-next--warn' : postApply ? `kus-rl-next--${postApply.tone}` : 'kus-rl-next--info');
     info.textContent = message; reviewBody.appendChild(info);
     const summary = document.createElement('p'); summary.className = 'kus-rl-quiet';
@@ -1952,7 +2369,7 @@ export function mountReflectLitePanel() {
     reviewBody.appendChild(summary);
     if (blockers.length) {
       const list = document.createElement('ul'); list.className = 'kus-rl-issues';
-      for (const message of blockers) { const item = document.createElement('li'); item.textContent = message; list.appendChild(item); }
+      for (const message of blockers) { const item = document.createElement('li'); item.textContent = withoutApiContextLines(message); list.appendChild(item); }
       reviewBody.appendChild(list);
       // フィールド不足は、メッセージの文字列ではなく requiredFields と取得済みフィールドコードから構造的に判定する。
       const missing = result ? findMissingFieldReferences(result.entries, scopes, result.sourceFieldCodes, result.targetFieldCodes, result.sourceSystemFieldCodes) : [];
@@ -1985,6 +2402,7 @@ export function mountReflectLitePanel() {
     exportPlanMdBtn.disabled = busy || !fresh;
     copyPlanMdBtn.disabled = busy || !fresh;
     renderRollout();
+    renderPrecheck();
     rerenderPreviewCard(); refreshWorkflow();
   }
 
@@ -2112,6 +2530,7 @@ export function mountReflectLitePanel() {
     if (removals) reasons.push(`削除・置換される設定が ${removals} 件あります`);
     if (entries.some(entry => RISKY_SCOPE_KEYS.has(entry.sectionKey))) reasons.push('権限・通知・プロセス管理の変更を含みます');
     if (preview?.result.targetPending?.state === 'pending') reasons.push(TARGET_PENDING_REASON);
+    if (scopes.some(key => key === 'fieldSettings' || key === 'actionSettings') && hasLookupCandidates(preview?.result.lookupCandidates)) reasons.push(LOOKUP_CANDIDATES_REASON);
     if (!sourceBundleFromJson && srcApp.value.trim() === tgtApp.value.trim() && srcGuest.value.trim() === tgtGuest.value.trim()) reasons.push('同じアプリの本番の設定でプレビューを更新します');
     return reasons;
   }
@@ -2158,6 +2577,7 @@ export function mountReflectLitePanel() {
     const policy = document.createElement('p'); policy.className = 'kus-rl-quiet';
     policy.textContent = '実行直前に設定を再取得し、確認後に別の変更があれば中止します。途中でエラーが起きたら、以降の項目を実行せず中断します。'; confirmBody.appendChild(policy);
     appendTargetPendingNotice(confirmBody, state.preview.result.targetPending);
+    if (state.scopes.some(key => key === 'fieldSettings' || key === 'actionSettings')) appendLookupCandidatesNotice(confirmBody, state.preview.result.lookupCandidates, { nameOf: candidateAppName });
     const reasons = highImpactReasons(); targetCheckRow.hidden = !reasons.length;
     if (reasons.length) { const note = document.createElement('p'); note.className = 'kus-rl-next kus-rl-next--warn'; note.textContent = reasons.join('。') + '。確認のため、反映先アプリIDを入力してください。'; confirmBody.appendChild(note); }
     const uploadLabels = collectUploadLabels(entries);
@@ -2210,7 +2630,8 @@ export function mountReflectLitePanel() {
       preserveTargetOnly: preserve.checkbox.checked,
       lookupMap: lookupMapValue(state.lookupState),
       entries: state.preview.result.entries.filter(entry => state.scopes.includes(entry.sectionKey)),
-      targetPending: state.preview.result.targetPending
+      targetPending: state.preview.result.targetPending,
+      ...(state.scopes.some(key => key === 'fieldSettings' || key === 'actionSettings') && state.preview.result.lookupCandidates ? { lookupCandidates: state.preview.result.lookupCandidates } : {})
     });
     return { text, appLabel: buildAppFilenameLabel(tgtApp.value.trim(), identities.target.name) };
   }
@@ -2792,6 +3213,7 @@ export function mountReflectLitePanel() {
   detailRow.className = 'kus-rl-detail-row';
   detailRow.append(detailBtn, detailSummary);
   setupGrid.appendChild(detailRow);
+  setupGrid.appendChild(precheckCard.card);
   /** ポップアップの中の設定のうち、反映結果に影響するものを表に一行で示す（隠れた設定で意図しない削除をしないため）。 */
   function refreshDetailSummary() {
     const parts = [preserve.checkbox.checked ? '反映先だけの一覧・グラフ・アクションは保持' : '反映先だけの一覧・グラフ・アクションを削除'];
@@ -3003,6 +3425,49 @@ function appendTargetPendingNotice(host: HTMLElement, pending: ReflectTargetPend
     const mark = document.createElement('strong');
     mark.textContent = pending.state === 'clean' ? '✓ 未公開の変更なし' : pending.state === 'own' ? '✓ 未公開の変更はこのツールの反映分だけ' : 'ⓘ 未公開の変更は未確認';
     box.append(mark, text);
+  }
+  host.appendChild(box);
+}
+
+/**
+ * 参照先変換の候補（反映元と反映先で参照先アプリが違う）の表示。入れずに反映すると反映先の参照先が反映元のアプリに書き換わるため、警告色で示す。
+ * 候補は「反映先の現在の設定がそうなっている」ことだけが根拠。食い違うもの（同じ旧IDに複数の参照先がある）は自動では入れず、利用者が決める。
+ */
+function appendLookupCandidatesNotice(host: HTMLElement, candidates: LookupMapCandidates | undefined, options: { nameOf: (side: 'from' | 'to', id: string) => string; apply?: { disabled: boolean; onClick: () => void } }) {
+  if (!candidates || !hasLookupCandidates(candidates)) return;
+  const box = document.createElement('div');
+  box.className = 'kus-rl-next kus-rl-next--warn kus-rl-candidates';
+  box.dataset.lookupCandidates = 'true';
+  const title = document.createElement('strong');
+  title.textContent = '参照先変換の候補があります';
+  const text = document.createElement('span');
+  text.textContent = '反映元と反映先で、ルックアップ・関連レコード一覧・アクションの参照先アプリが違います。参照先変換に入れずに反映すると、反映先の参照先が反映元のアプリに書き換わります。';
+  box.append(title, text);
+  const list = document.createElement('ul');
+  list.className = 'kus-rl-issues';
+  list.dataset.lookupCandidateList = 'true';
+  const label = (id: string, side: 'from' | 'to') => { const name = options.nameOf(side, id); return name ? `${id}（${name}）` : id; };
+  for (const candidate of candidates.candidates) {
+    const item = document.createElement('li');
+    item.dataset.lookupCandidate = `${candidate.from}>${candidate.to}`;
+    item.textContent = describeLookupCandidate(candidate, { from: options.nameOf('from', candidate.from), to: options.nameOf('to', candidate.to) });
+    list.appendChild(item);
+  }
+  for (const conflict of candidates.conflicts) {
+    const item = document.createElement('li');
+    item.dataset.lookupConflict = conflict.from;
+    const heads = conflict.targets.map(target => label(target.to, 'to')).join(' または ');
+    const details = conflict.targets.map(target => `${target.to}: ${target.sources.join('、')}${target.total > target.sources.length ? ` ほか ${target.total - target.sources.length} 件` : ''}`).join(' / ');
+    item.textContent = `${label(conflict.from, 'from')} → ${heads}：反映先の参照先が一致していません（${details}）。自動では入れません。参照先変換に自分で入力してください。`;
+    list.appendChild(item);
+  }
+  box.appendChild(list);
+  if (options.apply && candidates.candidates.length) {
+    const apply = makeButton('候補を参照先変換に追加して差分を取り直す', 'sub');
+    apply.dataset.lookupApply = 'true';
+    apply.disabled = options.apply.disabled;
+    apply.addEventListener('click', options.apply.onClick);
+    box.appendChild(apply);
   }
   host.appendChild(box);
 }
@@ -3272,7 +3737,8 @@ function renderPreviewResult(host: HTMLElement, result: PreviewReflectResult, op
         + `  <div class="kus-rl-preview-row__title">${escapeHtml(entry.label)}</div>`
         + `  <span class="kus-rl-pill kus-rl-pill--${group.tone}">${statusLabel}</span>`
         + '</div>'
-        + `<div class="kus-rl-preview-row__detail">${escapeHtml(entry.message)}</div>`
+        // 内部の通信情報（[API] …）は利用者に見せない（取得失敗の理由の 1 行目だけ示す）。
+        + `<div class="kus-rl-preview-row__detail">${escapeHtml(withoutApiContextLines(entry.message))}</div>`
         + (statePills.length ? `<div class="kus-rl-preview-row__state">${statePills.join('')}</div>` : '')
         + (metaPills.length ? `<div class="kus-rl-preview-row__meta">${metaPills.join('')}</div>` : '');
 

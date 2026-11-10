@@ -7,6 +7,7 @@ import {
   escapeJsonPointerToken,
   DesignSnapshot
 } from './snapshot.js';
+import { stripSensitiveSupplements } from './sanitize.js';
 
 const AI_MARKDOWN_SCHEMA_VERSION = '1';
 
@@ -551,7 +552,10 @@ function sectionLabel(key: string): string {
  * AI向け設計書。本文の設定値は各セクションのJSONブロックに一度だけ置き、
  * それ以外の索引はJSON Pointerで原文へ戻れるようにする。
  */
-export function buildDesignAiMarkdown(bundle: any): string {
+export function buildDesignAiMarkdown(input: any): string {
+  // 設定JSON由来のプラグイン設定値・JS/CSS本文は、API から直接取得した場合と同じく資料に含めない（AI へ渡す資料のため）。
+  const stripped = stripSensitiveSupplements(input);
+  const bundle = stripped.bundle;
   const snapshot = buildDesignSnapshot(bundle);
   const references = collectReferences(bundle, snapshot);
   const lines: string[] = [];
@@ -560,6 +564,14 @@ export function buildDesignAiMarkdown(bundle: any): string {
 
   const rawMetadata = bundleMetadata(bundle);
   lines.push('## メタデータ', '', markdownTable(['key', 'value'], metadataRows(bundle, snapshot)), '', '### セクションリビジョン', '', markdownTable(['sectionKey', 'revision'], revisionRows(bundle)), '', '### bundle metadata（raw JSON）', '', `- encoding: ${jsonEncoding(rawMetadata)}`, jsonFence(rawMetadata), '');
+
+  if (stripped.pluginConfigs || stripped.customizeBodies) {
+    const excluded = [
+      stripped.pluginConfigs ? `プラグインの設定値（${stripped.pluginConfigs}件）` : '',
+      stripped.customizeBodies ? `JS/CSSファイルの本文（${stripped.customizeBodies}件）` : ''
+    ].filter(Boolean).join('、');
+    lines.push('## 除外した補助情報', '', `- 設定JSONに含まれていた次の情報は、API キーなどの機微な値を含み得るため、この資料に含めていません: ${excluded}`, '');
+  }
 
   lines.push('## 取得状態', '', markdownTable(
     ['key', 'label', 'status', 'count', 'detail'],

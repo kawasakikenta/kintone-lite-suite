@@ -10,7 +10,7 @@ vi.mock('../../src/utils', async importOriginal => ({ ...await importOriginal<ty
 const zipFiles = vi.hoisted(() => new Map<string, string>());
 const zipLoader = vi.hoisted(() => ({ fail: false }));
 vi.mock('../../src/jszipLoader', () => ({ loadJSZipLite: async () => {
-  if (zipLoader.fail) throw new Error('JSZipの読み込みに失敗しました');
+  if (zipLoader.fail) throw new Error('ZIPの準備に失敗しました');
   return class {
     file(name: string, content: string) { zipFiles.set(name, content); return this; }
     async generateAsync() { return new Blob(['zip fixture']); }
@@ -45,9 +45,9 @@ describe('settings export result details', () => {
     expect(status).toHaveBeenLastCalledWith(expect.stringContaining('JS/CSSファイル 2件は本文を取得できず'), true);
     expect(downloadText).toHaveBeenCalledTimes(1);
   });
-  it('stops before fetching any app when the ZIP library cannot be loaded', async () => {
+  it('stops before fetching any app when the ZIP cannot be prepared', async () => {
     zipLoader.fail = true;
-    await expect(runSettingsExportStandalone('zip', { apps: [{ appId: '1' }, { appId: '2' }] }, vi.fn())).rejects.toThrow(/JSZip/);
+    await expect(runSettingsExportStandalone('zip', { apps: [{ appId: '1' }, { appId: '2' }] }, vi.fn())).rejects.toThrow(/ZIPの準備/);
     expect(fetchBundle).not.toHaveBeenCalled();
     zipLoader.fail = false;
     vi.mocked(fetchBundle).mockResolvedValue(bundle({ appSettings: { name: 'A' }, fieldSettings: {} }));

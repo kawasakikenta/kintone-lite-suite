@@ -11,7 +11,7 @@
  */
 
 import { DEFAULT_APP_ID } from '../constants.js';
-import { runSourceToProductionStandalone } from '../tabs/deploy-source-standalone.js';
+import { runSourceToProductionStandalone, verifySourceDeployStandalone } from '../tabs/deploy-source-standalone.js';
 import {
   previewReflectStandalone,
   reflectConnectionError,
@@ -60,6 +60,26 @@ import {
   type SourceSession
 } from '../deploy/sourceSession.js';
 import {
+  buildVerifyExpectations,
+  describeVerifyResult,
+  verifySideFor,
+  verifyState,
+  type SourceVerifyResult,
+  type VerifyExpectation
+} from '../deploy/sourceVerify.js';
+import {
+  applySelectionFile,
+  buildSelectionFile,
+  checkSelectionFileSize,
+  countSelectionFile,
+  describeSelectionFileApply,
+  describeSelectionFileMismatch,
+  describeSelectionFileSettingNotes,
+  parseSelectionFile,
+  selectionFileLabels,
+  stringifySelectionFile
+} from '../deploy/sourceSelectionFile.js';
+import {
   RESTORE_NOTICE_BODY,
   RESTORE_NOTICE_TITLE,
   isDeployBackupFile,
@@ -95,7 +115,9 @@ import { createAppSearchControl } from './appSearchControl.js';
 import { createProgressView, el, firstLines, makeSkipLink, setButtonText, type ProgressView } from './deployProgressView.js';
 import { createEditView } from './deploy-source-edit.js';
 import { sharedMemory } from './deployMemory.js';
-import { createSelectView, renderTargetPending } from './deploy-source-select.js';
+import { createSelectView, renderLookupCandidates, renderTargetPending } from './deploy-source-select.js';
+import { lookupCandidatesFor } from '../deploy/sourceLookup.js';
+import { appendLookupMapCandidates, type LookupMapCandidates } from '../reflect/lookupCandidates.js';
 import { ensureSourceStyles } from './deploy-source-style.js';
 import {
   attachCardHelp,
@@ -135,12 +157,16 @@ interface RunContext {
   preserveTargetOnly: boolean;
   lookupMap: Record<string, string>;
   targetPending: SourceRecordInput['targetPending'];
+  /** 実行したときに、反映先の参照先と違うまま反映した参照先変換の候補（記録に残す） */
+  lookupCandidates?: LookupMapCandidates;
   allowPendingChanges: boolean;
   sections: SourceRecordSection[];
   startedAt: string;
+  /** 実行したときに控えた、選んだ変更の場所と期待する値（「反映後の内容を確認する」で使う） */
+  verifyExpectations: VerifyExpectation[];
 }
 
-interface SourceRunSnapshot { result: SourceDeployResult; context: RunContext; finishedAt: string }
+interface SourceRunSnapshot { result: SourceDeployResult; context: RunContext; finishedAt: string; /** 「反映後の内容を確認する」の結果（確認していなければ null） */ verification: SourceVerifyResult | null }
 
 /** 「バックアップから戻す」を始める前の入力（戻す状態を終えるとき、利用者が変えていない値だけをここへ戻す）。 */
 interface RestoreBefore {
@@ -241,6 +267,8 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
   let staleReason = '';
   /** 抽出し直した後の、選択と修正の引き継ぎの案内（次の抽出まで段階 2 に出す） */
   let carryNote = '';
+  /** 「選択と修正を読み込む」の結果（読み込めた・拒否した）。次の抽出まで段階 2・3 に出す */
+  let selectionFileNote: { tone: 'ok' | 'warn'; text: string } | null = null;
   let restore: RestoreState | null = null;
   /** いまの抽出結果が、バックアップから戻す設定で抽出したものなら、その反映元の表示名 */
   let sessionRestoreLabel = '';
@@ -844,10 +872,50 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
     return firstBlockerText(selectionBlockers());
   }
 
+  // 参照先変換の候補（反映元と反映先で参照先アプリが違うもの）の、アプリ名（分かる範囲で）と、追加して抽出し直す操作
+  const candidateNames = new Map<string, string>();
+  const candidateGuest = (side: 'from' | 'to') => (session ? (side === 'to' ? session.identities.target.guestId : session.identities.source.guestId) : '') || '';
+  function candidateAppName(side: 'from' | 'to', id: string): string {
+    const guest = candidateGuest(side);
+    return candidateNames.get(`${guest}|${id}`) ?? appLookupCache.peek(id, guest)?.name ?? '';
+  }
+  /** 候補の参照先アプリの名前を先に確認する（表示を描く前。確認できないものは ID だけで示す）。 */
+  async function prefetchCandidateNames(candidates: LookupMapCandidates | undefined, identities: { source: { guestId: string }; target: { guestId: string } }) {
+    if (!candidates) return;
+    const jobs: Array<Promise<void>> = [];
+    const add = (guest: string, id: string) => {
+      const key = `${guest}|${id}`;
+      if (candidateNames.has(key) || !isLookupableReflectApp(id, guest) || jobs.length >= 20) return;
+      jobs.push(appLookupCache.get(id, guest).then((result) => { if (result.ok) candidateNames.set(key, result.name); }, () => {}));
+    };
+    for (const candidate of candidates.candidates.slice(0, 10)) { add(identities.source.guestId || '', candidate.from); add(identities.target.guestId || '', candidate.to); }
+    for (const conflict of candidates.conflicts.slice(0, 5)) { add(identities.source.guestId || '', conflict.from); for (const target of conflict.targets) add(identities.target.guestId || '', target.to); }
+    await Promise.all(jobs);
+  }
+  /** いま表示する候補（反映する項目にフィールド設定・アクション設定を含むときだけ）。 */
+  const currentLookupCandidates = (): LookupMapCandidates | undefined => (session && isFresh() ? lookupCandidatesFor(session.preview.lookupCandidates, activeScopes()) : undefined);
+  /** 候補を参照先変換の入力欄へ加えて、同じ入力で差分を抽出し直す（入力済みの変換は上書きしない。選択と入力欄の修正は、同じ変更・同じ場所のものを引き継ぐ）。 */
+  function applyLookupCandidates() {
+    const candidates = currentLookupCandidates();
+    if (busy || restoring() || !session || !candidates) return;
+    const state = currentLookup();
+    if (!state.ok) { panel.setStatus(`参照先変換に誤りがあります。直してから候補を追加してください。${lookupMapError(state)}`, 'warn'); return; }
+    const { text, added } = appendLookupMapCandidates(lookupTa.value, candidates.candidates);
+    if (!added) { panel.setStatus('追加できる候補はありません（入力済みの旧IDは上書きしません）。', 'info'); return; }
+    const carryFrom = session;
+    lookupTa.value = text;
+    onInputsChanged();
+    void startExtract(carryFrom, `参照先変換に候補 ${added} 件を追加して、差分を取り直しました。`);
+  }
+
   const selectView = createSelectView({
     session: () => session,
     activeScopes,
     isFresh,
+    lookupNotice: () => {
+      const candidates = currentLookupCandidates();
+      return candidates ? { candidates, nameOf: candidateAppName, ...(restoring() ? {} : { apply: applyLookupCandidates }) } : null;
+    },
     blockers: selectionBlockers,
     notify: (message) => panel.setStatus(message, 'info'),
     dropScope: (key) => {
@@ -887,7 +955,7 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
     jsonEditsChanged: () => refreshWorkflow()
   });
 
-  async function startExtract() {
+  async function startExtract(carryFrom: SourceSession | null = null, leading = '') {
     if (busy) return;
     const blocker = setupBlocker();
     if (blocker) { panel.setStatus(blocker, 'warn'); return; }
@@ -900,20 +968,22 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
       if (kind !== 'json') sourceNote.adopt({ ok: true, appId: identities.source.appId, name: identities.source.name, code: identities.source.code });
       targetNote.adopt({ ok: true, appId: identities.target.appId, name: identities.target.name, code: identities.target.code });
       const preview = await previewReflectStandalone(options, (message) => panel.setStatus(message, 'busy'), { checkTargetDeployStatus: true });
-      // 書き込み前の検査で止まった後の抽出し直し（同じ入力）は、前回の選択と入力欄の修正をできるだけ引き継ぐ。
-      const previous = extractionStale && session && session.signature === signature ? session : null;
+      await prefetchCandidateNames(preview.lookupCandidates, identities);
+      // 書き込み前の検査で止まった後の抽出し直し（同じ入力）と、参照先変換の候補を追加した抽出し直しは、前回の選択と入力欄の修正をできるだけ引き継ぐ。
+      const previous = carryFrom ?? (extractionStale && session && session.signature === signature ? session : null);
       session = createSourceSession({ signature, opts: options, identities, sourceEnvironment: kind, preview });
       extractionStale = false;
       staleReason = '';
       sessionRestoreLabel = restoring() ? restoreSourceLabel(identities.target.name, restore!.plan.generatedAt) : '';
       carryNote = previous ? describeCarryOver(carryOverSession(session, previous)) : '';
+      selectionFileNote = null;
       bump();
       clearConfirmation();
       recompose();
       viewsFresh = true;
       showStage('select');
       const counts = countExtraction(preview.entries, undefined, session.models);
-      const summary = describeExtractionSummary(counts);
+      const summary = `${leading}${describeExtractionSummary(counts)}`;
       const carried = carryNote ? ` ${carryNote}` : '';
       const deployStatus = preview.targetDeployStatus;
       // 反映先が処理中なら先へ進めない（警告）。処理中かを確認できなかったときは、止めずに注意だけ添える。
@@ -922,6 +992,83 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
       else if (counts.error) panel.setStatus(`${summary}取得失敗の項目は、反映しない項目から外すか、抽出し直してください。まだ書き込んでいません。${carried}${caution}`, 'warn');
       else if (!counts.change) panel.setStatus(`${summary}まだ書き込んでいません。${carried}${caution}`, 'info');
       else panel.setStatus(`${summary}反映する変更を選んでください。まだ書き込んでいません。${carried}${caution}`, caution ? 'info' : 'ok');
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // 選んだ変更と修正の保存・読み込み（承認を待つ間や、別の担当者への受け渡し）
+  // ---------------------------------------------------------------------------
+  interface SelectionTools { root: HTMLElement; saveBtn: HTMLButtonElement; loadBtn: HTMLButtonElement; file: HTMLInputElement }
+  const selectionTools: SelectionTools[] = [];
+  function makeSelectionTools(stageId: 'select' | 'edit'): SelectionTools {
+    const root = el('div', 'kus-ds-filetools');
+    root.dataset.selectionTools = stageId;
+    const saveBtn = makeButton('選択と修正を保存', 'sub');
+    const loadBtn = makeButton('選択と修正を読み込む', 'sub');
+    saveBtn.dataset.action = 'selection-save';
+    loadBtn.dataset.action = 'selection-load';
+    saveBtn.title = '選んだ変更・入力欄の修正・JSON での修正を JSON ファイルに保存します（書き込みはしません）';
+    loadBtn.title = '保存したファイルの選択と修正を、いまの抽出結果に当てはめます（書き込みはしません）';
+    const file = document.createElement('input');
+    file.type = 'file';
+    file.accept = '.json,application/json';
+    file.hidden = true;
+    file.dataset.selectionFile = stageId;
+    file.setAttribute('aria-label', '選択と修正のファイル');
+    const hint = el('span', 'kus-ds-filetools__hint', '承認を待つ間や、別の担当者への受け渡しに使います。読み込んでも、最終確認は必要です。');
+    root.append(saveBtn, loadBtn, file, hint);
+    saveBtn.addEventListener('click', saveSelectionFile);
+    loadBtn.addEventListener('click', () => file.click());
+    file.addEventListener('change', () => {
+      const picked = file.files?.[0];
+      file.value = '';
+      if (picked) void loadSelectionFile(picked);
+    });
+    const tools: SelectionTools = { root, saveBtn, loadBtn, file };
+    selectionTools.push(tools);
+    return tools;
+  }
+
+  function saveSelectionFile() {
+    if (busy || !session || !isFresh()) return;
+    const file = buildSelectionFile({ session, scopes: activeScopes(), goal: currentGoal(), createdAt: new Date().toISOString() });
+    const counts = countSelectionFile(file);
+    downloadText(buildExportFilename('選択と修正', 'json', selectionFileLabels(file)), stringifySelectionFile(file), 'application/json;charset=utf-8');
+    const parts = [`選んだ変更 ${counts.selected} 件`, `入力欄の修正 ${counts.overrides} 件`, ...(counts.jsonSections ? [`JSON での修正 ${counts.jsonSections} 項目`] : [])];
+    panel.setStatus(`選択と修正を保存しました（${parts.join('・')}）。JS/CSS の本文は含みません。差分を抽出し直したあとに「選択と修正を読み込む」で戻せます。`, 'ok');
+  }
+
+  async function loadSelectionFile(picked: File) {
+    if (busy) return;
+    await runLite('選択と修正を読み込み中…', async () => {
+      const reject = (text: string) => {
+        selectionFileNote = { tone: 'warn', text: `${text} 現在の選択と修正は変えていません。` };
+        paintBanners(isFresh());
+        panel.setStatus(selectionFileNote.text, 'warn');
+      };
+      const current = session;
+      if (!current || !isFresh() || extractionStale) { reject('先に「対象を選ぶ」で差分を抽出してください。'); return; }
+      const unapplied = editView.unappliedJson();
+      if (unapplied.length) { reject(`${unapplied.join('、')}のJSONの変更がまだ適用されていません。「JSONを適用」を押すか、「JSONの編集を閉じる」で取り消してから読み込んでください。`); return; }
+      const tooLarge = checkSelectionFileSize(picked.size);
+      if (tooLarge) { reject(tooLarge); return; }
+      let text: string;
+      try { text = await picked.text(); } catch { reject('ファイルを読み込めませんでした。'); return; }
+      const parsed = parseSelectionFile(text, picked.size);
+      if ('message' in parsed) { reject(parsed.message); return; }
+      const differences = describeSelectionFileMismatch(parsed.file, current);
+      if (differences.length) { reject(`このファイルは、いまの反映元・反映先のものではないため読み込めません。${differences.join('。')}。`); return; }
+      flushRecompose();
+      const result = applySelectionFile(current, parsed.file);
+      const notes = describeSelectionFileSettingNotes(parsed.file, current);
+      bump();
+      recompose();
+      renderViews();
+      const message = `${describeSelectionFileApply(parsed.file, result)}${notes.length ? ` 注意: ${notes.join('。')}。当てはまらない変更が増えることがあります。` : ''}`;
+      const incomplete = result.selectionLost + result.overridesLost + result.jsonLost > 0 || notes.length > 0;
+      selectionFileNote = { tone: incomplete ? 'warn' : 'ok', text: message };
+      refreshWorkflow();
+      panel.setStatus(message, incomplete ? 'warn' : 'ok');
     });
   }
 
@@ -1056,6 +1203,13 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
     pendingAck = makeCheck({ label: pendingState === 'pending' ? '反映先プレビューの以前からの未公開の変更も、一緒に本番へ反映されることを了承しました' : '未公開の変更があるか確認できないまま、プレビューの内容がすべて本番へ反映されることを了承しました', checked: false });
     pendingAck.checkbox.setAttribute('aria-label', '未公開の変更も一緒に本番へ反映されることを了承する');
     pendingAck.checkbox.addEventListener('input', refreshConfirmState);
+    // 参照先変換の候補を入れないまま本番まで進むときの警告（未公開の変更の了承と同じ場所。追加の入力は求めない）
+    const lookupCandidates = currentLookupCandidates();
+    if (lookupCandidates) {
+      const lookupFact = fact('lookup', '参照先変換の候補', 'danger');
+      renderLookupCandidates(lookupFact.dd, lookupCandidates, { nameOf: candidateAppName, confirm: true });
+      facts.appendChild(lookupFact.root);
+    }
     const pendingFact = fact('pending', '反映先の未公開の変更', pendingRequired ? 'danger' : '');
     renderTargetPending(pendingFact.dd, pending, false);
     if (pendingRequired) {
@@ -1087,7 +1241,8 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
     showStage('confirm');
     panel.setStatus(`反映先と内容を確認してください。まだ${goal === 'production' ? '反映先へは書き込んで' : '反映先のプレビューへは書き込んで'}いません。`, 'info');
   }
-  confirmBtn.addEventListener('click', openConfirmation);
+  // 二重クリック（2 回目のクリックは detail が 2 以上）の 2 回目は、同じ位置に現れた次の段階の主ボタンを押してしまう（内容の修正を飛ばして最終確認へ進む）ので受け付けない。
+  confirmBtn.addEventListener('click', (event) => { if (event.detail > 1) return; openConfirmation(); });
 
   // ---------------------------------------------------------------------------
   // 段階 5: 結果
@@ -1102,6 +1257,13 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
   const deployCard = makeCard({ title: '本番への反映', soft: true });
   const deployHost = el('div');
   deployCard.body.appendChild(deployHost);
+  const verifyCard = makeCard({ title: '反映後の内容の確認', soft: true });
+  const verifyIntro = el('p', 'kus-ds-verify__intro');
+  const verifyBtn = makeButton('反映後の内容を確認する', 'sub');
+  verifyBtn.dataset.sourceVerify = 'true';
+  const verifyHost = el('div', 'kus-ds-verify');
+  verifyHost.setAttribute('aria-live', 'polite');
+  verifyCard.body.append(verifyIntro, verifyBtn, verifyHost);
   const resultTools = el('div', 'kus-dp-tools');
   const saveJsonBtn = makeButton('結果JSONを保存', 'sub');
   const saveRecordBtn = makeButton('記録をMarkdownで保存', 'sub');
@@ -1112,7 +1274,7 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
   const openSettingsBtn = makeButton('反映先アプリの設定画面を開く', 'sub');
   resultTools.append(saveJsonBtn, saveRecordBtn, copyRecordBtn, restoreBtn, openSettingsBtn);
   const resultGrid = el('div', 'kus-ds-result-grid');
-  resultGrid.append(resultHead, resultNotes, applyCard.card, deployCard.card, resultTools);
+  resultGrid.append(resultHead, resultNotes, applyCard.card, deployCard.card, verifyCard.card, resultTools);
   resultCard.body.appendChild(resultGrid);
   const resultEmpty = el('div', 'kus-dp-empty', 'まだ実行していません。対象を選び、差分を選んで最終確認をしてから実行してください。');
 
@@ -1151,6 +1313,7 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
     if (running || !last) {
       resultHead.textContent = `${currentRunGoal === 'preview' ? '反映先プレビューへの書き込み' : '反映先プレビューへの書き込みと本番への反映'}を実行中です。`;
       resultTools.hidden = true;
+      verifyCard.card.hidden = true;
       applyCard.card.hidden = false;
       deployCard.card.hidden = currentRunGoal !== 'production';
       return;
@@ -1197,10 +1360,62 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
     resultNotes.appendChild(el('div', 'kus-dp-info', sourceUndoGuidance(last.context.goal, last.context.targetPending)));
     restoreBtn.hidden = !pickSourceRestoreRequest(result, last.context.target);
     restoreBtn.disabled = busy;
+    renderVerifyCard(last);
   }
 
+  /** 「反映後の内容の確認」。本番まで反映が成功した（または完了を確認できない）結果と、プレビューまですべて書き込めた結果にだけ出す。 */
+  function renderVerifyCard(last: SourceRunSnapshot) {
+    const side = verifySideFor(last.result, last.context.goal);
+    verifyCard.card.hidden = !side || !last.context.verifyExpectations.length;
+    verifyBtn.disabled = busy;
+    if (verifyCard.card.hidden || !side) return;
+    const count = last.context.verifyExpectations.length;
+    verifyIntro.textContent = `${side === 'production' ? '本番' : '反映先のプレビュー'}の設定を読み取り、選んだ ${count} 件の変更が、選んだ値（修正した値を含む）で入っているか確かめます。読み取りだけで、書き込みません。選ばなかった変更は確認しません。`;
+    setButtonText(verifyBtn, last.verification ? '反映後の内容を確認し直す' : '反映後の内容を確認する');
+    verifyHost.replaceChildren();
+    const verification = last.verification;
+    if (!verification) return;
+    const message = describeVerifyResult(verification);
+    const state = verifyState(verification);
+    const box = el('div', `kus-ds-note kus-ds-note--${state === 'all' ? 'ok' : state === 'mismatch' ? 'err' : 'warn'}`);
+    box.dataset.verifyResult = state;
+    box.append(el('strong', '', `${state === 'all' ? '✓ ' : state === 'mismatch' ? '! ' : 'ⓘ '}${message.text}`), el('span', '', `確認した日時: ${new Date(verification.checkedAt).toLocaleString('ja-JP', { hour12: false })}`));
+    verifyHost.appendChild(box);
+    const listOf = (title: string, rows: string[], dataKey: string) => {
+      const section = el('div');
+      section.dataset.verifyList = dataKey;
+      section.appendChild(el('strong', '', `${title}（${rows.length} 件）`));
+      const ul = el('ul', 'kus-ds-verify__list');
+      for (const row of rows.slice(0, 30)) ul.appendChild(el('li', '', row));
+      if (rows.length > 30) ul.appendChild(el('li', '', `ほか ${rows.length - 30} 件（全件は記録のMarkdownと結果JSONで確認できます）`));
+      section.appendChild(ul);
+      verifyHost.appendChild(section);
+    };
+    if (verification.mismatches.length) listOf('反映されていない変更', verification.mismatches.map((item) => `${item.place}: 期待した値 ${item.expectedText}、現在の値 ${item.currentText}`), 'mismatch');
+    if (verification.unknown.length) listOf('確認できなかった変更', verification.unknown.map((item) => `${item.sectionLabel}: ${item.count} 件（${item.reason}）`), 'unknown');
+    for (const note of verification.notes) verifyHost.appendChild(el('div', 'kus-ds-note kus-ds-note--quiet', note));
+  }
+
+  async function runVerify() {
+    const last = memory.lastRun;
+    if (busy || !last) return;
+    const side = verifySideFor(last.result, last.context.goal);
+    if (!side) return;
+    await runLite('反映後の内容を確認中…', async () => {
+      const verification = await verifySourceDeployStandalone({
+        target: { appId: last.context.target.appId, guestId: last.context.target.guestId }, side, expectations: last.context.verifyExpectations,
+        setStatus: (message) => panel.setStatus(message, 'busy')
+      });
+      last.verification = verification;
+      renderResultCard();
+      const message = describeVerifyResult(verification);
+      panel.setStatus(message.text, message.tone);
+    });
+  }
+  verifyBtn.addEventListener('click', () => { void runVerify(); });
+
   function recordInput(last: SourceRunSnapshot): SourceRecordInput {
-    return { ...last.context, finishedAt: last.finishedAt, result: last.result };
+    return { ...last.context, finishedAt: last.finishedAt, result: last.result, verification: last.verification };
   }
   function exportName(base: string, ext: string, last: SourceRunSnapshot) {
     return buildExportFilename(base, ext, { appLabel: buildAppFilenameLabel(last.context.target.appId, last.context.target.name) });
@@ -1255,9 +1470,11 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
       preserveTargetOnly: !!current.opts.preserveTargetOnly,
       lookupMap: { ...(current.opts.lookupMap || {}) },
       targetPending: current.preview.targetPending,
+      ...(currentLookupCandidates() ? { lookupCandidates: currentLookupCandidates() } : {}),
       allowPendingChanges,
       sections: run.map((section) => ({ sectionKey: section.sectionKey, label: section.label, selectedCount: section.selectedCount, totalCount: section.totalCount, editedCount: section.editedCount, items: section.plan.items || [] })),
-      startedAt: new Date().toISOString()
+      startedAt: new Date().toISOString(),
+      verifyExpectations: buildVerifyExpectations({ session: current, sections: run })
     };
     // 選んだ変更がある項目だけを書き込む。送る設定は項目ごとに渡す（渡さない項目は既定の計画どおりに書き込まれてしまう）。
     const reflect: ReflectOptions = { ...current.opts, scopes: run.map((section) => section.sectionKey) };
@@ -1275,7 +1492,7 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
     showStage('result');
     renderResultCard();
     const finish = (result: SourceDeployResult) => {
-      const last: SourceRunSnapshot = { result, context, finishedAt: new Date().toISOString() };
+      const last: SourceRunSnapshot = { result, context, finishedAt: new Date().toISOString(), verification: null };
       memory.lastRun = last;
       // 書き込んだため、実行前の差分の抽出は使えない。
       session = null;
@@ -1429,7 +1646,23 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
   carryBanner.setAttribute('aria-live', 'polite');
   carryBanner.hidden = true;
   stages.select.appendChild(carryBanner);
+  // 選択と修正の保存・読み込み（段階 2・3）と、その結果の案内
+  const fileBanners: HTMLElement[] = [];
+  for (const stageId of ['select', 'edit'] as const) {
+    const tools = makeSelectionTools(stageId);
+    const banner = el('div', 'kus-ds-note kus-ds-note--info');
+    banner.dataset.selectionFileNote = stageId;
+    banner.setAttribute('aria-live', 'polite');
+    banner.hidden = true;
+    stages[stageId].append(tools.root, banner);
+    fileBanners.push(banner);
+  }
   function paintBanners(fresh: boolean) {
+    for (const banner of fileBanners) {
+      banner.hidden = !fresh || !selectionFileNote;
+      banner.className = `kus-ds-note kus-ds-note--${selectionFileNote?.tone === 'warn' ? 'warn' : 'ok'}`;
+      banner.textContent = selectionFileNote?.text || '';
+    }
     const restoreText = restoring() ? `${restoreLabel()}を反映元にしています。${RESTORE_NOTICE_BODY}` : '';
     for (const banner of restoreBanners) { banner.root.hidden = !restoreText; banner.body.textContent = restoreText; }
     const staleText = fresh && extractionStale ? `書き込み前の確認で止めたため、まだ何も書き込んでいません（${staleReason || '反映先が更新されました'}）。「差分を抽出し直す」を押してください。選択と入力欄の修正は、抽出し直した後もできるだけ引き継ぎます。` : '';
@@ -1457,7 +1690,8 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
     showStage(back[activeStage]);
   });
   extractBtn.addEventListener('click', () => { void startExtract(); });
-  toEditBtn.addEventListener('click', () => {
+  toEditBtn.addEventListener('click', (event) => {
+    if (event.detail > 1) return;
     flushRecompose();
     if (!session || !isFresh() || extractionStale || editEntryBlocker()) return;
     showStage('edit');
@@ -1511,6 +1745,10 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
     backBtn.disabled = busy;
     extractBtn.disabled = busy || !!blocker;
     toEditBtn.disabled = busy || !usable || !!editEntryBlocker();
+    for (const tools of selectionTools) {
+      tools.saveBtn.disabled = busy || !fresh;
+      tools.loadBtn.disabled = busy || !usable;
+    }
     confirmBtn.disabled = busy || !usable || !!stageProblem;
     setButtonText(backBtn, activeStage === 'select' ? '対象を変更' : activeStage === 'edit' ? '差分の選択に戻る' : activeStage === 'confirm' ? '内容の修正に戻る' : '対象を選び直す');
     setButtonText(extractBtn, stale ? '差分を抽出し直す' : fresh ? '抽出し直す' : '差分を抽出する');

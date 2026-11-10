@@ -61,7 +61,7 @@ module.exports = async function verifyDeployEngine({ page, script, out }) {
     };
     for (const def of config.apps) {
       state.apps[def.id] = {
-        id: def.id, guest: def.guest || '', name: def.name, status: null, group: null,
+        id: def.id, guest: def.guest || '', name: def.name, status: null, group: null, recordCount: def.recordCount ?? 0,
         prodRevision: String(def.prodRevision), previewRevision: String(def.previewRevision),
         production: { ...defaults(def.name), ...clone(def.shared || {}), ...clone(def.production || {}) },
         preview: { ...defaults(def.name), ...clone(def.shared || {}), ...clone(def.preview || {}) }
@@ -110,6 +110,15 @@ module.exports = async function verifyDeployEngine({ page, script, out }) {
           }
           // 依頼していないアプリは完了済み（kintone は未反映のアプリにも SUCCESS を返す）。
           return { apps: ids.map(id => ({ app: id, status: appOf(id).status || 'SUCCESS' })) };
+        }
+        if (path === '/records.json') {
+          // 削除されるフィールドの影響の大きさ（レコード数）の読み取り。件数だけを返す GET だけを受け付ける。
+          if (preview) throw violation(`records.json に preview prefix は無い: ${url}`);
+          const app = appOf(params.app);
+          if (params.query !== 'limit 1' || params.totalCount !== true) throw violation(`想定外のレコード取得: ${JSON.stringify(params)}`);
+          state.recordReads = (state.recordReads || 0) + 1;
+          if (app.recordCount === 'error') throw Object.assign(new Error('このアプリのレコードを閲覧する権限がありません。'), { code: 'CB_NO02' });
+          return { records: [], totalCount: String(app.recordCount) };
         }
         const key = ENDPOINTS[path];
         if (!key) throw violation(`想定外の GET: ${url}`);
@@ -224,6 +233,7 @@ module.exports = async function verifyDeployEngine({ page, script, out }) {
   const state = () => page.evaluate(() => {
     const s = window.__engine;
     return {
+      recordReads: s.recordReads || 0,
       calls: s.calls.map(({ seq, url, method, params }) => ({ seq, url, method, params })),
       posts: s.posts, violations: s.violations, downloads: s.downloads.map(({ seq, name }) => ({ seq, name })),
       fetches: s.fetches, statusGets: s.statusGets,
@@ -253,7 +263,7 @@ module.exports = async function verifyDeployEngine({ page, script, out }) {
   await reset({
     pollsToFinish: 2,
     apps: [{
-      id: '101', name: '営業管理', prodRevision: '12', previewRevision: '15',
+      id: '101', name: '営業管理', prodRevision: '12', previewRevision: '15', recordCount: 1234567,
       production: {
         fieldSettings: props(field('name', '顧客名'), field('old_code', '旧項目'), field('obsolete', '廃止項目'), field('tag', '担当部署')),
         layoutSettings: { layout: [{ type: 'ROW', fields: [{ type: 'SINGLE_LINE_TEXT', code: 'name' }, { type: 'SINGLE_LINE_TEXT', code: 'old_code' }] }] }
@@ -286,8 +296,14 @@ module.exports = async function verifyDeployEngine({ page, script, out }) {
     assert.match(detail, /旧項目（old_code）[\s\S]*フィールドコードを変えただけなら値は残る可能性があります（プレビューの『new_code』）/);
     assert.match(detail, /廃止項目（obsolete）/);
   }
+  // 影響の大きさ: 本番のレコード数（読み取りだけ）
+  await page.locator('[data-record-count="101"]').filter({ hasText: 'このアプリのレコード' }).waitFor();
+  assert.equal(await page.locator('[data-record-count="101"]').innerText(), 'このアプリのレコード: 1,234,567 件（閲覧できるレコードの数）。削除するフィールドの値は、これらのレコードから削除されます。');
   await shot('review-1app');
   await toConfirm();
+  await page.locator('[data-record-impact-app="101"]').filter({ hasText: 'このアプリのレコード' }).waitFor();
+  assert.equal(await page.locator('[data-record-impact-app="101"]').innerText(), '営業管理（#101）: このアプリのレコード: 1,234,567 件（閲覧できるレコードの数）。削除するフィールドの値は、これらのレコードから削除されます。', '最終確認にも、削除されるフィールドがあるアプリのレコード数を示す');
+  assert.equal((await state()).recordReads, 1, '詳細と最終確認で、同じアプリのレコード数は 1 回だけ読み取る');
   assert.match(await facts('removed-fields').innerText(), /削除されるフィールド（2 件）[\s\S]*レコードの値も削除され、元に戻せません[\s\S]*営業管理（#101）: 旧項目（old_code）[\s\S]*廃止項目（obsolete）/);
   assert.match(await facts('backup').innerText(), /反映前の本番設定（1 アプリ分/);
   assert.equal(await confirmBox().getAttribute('aria-label'), '確認用の対象アプリID');
@@ -693,6 +709,30 @@ module.exports = async function verifyDeployEngine({ page, script, out }) {
   assert.equal(await page.locator('select[aria-label="設定JSON内の反映元アプリ"]').inputValue(), '1', '反映元は選んだアプリの設定');
   assert.equal((await assertOnlyDeployWrites('10 戻す設定')).posts.length, 2, '戻す設定にしただけでは何も依頼しない');
   ok('engine: restore from a multi-app deploy result');
+
+  // =========================================================================
+  // 11. レコード数: 閲覧できない・取得に失敗しても止めずに「確認できませんでした」と示す。削除されるフィールドが無いアプリは読み取らない
+  // =========================================================================
+  await reset({
+    apps: [
+      { id: '201', name: '閲覧できないアプリ', prodRevision: '5', previewRevision: '6', recordCount: 'error', production: { fieldSettings: props(field('name', '名前'), field('gone', '廃止')) }, preview: { fieldSettings: props(field('name', '名前')) } },
+      { id: '202', name: '削除なしのアプリ', prodRevision: '5', previewRevision: '6', recordCount: 99, production: { fieldSettings: props(field('name', '名前')) }, preview: { fieldSettings: props(field('name', '名前', { required: true })) } }
+    ]
+  });
+  await setTargets(['201', '202']);
+  await inspect();
+  await toConfirm();
+  await page.locator('[data-record-impact-app="201"]').filter({ hasText: '確認できませんでした' }).waitFor();
+  assert.equal(await page.locator('[data-record-impact-app="201"]').innerText(), '閲覧できないアプリ（#201）: レコード数は確認できませんでした（このアプリのレコードを閲覧する権限がありません。）。削除するフィールドの値は、すべてのレコードから削除されます。');
+  assert.equal(await page.locator('[data-record-impact-app="202"]').count(), 0, '削除されるフィールドが無いアプリのレコード数は読み取らない');
+  assert.equal((await state()).recordReads, 1);
+  assert.equal(await ackBox().isVisible(), true, 'レコード数を確認できなくても、最終確認は止まらない');
+  await ackBox().check();
+  await confirmBox().fill('2');
+  assert.equal(await runButton().isEnabled(), true, 'レコード数を確認できなくても実行できる（確認のチェックと入力が揃えば）');
+  await shot('confirm-record-count-unavailable');
+  assert.equal((await assertOnlyDeployWrites('11 レコード数')).posts.length, 0);
+  ok('engine: record count of apps with removed fields (read-only, never blocks)');
 
   return checks;
 };

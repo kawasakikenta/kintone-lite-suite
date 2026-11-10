@@ -264,27 +264,6 @@
 
   // src/constants.ts
   var TOOL_ID = "kintone-unified-suite-v2";
-  var EXTERNAL_LIBRARIES = Object.freeze({
-    jszip: Object.freeze({
-      version: "3.10.1",
-      cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"
-    }),
-    cytoscape: Object.freeze({
-      version: "3.28.1",
-      cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js",
-      altVersion: "3.26.0",
-      altCdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape@3.26.0/dist/cytoscape.min.js"
-    }),
-    dagre: Object.freeze({
-      version: "0.8.5",
-      cdnUrl: "https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"
-    }),
-    cytoscapeDagre: Object.freeze({
-      version: "2.5.0",
-      cdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js",
-      altCdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"
-    })
-  });
   function resolveDefaultAppId() {
     try {
       if (typeof kintone !== "undefined" && kintone?.app?.getId) {
@@ -1055,8 +1034,8 @@
     }
     throw apiErrorWithContext(lastErr, { method, prefix, path, payload: body });
   }
-  async function apiPost(prefix, path, body) {
-    return executeMutatingApiWithRetry("POST", prefix, path, body);
+  async function apiPost(prefix, path, body, retries) {
+    return executeMutatingApiWithRetry("POST", prefix, path, body, retries);
   }
   async function apiDelete(prefix, path, body, options = {}) {
     assertAllowsMutatingRestCall(prefix, path, "DELETE");
@@ -2365,6 +2344,10 @@
     }
   }
 
+  // src/archive/lite-zip.ts
+  var LITE_ZIP_MAX_ENTRIES = 65535;
+  var LITE_ZIP_MAX_BYTES = 4294967294;
+
   // src/tabs/run-cancel-summary.ts
   function formatCancelledHeadline(done, total) {
     const safeTotal = Math.max(0, Math.floor(total));
@@ -2407,6 +2390,22 @@
       }];
     }).sort((a, b) => a.index - b.index);
   }
+
+  // src/tabs/record-zip-split.ts
+  var ZIP_PART_TARGET_BYTES = 2 * 1024 * 1024 * 1024;
+  var ZIP_MAX_BYTES = LITE_ZIP_MAX_BYTES;
+  var ZIP_MAX_ENTRIES = LITE_ZIP_MAX_ENTRIES;
+  var RESERVED_ENTRIES = 32;
+  var RESERVED_BYTES = 16 * 1024 * 1024;
+  var PER_FILE_FIXED_BYTES = 76 + 64 + 1024;
+  var PER_DIRECTORY_FIXED_BYTES = 76 + 64;
+  var DEFAULT_ZIP_PLAN_LIMITS = Object.freeze({
+    targetBytes: ZIP_PART_TARGET_BYTES,
+    maxBytes: ZIP_MAX_BYTES,
+    maxEntries: ZIP_MAX_ENTRIES,
+    reservedEntries: RESERVED_ENTRIES,
+    reservedBytes: RESERVED_BYTES
+  });
 
   // src/tabs/record-standalone.ts
   function parseRecordAppIds(value) {

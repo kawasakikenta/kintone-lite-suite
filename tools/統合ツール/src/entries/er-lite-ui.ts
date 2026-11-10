@@ -248,7 +248,7 @@ export function mountErLitePanel() {
     ['探索の深さ', !depthInp.value.trim() || Number(depthInp.value) === 0 ? '無制限（関連アプリを最後まで探索します）' : depthInp.value.trim()],
     ['表示', (layoutSel.selectedOptions[0]?.textContent || '') + ' / ' + (densitySel.selectedOptions[0]?.textContent || '')],
     ['逆引き', reverseCb.checkbox.checked ? '逆引きあり（テナント内のアプリを走査するため時間がかかる場合があります）' : 'なし'],
-    ...(parseAppIds(appInp.value).length >= 50 ? [['起点が多い場合', `${parseAppIds(appInp.value).length}アプリを起点に、設定を順に読み取ります。時間がかかり、図やHTMLも大きくなります。途中で「中止」できます。`] as [string, string]] : [])
+    ...(parseAppIds(appInp.value).length >= 50 ? [['起点が多い場合', `${parseAppIds(appInp.value).length}アプリを起点に、設定を数アプリずつ並行して読み取ります。数百アプリを超えると数分かかり、図やHTMLも大きくなります。途中で「中止」できます。`] as [string, string]] : [])
   ];
   const erProblem = () => validateErOptions(source());
   installLiteWorkflow(panel, {

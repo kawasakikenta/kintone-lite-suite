@@ -26,10 +26,15 @@
     "test:diff-pairs-dom": "node tools/test-harness/run-diff-lite-pairs-dom.cjs",
     "test:diff-pair-folders-dom": "node tools/test-harness/run-diff-lite-pair-folders-dom.cjs",
     "test:diff-compare": "node tools/test-harness/run-diff-lite-compare.cjs",
+    "test:diff-explore": "node tools/test-harness/diff-explore.cjs",
     "test:er-compare": "node tools/test-harness/run-er-diagram-compare.cjs",
+    "test:er-explore": "node tools/test-harness/er-explore.cjs",
     "test:reflect-dom": "node tools/test-harness/run-reflect-lite-dom.cjs",
     "test:deploy-dom": "node tools/test-harness/run-deploy-lite-dom.cjs",
     "test:deploy-explore": "node tools/test-harness/deploy-explore.cjs",
+    "test:settings-design-explore": "node tools/test-harness/settings-design-explore.cjs",
+    "test:field-jsconfig-explore": "node tools/test-harness/field-jsconfig-explore.cjs",
+    "test:reflect-explore": "node tools/test-harness/reflect-explore.cjs",
     "snippet": "node scripts/build-snippet.js",
     "mcp:playwright": "node node_modules/@playwright/mcp/cli.js --browser=chrome --output-dir=.playwright-mcp --save-session",
     "verify:playwright-mcp": "node scripts/verify-playwright-mcp.cjs",
@@ -37,6 +42,7 @@
     "test:lite-shared": "node tools/test-harness/run-lite-shared-dom.cjs",
     "test:record-metadata": "node tools/test-harness/run-record-metadata-dom.cjs",
     "test:record-quality": "node tools/test-harness/run-record-quality-dom.cjs",
+    "test:record-explore": "node tools/test-harness/record-explore.cjs",
     "test:all": "node scripts/test-all.cjs"
   },
   "engines": {

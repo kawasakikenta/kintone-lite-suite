@@ -13,7 +13,7 @@
 | 配布形式 | esbuild で生成した ES2020 向け IIFE、機能ごとの単一 `.js` ファイル |
 | 正規ソース | `tools/統合ツール/src/` |
 | 配布物 | `tools/` 直下の 12 本の `.js` |
-| 外部接続 | kintone REST API、および機能実行時に必要となる CDN |
+| 外部接続 | kintone REST API、およびプロセス図（Mermaid）を読み込む CDN。ER 図 HTML の描画ライブラリ、ZIP 作成、設計書 Excel の書き出しは bundle（ER 図は生成する HTML）に含め、通信しない |
 | 対応開発環境 | Node.js 20 以上、npm 10 以上 |
 
 統合版 `tools/統合ツール.js` は廃止済みです。各 lite エントリは、実行場所が kintone ページであることを確認してから、必要な UI と機能だけを起動します。
@@ -70,7 +70,7 @@ flowchart LR
 
 ### 4.1 npm の直接依存
 
-本番 bundle に npm パッケージを直接 import する構成ではありません。次のパッケージは、ビルド、型検査、テスト、または ER 図ハーネスで使用する **開発時依存**です。
+bundle へ同梱して実行時に使うパッケージは、`xlsx-js-style`（`設計書作成.js` にだけ）と、ER 図の描画ライブラリ `cytoscape`・`dagre`・`cytoscape-dagre`（`ER図.js` にだけ。下表）です。そのほかは、ビルド、型検査、テストで使用する **開発時依存**です。
 
 | パッケージ | 宣言バージョン | 配置 | 用途 |
 | --- | --- | --- | --- |
@@ -79,9 +79,10 @@ flowchart LR
 | `esbuild` | `^0.25.0` | 統合ツール | TypeScript と CSS を機能別 IIFE に bundle |
 | `typescript` | `^5.6.3` | 統合ツール | 通常および strict の静的型検査 |
 | `vitest` | `^4.1.7` | 統合ツール | 単体テストランナー |
-| `cytoscape` | `3.28.1` | 統合ツール | ER 図のブラウザ回帰テストで CDN をローカル実体に差し替えるために使用 |
-| `dagre` | `0.8.5` | 統合ツール | ER 図の階層レイアウトをローカル検証 |
-| `cytoscape-dagre` | `2.5.0` | 統合ツール | Cytoscape と Dagre の連携をローカル検証 |
+| `cytoscape` | `3.28.1` | 統合ツール | ER 図 HTML のグラフ描画。ビルド時に `ER図.js` へ同梱し、生成する HTML へインラインで埋め込む（4.2.1） |
+| `dagre` | `0.8.5` | 統合ツール | ER 図の階層レイアウト。同上 |
+| `cytoscape-dagre` | `2.5.0` | 統合ツール | Cytoscape で Dagre を使うプラグイン。同上 |
+| `xlsx-js-style` | `1.2.0` | 統合ツール | 設計書 Excel のスタイル付き生成（SheetJS 0.18.5 + セル書式、Apache-2.0）。`設計書作成.js` にだけ同梱 |
 
 間接依存を含む厳密な解決バージョンと整合性ハッシュは `package-lock.json` および `tools/統合ツール/package-lock.json` を正本とし、この文書へ重複転記しません。
 
@@ -89,17 +90,35 @@ flowchart LR
 
 これらは bundle へ同梱されず、該当機能を使うときにブラウザから読み込みます。そのため、kintone 環境の Content Security Policy、プロキシ、ネットワーク制限の影響を受けます。
 
+kintone の画面へ読み込む外部スクリプトは、管理者のセッションで実行されます（このツール群は設定の書き込みや本番反映もできます）。そのため、**固定版 + `integrity`（SRI）+ `crossorigin="anonymous"` で検証できるものだけ**を読み込みます。内容を検証できない URL は候補に入れません。
+
+**同梱していて通信しないもの**
+
+- ZIP 作成: 自前実装（`src/archive/lite-zip.ts`）。以前の JSZip（cdnjs）は廃止しました。`loadJSZipLite()`（`src/jszipLoader.ts`）が返し、ページに既にある `window.JSZip` は使いません。UTF-8 のファイル名、CRC-32、フォルダ、後勝ちの上書き、`remove`、空の ZIP に対応します。圧縮はブラウザに `CompressionStream('deflate-raw')` があれば DEFLATE（縮まないものは STORE）、無ければ STORE です。classic ZIP の上限（1 エントリ・全体とも 4GB 未満、65,535 件）を超える場合は、壊れた ZIP を作らずエラーにします。
+- ER 図の描画ライブラリ: Cytoscape.js・Dagre・cytoscape-dagre の固定版を `ER図.js` に取り込み、生成する HTML へインラインで埋め込みます（4.2.1）。
+- 設計書 Excel: xlsx-js-style 1.2.0（`src/tabs/sheetLib.ts`）。`設計書作成.js` にだけ入ります。配布物は UMD のため、`build.js` が `module` などを隠して CDN のブラウザ版と同じ形で取り込みます（文字コード表 `cpexcel` は含めません）。以前のフォールバック（SheetJS 0.18.5）は廃止しました。
+
 | ライブラリ | バージョン | 主な用途 | 読込元・備考 |
 | --- | --- | --- | --- |
-| JSZip | 3.10.1 | 設定、JS/CSS、添付、CSVひな形などの ZIP 作成 | cdnjs。lite 共通ローダーは失敗と30秒タイムアウトを表示 |
-| Cytoscape.js | 3.28.1 | 出力した ER 図 HTML のグラフ描画 | cdnjs。代替は jsDelivr の 3.26.0 |
-| Dagre | 0.8.5 | ER 図の階層レイアウト | jsDelivr |
-| cytoscape-dagre | 2.5.0 | Cytoscape.js で Dagre を利用 | jsDelivr の minified / non-minified 候補 |
-| Mermaid | 10.6.1 | プロセス図の描画 | jsDelivr → unpkg → cdnjs の順で試行。失敗時は簡易 HTML 表示 |
-| xlsx-js-style | 1.2.0 | 設計書 XLSX のスタイル付き生成 | jsDelivr。失敗時は SheetJS 0.18.5 を試行 |
-| SheetJS (`xlsx`) | 0.18.5 | 設計書 XLSX のフォールバック生成 | jsDelivr。差分比較 XLSX は外部ライブラリを使わず自前生成 |
+| Mermaid | 10.6.1 | プロセス図の描画 | jsDelivr → unpkg の順で試行し、どちらも SRI（sha384）で検証。30 秒で次の候補へ。読み込めない・検証に失敗した場合は簡易 HTML 表示（状態と遷移の表）。cdnjs は同じ内容と確かめられないため候補から外した |
 
-URL の正本は原則 `src/constants.ts` です。ただし Mermaid の候補 URL は `src/tabs/process-standalone.ts`、設計書 XLSX の候補 URL は `src/tabs/design-xlsx.ts` にあります。
+実行時に CDN から読み込むのは Mermaid だけで、候補 URL とハッシュの正本は `src/tabs/mermaid-loader.ts` です（以前の `src/constants.ts` の `EXTERNAL_LIBRARIES` は廃止しました）。ハッシュは npm の `mermaid@10.6.1` の `dist/mermaid.min.js` から計算した値で、jsDelivr（`/npm/`）と unpkg は npm の配布物をそのまま配るため同じ値で検証できます。バージョンを上げるときは、新しい配布物から `openssl dgst -sha384 -binary mermaid.min.js | openssl base64 -A` で計算し直します。
+
+`window.mermaid` が既にあるときは再読み込みせずに使います。それは、このツールが検証付きで読み込んだ固定版か、このページで既に実行されている別のスクリプト（kintone のカスタマイズなど）が読み込んだものです。後者はこのツールが新たに外部スクリプトを実行するわけではありませんが、内容は検証できません。どちらでも `securityLevel: 'strict'` で初期化します。
+
+### 4.2.1 ビルド時に同梱する依存（ER 図）
+
+ER 図の HTML は、Cytoscape.js 3.28.1・Dagre 0.8.5・cytoscape-dagre 2.5.0 を実行時に読み込まず、HTML の中へインラインの script として埋め込みます。社内ネットワークで CDN が遮断されていても、図を表示できます。
+
+| 項目 | 内容 |
+| --- | --- |
+| 版の固定 | `tools/統合ツール/package.json` の devDependencies（`package-lock.json` の整合性ハッシュで固定）。`tests/er-html.test.ts` が、同梱する版と package.json・node_modules の版の一致を検査する |
+| 同梱の仕組み | `src/tabs/er-libraries.ts` が `cytoscape.min.js`・`dagre.min.js`・`cytoscape-dagre.js` を `?raw` で取り込む。`build.js` は `rawTextPlugin.js`（esbuild プラグイン）で、単体テスト（Vitest）は標準の `?raw` で同じ書き方を解決する |
+| ライセンス | 3 本とも MIT。`cytoscape.min.js` の著作権コメントはそのまま残す。`dagre.min.js` は graphlib・lodash を含むため、dagre・graphlib・lodash・cytoscape-dagre の LICENSE の全文を、各ライブラリの前のコメントに付ける |
+| 取り込む先 | `ER図.js` だけ（他の 11 本には入らない）。サイズは 約 0.47 MB → 約 1.1 MB。生成する HTML は 約 0.67 MB 増える |
+| CSP | `script-src 'unsafe-inline'`（外部ホストなし）。インラインに埋め込む文字列は `</script` を無害にしてから入れる（`escapeInlineScriptSource`） |
+| 保存し直し | 図の画面の「出力 → 編集済みHTMLを保存」は、画面の DOM を複製して保存するため、同梱したライブラリも保存した HTML に入り、そのまま単体で開ける |
+| 初期化に失敗したとき | ブラウザの制限などで描画ライブラリが使えないときは、取得済みのアプリ一覧の表を出す（CDN は前提にしない） |
 
 ### 4.3 プラットフォーム API とブラウザ標準機能
 
@@ -144,7 +163,7 @@ URL の正本は原則 `src/constants.ts` です。ただし Mermaid の候補 U
 
 ### ブラウザ内処理
 
-取得データと成果物は原則としてブラウザ内で処理します。別のアプリケーションサーバーは持ちません。ただし、動的ライブラリの取得先 CDN と kintone REST API への通信は発生します。
+取得データと成果物は原則としてブラウザ内で処理します。別のアプリケーションサーバーは持ちません。ただし、動的ライブラリの取得先 CDN（ER 図を除く）と kintone REST API への通信は発生します。
 
 ### 安全な書き込み
 
@@ -152,7 +171,7 @@ URL の正本は原則 `src/constants.ts` です。ただし Mermaid の候補 U
 
 ### 外部依存の縮退動作
 
-CDN 依存が取得できない可能性を前提に、代替 CDN、簡易表示、明示的なエラーのいずれかを用意します。差分比較 XLSX は外部 CDN に依存しない実装です。
+CDN 依存（Mermaid）が取得できない可能性を前提に、代替 CDN、簡易表示、明示的なエラーのいずれかを用意します。ZIP 作成、設計書 Excel、差分比較 XLSX、ER 図 HTML（描画ライブラリを同梱）は外部 CDN に依存せず、CDN が遮断された環境でも使えます。Mermaid は、読み込めない・SRI の検証に失敗したときに簡易表示へ切り替え、理由を状態表示とログに残します（SRI の不一致はブラウザ上で通信失敗と区別できないため、どちらも同じ扱いです）。
 
 ## 7. ビルドと検証
 
@@ -179,9 +198,9 @@ git diff --exit-code
 
 1. `package.json` または外部ライブラリ URL のバージョンを更新する。
 2. npm 依存なら対応する lockfile を `npm install` で更新する。
-3. CDN 依存なら、グローバル変数名、CSS、代替 URL、CSP の許可先が一致するか確認する。
+3. CDN 依存なら、グローバル変数名、CSS、代替 URL、CSP の許可先が一致するか確認する。固定版の `integrity`（sha384）と `crossorigin="anonymous"` を付け、ハッシュは npm の配布物から計算する（検証できない URL は候補に入れない）。同梱できるものは同梱を優先する。
 4. `npm run check` を実行し、生成物の差分もレビューする。
-5. 関連する Playwright ハーネスで通常経路と CDN 遮断時の挙動を確認する。
+5. 関連する Playwright ハーネスで通常経路と CDN 遮断時の挙動を確認する。同梱する依存（ER 図）は、ネットワークをすべて遮断した状態で描画できること（`npm run test:er-compare`）を確認する。
 6. この一覧と、必要に応じて `tools/統合ツール/README.md` を更新する。
 
 ## 9. 関連資料

@@ -12,8 +12,11 @@ if (!process.env.npm_execpath) {
   console.error('npm run test:all から実行してください。');
   process.exit(1);
 }
-const suites = ['check', 'test:output-layouts', 'test:lite-shared', 'test:record-metadata', 'test:record-quality', 'test:lite-workflows', 'test:reflect-dom', 'test:deploy-dom',
-  'test:diff-multi-dom', 'test:diff-pairs-dom', 'test:diff-pair-folders-dom', 'test:diff-compare', 'test:er-compare'];
+// 通し検証（*-explore）は、配布物をそのまま読み込んで状態を持つ合成 kintone につなぐ。
+// 本番反映の通し検証（test:deploy-explore）は規模のシナリオに数分かかるため、ここには入れず手動で実行する。
+const suites = ['check', 'test:output-layouts', 'test:lite-shared', 'test:record-metadata', 'test:record-quality', 'test:record-explore', 'test:lite-workflows',
+  'test:field-jsconfig-explore', 'test:settings-design-explore', 'test:reflect-dom', 'test:reflect-explore', 'test:deploy-dom',
+  'test:diff-multi-dom', 'test:diff-pairs-dom', 'test:diff-pair-folders-dom', 'test:diff-compare', 'test:diff-explore', 'test:er-compare', 'test:er-explore'];
 const results = [];
 for (const suite of suites) {
   console.log(`\n[all-tests] ${suite}`);

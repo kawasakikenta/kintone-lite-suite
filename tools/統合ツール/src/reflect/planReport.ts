@@ -8,6 +8,8 @@
 import type { ReflectSectionPlan } from './standalonePlan.js';
 import type { ReflectTargetPending } from './targetPending.js';
 import { describeReflectFailure, type ApplySectionOutcome } from './applyOutcome.js';
+import { withoutApiContextLines } from '../utils.js';
+import { describeLookupCandidate, type LookupMapCandidates } from './lookupCandidates.js';
 
 export interface ReflectReportApp { appId: string; name: string; code?: string; guestId: string }
 
@@ -24,6 +26,8 @@ export interface ReflectReportInput {
   /** 反映後の記録にする場合の実行結果 */
   /** 反映後の記録にする場合の実行結果 */
   outcome?: { executedAt: string; sections: ApplySectionOutcome[] };
+  /** 参照先変換に入れていない、参照先アプリの違い（あれば「注意」として載せる） */
+  lookupCandidates?: LookupMapCandidates;
   /** 複数アプリへの順次反映（ロールアウト）結果 */
   rolloutResults?: Array<{ appId: string; guestId?: string; appName?: string; outcome: string; detail?: string }>;
 }
@@ -69,6 +73,14 @@ export function buildReflectReportMarkdown(input: ReflectReportInput): string {
   if (input.targetPending) lines.push(`- 反映先の未公開の変更: ${escapeReflectMarkdown(input.targetPending.message)}`);
   lines.push('- 書き込み先はプレビューです。本番への公開はアプリの設定画面で行います。', '');
 
+  const candidates = input.lookupCandidates;
+  if (candidates && (candidates.candidates.length || candidates.conflicts.length)) {
+    lines.push('## 注意: 参照先変換の候補', '');
+    lines.push('- 反映元と反映先で、ルックアップ・関連レコード一覧・アクションの参照先アプリが違います。参照先変換に入れずに反映すると、反映先の参照先が反映元のアプリに書き換わります。');
+    for (const candidate of candidates.candidates) lines.push(`- 候補: ${escapeReflectMarkdown(describeLookupCandidate(candidate))}`);
+    for (const conflict of candidates.conflicts) lines.push(`- 食い違い（自動では入れません）: ${escapeReflectMarkdown(conflict.from)} → ${conflict.targets.map(target => escapeReflectMarkdown(target.to)).join(' / ')}`);
+    lines.push('');
+  }
   lines.push('## 概要', '');
   const outcomeOf = (key: string) => input.outcome?.sections.find(section => section.sectionKey === key);
   lines.push(record ? '| 項目 | 結果 | 変更 | 削除 | 反映方法 |' : '| 項目 | 状態 | 変更 | 削除 | 保持 | 反映方法 |');
@@ -89,8 +101,9 @@ export function buildReflectReportMarkdown(input: ReflectReportInput): string {
       lines.push(`- 結果: ${outcomeLabel(outcome)}`);
       if (outcome.message) lines.push(`- 詳細: ${escapeReflectMarkdown(describeReflectFailure(outcome.message))}`);
     }
-    lines.push(`- 状態: ${escapeReflectMarkdown(entry.message || STATUS_LABELS[entry.status] || entry.status)}`);
-    for (const blocker of listOf(entry.blockers)) lines.push(`- 停止理由: ${escapeReflectMarkdown(blocker)}`);
+    // 内部の通信情報（[API] …）は承認依頼や作業記録に載せない。
+    lines.push(`- 状態: ${escapeReflectMarkdown(withoutApiContextLines(entry.message) || STATUS_LABELS[entry.status] || entry.status)}`);
+    for (const blocker of listOf(entry.blockers)) lines.push(`- 停止理由: ${escapeReflectMarkdown(withoutApiContextLines(blocker))}`);
     for (const warning of listOf(entry.warnings)) lines.push(`- 注意: ${escapeReflectMarkdown(warning)}`);
     for (const upload of entry.fileUploads || []) lines.push(`- アップロードするファイル: ${upload.platform === 'desktop' ? 'PC' : 'モバイル'} ${upload.kind.toUpperCase()} / ${escapeReflectMarkdown(upload.name)}`);
     const items = [...(entry.items || [])].sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind));

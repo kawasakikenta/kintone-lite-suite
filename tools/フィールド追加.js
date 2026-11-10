@@ -264,27 +264,6 @@
 
   // src/constants.ts
   var TOOL_ID = "kintone-unified-suite-v2";
-  var EXTERNAL_LIBRARIES = Object.freeze({
-    jszip: Object.freeze({
-      version: "3.10.1",
-      cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"
-    }),
-    cytoscape: Object.freeze({
-      version: "3.28.1",
-      cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js",
-      altVersion: "3.26.0",
-      altCdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape@3.26.0/dist/cytoscape.min.js"
-    }),
-    dagre: Object.freeze({
-      version: "0.8.5",
-      cdnUrl: "https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"
-    }),
-    cytoscapeDagre: Object.freeze({
-      version: "2.5.0",
-      cdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js",
-      altCdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"
-    })
-  });
   function resolveDefaultAppId() {
     try {
       if (typeof kintone !== "undefined" && kintone?.app?.getId) {
@@ -1053,8 +1032,8 @@
   async function apiPut(prefix, path, body) {
     return executeMutatingApiWithRetry("PUT", prefix, path, body);
   }
-  async function apiPost(prefix, path, body) {
-    return executeMutatingApiWithRetry("POST", prefix, path, body);
+  async function apiPost(prefix, path, body, retries) {
+    return executeMutatingApiWithRetry("POST", prefix, path, body, retries);
   }
   var REVISION_CONFLICT_CODES = /* @__PURE__ */ new Set(["GAIA_CO02"]);
   function isRevisionConflictError(error) {
@@ -3221,6 +3200,143 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     return isRunCancelledError(error) || isCancelReportError(error);
   }
 
+  // src/tabs/field.ts
+  function collectFieldValidationIssues(props) {
+    const issues = [];
+    const seenCodes = /* @__PURE__ */ new Set();
+    const visit = (fieldMap, path) => {
+      for (const [key, def] of Object.entries(fieldMap || {})) {
+        const code = String(def?.code || key || "").trim();
+        const label = String(def?.label || "").trim();
+        const type = String(def?.type || "").trim();
+        const fieldPath = path ? `${path}.${key}` : key;
+        if (!code) issues.push(`${fieldPath}: code が空です`);
+        if (code && seenCodes.has(code)) issues.push(`${fieldPath}: code "${code}" が重複しています`);
+        if (code) seenCodes.add(code);
+        if (code && String(key) !== code) issues.push(`${fieldPath}: JSONキー "${key}" と code "${code}" が一致していません`);
+        if (!type) issues.push(`${fieldPath}: type がありません`);
+        if (!label && type !== "SPACER" && type !== "HR" && type !== "LABEL") issues.push(`${fieldPath}: label がありません`);
+        if (def?.lookup && !def.lookup.relatedApp?.app) issues.push(`${fieldPath}: lookup.relatedApp.app がありません`);
+        if (def?.referenceTable && !def.referenceTable.relatedApp?.app) issues.push(`${fieldPath}: referenceTable.relatedApp.app がありません`);
+        if (type === "SUBTABLE" && (!def.fields || typeof def.fields !== "object")) issues.push(`${fieldPath}: SUBTABLE に fields がありません`);
+        if (type === "SUBTABLE") visit(def.fields, fieldPath);
+      }
+    };
+    visit(props, "");
+    return issues;
+  }
+  function summarizeFieldProps(props) {
+    const byType = {};
+    let total = 0;
+    let system = 0;
+    let writable = 0;
+    let subtable = 0;
+    let lookup = 0;
+    let calc = 0;
+    for (const [, def] of Object.entries(props || {})) {
+      if (!def || typeof def !== "object") continue;
+      total += 1;
+      const type = String(def.type || "").trim();
+      byType[type] = (byType[type] || 0) + 1;
+      if (SYSTEM_FIELD_TYPES.has(type)) system += 1;
+      else writable += 1;
+      if (type === "SUBTABLE") subtable += 1;
+      if (def.lookup) lookup += 1;
+      if (type === "CALC" || def.expression) calc += 1;
+    }
+    return { total, system, writable, subtable, lookup, calc, byType };
+  }
+  var FORMULA_WORDS = /* @__PURE__ */ new Set([
+    "IF",
+    "AND",
+    "OR",
+    "NOT",
+    "SUM",
+    "ROUND",
+    "ROUNDDOWN",
+    "ROUNDUP",
+    "DATE_FORMAT",
+    "DATE",
+    "TIME",
+    "DATETIME_FORMAT",
+    "CONTAINS",
+    "NUMBER",
+    "VALUE",
+    "TRUE",
+    "FALSE"
+  ]);
+  var FORMULA_TOKEN = /"(?:[^"\\]|\\.)*"|[\p{L}_][\p{L}\p{N}_]*/gu;
+  function collectFormulaRefs(expression) {
+    const refs = /* @__PURE__ */ new Set();
+    const text = String(expression || "");
+    for (const match of text.matchAll(FORMULA_TOKEN)) {
+      const token = match[0];
+      if (token.startsWith('"')) continue;
+      if (text.slice((match.index ?? 0) + token.length).trimStart().startsWith("(")) continue;
+      if (FORMULA_WORDS.has(token.toUpperCase())) continue;
+      refs.add(token);
+    }
+    return [...refs];
+  }
+  function rewriteFormulaRefs(expression, codeMap) {
+    const text = String(expression ?? "");
+    return text.replace(FORMULA_TOKEN, (token, offset) => {
+      if (token.startsWith('"')) return token;
+      if (text.slice(offset + token.length).trimStart().startsWith("(")) return token;
+      return codeMap.get(token) ?? token;
+    });
+  }
+  function collectFieldApplyWarnings(incomingProps, currentProps, lookupMap = {}) {
+    const warnings = [];
+    const currentCodes = new Set(Object.keys(currentProps || {}));
+    const incomingCodes = new Set(Object.keys(incomingProps || {}));
+    const allCodes = /* @__PURE__ */ new Set([...currentCodes, ...incomingCodes]);
+    const addSubtableChildCodes = (propsMap) => {
+      for (const [key, def] of Object.entries(propsMap || {})) {
+        if (def?.code) allCodes.add(String(def.code));
+        if (def?.type === "SUBTABLE" && def?.fields && typeof def.fields === "object") {
+          for (const [ck, cdef] of Object.entries(def.fields)) {
+            allCodes.add(ck);
+            if (cdef?.code) allCodes.add(String(cdef.code));
+          }
+        } else {
+          void key;
+        }
+      }
+    };
+    addSubtableChildCodes(currentProps);
+    addSubtableChildCodes(incomingProps);
+    const conflicts = [...incomingCodes].filter((code) => currentCodes.has(code));
+    if (conflicts.length) {
+      warnings.push(`既存フィールドと同じ code が ${conflicts.length} 件あります: ${conflicts.slice(0, 12).join(", ")}${conflicts.length > 12 ? " ..." : ""}`);
+    }
+    const converted = [];
+    const unconvertedRefs = [];
+    const walk = (fieldMap, parent = "") => {
+      for (const [key, def] of Object.entries(fieldMap || {})) {
+        const label = parent ? `${parent}.${key}` : key;
+        const relatedApp = def?.lookup?.relatedApp?.app ?? def?.referenceTable?.relatedApp?.app;
+        if (relatedApp != null) {
+          const before = String(relatedApp);
+          if (lookupMap[before]) converted.push(`${label}: ${before} -> ${lookupMap[before]}`);
+          else unconvertedRefs.push(`${label}: ${before}`);
+        }
+        if (def?.expression) {
+          const missing = collectFormulaRefs(def.expression).filter((code) => !allCodes.has(code));
+          if (missing.length) warnings.push(`${label}: 計算式が参照する ${missing.join(", ")} は、この JSON にありません（反映先に同じコードのフィールドがあれば問題ありません。実行前の確認で反映先と照合します）`);
+        }
+        if (def?.type === "SUBTABLE") walk(def.fields, label);
+      }
+    };
+    walk(incomingProps);
+    if (converted.length) warnings.push(`参照先アプリID変換: ${converted.slice(0, 8).join(" / ")}${converted.length > 8 ? " ..." : ""}`);
+    if (unconvertedRefs.length) warnings.push(`変換されない参照先アプリIDがあります: ${unconvertedRefs.slice(0, 8).join(" / ")}${unconvertedRefs.length > 8 ? " ..." : ""}`);
+    if ([...incomingCodes].some((code) => !currentCodes.has(code))) {
+      warnings.push("新規追加フィールドはフォームレイアウトには自動配置されません。必要に応じてkintoneのフォーム設定で配置してください。");
+    }
+    return warnings;
+  }
+
   // src/tabs/field-standalone.ts
   function assertNumericIds(appId, guestId, appLabel) {
     if (!/^\d+$/.test(String(appId ?? "").trim())) throw new Error(`${appLabel}アプリIDは半角数字で入力してください`);
@@ -3461,7 +3577,76 @@ ${error?.message != null ? String(error.message) : String(error)}`);
     }
     return conflicts;
   }
-  function buildFieldApplyConfirmText(targetAppId, targetGuestId, plan) {
+  var MISSING_REFERENCE_KIND_LABEL = {
+    calc: "計算式",
+    lookup: "ルックアップのコピー先",
+    reference: "関連レコード一覧の条件",
+    renamed: "計算式・コピー先など（コードを変更するフィールドを参照）"
+  };
+  function finalFieldCodes(plan, current) {
+    const codes = /* @__PURE__ */ new Set();
+    const renamedAway = /* @__PURE__ */ new Set();
+    const addDef = (key, def, update) => {
+      const code = String(update?.code || def?.code || key);
+      codes.add(code);
+      if (code !== key) renamedAway.add(key);
+      if (def?.type === "SUBTABLE") {
+        for (const [childKey, childDef] of Object.entries(def.fields || {})) {
+          const childCode = String(update?.fields?.[childKey]?.code || childDef?.code || childKey);
+          codes.add(childCode);
+          if (childCode !== childKey) renamedAway.add(childKey);
+        }
+      }
+    };
+    for (const [key, def] of Object.entries(current)) addDef(key, def, hasOwn(plan.updates, key) ? plan.updates[key] : void 0);
+    for (const [key, def] of Object.entries(plan.adds)) addDef(key, def, void 0);
+    for (const code of codes) renamedAway.delete(code);
+    return { codes, renamedAway };
+  }
+  function referencedFieldCodes(def) {
+    const out = [];
+    if (def?.type === "CALC" && typeof def.expression === "string") out.push({ kind: "calc", codes: collectFormulaRefs(def.expression) });
+    if (def?.lookup && Array.isArray(def.lookup.fieldMappings)) out.push({ kind: "lookup", codes: def.lookup.fieldMappings.map((item) => String(item?.field || "")).filter(Boolean) });
+    const condition = def?.referenceTable?.condition?.field;
+    if (typeof condition === "string" && condition) out.push({ kind: "reference", codes: [condition] });
+    return out;
+  }
+  function findMissingFieldReferences(plan, currentProps) {
+    const current = currentProps || {};
+    const { codes, renamedAway } = finalFieldCodes(plan, current);
+    const found = [];
+    const check = (field, def, onlyRenamed) => {
+      for (const { kind, codes: refs } of referencedFieldCodes(def)) {
+        const selfCode = String(def?.code || "");
+        const missing = [...new Set(refs)].filter((code) => (onlyRenamed ? renamedAway.has(code) : !codes.has(code)) && code !== selfCode);
+        if (missing.length) found.push({ field, kind: onlyRenamed ? "renamed" : kind, missing });
+      }
+    };
+    const visit = (key, def, onlyRenamed) => {
+      check(key, def, onlyRenamed);
+      if (def?.type === "SUBTABLE") for (const [childKey, childDef] of Object.entries(def.fields || {})) check(`${key}.${childKey}`, childDef, onlyRenamed);
+    };
+    for (const [key, def] of Object.entries(plan.adds)) visit(key, def, false);
+    for (const [key, def] of Object.entries(plan.updates)) visit(key, def, false);
+    if (renamedAway.size) {
+      for (const [key, def] of Object.entries(current)) {
+        if (hasOwn(plan.updates, key)) continue;
+        visit(key, def, true);
+      }
+    }
+    return found;
+  }
+  function describeMissingFieldReferences(missing, limit = 8) {
+    if (!missing.length) return [];
+    const shown = missing.slice(0, limit).map((item) => `・${item.field}（${MISSING_REFERENCE_KIND_LABEL[item.kind]}）: ${item.missing.join("、")}`);
+    return [
+      "⚠ 次のフィールドは、反映後のフォームに無いフィールドを参照しています。kintone に拒否される可能性があります:",
+      ...shown,
+      ...missing.length > limit ? [`…ほか ${missing.length - limit} 件`] : [],
+      "参照先のフィールドも JSON に加えるか、反映先に作ってから反映してください。"
+    ];
+  }
+  function buildFieldApplyConfirmText(targetAppId, targetGuestId, plan, missing = []) {
     const addCount = Object.keys(plan.adds).length;
     const updateCount = Object.keys(plan.updates).length;
     const skipCount = plan.skippedSystem.length + plan.skippedExisting.length;
@@ -3472,6 +3657,7 @@ ${error?.message != null ? String(error.message) : String(error)}`);
       updateCount ? `更新: ${listCodes(plan.updates)}` : "",
       "削除 0件（このツールはフィールドを削除しません）",
       updateCount ? "更新対象は、反映先の既存の定義を反映元の内容で置き換えます。" : "",
+      ...describeMissingFieldReferences(missing),
       "本番は変わりません（公開は kintone の設定画面で行います）。実行しますか？"
     ].filter(Boolean).join("\n");
   }
@@ -3498,7 +3684,8 @@ ${logs.join("\n")}` : baseMessage;
       updateCount: Object.keys(plan.updates).length,
       skipCount: plan.skippedSystem.length + plan.skippedExisting.length,
       conflicts: findFieldCodeConflicts(plan, current.properties || {}),
-      revision: pickRevision(current)
+      revision: pickRevision(current),
+      missingRefs: findMissingFieldReferences(plan, current.properties || {})
     };
   }
   var FIELD_CODE_CONFLICT_MESSAGE = (conflicts) => `反映後のフィールドコードが既存のフィールドと重複するため、何も反映せずに中止しました: ${conflicts.join("、")}`;
@@ -3563,7 +3750,7 @@ ${logs.join("\n")}` : baseMessage;
     const incoming = parseFieldJsonInput(fieldJson);
     const lookupMap = parseLookupMapInput(lookupMapJson);
     setStatus("反映先のフィールド設定を取得中...");
-    const { prefix, plan, addCount, updateCount, skipCount, conflicts, revision } = await inspectFieldTarget(tgtApp, tgtGuest, incoming, lookupMap, !!overwrite);
+    const { prefix, plan, addCount, updateCount, skipCount, conflicts, revision, missingRefs } = await inspectFieldTarget(tgtApp, tgtGuest, incoming, lookupMap, !!overwrite);
     const logs = [...plan.logs];
     if (!addCount && !updateCount) {
       setStatus(`追加・更新対象がありません（スキップ ${skipCount}件）`, true);
@@ -3572,7 +3759,7 @@ ${logs.join("\n")}` : baseMessage;
     }
     if (conflicts.length) throw new Error(FIELD_CODE_CONFLICT_MESSAGE(conflicts));
     if (!/^\d+$/.test(revision)) throw new Error(FIELD_REVISION_MISSING_MESSAGE);
-    if (!opts.skipConfirm && !kusConfirm(buildFieldApplyConfirmText(tgtApp, tgtGuest, plan))) {
+    if (!opts.skipConfirm && !kusConfirm(buildFieldApplyConfirmText(tgtApp, tgtGuest, plan, missingRefs))) {
       setStatus("フィールド反映をキャンセルしました");
       logs.push("キャンセル");
       return logs;
@@ -3622,7 +3809,7 @@ ${logs.join("\n")}` : baseMessage;
   }
   function singleLineMessage(error) {
     const message = error instanceof Error ? error.message : String(error?.message ?? error ?? "エラーが発生しました");
-    return message.split("\n").map((line) => line.trim()).filter((line) => line && !line.startsWith("NG ")).join(" / ");
+    return message.split("\n").map((line) => line.trim()).filter((line) => line && !line.startsWith("NG ") && !line.startsWith("[API]")).join(" / ");
   }
   function countByStatus(results) {
     const counts = { success: 0, unchanged: 0, failed: 0, conflict: 0, "not-run": 0 };
@@ -3639,7 +3826,8 @@ ${logs.join("\n")}` : baseMessage;
     const sum = (key) => ready.reduce((n, r) => n + r[key], 0);
     const lines = [
       ...failed.map((r) => `× ${fieldMultiLabel(r)}: 事前確認に失敗（${r.message}）`),
-      ...ready.map((r) => `○ ${fieldMultiLabel(r)}: ${describePlanCounts(r)}`),
+      ...ready.map((r) => `○ ${fieldMultiLabel(r)}: ${describePlanCounts(r)}${r.missingRefs?.length ? `
+   ⚠ 反映後のフォームに無いフィールドを参照: ${r.missingRefs.slice(0, 3).map((item) => `${item.field} → ${item.missing.join("、")}`).join(" / ")}${r.missingRefs.length > 3 ? ` ほか${r.missingRefs.length - 3}件` : ""}` : ""}`),
       ...unchanged.map((r) => `－ ${fieldMultiLabel(r)}: 変更なし（スキップ ${r.skip}）`)
     ];
     return [
@@ -3647,6 +3835,7 @@ ${logs.join("\n")}` : baseMessage;
       `反映する ${ready.length}件 / 変更なし ${unchanged.length}件 / 事前確認に失敗 ${failed.length}件（失敗したアプリには反映しません）`,
       `合計: 追加 ${sum("add")}件 / 更新 ${sum("update")}件 / スキップ ${sum("skip")}件`,
       "削除 0件（このツールはフィールドを削除しません）",
+      ...ready.some((r) => r.missingRefs?.length) ? ["⚠ 参照先のフィールドが反映後のフォームに無い反映先は、kintone に拒否される可能性があります。参照先のフィールドも JSON に加えるか、反映先に作ってから反映してください。"] : [],
       "",
       summarizeList(lines),
       "",
@@ -3715,7 +3904,7 @@ ${logs.join("\n")}` : baseMessage;
         } else if (!/^\d+$/.test(inspection.revision)) {
           results.push({ ...baseResult(target), add: 0, update: 0, skip: inspection.skipCount, status: "failed", phase: "precheck", message: FIELD_REVISION_MISSING_MESSAGE });
         } else {
-          const entry = { ...baseResult(target), ...counts, status: "success", phase: "precheck", message: "" };
+          const entry = { ...baseResult(target), ...counts, status: "success", phase: "precheck", message: "", ...inspection.missingRefs.length ? { missingRefs: inspection.missingRefs } : {} };
           results.push(entry);
           ready.push({ target, inspection: { ...inspection, current: null }, entry });
         }
@@ -3821,11 +4010,47 @@ ${logs.join("\n")}` : baseMessage;
     const checkDuplicate = (from, to, toCode) => {
       if ((finalCodes.get(toCode) || 0) > 1) collisions.push(`${from} → ${to}`);
     };
+    const codeMap = /* @__PURE__ */ new Map();
+    for (const [code, field] of entries) {
+      if (!field || RENAME_EXCLUDED_TYPES.has(field.type)) continue;
+      const next = rename(code);
+      if (next && next !== code) codeMap.set(code, next);
+      if (field.type === "SUBTABLE" && field.fields && typeof field.fields === "object") {
+        for (const [childCode, childDef] of Object.entries(field.fields)) {
+          if (!childDef || RENAME_EXCLUDED_TYPES.has(childDef.type)) continue;
+          const nextChild = rename(childCode);
+          if (nextChild && nextChild !== childCode) codeMap.set(childCode, nextChild);
+        }
+      }
+    }
+    const rewriteReferences = (def) => {
+      let changed = false;
+      if (def.type === "CALC" && typeof def.expression === "string") {
+        const next = rewriteFormulaRefs(def.expression, codeMap);
+        if (next !== def.expression) {
+          def.expression = next;
+          changed = true;
+        }
+      }
+      for (const mapping of Array.isArray(def.lookup?.fieldMappings) ? def.lookup.fieldMappings : []) {
+        if (mapping && typeof mapping.field === "string" && codeMap.has(mapping.field)) {
+          mapping.field = codeMap.get(mapping.field);
+          changed = true;
+        }
+      }
+      const condition = def.referenceTable?.condition;
+      if (condition && typeof condition.field === "string" && codeMap.has(condition.field)) {
+        condition.field = codeMap.get(condition.field);
+        changed = true;
+      }
+      return changed;
+    };
     for (const [code, field] of entries) {
       if (!field || RENAME_EXCLUDED_TYPES.has(field.type)) continue;
       const newCode = rename(code);
       const cloned = deepClone(field);
       let touched = false;
+      if (rewriteReferences(cloned)) touched = true;
       if (newCode !== code) {
         if (!newCode) {
           collisions.push(`${code} → (空)`);
@@ -3842,6 +4067,7 @@ ${logs.join("\n")}` : baseMessage;
           if (!childDef || RENAME_EXCLUDED_TYPES.has(childDef.type)) continue;
           const newChild = rename(childCode);
           const childClone = deepClone(childDef);
+          if (rewriteReferences(childClone)) touched = true;
           if (newChild !== childCode) {
             if (!newChild) {
               collisions.push(`${code}.${childCode} → (空)`);
@@ -3877,130 +4103,6 @@ ${logs.join("\n")}` : baseMessage;
     }
     setStatus(`プレフィックス${removeMode ? "除去" : "付与"}完了: ${result.modifiedCount}件`);
     return { properties: result.properties, modifiedCount: result.modifiedCount, renamePairs: result.renamePairs, renameMode: result.renameMode };
-  }
-
-  // src/tabs/field.ts
-  function collectFieldValidationIssues(props) {
-    const issues = [];
-    const seenCodes = /* @__PURE__ */ new Set();
-    const visit = (fieldMap, path) => {
-      for (const [key, def] of Object.entries(fieldMap || {})) {
-        const code = String(def?.code || key || "").trim();
-        const label = String(def?.label || "").trim();
-        const type = String(def?.type || "").trim();
-        const fieldPath = path ? `${path}.${key}` : key;
-        if (!code) issues.push(`${fieldPath}: code が空です`);
-        if (code && seenCodes.has(code)) issues.push(`${fieldPath}: code "${code}" が重複しています`);
-        if (code) seenCodes.add(code);
-        if (code && String(key) !== code) issues.push(`${fieldPath}: JSONキー "${key}" と code "${code}" が一致していません`);
-        if (!type) issues.push(`${fieldPath}: type がありません`);
-        if (!label && type !== "SPACER" && type !== "HR" && type !== "LABEL") issues.push(`${fieldPath}: label がありません`);
-        if (def?.lookup && !def.lookup.relatedApp?.app) issues.push(`${fieldPath}: lookup.relatedApp.app がありません`);
-        if (def?.referenceTable && !def.referenceTable.relatedApp?.app) issues.push(`${fieldPath}: referenceTable.relatedApp.app がありません`);
-        if (type === "SUBTABLE" && (!def.fields || typeof def.fields !== "object")) issues.push(`${fieldPath}: SUBTABLE に fields がありません`);
-        if (type === "SUBTABLE") visit(def.fields, fieldPath);
-      }
-    };
-    visit(props, "");
-    return issues;
-  }
-  function summarizeFieldProps(props) {
-    const byType = {};
-    let total = 0;
-    let system = 0;
-    let writable = 0;
-    let subtable = 0;
-    let lookup = 0;
-    let calc = 0;
-    for (const [, def] of Object.entries(props || {})) {
-      if (!def || typeof def !== "object") continue;
-      total += 1;
-      const type = String(def.type || "").trim();
-      byType[type] = (byType[type] || 0) + 1;
-      if (SYSTEM_FIELD_TYPES.has(type)) system += 1;
-      else writable += 1;
-      if (type === "SUBTABLE") subtable += 1;
-      if (def.lookup) lookup += 1;
-      if (type === "CALC" || def.expression) calc += 1;
-    }
-    return { total, system, writable, subtable, lookup, calc, byType };
-  }
-  var FORMULA_WORDS = /* @__PURE__ */ new Set([
-    "IF",
-    "AND",
-    "OR",
-    "NOT",
-    "SUM",
-    "ROUND",
-    "ROUNDDOWN",
-    "ROUNDUP",
-    "DATE_FORMAT",
-    "DATE",
-    "TIME",
-    "DATETIME_FORMAT",
-    "CONTAINS",
-    "NUMBER",
-    "VALUE",
-    "TRUE",
-    "FALSE"
-  ]);
-  function collectFormulaRefs(expression) {
-    const refs = /* @__PURE__ */ new Set();
-    String(expression || "").replace(/\b[A-Za-z_][A-Za-z0-9_]*\b/g, (token) => {
-      if (!FORMULA_WORDS.has(token.toUpperCase())) refs.add(token);
-      return token;
-    });
-    return [...refs];
-  }
-  function collectFieldApplyWarnings(incomingProps, currentProps, lookupMap = {}) {
-    const warnings = [];
-    const currentCodes = new Set(Object.keys(currentProps || {}));
-    const incomingCodes = new Set(Object.keys(incomingProps || {}));
-    const allCodes = /* @__PURE__ */ new Set([...currentCodes, ...incomingCodes]);
-    const addSubtableChildCodes = (propsMap) => {
-      for (const [key, def] of Object.entries(propsMap || {})) {
-        if (def?.code) allCodes.add(String(def.code));
-        if (def?.type === "SUBTABLE" && def?.fields && typeof def.fields === "object") {
-          for (const [ck, cdef] of Object.entries(def.fields)) {
-            allCodes.add(ck);
-            if (cdef?.code) allCodes.add(String(cdef.code));
-          }
-        } else {
-          void key;
-        }
-      }
-    };
-    addSubtableChildCodes(currentProps);
-    addSubtableChildCodes(incomingProps);
-    const conflicts = [...incomingCodes].filter((code) => currentCodes.has(code));
-    if (conflicts.length) {
-      warnings.push(`既存フィールドと同じ code が ${conflicts.length} 件あります: ${conflicts.slice(0, 12).join(", ")}${conflicts.length > 12 ? " ..." : ""}`);
-    }
-    const converted = [];
-    const unconvertedRefs = [];
-    const walk = (fieldMap, parent = "") => {
-      for (const [key, def] of Object.entries(fieldMap || {})) {
-        const label = parent ? `${parent}.${key}` : key;
-        const relatedApp = def?.lookup?.relatedApp?.app ?? def?.referenceTable?.relatedApp?.app;
-        if (relatedApp != null) {
-          const before = String(relatedApp);
-          if (lookupMap[before]) converted.push(`${label}: ${before} -> ${lookupMap[before]}`);
-          else unconvertedRefs.push(`${label}: ${before}`);
-        }
-        if (def?.expression) {
-          const missing = collectFormulaRefs(def.expression).filter((code) => !allCodes.has(code));
-          if (missing.length) warnings.push(`${label}: 計算式の参照候補が見つかりません: ${missing.join(", ")}`);
-        }
-        if (def?.type === "SUBTABLE") walk(def.fields, label);
-      }
-    };
-    walk(incomingProps);
-    if (converted.length) warnings.push(`参照先アプリID変換: ${converted.slice(0, 8).join(" / ")}${converted.length > 8 ? " ..." : ""}`);
-    if (unconvertedRefs.length) warnings.push(`変換されない参照先アプリIDがあります: ${unconvertedRefs.slice(0, 8).join(" / ")}${unconvertedRefs.length > 8 ? " ..." : ""}`);
-    if ([...incomingCodes].some((code) => !currentCodes.has(code))) {
-      warnings.push("新規追加フィールドはフォームレイアウトには自動配置されません。必要に応じてkintoneのフォーム設定で配置してください。");
-    }
-    return warnings;
   }
 
   // src/entries/appSearchControl.ts

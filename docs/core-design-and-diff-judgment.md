@@ -42,7 +42,7 @@ flowchart TB
   end
   Bundle --> Entry
   Api --> Kintone["kintone REST API（同一オリジン）<br/>/k/v1、/k/v1/preview、/k/guest/ID/v1、同 /preview"]
-  Api -. 必要時のみ動的読込 .-> CDN["外部 CDN<br/>JSZip・Cytoscape 等、失敗時は縮退"]
+  Api -. 必要時のみ動的読込 .-> CDN["外部 CDN<br/>Mermaid・Cytoscape 等（SRI 検証）、失敗時は縮退"]
   style Diff fill:#dbeafe,stroke:#2563eb,stroke-width:2px
 ```
 
@@ -54,7 +54,7 @@ flowchart TB
 | 生成物と正規ソースの分離 | `tools/*.js` と `単機能スクリプト棚卸し.md` はビルド生成物。`npm run check` 後の `git diff --exit-code` で更新漏れを検出する運用 | `CLAUDE.md`、`build.js` |
 | kintone 画面ガード | 全エントリが `isKintonePage()`（`window.kintone.api` と `window.kintone.app` の存在）を満たすときだけ起動し、それ以外はアラートのみ | `src/kintoneGuard.ts` |
 | ブラウザストレージ禁止 | `localStorage` / `sessionStorage` / `indexedDB` / `document.cookie` を `src/` 全体で禁止し、`check:no-browser-storage` がビルド前に文字列検査で落とす。レビュー状態・比較条件は JSON ファイルで持ち運ぶ | `scripts/check-no-browser-storage.cjs` |
-| 外部依存は実行時動的読込＋縮退 | 本番 bundle に npm パッケージを同梱しない。JSZip・Cytoscape・Dagre 等は CDN から動的読込し、代替 URL・30秒タイムアウト・簡易表示を用意。差分比較の Excel は自前生成で CDN 非依存 | `constants.ts`、`jszipLoader.ts`、`diff/xlsx-builder.ts` |
+| 外部依存は実行時動的読込＋縮退 | ZIP 作成（自前実装）と設計書 Excel（xlsx-js-style を `設計書作成.js` にだけ同梱）は CDN 非依存。Mermaid・Cytoscape・Dagre 等は CDN から動的読込し、代替 URL・タイムアウト・簡易表示を用意（Mermaid は固定版を SRI で検証）。差分比較の Excel も自前生成で CDN 非依存 | `constants.ts`、`jszipLoader.ts`、`archive/lite-zip.ts`、`tabs/sheetLib.ts`、`tabs/mermaid-loader.ts`、`diff/xlsx-builder.ts` |
 | 安全な書き込み | 設定の変更系 REST（POST/PUT/DELETE/PATCH）は `/v1/preview` を含む prefix へのみ許可。例外はレコード API 4パス、`/records/cursor.json`、別アプリの JS/CSS を渡すための `POST /file.json`（一時ファイル作成のみ）。`app/deploy.json` は原則拒否し、本番反映ツールの `requestAppDeploy` だけが preview prefix の `/app/deploy.json` へ POST できる（完全一致・自動再試行なし） | `api.ts` `assertAllowsMutatingRestCall`・`requestAppDeploy` |
 | 共有モジュールの波及 | `litePanelTheme.ts`・`kintoneGuard.ts`・`design-xlsx.ts`・`er.ts`・`diff/export.ts` の `bundleToMarkdown` は複数 bundle から参照され、1箇所の変更が最大 10 本の生成 JS に波及する | `tools/統合ツール/AGENTS.md` |
 
@@ -91,7 +91,7 @@ flowchart TB
 | `createLitePanel` | 同じ id の既存パネルがあれば `kus-lite-dispose` イベントを投げてから除去し、二重マウントを防ぐ。ドラッグ移動、「－」で見出しだけに折りたたみ、Esc は操作中のパネルだけを閉じる。`setPrimaryAction` に登録したボタンは Enter（textarea は Ctrl/Cmd+Enter）で押され、IME 変換確定の Enter は無視 |
 | `liteRun` | 非同期処理の共通ラッパー。busy 中はパネルを無効化。完了時、ステータスが err / warn / info なら成功メッセージで上書きしない（部分成功・比較未完了の警告を残す）。例外は 1 行目をステータス、残り（API コンテキスト・内訳）をログへ |
 | `installLiteWorkflow` | 「1 対象と操作 → 2 内容を確認 → 3 実行結果」の固定 3 段階。各アクションは `validate()`（入力検査文を返す）と `summary()`（確認表）を持ち、`writes: true` の操作は書き込みとして明示 |
-| 外部ライブラリ | `loadJSZipLite`: 既に `window.JSZip` があれば再利用、読込中の script 要素は共有、失敗を観測した要素は再利用しない。30 秒でタイムアウトし CSP / ネットワーク確認を案内 |
+| ZIP 作成 | `loadJSZipLite`: 自前の ZIP 実装（`archive/lite-zip.ts`）を返す。通信せず、ページの `window.JSZip` も使わない。classic ZIP の上限（4GB 未満・65,535 件）を超えたら `ZipLimitError` で止める |
 | ストレージ | ブラウザストレージ非使用（第 2 章）。レビュー状態・比較条件プロファイル・接続プリセットは JSON ファイルとして保存・読込 |
 | コード規約 | 既存テキストの CRLF 維持、生成物は編集しない、取得失敗・処理上限・部分成功は隠さず表示（`CLAUDE.md`） |
 
@@ -320,6 +320,8 @@ COMPOSITE_ARRAY_RULES のパス正規表現
 - `findReorderedKeys`: 両側に対応相手がいる要素だけを数えた相対順位が変わった要素を移動とする。先頭への追加や途中の削除で後続が全部ずれても移動にはしない
 - `moved` 行は `type: 'changed'` に `moved: true`、`movedFrom` / `movedTo`（0 始まり）を持ち、人向け表記では＋1 して「N 番目 → M 番目」
 - `isUnorderedArrayPath`（現在は `actionSettings.actions….mappings` のみ）に該当する配列では位置違いを `same` 扱いにし、移動行を作らない
+- 「並び順を無視」の正規化（`unorderedArrays`）を適用したセクションでは、`computeDiffRows` が行の配列 `__orderInsensitive` を立てて比較し（`isOrderInsensitiveSection`）、移動行を作らない。正規化は配列を内容で並べ替えるため、内容が違う要素が混ざると、内容の同じ要素の位置がずれて偽の移動行になっていた（フィールド権限の宛先など）。この比較の行には `_orderNormalized` を付け、path の添字から元の設定の要素を引かない（`layoutFieldCaption`・Excel の `customerLayoutItemParts`）
+- 入れ子の配列の行には、外側の配列の識別子を `parentArrayKey` / `parentArrayKeyValue` で残す（`tagParentArrayKey`。内側の `arrayKey` は上書きしない）。フィールド権限の宛先ごとの行が、対象のフィールドを示すために使う
 - 同じ内容が重複する配列では先頭から未使用の要素へ対応付けるため、どの個体が移動したかまでは保証しない
 
 ### 7.6 内部の重要度（`detectRowSeverity`、表示・絞込・色分けには不使用）
@@ -341,6 +343,8 @@ COMPOSITE_ARRAY_RULES のパス正規表現
 改名行は実差分として 1 件に数えますが、状態名だけを安全に書き換える API がないため反映選択とパッチ生成から除外され、改名が 1 件でもある比較では反映 JSON 全体を無効にします（第 9 章）。
 
 ### 8.2 その他の前処理
+
+- 名前付きマップ（`views` / `reports` / `states` / `categories` / `actions`）の `index` は、両側にある要素の相対順位が同じなら同じ値に揃えてから比べる（`relativizeNamedIndexesForSection`。途中の追加・削除による繰り下がりを差にしない。相対順位が変わった要素は実際の値のまま）
 
 | セクション | 処理 | 目的 |
 | --- | --- | --- |
@@ -369,6 +373,8 @@ COMPOSITE_ARRAY_RULES のパス正規表現
 | `expandEntityRowsForDisplay` | fieldSettings 以外のセクションで `path === sectionKey`（セクション全体）の added / removed | ビュー・グラフ・カテゴリ（名前付きマップ）、状態＋遷移、アクション、権限エントリ、通知、プラグイン、JS/CSS（desktop / mobile × js / css）、レイアウト行を実体単位で最大 200 行。`_expandedFromEntity` |
 
 ### 8.6 日本語の理由とラベル
+
+フィールド権限の行は対象のフィールド（表示名とコード）を示し、グラフの集計は `aggregations` の種類（API の値は `AVERAGE`）と対象のフィールド、プロセスのステータスの作業者は「作業者」、配列の要素は「初期値（2件目）」の形で示します。
 
 `buildDiffReasonSummary` が行ごとに「フィールド名変更」「必須設定変更」「ビュー「案件一覧」 / 絞り込み条件 変更」「順序変更（N 番目 → M 番目）」のような要約を作り、`extractEntityContext` が非フィールド行の実体種別・ラベル・プロパティ名を解決します。内部キーと列挙値の日本語化は `label-dict.ts`（enum 値とプロパティ名だけ。`filterCond` の中身や利用者入力名は辞書化しない）、「どこで・何が・どう変わったか」への分解は `path-decoder.ts` が担い、HTML・Excel・Markdown・検索索引が同じ辞書を参照します。
 
@@ -427,6 +433,8 @@ COMPOSITE_ARRAY_RULES のパス正規表現
 - `App ID::ゲスト ID` が同じ比較先が 2 行あれば「比較先 N 行目は M 行目と同じ接続先」で止める。直前の結果は消さない
 - 比較先の設定 JSON は単一比較専用。成功した比較先ごとに HTML を自動保存（比較先が `MULTI_AUTO_HTML_MAX_TARGETS` = 10 件を超えると自動保存せず理由を表示）
 - 「環境内の全アプリ」の候補は `planMultiTargetFill`（`diff/multi-targets.ts`）で選別する。既存行と同じ `App ID::ゲスト ID`、候補内の重複、正の整数でない ID、比較元と同じ App ID・ゲスト ID・環境の候補は追加しない
+
+- 結果を保持するとき（`multiXlsxExports`。ペア一括も同じ）は、`diff/retention.ts` の `stripComparisonScratchForRetention` で、JS/CSS の本文（`_bodyText`・`_bodyHash`）とプラグイン設定の取得結果（`_config`）を取り除く。比較後は出力が読まない作業用の値で、保持量の大半だった（比較先 200 件・JS/CSS 本文約 485KB で約 99MB → 約 22MB）。`collectPartialComparisonIssues` は本文の有無を見るため、取り除くのは比較（`runDiffStandalone`）の後
 
 ### 10.2 ペア一括比較（`prepareDiffBatchPairs`）
 

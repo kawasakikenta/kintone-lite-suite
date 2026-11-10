@@ -163,6 +163,22 @@ const sourceDeployModule = `
         content: { kind: 'kintone-deploy-backup', version: 1, generatedAt: new Date().toISOString(), mode: 'deploy', environment: 'production', scopes: ['fieldSettings', 'layoutSettings', 'viewSettings', 'customizeSettings'], bundles: [bundleOf(backupApp, false)], secret: 'CONTENT-BODY' } } };
     return result;
   }
+  // 反映後の内容の確認（読み取りの結果を合成する。判定そのものは deploy/sourceVerify.ts の単体テストと結合ハーネスで確かめる）
+  export async function verifySourceDeployStandalone(opts) {
+    var mock = window.__src, cfg = mock.verify || {};
+    mock.verifies.push(clone({ target: opts.target, side: opts.side, expectations: opts.expectations }));
+    opts.setStatus && opts.setStatus('設定を読み取って確認中…');
+    await delay(mock.delay || 0);
+    if (cfg.throws) throw new Error(cfg.throws);
+    var list = opts.expectations, bad = list.slice(0, cfg.mismatch || 0);
+    var unknownCount = cfg.unknown || 0;
+    return {
+      checkedAt: new Date().toISOString(), side: opts.side, total: list.length, reflected: list.length - bad.length - unknownCount,
+      mismatches: bad.map(function (item) { return { sectionKey: item.sectionKey, sectionLabel: item.sectionLabel, place: item.place, kind: item.kind, expectedText: item.expectedText, currentText: '（合成した現在の値）' }; }),
+      unknown: unknownCount ? [{ sectionKey: 'viewSettings', sectionLabel: 'ビュー設定', count: unknownCount, reason: '権限がありません。' }] : [], unknownCount: unknownCount,
+      editedTotal: list.filter(function (item) { return item.edited; }).length, editedReflected: list.filter(function (item) { return item.edited; }).length, notes: []
+    };
+  }
 `;
 
 async function bundle({ esbuild, deployMock }) {
@@ -265,7 +281,7 @@ module.exports = {
     const idle = () => page.waitForFunction(() => document.querySelector('#kus-deploy-lite').getAttribute('aria-busy') !== 'true');
     const dockText = () => page.locator('.kus-dp-dock-copy').innerText();
     const statusText = () => page.locator('.kus-lp__status-text').innerText();
-    const src = () => page.evaluate(() => JSON.parse(JSON.stringify({ previewCalls: window.__src.previewCalls, composeCalls: window.__src.composeCalls, runs: window.__src.runs, resolveCalls: window.__src.resolveCalls, modelCalls: window.__src.modelCalls })));
+    const src = () => page.evaluate(() => JSON.parse(JSON.stringify({ previewCalls: window.__src.previewCalls, composeCalls: window.__src.composeCalls, runs: window.__src.runs, verifies: window.__src.verifies, resolveCalls: window.__src.resolveCalls, modelCalls: window.__src.modelCalls })));
     const lastCompose = async () => (await src()).composeCalls.at(-1);
     const card = key => page.locator(`[data-select-section="${key}"]`);
     const row = id => page.locator(`.kus-ds-row[data-change-id="${id}"]`);
@@ -290,7 +306,7 @@ module.exports = {
         window.__src = Object.assign({
           apps: { '10': { name: '営業テンプレート（開発）', code: 'tpl' }, '20': { name: '営業管理', code: 'sales' }, '30': { name: '受注管理', code: 'orders' } },
           models: modelList, entries: entryList, targetPending: cfg.targetPending === undefined ? null : cfg.targetPending, targetHasFields: { },
-          previewCalls: [], composeCalls: [], runs: [], resolveCalls: [], modelCalls: [], opened: [], delay: 0, run: {}
+          previewCalls: [], composeCalls: [], runs: [], verifies: [], resolveCalls: [], modelCalls: [], opened: [], delay: 0, run: {}, verify: {}
         }, cfg);
         window.kintone = { app: { getId: () => 20 }, api: Object.assign(async (url, method, params) => {
           const match = /\/app\.json$/.exec(url);
@@ -899,6 +915,22 @@ module.exports = {
     assert.equal(await page.evaluate(() => window.__copied[0].startsWith('# 反映元アプリから本番への反映の記録')), true);
     await button('反映先アプリの設定画面を開く').click();
     assert.match(await page.evaluate(() => window.__src.opened[0]), /\/k\/admin\/app\/flow\?app=20$/);
+    // 反映後の内容の確認: 実行したときに控えた「選んだ変更の場所と期待する値」を、読み取りへ渡す
+    assert.equal(await page.locator('[data-verify-result]').count(), 0, '確認するまで結果は出さない');
+    await button('反映後の内容を確認する').click();
+    await idle();
+    const verifyCalls = (await src()).verifies;
+    assert.equal(verifyCalls.length, 1);
+    assert.equal(verifyCalls[0].side, 'production');
+    assert.deepEqual(verifyCalls[0].target, { appId: '20', guestId: '' });
+    assert.equal(verifyCalls[0].expectations.length, 7, '選んだ変更（フィールド 5 件・ビュー 2 件）だけ控える');
+    const labelExpectation = verifyCalls[0].expectations.find(item => item.pointer === '/properties/name/label');
+    assert.deepEqual([labelExpectation.expected, labelExpectation.edited], ['お客様名', true], '修正した値を期待する値にする');
+    assert.equal(verifyCalls[0].expectations.some(item => item.pointer === '/properties/old'), false, '選ばなかった削除は確認しない');
+    assert.equal(await page.locator('[data-verify-result]').getAttribute('data-verify-result'), 'all');
+    assert.match(await statusText(), /^選んだ 7 件はすべて反映されています（本番の設定を確認しました。修正した値 1 件も、その値になっています）。/);
+    assert.match((await downloadOf('記録をMarkdownで保存')).text, /## 反映後の内容の確認[\s\S]*結果: 選んだ 7 件はすべて反映されています/);
+    assert.equal(JSON.parse((await downloadOf('結果JSONを保存')).text).verification.state, 'all');
     await page.screenshot({ path: path.join(out, 'source-result-1440.png') });
     ok('run success');
 
@@ -907,7 +939,39 @@ module.exports = {
     assert.equal(await tab('結果').getAttribute('aria-selected'), 'true');
     assert.equal(await flowRadio('反映元アプリから本番へ').isChecked(), true);
     assert.equal(await button('結果JSONを保存').isEnabled(), true);
+    assert.equal(await page.locator('[data-verify-result="all"]').count(), 1, '開き直しても反映後の内容の確認の結果を残す');
     ok('remount keeps result');
+
+    // 反映後の内容の確認: 反映されていない変更・確認できない変更・確認の失敗
+    const runDefault = async cfg => {
+      await reset({ cfg: { targetPending: clean, ...cfg } });
+      await extract();
+      await toEdit(); await toConfirm();
+      await ackBox().check(); await idBox().fill('20');
+      await runButton().click(); await idle();
+    };
+    await runDefault({ verify: { mismatch: 2, unknown: 1 } });
+    await button('反映後の内容を確認する').click();
+    await idle();
+    assert.equal(await page.locator('[data-verify-result]').getAttribute('data-verify-result'), 'mismatch');
+    assert.match(await page.locator('[data-verify-result]').innerText(), /^! 反映されていない変更 2 件（選んだ \d+ 件中。本番の設定を確認しました）。確認できなかった変更 1 件。/);
+    assert.equal(await page.locator('[data-verify-list="mismatch"] li').count(), 2);
+    assert.match(await page.locator('[data-verify-list="mismatch"]').innerText(), /期待した値 .*、現在の値 （合成した現在の値）/);
+    assert.match(await page.locator('[data-verify-list="unknown"]').innerText(), /確認できなかった変更（1 件）[\s\S]*ビュー設定: 1 件（権限がありません。）/);
+    assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'err');
+    await runDefault({ verify: { unknown: 1 } });
+    await button('反映後の内容を確認する').click();
+    await idle();
+    assert.equal(await page.locator('[data-verify-result]').getAttribute('data-verify-result'), 'unknown');
+    assert.doesNotMatch(await page.locator('[data-verify-result]').innerText(), /すべて反映されています/);
+    await runDefault({ verify: { throws: '通信に失敗しました' } });
+    await button('反映後の内容を確認する').click();
+    await idle();
+    assert.equal(await page.locator('[data-verify-result]').count(), 0, '確認に失敗したときは結果を出さない');
+    assert.match(await statusText(), /通信に失敗しました/);
+    assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'err');
+    assert.equal(await button('反映後の内容を確認する').isEnabled(), true, '失敗しても確認し直せる');
+    ok('verify after run');
 
     // 目標がプレビューまで
     await reset({ cfg: { targetPending: clean } });

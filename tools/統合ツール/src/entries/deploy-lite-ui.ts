@@ -9,6 +9,7 @@
 
 import { DEFAULT_APP_ID } from '../constants.js';
 import { inspectDeployTargetsStandalone, runDeployStandalone, validateDeployTargets } from '../tabs/deploy-standalone.js';
+import { fetchRecordCountStandalone } from '../tabs/deploy-record-count.js';
 import type {
   DeployAppInspection,
   DeployAppOutcome,
@@ -42,6 +43,7 @@ import {
   describeDeployMessage,
   describeDeployStatus,
   describeInspectSummary,
+  describeRecordCount,
   describeRemovedField,
   describeRemovedSettings,
   describeRunProgress,
@@ -340,6 +342,9 @@ function ensureStyles() {
   document.head.appendChild(st);
 }
 
+/** 最終確認でレコード数を読み取るアプリの上限（削除するフィールドがあるアプリが多いときは、残りを示すだけにする）。 */
+const RECORD_COUNT_APP_LIMIT = 20;
+
 const FLOW_SUBTITLES: Record<DeployFlow, string> = {
   source: '反映元アプリとの差分を選んで、反映先のプレビューへ書き込み、続けて本番へ反映します。',
   publish: 'プレビューの未公開の変更を確認してから、本番へ反映します。'
@@ -349,7 +354,10 @@ const FLOW_SUBTITLES: Record<DeployFlow, string> = {
 // 変更の詳細（開いたときに描画する）
 // =============================================================================
 
-function renderAppDetail(host: HTMLElement, app: DeployAppInspection, mode: DeployMode) {
+/** 削除されるフィールドがあるアプリのレコード数の表示を返す（読み取りだけ。取得に失敗しても止めない）。 */
+type RecordCountText = (app: Pick<DeployAppInspection, 'appId' | 'guestId'>) => Promise<string>;
+
+function renderAppDetail(host: HTMLElement, app: DeployAppInspection, mode: DeployMode, recordCountText?: RecordCountText) {
   host.replaceChildren();
   const body = el('div', 'kus-dp-detail');
   const text = deployModeText(mode);
@@ -373,6 +381,13 @@ function renderAppDetail(host: HTMLElement, app: DeployAppInspection, mode: Depl
       ul.appendChild(li);
     }
     box.appendChild(ul);
+    if (recordCountText) {
+      const impact = el('div', 'kus-ds-impact');
+      impact.dataset.recordCount = app.appId;
+      impact.textContent = 'レコード数を確認しています…';
+      box.appendChild(impact);
+      void recordCountText(app).then((text) => { if (impact.isConnected) impact.textContent = text; });
+    }
     body.appendChild(box);
   } else if (removed.length) {
     body.appendChild(el('div', 'kus-dp-info', `プレビューで削除されたフィールド（${removed.length} 件）は、変更を中止すると本番の状態に戻ります。`));
@@ -438,6 +453,17 @@ export function mountDeployLitePanel() {
   let ready = false;
   let activeStage: Stage = 'setup';
   let inspection: InspectionState | null = null;
+  /** 削除されるフィールドがあるアプリのレコード数（差分確認ごとに取り直す。確認画面と詳細で共有する） */
+  const recordCounts = new Map<string, Promise<string>>();
+  function recordCountText(app: Pick<DeployAppInspection, 'appId' | 'guestId'>): Promise<string> {
+    const key = deployAppKey(app);
+    let pending = recordCounts.get(key);
+    if (!pending) {
+      pending = fetchRecordCountStandalone({ appId: app.appId, guestId: app.guestId }).then(describeRecordCount, () => describeRecordCount({ ok: false, message: '取得を中止しました' }));
+      recordCounts.set(key, pending);
+    }
+    return pending;
+  }
   let selected = new Set<string>();
   let confirmedToken = '';
   let progressView: ProgressView | null = null;
@@ -712,7 +738,7 @@ export function mountDeployLitePanel() {
         toggle.setAttribute('aria-expanded', String(open));
         setButtonText(toggle, open ? '詳細を閉じる' : '詳細を表示');
         // 開いたときに初めて描画する（数千件のアプリでも重くしない）
-        if (open && !rendered) { rendered = true; renderAppDetail(detailTd, app, modeForInspection()); }
+        if (open && !rendered) { rendered = true; renderAppDetail(detailTd, app, modeForInspection(), recordCountText); }
       });
       tdAct.appendChild(toggle);
       tbody.appendChild(detailTr);
@@ -869,6 +895,7 @@ export function mountDeployLitePanel() {
       });
       const apps = mergeInspection(result, problemKeys ? previous : null, problemKeys);
       inspection = { apps, signature, at: Date.now(), inspectedAt: result.inspectedAt || new Date().toISOString() };
+      recordCounts.clear();
       reviewShown = 200;
       // 確認できたアプリ名を対象アプリの表へ反映する（名前の入力は署名に含めない）
       appTable.putApps(apps.map((app) => ({ appId: app.appId, guestId: app.guestId, appName: app.name })));
@@ -989,6 +1016,27 @@ export function mountDeployLitePanel() {
         }
         if (removedFields.length > 30) ul.appendChild(el('li', '', `ほか ${removedFields.length - 30} 件（全件は計画のMarkdownで確認できます）`));
         removed.dd.appendChild(ul);
+        // 影響の大きさ: 削除するフィールドがあるアプリのレコード数（読み取りだけ。確認できなくても止めない）
+        const impactApps = [...new Map(removedFields.map(({ app }) => [deployAppKey(app), app])).values()];
+        const impactHost = el('div');
+        impactHost.dataset.recordImpact = String(impactApps.length);
+        const lines = impactApps.slice(0, RECORD_COUNT_APP_LIMIT).map((app) => {
+          const line = el('div', 'kus-ds-impact', `${formatDeployApp(app)}: レコード数を確認しています…`);
+          line.dataset.recordImpactApp = app.appId;
+          impactHost.appendChild(line);
+          return { app, line };
+        });
+        if (impactApps.length > lines.length) impactHost.appendChild(el('div', 'kus-ds-impact', `ほか ${impactApps.length - lines.length} アプリのレコード数は確認していません。削除するフィールドの値は、それらのアプリのすべてのレコードから削除されます。`));
+        removed.dd.appendChild(impactHost);
+        void (async () => {
+          // 3 件ずつ読み取る（件数が多くても API を使いすぎない）
+          for (let index = 0; index < lines.length; index += 3) {
+            await Promise.all(lines.slice(index, index + 3).map(async ({ app, line }) => {
+              const text = await recordCountText(app);
+              if (line.isConnected) line.textContent = `${formatDeployApp(app)}: ${text}`;
+            }));
+          }
+        })();
       } else {
         removed.dd.textContent = '削除されるフィールドはありません。';
       }

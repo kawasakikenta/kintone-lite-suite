@@ -2,6 +2,7 @@ const esbuild = require('esbuild');
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
+const { rawTextPlugin } = require('./rawTextPlugin.js');
 
 const watch = process.argv.includes('--watch');
 
@@ -33,6 +34,27 @@ const cssPlugin = {
       return {
         contents: `export default \`${escaped}\`;`,
         loader: 'js'
+      };
+    });
+  }
+};
+
+// xlsx-js-style（設計書作成.js へ同梱する Excel ライブラリ）をブラウザ版のスクリプトと同じ形で取り込むプラグイン。
+// 配布物は UMD で、CommonJS として取り込むと ./cpexcel.js（約 470KB の文字コード表）まで巻き込み、
+// window.XLSX の書き換えも行う。module・exports・require・define・window を隠した関数で包み、
+// CDN から読み込んでいたとき（<script> のグローバル版）と同じ動作・同じ大きさにする。
+// ライセンス（Apache-2.0）の表記は同梱物の先頭に残す。
+const xlsxStyleBrowserPlugin = {
+  name: 'xlsx-js-style-browser',
+  setup(build) {
+    build.onLoad({ filter: /xlsx-js-style[\\/]dist[\\/]xlsx\.min\.js$/ }, async (args) => {
+      const source = await fs.promises.readFile(args.path, 'utf8');
+      const body = source.replace(/^\/\/# sourceMappingURL=.*$/m, '');
+      const notice = '/*! xlsx-js-style 1.2.0 (SheetJS Community Edition 0.18.5 + cell styles). Apache-2.0. '
+        + 'Copyright (C) 2012-present SheetJS LLC, (C) gitbrent. https://github.com/gitbrent/xlsx-js-style */';
+      return {
+        loader: 'js',
+        contents: `${notice}\nmodule.exports = (function (module, exports, require, define, window) {\n${body}\nreturn XLSX;\n})();\n`
       };
     });
   }
@@ -156,7 +178,7 @@ async function buildStandaloneBundles(entries) {
       charset: 'utf8',
       target: ['es2020'],
       minify: false,
-      plugins: [jsToTsResolver, cssPlugin],
+      plugins: [jsToTsResolver, cssPlugin, rawTextPlugin, xlsxStyleBrowserPlugin],
       banner: { js: buildBanner(item) },
       logLevel: 'info'
     });
