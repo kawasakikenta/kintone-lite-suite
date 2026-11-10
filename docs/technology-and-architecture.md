@@ -102,7 +102,7 @@ kintone の画面へ読み込む外部スクリプトは、管理者のセッシ
 | --- | --- | --- | --- |
 | Mermaid | 10.6.1 | プロセス図の描画 | jsDelivr → unpkg の順で試行し、どちらも SRI（sha384）で検証。30 秒で次の候補へ。読み込めない・検証に失敗した場合は簡易 HTML 表示（状態と遷移の表）。cdnjs は同じ内容と確かめられないため候補から外した |
 
-URL の正本は原則 `src/constants.ts` です。ただし Mermaid の候補 URL とハッシュは `src/tabs/mermaid-loader.ts` にあります。ハッシュは npm の `mermaid@10.6.1` の `dist/mermaid.min.js` から計算した値で、jsDelivr（`/npm/`）と unpkg は npm の配布物をそのまま配るため同じ値で検証できます。バージョンを上げるときは、新しい配布物から `openssl dgst -sha384 -binary mermaid.min.js | openssl base64 -A` で計算し直します。
+実行時に CDN から読み込むのは Mermaid だけで、候補 URL とハッシュの正本は `src/tabs/mermaid-loader.ts` です（以前の `src/constants.ts` の `EXTERNAL_LIBRARIES` は廃止しました）。ハッシュは npm の `mermaid@10.6.1` の `dist/mermaid.min.js` から計算した値で、jsDelivr（`/npm/`）と unpkg は npm の配布物をそのまま配るため同じ値で検証できます。バージョンを上げるときは、新しい配布物から `openssl dgst -sha384 -binary mermaid.min.js | openssl base64 -A` で計算し直します。
 
 `window.mermaid` が既にあるときは再読み込みせずに使います。それは、このツールが検証付きで読み込んだ固定版か、このページで既に実行されている別のスクリプト（kintone のカスタマイズなど）が読み込んだものです。後者はこのツールが新たに外部スクリプトを実行するわけではありませんが、内容は検証できません。どちらでも `securityLevel: 'strict'` で初期化します。
 
