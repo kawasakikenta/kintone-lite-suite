@@ -3578,8 +3578,13 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         : row && row.type === 'removed'
           ? 'removed'
           : 'changed';
-    return '<span class="fact-chip fact-chip--existence fact-chip--' + typeClass + '" data-row-existence="' + escHtml(rowExistenceLabel(row)) + '">' + escHtml(rowExistenceLabel(row)) + '</span>'
-      + rowDifferenceLabels(row).map((label) => '<span class="fact-chip fact-chip--difference fact-chip--' + typeClass + '" data-row-difference="' + escHtml(label) + '">' + escHtml(label) + '</span>').join('');
+    // 片側だけにある行は存在状況、両方にある行は差分内容が、その行の違いを表す。違いを表す側を
+    // 色付きで先に示し、もう一方は補足として続ける（存在状況と差分内容の 2 つは常に両方表示する）。
+    const existencePrimary = typeClass === 'added' || typeClass === 'removed';
+    const movedClass = typeClass === 'changed' && row && (row.moved || row.type === 'moved') ? ' fact-chip--moved' : '';
+    const existenceHtml = '<span class="fact-chip fact-chip--existence fact-chip--' + typeClass + (existencePrimary ? ' fact-chip--primary' : '') + '" data-row-existence="' + escHtml(rowExistenceLabel(row)) + '">' + escHtml(rowExistenceLabel(row)) + '</span>';
+    const differenceHtml = rowDifferenceLabels(row).map((label) => '<span class="fact-chip fact-chip--difference fact-chip--' + typeClass + movedClass + (existencePrimary ? '' : ' fact-chip--primary') + '" data-row-difference="' + escHtml(label) + '">' + escHtml(label) + '</span>').join('');
+    return existencePrimary ? existenceHtml + differenceHtml : differenceHtml + existenceHtml;
   }
 
   function issueSideLabel(side) {
@@ -3813,21 +3818,46 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         break;
       }
     }
+    // 共通部分が半分に満たない値（false → true、別の文言への置き換えなど）は、
+    // 文字単位で印を付けると細切れになって読めないため、値全体の置き換えとして扱う。
+    // 片方がもう片方に文字を足しただけ（引用符やタグの有無など）のときは、足した文字に印を付ける。
+    const common = dp[a.length][b.length];
+    if (common < Math.min(a.length, b.length) && common * 2 < Math.max(a.length, b.length)) return null;
     ops.reverse();
-    let left = '';
-    let right = '';
+    // 連続する同じ種類の文字を 1 つにまとめる（1 文字ずつ印を付けると字間が空き、打ち消し線も途切れる）。
+    const runs = [];
     for (const op of ops) {
-      if (op.t === 'same') {
-        const c = escHtml(op.c);
-        left += c;
-        right += c;
-      } else if (op.t === 'del') {
-        left += '<mark class="cdel">' + escHtml(op.c) + '</mark>';
+      const last = runs[runs.length - 1];
+      if (last && last.t === op.t) {
+        last.s += op.c;
+        last.n += 1;
       } else {
-        right += '<mark class="cadd">' + escHtml(op.c) + '</mark>';
+        runs.push({ t: op.t, s: op.c, n: 1 });
       }
     }
-    return { left, right };
+    const leftSegments = [];
+    const rightSegments = [];
+    const pushSegment = (segments, marked, text) => {
+      const last = segments[segments.length - 1];
+      if (last && last.marked === marked) last.text += text;
+      else segments.push({ marked, text });
+    };
+    runs.forEach((run, index) => {
+      if (run.t === 'del') {
+        pushSegment(leftSegments, true, run.s);
+      } else if (run.t === 'add') {
+        pushSegment(rightSegments, true, run.s);
+      } else {
+        // 変更に挟まれた 1 文字だけの一致は、前後の変更とつなげて示す。
+        const island = run.n === 1 && index > 0 && index < runs.length - 1;
+        pushSegment(leftSegments, island, run.s);
+        pushSegment(rightSegments, island, run.s);
+      }
+    });
+    const renderSegments = (segments, cls) => segments.map((segment) => segment.marked
+      ? '<mark class="' + cls + '">' + escHtml(segment.text) + '</mark>'
+      : escHtml(segment.text)).join('');
+    return { left: renderSegments(leftSegments, 'cdel'), right: renderSegments(rightSegments, 'cadd') };
   }
 
   // 値表示の方針:
@@ -3961,6 +3991,24 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       + '</div>';
   }
 
+  // 並び順だけが異なる行は、比較元と比較先の値が同じになる。変更行のない左右比較を出さず、
+  // その旨を 1 行で示し、内容は必要なときだけ開く。
+  function renderIdenticalValueNote(row, text) {
+    const key = rowStateKey(row);
+    const open = expandedVals.has(key);
+    const note = row && (row.moved || row.type === 'moved')
+      ? '内容は同じです。並び順だけが異なります。'
+      : '表示できる値は、比較元と比較先で同じです。';
+    return '<div class="val-note"><span>' + note + '</span>'
+      + '<button type="button" class="val-reveal" data-row-toggle="' + escHtml(key) + '" aria-expanded="' + (open ? 'true' : 'false') + '">'
+      + (open ? '内容を隠す ▴' : '内容を表示 ▾') + '</button></div>'
+      + (open
+        ? (isInlineText(text)
+          ? '<div class="val-inline"><span class="vi-val vi-val--same">' + escHtml(text) + '</span></div>'
+          : '<div class="val-single val-single--same"><div class="scroll"><pre class="blk">' + escHtml(text) + '</pre></div></div>')
+        : '');
+  }
+
   // 片側視点でのシンプル値表示（同一・追加・削除・インライン変更）
   function renderValueAreaOneSide(row, useCharDiff, side) {
     const isSrc = side === 'source';
@@ -3991,6 +4039,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     }
     const leftText = safeText(row.left);
     const rightText = safeText(row.right);
+    if (leftText === rightText) return renderIdenticalValueNote(row, ownText);
     if (isInlineText(leftText) && isInlineText(rightText)) {
       const cd = useCharDiff ? buildCharDiff(leftText, rightText) : null;
       const marked = cd ? (isSrc ? cd.left : cd.right) : escHtml(ownText);
@@ -4024,6 +4073,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         + '<div class="scroll"><pre class="blk">' + escHtml(text) + '</pre></div>'
         + '</div>';
     }
+    if (leftText === rightText) return renderIdenticalValueNote(row, leftText);
     if (isInlineText(leftText) && isInlineText(rightText)) {
       const cd = useCharDiff ? buildCharDiff(leftText, rightText) : null;
       return '<div class="val-inline val-inline--lanes">'
@@ -4037,6 +4087,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
 
   function wrapLongValueHtml(row, valueHtml) {
     const texts = [safeText(row && row.left), safeText(row && row.right)];
+    // 並び順だけが異なる行は注記と開閉ボタンで示すため、長い値の折りたたみで重ねて包まない。
+    if (row && row.type !== 'added' && row.type !== 'removed' && texts[0] === texts[1]) return valueHtml;
     const maxChars = Math.max(...texts.map((text) => text.length));
     const maxLines = Math.max(...texts.map((text) => text.split('\\n').length));
     if (maxChars <= LONG_VALUE_COLLAPSE_CHARS && maxLines <= LONG_VALUE_COLLAPSE_LINES) return valueHtml;
@@ -4692,7 +4744,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   function renderPathCell(row) {
     const fullPath = String(row?.path || '-');
     const pathMain = reportRowTitle(row);
-    let html = '<div class="path-main">' + escHtml(pathMain) + '</div>';
+    // 見出しの下の 1 行に、違いの種類・理由・技術情報・関連設定をまとめる（開いた詳細だけ行を分ける）。
+    let html = '<span class="drow-facts">' + renderRowFacts(row) + '</span>' + renderRowMeta(row);
     const technicalRows = [];
     if (row?.sectionKey === FIELD_SECTION_KEY) {
       const info = extractFieldPathInfo(fullPath);
@@ -4719,7 +4772,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
           : '<p>関連件数のみ検出されています。</p>')
         + '</details>';
     }
-    return html + renderRowMeta(row);
+    return '<div class="path-main">' + escHtml(pathMain) + '</div><div class="drow-meta">' + html + '</div>';
   }
 
   function settingsTone(row) {
@@ -6354,7 +6407,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       { key: 'changed', label: '内容が異なる', count: s.changed }
     ];
     if (s.moved) chips.push({ key: 'moved', label: '並び順が異なる', count: s.moved });
-    if (!hideSame) chips.push({ key: 'same', label: '同じ', count: s.same });
+    // 同一行を収録していないレポート（差分行のみ）では常に 0 件なので、選べない種別を並べない。
+    if (!hideSame && (s.same || typeFilterValue === 'same')) chips.push({ key: 'same', label: '同じ', count: s.same });
     const sortOptions = [
       ['standard', '標準（定義順）'],
       ['type', '存在状況・差分内容順']
@@ -6366,11 +6420,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     return '<div class="diff-toolbar" role="toolbar" aria-label="差分一覧の絞り込みと並び替え">'
       + '<div class="diff-toolbar-heading">'
       +   '<div class="diff-toolbar-title"><strong>差分レビュー</strong><span>絞り込み・移動・表示密度</span></div>'
-      +   '<div class="diff-scope-counts" aria-label="差分件数">'
-      +     '<span>全体 <b>' + scopeCount + '</b></span>'
-      +     '<span>表示中 <b>' + shownCount + '</b></span>'
-      +     '<span>未確認 <b>' + pendingCount + '</b></span>'
-      +   '</div>'
       +   '<button type="button" class="mobile-toolbar-toggle" data-mobile-toolbar-toggle aria-expanded="' + (mobileToolbarExpanded ? 'true' : 'false') + '" aria-controls="diffToolbarFilters diffToolbarSort">' + (mobileToolbarExpanded ? '条件を閉じる' : '条件を開く') + '</button>'
       + '</div>'
       + '<div class="focus-context" aria-label="集中表示中の比較対象">'
@@ -6394,6 +6443,11 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       + '<button type="button" class="tchip" data-diff-nav="prev" title="前の差分へ移動（k キー）" aria-label="前の差分へ移動">前へ</button>'
       + '<span id="diffNavPosition" class="diff-nav-position" role="status" aria-live="polite" aria-atomic="true">現在位置 0 / 0' + DIFF_NAV_RANGE_NOTE + '</span>'
       + '<button type="button" class="tchip" data-diff-nav="next" title="次の差分へ移動（j キー）" aria-label="次の差分へ移動">次へ</button>'
+      + '<div class="diff-scope-counts" aria-label="差分件数">'
+      +   '<span>全体 <b>' + scopeCount + '</b></span>'
+      +   '<span>表示中 <b>' + shownCount + '</b></span>'
+      +   '<span>未確認 <b>' + pendingCount + '</b></span>'
+      + '</div>'
       + '<span class="diff-toolbar-spacer"></span>'
       + '<label id="diffToolbarSort" class="diff-sort">並び順 <select id="diffSortSel">'
       + sortOptions.map((o) => '<option value="' + o[0] + '"' + (diffSortValue === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('')
@@ -6480,7 +6534,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       + ' tabindex="-1" data-diff-row-key="' + escHtml(key) + '" aria-current="' + (focused ? 'true' : 'false') + '"'
       + ' aria-label="' + escHtml(rowExistenceLabel(row) + '・' + rowDifferenceLabel(row) + ': ' + reportRowTitle(row)) + '">'
       + '<div class="drow-head">'
-      +   '<span class="drow-facts">' + renderRowFacts(row) + '</span>'
       +   '<div class="drow-title">' + renderPathCell(row) + '</div>'
       +   actionsHtml
       + '</div>'
@@ -6983,6 +7036,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       if (expandedVals.has(key)) expandedVals.delete(key);
       else expandedVals.add(key);
       render();
+      restoreToggleFocus('data-row-toggle', key);
       return;
     }
     const head = e.target.closest('[data-sec-toggle]');
@@ -8391,6 +8445,90 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .diff-toolbar{border-top-width:1px;box-shadow:0 10px 30px -25px rgba(15,23,42,.65)}
     .tchip{min-height:36px}
     .settings-tab,.btn,.row-act,.row-review-next,.row-reviewed,.row-select{min-height:36px}
+
+    /* 差分行の読みやすさ: 見出し → 違いの種類と理由（1 行）→ 値、の順に読めるよう 1 行あたりの高さを抑える。 */
+    .drow-list{gap:8px;padding:9px}
+    .drow{padding:10px 14px 11px;border-radius:12px}
+    .drow-head{gap:4px 14px;align-items:start}
+    .drow-title{display:flex;flex-direction:column;gap:3px}
+    .path-main{margin:0;font-size:14.5px;line-height:1.5}
+    .drow-meta{display:flex;flex-wrap:wrap;align-items:center;gap:2px 10px;min-width:0;color:var(--muted);font-size:12px;line-height:1.5}
+    .drow-meta .drow-facts{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap}
+    .drow-meta .meta-wrap{margin:0}
+    .drow-meta .meta-tags{margin:0;gap:5px}
+    .drow-meta .meta-tag{padding:1px 8px;font-size:12px;font-weight:650}
+    .drow-meta .meta-tag.reason,body.dark .drow-meta .meta-tag.reason{padding:0;border:0;border-radius:0;background:none;color:var(--fg)}
+    .drow-meta>details{margin:0;max-width:100%}
+    .drow-meta>details[open]{flex:1 1 100%}
+    .path-tech>summary,.related-settings>summary{font-size:12px;font-weight:650}
+    .path-tech-body span,.path-tech-body code{font-size:11.5px}
+    .fact-chip{min-height:0;padding:0;border:0;border-radius:0;background:none;color:var(--muted);font-size:12px;font-weight:650}
+    .fact-chip::before{display:none}
+    .fact-chip--primary{padding:1px 9px;border:1px solid var(--border);border-radius:999px;background:var(--card-soft);font-weight:800}
+    .fact-chip--primary.fact-chip--added{border-color:#86efac;background:#dcfce7;color:#166534}
+    .fact-chip--primary.fact-chip--removed{border-color:#fca5a5;background:#fee2e2;color:#991b1b}
+    .fact-chip--primary.fact-chip--changed{border-color:#fcd34d;background:#fef3c7;color:#92400e}
+    .fact-chip--primary.fact-chip--moved{border-color:#c4b5fd;background:#ede9fe;color:#5b21b6}
+    body.dark .fact-chip--primary.fact-chip--added{border-color:#166534;background:#14532d;color:#bbf7d0}
+    body.dark .fact-chip--primary.fact-chip--removed{border-color:#991b1b;background:#450a0a;color:#fecaca}
+    body.dark .fact-chip--primary.fact-chip--changed{border-color:#b45309;background:#78350f;color:#fde68a}
+    body.dark .fact-chip--primary.fact-chip--moved{border-color:#6d28d9;background:#2e1065;color:#ddd6fe}
+    .drow-actions{gap:4px}
+    .row-act{border-color:transparent;background:transparent}
+    .row-act:hover{border-color:var(--border);background:var(--card-soft)}
+    .row-review-next{border-color:var(--border);background:var(--card);color:var(--accent-strong)}
+    .row-review-next:hover{border-color:var(--accent);background:var(--accent-soft);filter:none}
+    .drow--focus .row-review-next{border-color:var(--accent-solid-strong);background:var(--accent-solid);color:#fff}
+    .drow--focus .row-review-next:hover{filter:brightness(1.06)}
+    .drow-val{margin-top:8px;padding-left:0}
+    .val-inline--lanes{gap:6px 10px;align-items:center}
+    .val-lane,body.diff-density-compact .val-lane{flex-direction:row;align-items:baseline;gap:8px;padding:0;border:0;border-radius:0;background:none}
+    .val-lane-label{flex:0 0 auto;padding:0}
+    .val-lane-label b{font-size:12px;font-weight:700;letter-spacing:0;color:var(--muted)}
+    .val-lane .vi-val{flex:1 1 auto;width:auto;min-width:0}
+    .vi-val{padding:4px 10px;line-height:1.55}
+    .val-single-head{padding:5px 11px;font-size:12px;letter-spacing:0}
+    .duo-head .duo-lane{padding:5px 11px}
+    .duo-head .duo-lane b{font-size:12px;letter-spacing:0;color:var(--muted)}
+    .blk{font-size:12px;line-height:1.6}
+    .val-note{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:5px 11px;border:1px dashed var(--border);border-radius:9px;background:var(--card-soft);color:var(--muted);font-size:12px;line-height:1.5}
+    .val-note .val-reveal{margin:0}
+    .val-note + .val-inline,.val-note + .val-single{margin-top:6px}
+    .agg-list{gap:6px}
+    .agg-item{padding:7px 10px 8px;border-radius:9px}
+    .agg-val{margin-top:5px}
+    body.diff-density-compact .drow-list{gap:5px;padding:6px}
+    body.diff-density-compact .path-main{font-size:13.5px}
+    body.diff-density-compact .vi-val{padding:2px 8px}
+    @media (min-width:769px){
+      .drow-meta>details>summary{min-height:24px}
+      .val-note .val-reveal{min-height:28px;padding:3px 11px}
+    }
+    /* 絞り込みバー: 「条件を開く」が要る狭い画面を除いて種別と移動の 2 段だけにし、絞り込みが無いときの「適用中」の行は出さない。 */
+    .diff-scope-counts span{font-size:11px}
+    .diff-scope-counts b{font-size:12px}
+    .active-filters{font-size:11px}
+    @media (min-width:561px){
+      .diff-toolbar-heading,.active-filters--empty{display:none}
+      .diff-toolbar-row--navigation>.diff-scope-counts{margin-left:6px}
+    }
+    @media (max-width:560px){
+      .diff-toolbar-row--navigation>.diff-scope-counts{grid-column:1/-1}
+      .mobile-toolbar-toggle{align-items:center}
+    }
+    /* 値を 1 行にまとめたので、サイドバーが外れる中間の幅でも比較元と比較先を左右に並べる。 */
+    @media (min-width:769px) and (max-width:1080px){
+      .val-inline--lanes{grid-template-columns:minmax(0,1fr) auto minmax(0,1fr)}
+      .val-inline--lanes .vi-arrow{transform:none;justify-self:auto}
+    }
+    /* 縦に積む幅では、比較元・比較先の見出しが方向を示すので矢印の行を省く。 */
+    @media (max-width:768px){
+      .val-inline--lanes .vi-arrow{display:none}
+    }
+    /* 印刷では技術情報・関連設定を開いて出すので、それぞれ行を分ける。 */
+    @media print{
+      .drow-meta>details{flex:1 1 100%}
+    }
 
     @media (max-width:900px){
       .report-hero{display:flex;flex-direction:column}
