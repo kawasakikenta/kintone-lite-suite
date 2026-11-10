@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { computeLineDiff } from '../../src/diff/line-diff';
 import {
   buildLiteDiffHtmlContext,
   buildLiteDiffMarkdownContext,
@@ -20,6 +21,11 @@ import {
   validateLiteDiffStart
 } from '../../src/entries/diff-lite-ui';
 import { SECTION_DEFS } from '../../src/constants';
+
+vi.mock('../../src/diff/line-diff', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/diff/line-diff')>();
+  return { ...original, computeLineDiff: vi.fn(original.computeLineDiff) };
+});
 import { computeDiffRows } from '../../src/diff/engine';
 import { enrichDiffRows } from '../../src/diff/enrich';
 
@@ -501,8 +507,8 @@ describe('diff lite result presentation', () => {
       type: 'changed', left: longJson, right: `${longJson}\nchanged`
     } as any;
     const rowKey = buildLiteDiffRowKey(row);
-    const collapsed = renderRowsHtml([row], false, '', [row]);
-    const expanded = renderRowsHtml([row], false, '', [row], { expandedValueKeys: new Set([`${rowKey}:before`]) });
+    const collapsed = renderRowsHtml([row], false, '', [row], { lineDiff: false });
+    const expanded = renderRowsHtml([row], false, '', [row], { lineDiff: false, expandedValueKeys: new Set([`${rowKey}:before`]) });
 
     expect(collapsed).toContain(`data-kus-dl-value-toggle="${rowKey}:before"`);
     expect(collapsed).toContain('aria-expanded="false"');
@@ -551,8 +557,10 @@ describe('diff lite result presentation', () => {
     expect(firstKey).not.toBe(secondKey);
     expect(html).toContain(`data-kus-dl-row-key="${firstKey}"`);
     expect(html).toContain(`data-kus-dl-row-key="${secondKey}"`);
-    expect(html).toContain(`aria-controls="kus-dl-row-values-${firstKey}"`);
-    expect(html).toContain(`aria-controls="kus-dl-row-values-${secondKey}"`);
+    expect(html).toContain(`aria-controls="kus-dl-row-detail-${firstKey}"`);
+    expect(html).toContain(`aria-controls="kus-dl-row-detail-${secondKey}"`);
+    expect(html).toContain(`id="kus-dl-row-values-${firstKey}"`);
+    expect(html).toContain(`id="kus-dl-row-values-${secondKey}"`);
   });
 
   it('filters rows only by factual section, type, and keyword, not internal severity', () => {
@@ -605,26 +613,33 @@ describe('diff lite result presentation', () => {
     expect(openHtml).toContain('aria-label="customer · フィールド設定の表示名を次回の比較から除外（無視ルールへ追加）"');
     expect(openHtml).toContain('data-side-label="比較元の値"');
     expect(openHtml).toContain('data-side-label="比較先の値"');
-    expect(openHtml).toContain(`data-kus-dl-mobile-row-toggle="${rowKey}"`);
-    expect(openHtml).toContain(`aria-controls="kus-dl-row-values-${rowKey}"`);
-    expect(openHtml).toContain('aria-expanded="false"');
-    expect(openHtml).toContain('比較元・比較先の値を確認');
+    expect(openHtml).toContain(`data-kus-dl-row-toggle="${rowKey}"`);
+    expect(openHtml).toContain(`aria-controls="kus-dl-row-detail-${rowKey}"`);
+    expect(openHtml).toContain(`id="kus-dl-row-values-${rowKey}"`);
+    expect(openHtml).not.toContain('data-kus-dl-mobile-row-toggle');
+    expect(openHtml).not.toContain('kus-dl-row__mobile-toggle');
+    expect(openHtml).toContain('aria-expanded="true"');
     expect(openHtml).toContain('data-kus-dl-section-key="fieldSettings" open');
     expect(closedHtml).not.toContain('data-kus-dl-section-key="fieldSettings" open');
   });
 
-  it('preserves an explicitly expanded mobile row and uses an item-specific accessible label', () => {
+  it('uses an item-specific accessible label on the row toggle for every screen width', () => {
     const row = {
       sectionKey: 'appSettings', section: 'アプリ設定', path: 'appSettings.name',
       type: 'changed', reasonSummary: 'アプリ名の変更', left: '旧名称', right: '新名称'
     } as any;
     const rowKey = buildLiteDiffRowKey(row);
-    const html = renderRowsHtml([row], false, '', [row], { expandedRowKeys: new Set([rowKey]) });
+    const open = renderRowsHtml([row], false, '', [row], { rowMode: 'detail' });
+    const closed = renderRowsHtml([row], false, '', [row], { rowMode: 'list' });
 
-    expect(html).toContain(`data-kus-dl-mobile-row-toggle="${rowKey}"`);
-    expect(html).toContain('aria-expanded="true"');
-    expect(html).toContain('aria-label="名前: 旧名称 → 新名称の比較元・比較先の値を閉じる"');
-    expect(html).toContain(`id="kus-dl-row-values-${rowKey}" class="kus-dl-row__cols is-expanded"`);
+    expect(open).toContain(`data-kus-dl-row-toggle="${rowKey}"`);
+    expect(open).toContain('aria-expanded="true"');
+    expect(open).toContain('aria-label="名前: 旧名称 → 新名称の比較元・比較先の値を閉じる"');
+    expect(open).toContain('>値を閉じる</button>');
+    expect(open).toContain(`id="kus-dl-row-values-${rowKey}" class="kus-dl-row__cols"`);
+    expect(closed).toContain('aria-expanded="false"');
+    expect(closed).toContain('aria-label="名前: 旧名称 → 新名称の比較元・比較先の値を表示"');
+    expect(closed).toContain('>値を表示</button>');
   });
 
   it('offers literal exact-path ignore for wildcard and delimiter characters', () => {
@@ -809,6 +824,280 @@ describe('diff lite JSON selection lifecycle', () => {
       } as any;
       const html = renderRowsHtml([row], false, '', [row], { fieldLabels: new Map([['customer_name', '顧客名']]) });
       expect(html).not.toContain('（customer_name）');
+    });
+  });
+});
+
+describe('diff lite row list mode and line-by-line values', () => {
+  const textRow = (left: unknown, right: unknown, extra: Record<string, unknown> = {}) => ({
+    sectionKey: 'pluginSettings', section: 'プラグイン', path: 'pluginSettings.plugins.sample.config',
+    type: 'changed', reasonSummary: '設定値の変更', left, right, ...extra
+  }) as any;
+  const numberedLines = (count: number, replace: Record<number, string> = {}) =>
+    Array.from({ length: count }, (_, index) => replace[index + 1] ?? `const value${index + 1} = ${index + 1};`).join('\n');
+  const render = (row: any, options: Record<string, unknown> = {}) => renderRowsHtml([row], false, '', [row], options);
+  const briefOf = (html: string) => html.match(/<div class="kus-dl-row__brief" data-kus-dl-brief>([\s\S]*?)<\/div><div id=/)?.[1] ?? '';
+  const textOf = (html: string) => html.replace(/<[^>]+>/g, '|').replace(/\|+/g, '|');
+
+  it('defaults to the detail mode in the pure function and opens the values', () => {
+    const row = textRow('旧', '新');
+    const html = render(row);
+    expect(html).toContain('kus-dl-row--changed is-open"');
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain('class="kus-dl-row__cols"');
+    expect(html).not.toContain('kus-dl-row__brief');
+  });
+
+  it('closes the row in the list mode: brief only, an empty hidden detail, and no value markup', () => {
+    const row = textRow('旧名称', '新名称');
+    const rowKey = buildLiteDiffRowKey(row);
+    const html = render(row, { rowMode: 'list' });
+
+    expect(html).not.toContain('is-open');
+    expect(html).toContain(`data-kus-dl-row-toggle="${rowKey}" aria-expanded="false" aria-controls="kus-dl-row-detail-${rowKey}"`);
+    expect(html).toContain('>値を表示</button>');
+    expect(html).toContain('data-kus-dl-brief');
+    expect(html).toContain(`<div id="kus-dl-row-detail-${rowKey}" class="kus-dl-row__detail" hidden></div>`);
+    expect(html).not.toContain('kus-dl-row__cols');
+    expect(html).not.toContain('kus-dl-pre');
+    expect(html).not.toContain('data-kus-dl-technical');
+    expect(html).not.toContain('data-kus-dl-ignore-path');
+    expect(html).not.toContain('data-kus-dl-linediff');
+  });
+
+  it('combines the row mode with the rows the user toggled', () => {
+    const row = textRow('旧名称', '新名称');
+    const rowKey = buildLiteDiffRowKey(row);
+    const toggled = new Set([rowKey]);
+
+    expect(render(row, { rowMode: 'list', toggledRowKeys: toggled })).toContain('is-open');
+    expect(render(row, { rowMode: 'list', toggledRowKeys: toggled })).toContain('class="kus-dl-row__cols"');
+    expect(render(row, { rowMode: 'list', toggledRowKeys: new Set() })).not.toContain('is-open');
+    expect(render(row, { rowMode: 'detail', toggledRowKeys: toggled })).not.toContain('is-open');
+    expect(render(row, { rowMode: 'detail', toggledRowKeys: toggled })).toContain('hidden></div>');
+    expect(render(row, { rowMode: 'detail', toggledRowKeys: new Set() })).toContain('is-open');
+    const opened = render(row, { rowMode: 'list', toggledRowKeys: toggled });
+    expect(opened).toContain('aria-expanded="true"');
+    expect(opened).toContain('>値を閉じる</button>');
+    expect(opened).not.toContain('kus-dl-row__brief');
+    expect(opened).toContain('data-kus-dl-ignore-path');
+  });
+
+  it('shows a single-line change as a before-to-after chip pair', () => {
+    const html = render(textRow('顧客名', '取引先名'), { rowMode: 'list' });
+    const brief = briefOf(html);
+    expect(brief).toContain('<span class="kus-dl-chip kus-dl-chip--before">顧客名</span>');
+    expect(brief).toContain('<span class="kus-dl-arrow" role="img" aria-label="から">→</span>');
+    expect(brief).toContain('<span class="kus-dl-chip kus-dl-chip--after">取引先名</span>');
+    expect(brief.indexOf('顧客名')).toBeLessThan(brief.indexOf('取引先名'));
+  });
+
+  it('collapses whitespace and clips a long value to 120 characters in the chip', () => {
+    const long = `${'あ'.repeat(130)}　 \t末尾`;
+    const html = render(textRow('x', long.replace(/\n/g, ' ')), { rowMode: 'list' });
+    const chip = html.match(/kus-dl-chip--after"[^>]*>([^<]*)</)?.[1] ?? '';
+    expect(chip).toBe(`${'あ'.repeat(120)}…`);
+    expect(html).toContain('kus-dl-chip--after" title="');
+
+    const spaced = render(textRow('a   b', 'c\t\td'), { rowMode: 'list' });
+    expect(briefOf(spaced)).toContain('>a b</span>');
+    expect(briefOf(spaced)).toContain('>c d</span>');
+  });
+
+  it('shows an addition as a green chip, a removal as a red chip, and an unchanged item as a grey chip', () => {
+    const added = render({ sectionKey: 'viewSettings', section: 'ビュー', path: 'viewSettings.views.new', type: 'added', right: { name: '新一覧' } } as any, { rowMode: 'list' });
+    const removed = render({ sectionKey: 'viewSettings', section: 'ビュー', path: 'viewSettings.views.old', type: 'removed', left: { name: '旧一覧' } } as any, { rowMode: 'list' });
+    const same = render({ sectionKey: 'viewSettings', section: 'ビュー', path: 'viewSettings.views.same', type: 'same', left: { name: '同じ一覧' }, right: { name: '同じ一覧' } } as any, { rowMode: 'list' });
+
+    expect(briefOf(added)).toMatch(/^<span class="kus-dl-chip kus-dl-chip--after"[^>]*>[^<]*新一覧[^<]*<\/span>$/);
+    expect(briefOf(removed)).toMatch(/^<span class="kus-dl-chip kus-dl-chip--before"[^>]*>[^<]*旧一覧[^<]*<\/span>$/);
+    expect(briefOf(same)).toMatch(/^<span class="kus-dl-chip kus-dl-chip--same"[^>]*>[^<]*同じ一覧[^<]*<\/span>$/);
+    expect(briefOf(added)).not.toContain('kus-dl-arrow');
+  });
+
+  it('omits the brief when both sides read the same', () => {
+    const row = textRow('100', '100');
+    const html = render(row, { rowMode: 'list' });
+    expect(html).not.toContain('kus-dl-row__brief');
+    expect(html).toContain('hidden></div>');
+  });
+
+  it('summarises a multi-line change with the line counts, the first differing line, and the rest', () => {
+    const left = numberedLines(40);
+    const right = numberedLines(40, { 10: 'const value10 = 100;', 30: 'const value30 = 300;' });
+    const brief = briefOf(render(textRow(left, right), { rowMode: 'list' }));
+    const text = textOf(brief);
+
+    expect(brief).toContain('class="kus-dl-brief__count kus-dl-brief__count--del" role="img" aria-label="削除 2行">−2行</span>');
+    expect(brief).toContain('class="kus-dl-brief__count kus-dl-brief__count--add" role="img" aria-label="追加 2行">+2行</span>');
+    expect(brief).toContain('<span class="kus-dl-chip kus-dl-chip--before">const value10 = 10;</span>');
+    expect(brief).toContain('<span class="kus-dl-chip kus-dl-chip--after">const value10 = 100;</span>');
+    expect(brief).not.toContain('value30');
+    expect(text).toContain('ほか 1 行');
+  });
+
+  it('summarises pure additions and deletions by the changed side only', () => {
+    const base = numberedLines(20);
+    const withInserted = `${base}\nconst tail = true;`;
+    const added = briefOf(render(textRow(base, withInserted), { rowMode: 'list' }));
+    expect(added).toContain('aria-label="追加 1行"');
+    expect(added).not.toContain('aria-label="削除');
+    expect(added).toContain('<span class="kus-dl-chip kus-dl-chip--after">const tail = true;</span>');
+    expect(added).not.toContain('kus-dl-arrow');
+    expect(added).not.toContain('ほか');
+
+    const removed = briefOf(render(textRow(withInserted, base), { rowMode: 'list' }));
+    expect(removed).toContain('aria-label="削除 1行"');
+    expect(removed).toContain('<span class="kus-dl-chip kus-dl-chip--before">const tail = true;</span>');
+  });
+
+  it('strips leading indentation and clips an excerpt line to 80 characters', () => {
+    const left = `a\n    ${'x'.repeat(100)}\nz`;
+    const right = 'a\n    changed\nz';
+    const brief = briefOf(render(textRow(left, right), { rowMode: 'list' }));
+    expect(brief).toContain(`>${'x'.repeat(80)}…</span>`);
+    expect(brief).toContain('>changed</span>');
+    expect(brief).not.toContain('>    ');
+  });
+
+  it('says when only the line endings differ', () => {
+    const row = textRow('a\r\nb\r\nc', 'a\nb\nc');
+    const brief = briefOf(render(row, { rowMode: 'list' }));
+    expect(brief).toContain('改行コードだけが異なります');
+    expect(brief).not.toContain('kus-dl-chip');
+
+    const detail = render(row, { rowMode: 'detail' });
+    expect(detail).toContain('行の内容は同じです。改行コード（CRLF / LF）だけが異なります。');
+    expect(detail).not.toContain('kus-dl-ld-row');
+    expect(detail).toContain('data-kus-dl-linediff');
+  });
+
+  it('falls back to a flattened chip pair and the line counts when the line diff is disabled or too large', () => {
+    const left = 'first\nsecond\nthird';
+    const right = 'first\nSECOND\nthird\nfourth';
+    const disabled = briefOf(render(textRow(left, right), { rowMode: 'list', lineDiff: false }));
+    expect(disabled).toContain('>first second third</span>');
+    expect(disabled).toContain('>first SECOND third fourth</span>');
+    expect(textOf(disabled)).toContain('3行 → 4行');
+    expect(disabled).not.toContain('kus-dl-brief__count');
+
+    const hugeLeft = Array.from({ length: 2000 }, (_, index) => `old ${index}`).join('\n');
+    const hugeRight = Array.from({ length: 2000 }, (_, index) => `new ${index}`).join('\n');
+    const tooMany = render(textRow(hugeLeft, hugeRight), { rowMode: 'list' });
+    expect(textOf(briefOf(tooMany))).toContain('2000行 → 2000行');
+    const tooManyOpen = render(textRow(hugeLeft, hugeRight), { rowMode: 'detail' });
+    expect(tooManyOpen).toContain('違う行が多いため、行単位の表示を省略しました。');
+    expect(tooManyOpen).toContain('class="kus-dl-pre del"');
+    expect(tooManyOpen).not.toContain('data-kus-dl-linediff');
+  });
+
+  it('escapes markup in the brief chips and in the line-by-line block', () => {
+    const scriptLeft = 'a\n<script>alert("l")</script>\nz';
+    const scriptRight = 'a\n<script>alert("r")</script>\nz';
+    const closed = render(textRow(scriptLeft, scriptRight), { rowMode: 'list' });
+    const open = render(textRow(scriptLeft, scriptRight), { rowMode: 'detail', lineDiff: true });
+    const single = render(textRow('<img src=x onerror=1>', '<b>x</b>'), { rowMode: 'list' });
+
+    for (const html of [closed, open, single]) {
+      expect(html).not.toContain('<script>');
+      expect(html).not.toContain('<img src');
+      expect(html).not.toContain('<b>x</b>');
+    }
+    expect(closed).toContain('&lt;script&gt;');
+    expect(open).toContain('&lt;script&gt;alert(&quot;l&quot;)');
+    expect(single).toContain('&lt;img src=x onerror=1&gt;');
+  });
+
+  describe('line-by-line block', () => {
+    const left = numberedLines(40);
+    const right = numberedLines(41, { 10: 'const value10 = 100;' }).replace('const value41 = 41;', 'const extra = 1;\nconst value41b = 2;');
+
+    it('shows line numbers, markers, aligned empty cells, and folds the unchanged lines', () => {
+      const row = textRow(left, right);
+      const rowKey = buildLiteDiffRowKey(row);
+      const html = render(row, { rowMode: 'detail' });
+
+      expect(html).toContain('<div class="kus-dl-linediff" role="group" aria-label="行単位の差分" data-kus-dl-linediff>');
+      expect(html).toContain('<div class="kus-dl-linediff__head"><span>比較元</span><span>比較先</span></div>');
+      expect(html).toContain('class="kus-dl-ld-row kus-dl-ld-row--replace"');
+      expect(html).toContain('<div class="kus-dl-ld-cell kus-dl-ld-cell--del" data-side="before"><span class="kus-dl-ld-no">10</span><span class="kus-dl-ld-mark">−</span><span class="kus-dl-ld-text">const value10 = 10;</span></div>');
+      expect(html).toContain('<div class="kus-dl-ld-cell kus-dl-ld-cell--add" data-side="after"><span class="kus-dl-ld-no">10</span><span class="kus-dl-ld-mark">+</span><span class="kus-dl-ld-text">const value10 = 100;</span></div>');
+      expect(html).toContain('class="kus-dl-ld-row kus-dl-ld-row--add"');
+      expect(html).toContain('<div class="kus-dl-ld-cell kus-dl-ld-cell--pad" data-side="before" aria-hidden="true"></div>');
+      expect(html).toContain('class="kus-dl-ld-row kus-dl-ld-row--same"');
+      expect(html).toMatch(/<div class="kus-dl-ld-skip">変更のない \d+ 行を省略<\/div>/);
+      // 違う行の前後 2 行だけ（1 行目〜7 行目と 13 行目以降は省略）
+      expect(html).toContain('const value8 = 8;');
+      expect(html).not.toContain('const value3 = 3;');
+      expect(html).toContain('−1行 / +3行');
+      expect(html).toContain('比較元 40行 → 比較先 42行');
+      expect(html).toContain(`data-kus-dl-lines-toggle="${rowKey}" aria-expanded="false"`);
+      expect(html).toContain('>すべての行を表示</button>');
+      expect(html).not.toContain('kus-dl-pre');
+    });
+
+    it('shows every line on request and offers to fold them again', () => {
+      const row = textRow(left, right);
+      const rowKey = buildLiteDiffRowKey(row);
+      const html = render(row, { rowMode: 'detail', expandedValueKeys: new Set([`${rowKey}:lines`]) });
+
+      expect(html).not.toContain('kus-dl-ld-skip');
+      expect(html).toContain('const value3 = 3;');
+      expect(html).toContain('const value40 = 40;');
+      expect(html).toContain(`data-kus-dl-lines-toggle="${rowKey}" aria-expanded="true"`);
+      expect(html).toContain('>変更のある行の前後だけ表示</button>');
+    });
+
+    it('does not offer the toggle when nothing is folded', () => {
+      const html = render(textRow('a\nb\nc', 'a\nB\nc'), { rowMode: 'detail' });
+      expect(html).toContain('data-kus-dl-linediff');
+      expect(html).not.toContain('data-kus-dl-lines-toggle');
+      expect(html).not.toContain('kus-dl-ld-skip');
+    });
+
+    it('highlights characters only inside a similar replaced line when the character highlight is on', () => {
+      const similarLeft = `head\nconst totalPrice = price * quantity + shipping;\ntail`;
+      const similarRight = `head\nconst totalPrice = price * quantity + shipping + tax;\ntail`;
+      const on = renderRowsHtml([textRow(similarLeft, similarRight)], true, '', undefined, { rowMode: 'detail' });
+      const off = renderRowsHtml([textRow(similarLeft, similarRight)], false, '', undefined, { rowMode: 'detail' });
+      expect(on).toContain('diff-char-add');
+      expect(off).not.toContain('diff-char-add');
+      expect(off).not.toContain('diff-char-del');
+
+      const dissimilar = renderRowsHtml([textRow('head\nalpha beta gamma\ntail', 'head\n12345 67890 !!!!!\ntail')], true, '', undefined, { rowMode: 'detail' });
+      expect(dissimilar).toContain('data-kus-dl-linediff');
+      expect(dissimilar).not.toContain('diff-char-');
+    });
+
+    it('keeps the previous two-column values when the line diff is off and for single-line values', () => {
+      const off = render(textRow(left, right), { rowMode: 'detail', lineDiff: false });
+      expect(off).not.toContain('data-kus-dl-linediff');
+      expect(off).not.toContain('行単位の表示を省略');
+      expect(off).toContain('class="kus-dl-pre del"');
+      expect(off).toContain('class="kus-dl-pre add"');
+
+      const single = render(textRow('旧', '新'), { rowMode: 'detail' });
+      expect(single).not.toContain('data-kus-dl-linediff');
+      expect(single).toContain('class="kus-dl-pre del"');
+
+      const added = render({ sectionKey: 'pluginSettings', section: 'プラグイン', path: 'pluginSettings.plugins.new', type: 'added', right: 'a\nb\nc' } as any, { rowMode: 'detail' });
+      expect(added).not.toContain('data-kus-dl-linediff');
+      expect(added).toContain('比較先にのみ存在');
+    });
+
+    it('does not recompute the line diff for the same row object when it is rendered again', () => {
+      const row = textRow(left, right);
+      const calls = vi.mocked(computeLineDiff);
+      calls.mockClear();
+      const first = render(row, { rowMode: 'list' });
+      render(row, { rowMode: 'detail' });
+      render(row, { rowMode: 'list', toggledRowKeys: new Set([buildLiteDiffRowKey(row)]) });
+      expect(calls).toHaveBeenCalledTimes(1);
+      expect(first).toContain('kus-dl-brief__count');
+
+      calls.mockClear();
+      render(row, { rowMode: 'detail', lineDiff: false });
+      expect(calls).not.toHaveBeenCalled();
     });
   });
 });

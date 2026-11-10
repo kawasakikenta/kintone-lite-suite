@@ -18,15 +18,21 @@ export const DIFF_COMPARISON_PROFILE_LIMITS = Object.freeze({
 
 export const DIFF_COMPARISON_PROFILE_DENSITIES = ['compact', 'standard', 'comfortable'] as const;
 export const DIFF_COMPARISON_PROFILE_LAYOUTS = ['split', 'stacked'] as const;
+export const DIFF_COMPARISON_PROFILE_ROW_MODES = ['list', 'detail'] as const;
 
 export type DiffComparisonProfileDensity = typeof DIFF_COMPARISON_PROFILE_DENSITIES[number];
 export type DiffComparisonProfileLayout = typeof DIFF_COMPARISON_PROFILE_LAYOUTS[number];
+export type DiffComparisonProfileRowMode = typeof DIFF_COMPARISON_PROFILE_ROW_MODES[number];
 
 export interface DiffComparisonProfileDisplay {
   charDiff: boolean;
   showResultList: boolean;
   density: DiffComparisonProfileDensity;
   layout: DiffComparisonProfileLayout;
+  /** 差分の表示方法（list: 一覧で値を閉じる / detail: 詳細で値も開く） */
+  rowMode: DiffComparisonProfileRowMode;
+  /** 複数行の値を行単位で比べる */
+  lineDiff: boolean;
 }
 
 export interface DiffComparisonProfile {
@@ -62,6 +68,7 @@ const VALID_SCOPES = new Set(SECTION_DEFS.map((definition) => definition.key));
 const VALID_NORMALIZATION_PRESETS = new Set(Object.keys(DIFF_NORMALIZATION_PRESETS));
 const VALID_DENSITIES = new Set<string>(DIFF_COMPARISON_PROFILE_DENSITIES);
 const VALID_LAYOUTS = new Set<string>(DIFF_COMPARISON_PROFILE_LAYOUTS);
+const VALID_ROW_MODES = new Set<string>(DIFF_COMPARISON_PROFILE_ROW_MODES);
 const PROTOTYPE_POLLUTION_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 
 /** 比較条件のJSONではないと判断したときの案内。名前の未入力など別の原因に見えないよう最初に判定する。 */
@@ -77,7 +84,9 @@ const DEFAULT_DISPLAY: Readonly<DiffComparisonProfileDisplay> = Object.freeze({
   charDiff: true,
   showResultList: true,
   density: 'standard',
-  layout: 'split'
+  layout: 'split',
+  rowMode: 'list',
+  lineDiff: true
 });
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -207,11 +216,18 @@ function normalizeDisplay(value: unknown): DiffComparisonProfileDisplay {
   const layout = typeof rawLayout === 'string' && VALID_LAYOUTS.has(rawLayout)
     ? rawLayout as DiffComparisonProfileLayout
     : DEFAULT_DISPLAY.layout;
+  const rawRowMode = ownValue(value, 'rowMode');
+  const rowMode = typeof rawRowMode === 'string' && VALID_ROW_MODES.has(rawRowMode)
+    ? rawRowMode as DiffComparisonProfileRowMode
+    : DEFAULT_DISPLAY.rowMode;
+  const rawLineDiff = ownValue(value, 'lineDiff');
   return {
     charDiff: typeof rawCharDiff === 'boolean' ? rawCharDiff : DEFAULT_DISPLAY.charDiff,
     showResultList: typeof rawShowResultList === 'boolean' ? rawShowResultList : DEFAULT_DISPLAY.showResultList,
     density,
-    layout
+    layout,
+    rowMode,
+    lineDiff: typeof rawLineDiff === 'boolean' ? rawLineDiff : DEFAULT_DISPLAY.lineDiff
   };
 }
 
