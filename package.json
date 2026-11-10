@@ -50,6 +50,6 @@
     "npm": ">=10"
   },
   "devDependencies": {
-    "@playwright/mcp": "0.0.70"
+    "@playwright/mcp": "0.0.80"
   }
 }
