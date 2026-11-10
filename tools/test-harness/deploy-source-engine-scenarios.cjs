@@ -1212,9 +1212,19 @@ module.exports = async function verifyDeploySourceEngine({ page, script, out, on
     assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'ok');
     await shot('q-loaded');
     // キーボードだけで読み込める（ボタンへ focus して Enter でファイルの選択が開く）。320〜1440px で横にはみ出さない
-    await button('選択と修正を読み込む').focus();
-    const [keyboardChooser] = await Promise.all([page.waitForEvent('filechooser'), page.keyboard.press('Enter')]);
-    await keyboardChooser.setFiles({ name: saved.name, mimeType: 'application/json', buffer: Buffer.from(saved.text) });
+    // ファイル選択の横取りは、filechooser の待ち受けを登録してから有効になるまでに間がある。登録と同時に Enter を送ると、
+    // 有効になる前にキーが届いてイベントが来ないことがある（クリックは前処理の分だけ遅いので起きない）。待ち受けを先に登録しておく。
+    const keepChooserIntercepted = () => {};
+    page.on('filechooser', keepChooserIntercepted);
+    try {
+      await button('選択と修正を読み込む').click({ trial: true });
+      await button('選択と修正を読み込む').focus();
+      assert.equal(await button('選択と修正を読み込む').evaluate(el => document.activeElement === el), true, '「選択と修正を読み込む」へフォーカスを移せる');
+      const [keyboardChooser] = await Promise.all([page.waitForEvent('filechooser'), page.keyboard.press('Enter')]);
+      await keyboardChooser.setFiles({ name: saved.name, mimeType: 'application/json', buffer: Buffer.from(saved.text) });
+    } finally {
+      page.off('filechooser', keepChooserIntercepted);
+    }
     await idle();
     assert.match(await fileNote('select').innerText(), /当てはめたもの: 選択 2 件・入力欄の修正 1 件/);
     for (const width of [320, 390, 768, 1440]) {

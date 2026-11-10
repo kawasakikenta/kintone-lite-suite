@@ -833,6 +833,10 @@ async function main() {
     await button('詳細設定…').click();
     try { return await action(); } finally {
       await button('詳細設定を閉じる').click();
+      // ポップアップを閉じると、ブラウザは close イベントを非同期に送り、製品はそこで「詳細設定…」へフォーカスを戻す。
+      // 戻る前に次のキー操作を送ると Enter が別のボタンに当たるため（人の操作では起きない間隔）、閉じ終わるまで待つ。
+      await page.waitForFunction(() => !document.querySelector('dialog[open]'));
+      await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 0)));
       if (selected && selected !== 'kus-rl-tab-setup') await page.locator(`#${selected}`).click();
     }
   }
@@ -1572,12 +1576,20 @@ function registerUx(scenario, ctx) {
     await reset(reflectWorld());
     await setup({ scopes: ['fieldSettings', 'layoutSettings'] });
     await setLookup('401 → 301');
-    await button('差分を確認する').focus();
-    await page.keyboard.press('Enter');
+    // キーボードの利用者と同じく、ボタンが押せる状態になり、フォーカスが入ったことを確かめてから Enter を押す
+    const pressEnterOn = async name => {
+      await button(name).click({ trial: true });
+      await button(name).focus();
+      assert.equal(await button(name).evaluate(el => document.activeElement === el), true, `「${name}」へフォーカスを移せる`);
+      await page.keyboard.press('Enter');
+    };
+    const waitForStage = name => page.waitForFunction(label => Array.from(document.querySelectorAll('[role="tab"][aria-selected="true"]')).some(el => (el.textContent || '').includes(label)), name, { timeout: 15000 });
+    await pressEnterOn('差分を確認する');
     await idle();
+    await waitForStage('差分を確認');
     assert.equal(await tab('差分を確認').getAttribute('aria-selected'), 'true');
-    await button('最終確認に進む').focus();
-    await page.keyboard.press('Enter');
+    await pressEnterOn('最終確認に進む');
+    await waitForStage('最終確認');
     assert.equal(await tab('最終確認').getAttribute('aria-selected'), 'true');
     await ackBox().focus();
     await page.keyboard.press('Space');
