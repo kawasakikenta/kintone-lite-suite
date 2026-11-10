@@ -63,7 +63,7 @@ tools/統合ツール/
 │   │   ├── record-query.ts    # レコード取得クエリ / CSV / ZIP 命名 / 分割書き込みの純粋ヘルパー
 │   │   ├── record-zip-split.ts # 添付保存・バックアップで ZIP を分ける位置の計画（レコード単位・上限は archive/lite-zip.ts の定数）
 │   │   └── *-standalone.ts    # lite 版用に統合 UI 依存を外した関数群
-│   ├── diff/                  # 差分エンジン
+│   ├── diff/                  # 差分エンジン（line-diff.ts: 差分比較パネルの結果明細で、複数行の値を行単位で比べる計算と、変更のない行の省略）
 │   ├── reflect/               # プレビュー反映エンジン
 │   ├── deploy/                # 本番反映（types.ts・sourceTypes.ts: エンジンと画面の取り決め / display.ts・report.ts・sourceDisplay.ts・sourceReport.ts: 表示・Markdown・結果 JSON の純粋関数 / sourceSession.ts: 差分の選択・修正の状態と、抽出し直したときの引き継ぎ / sourceSelectionFile.ts: 選んだ変更と修正の保存ファイル（組み立て・検証・照合・現在の抽出結果への当てはめ） / sourceVerify.ts: 「反映後の内容を確認する」（選んだ変更の期待する値の組み立て・判定・文言） / sourceRestore.ts: 「バックアップから戻す」（戻す内容の選び方・段階 1 へ設定する内容） / sections.ts・inspect.ts: エンジン）
 │   ├── handlers/              # 差分行のフォーカス移動

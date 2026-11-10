@@ -13836,6 +13836,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
   });
   var DIFF_COMPARISON_PROFILE_DENSITIES = ["compact", "standard", "comfortable"];
   var DIFF_COMPARISON_PROFILE_LAYOUTS = ["split", "stacked"];
+  var DIFF_COMPARISON_PROFILE_ROW_MODES = ["list", "detail"];
   var DiffComparisonProfileError = class extends Error {
     constructor(message) {
       super(message);
@@ -13846,6 +13847,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
   var VALID_NORMALIZATION_PRESETS = new Set(Object.keys(DIFF_NORMALIZATION_PRESETS));
   var VALID_DENSITIES = new Set(DIFF_COMPARISON_PROFILE_DENSITIES);
   var VALID_LAYOUTS = new Set(DIFF_COMPARISON_PROFILE_LAYOUTS);
+  var VALID_ROW_MODES = new Set(DIFF_COMPARISON_PROFILE_ROW_MODES);
   var PROTOTYPE_POLLUTION_KEYS = /* @__PURE__ */ new Set(["__proto__", "prototype", "constructor"]);
   var DIFF_COMPARISON_PROFILE_NOT_PROFILE_MESSAGE = "比較条件のJSONではありません（設定JSONや差分JSONは「設定JSON読込」で読み込んでください）";
   var PROFILE_SHAPE_KEYS = ["scopes", "ignoreKeys", "includeSame", "normalizationPresetState", "display"];
@@ -13854,7 +13856,9 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     charDiff: true,
     showResultList: true,
     density: "standard",
-    layout: "split"
+    layout: "split",
+    rowMode: "list",
+    lineDiff: true
   });
   function isRecord(value) {
     return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -13956,11 +13960,16 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     const rawShowResultList = ownValue(value, "showResultList");
     const rawLayout = ownValue(value, "layout");
     const layout = typeof rawLayout === "string" && VALID_LAYOUTS.has(rawLayout) ? rawLayout : DEFAULT_DISPLAY.layout;
+    const rawRowMode = ownValue(value, "rowMode");
+    const rowMode = typeof rawRowMode === "string" && VALID_ROW_MODES.has(rawRowMode) ? rawRowMode : DEFAULT_DISPLAY.rowMode;
+    const rawLineDiff = ownValue(value, "lineDiff");
     return {
       charDiff: typeof rawCharDiff === "boolean" ? rawCharDiff : DEFAULT_DISPLAY.charDiff,
       showResultList: typeof rawShowResultList === "boolean" ? rawShowResultList : DEFAULT_DISPLAY.showResultList,
       density,
-      layout
+      layout,
+      rowMode,
+      lineDiff: typeof rawLineDiff === "boolean" ? rawLineDiff : DEFAULT_DISPLAY.lineDiff
     };
   }
   function parseInput(raw) {
@@ -14015,6 +14024,197 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     const profile = parseDiffComparisonProfile(raw);
     const indentation = Number.isFinite(space) ? Math.max(0, Math.min(10, Math.trunc(space))) : 2;
     return JSON.stringify(profile, null, indentation);
+  }
+
+  // src/diff/line-diff.ts
+  var LINE_DIFF_MAX_EDITS = 1500;
+  var LINE_DIFF_CONTEXT_LINES = 2;
+  var SIMILAR_LINE_RATIO = 0.5;
+  function splitDiffLines(text2) {
+    return String(text2 ?? "").split(/\r\n|\r|\n/);
+  }
+  var OP_SAME = 0;
+  var OP_DEL = 1;
+  var OP_ADD = 2;
+  function shortestEditScript(a, b, maxEdits) {
+    const n = a.length;
+    const m = b.length;
+    const max = Math.min(n + m, Math.max(0, maxEdits));
+    const furthest = new Int32Array(2 * max + 2);
+    const trace = [];
+    let found = -1;
+    for (let d = 0; d <= max && found < 0; d++) {
+      trace.push(furthest.slice(max - d, max + d + 1));
+      for (let k = -d; k <= d; k += 2) {
+        let x2;
+        if (k === -d || k !== d && furthest[max + k - 1] < furthest[max + k + 1]) x2 = furthest[max + k + 1];
+        else x2 = furthest[max + k - 1] + 1;
+        let y2 = x2 - k;
+        while (x2 < n && y2 < m && a[x2] === b[y2]) {
+          x2 += 1;
+          y2 += 1;
+        }
+        furthest[max + k] = x2;
+        if (x2 >= n && y2 >= m) {
+          found = d;
+          break;
+        }
+      }
+    }
+    if (found < 0) return null;
+    const reversed = new Uint8Array(n + m);
+    let length = 0;
+    let x = n;
+    let y = m;
+    for (let d = found; d > 0; d--) {
+      const before = trace[d];
+      const k = x - y;
+      const down = k === -d || k !== d && before[k - 1 + d] < before[k + 1 + d];
+      const prevK = down ? k + 1 : k - 1;
+      const prevX = before[prevK + d];
+      const startX = down ? prevX : prevX + 1;
+      while (x > startX) {
+        reversed[length++] = OP_SAME;
+        x -= 1;
+        y -= 1;
+      }
+      reversed[length++] = down ? OP_ADD : OP_DEL;
+      if (down) y -= 1;
+      else x -= 1;
+    }
+    while (x > 0 && y > 0) {
+      reversed[length++] = OP_SAME;
+      x -= 1;
+      y -= 1;
+    }
+    const ops = new Uint8Array(length);
+    for (let i = 0; i < length; i++) ops[i] = reversed[length - 1 - i];
+    return ops;
+  }
+  function linesAreSimilar(left, right) {
+    const a = left.replace(/^\s+/, "");
+    const b = right.replace(/^\s+/, "");
+    const longer = Math.max(a.length, b.length);
+    if (!longer) return false;
+    const shorter = Math.min(a.length, b.length);
+    let prefix = 0;
+    while (prefix < shorter && a.charCodeAt(prefix) === b.charCodeAt(prefix)) prefix += 1;
+    let suffix = 0;
+    while (suffix < shorter - prefix && a.charCodeAt(a.length - 1 - suffix) === b.charCodeAt(b.length - 1 - suffix)) suffix += 1;
+    return (prefix + suffix) / longer >= SIMILAR_LINE_RATIO;
+  }
+  function computeLineDiff(leftText, rightText, options = {}) {
+    const left = splitDiffLines(leftText);
+    const right = splitDiffLines(rightText);
+    const maxEdits = options.maxEdits ?? LINE_DIFF_MAX_EDITS;
+    let head = 0;
+    const shortest = Math.min(left.length, right.length);
+    while (head < shortest && left[head] === right[head]) head += 1;
+    let tail = 0;
+    while (tail < shortest - head && left[left.length - 1 - tail] === right[right.length - 1 - tail]) tail += 1;
+    const ids = /* @__PURE__ */ new Map();
+    const idOf = (line) => {
+      let id = ids.get(line);
+      if (id === void 0) {
+        id = ids.size;
+        ids.set(line, id);
+      }
+      return id;
+    };
+    const middleLeft = new Int32Array(left.length - head - tail);
+    const middleRight = new Int32Array(right.length - head - tail);
+    for (let i = 0; i < middleLeft.length; i++) middleLeft[i] = idOf(left[head + i]);
+    for (let i = 0; i < middleRight.length; i++) middleRight[i] = idOf(right[head + i]);
+    const ops = shortestEditScript(middleLeft, middleRight, maxEdits);
+    if (!ops) return null;
+    const rows = [];
+    let removed = 0;
+    let added = 0;
+    let li = 0;
+    let ri = 0;
+    const pushSame = () => {
+      rows.push({ type: "same", left: left[li], right: right[ri], leftNo: li + 1, rightNo: ri + 1 });
+      li += 1;
+      ri += 1;
+    };
+    for (let i = 0; i < head; i++) pushSame();
+    let index = 0;
+    while (index < ops.length) {
+      if (ops[index] === OP_SAME) {
+        pushSame();
+        index += 1;
+        continue;
+      }
+      let dels = 0;
+      let adds = 0;
+      while (index < ops.length && ops[index] !== OP_SAME) {
+        if (ops[index] === OP_DEL) dels += 1;
+        else adds += 1;
+        index += 1;
+      }
+      const pairs = Math.min(dels, adds);
+      for (let p = 0; p < pairs; p++) {
+        rows.push({
+          type: "replace",
+          left: left[li + p],
+          right: right[ri + p],
+          leftNo: li + p + 1,
+          rightNo: ri + p + 1,
+          similar: linesAreSimilar(left[li + p], right[ri + p])
+        });
+      }
+      for (let p = pairs; p < dels; p++) rows.push({ type: "del", left: left[li + p], leftNo: li + p + 1 });
+      for (let p = pairs; p < adds; p++) rows.push({ type: "add", right: right[ri + p], rightNo: ri + p + 1 });
+      li += dels;
+      ri += adds;
+      removed += dels;
+      added += adds;
+    }
+    for (let i = 0; i < tail; i++) pushSame();
+    return {
+      rows,
+      removed,
+      added,
+      leftLines: left.length,
+      rightLines: right.length,
+      newlineOnly: removed === 0 && added === 0 && String(leftText ?? "") !== String(rightText ?? "")
+    };
+  }
+  function foldLineDiffRows(rows, context = LINE_DIFF_CONTEXT_LINES) {
+    const keep = new Uint8Array(rows.length);
+    const span = Math.max(0, context);
+    for (let i2 = 0; i2 < rows.length; i2++) {
+      if (rows[i2].type === "same") continue;
+      const from = Math.max(0, i2 - span);
+      const to = Math.min(rows.length - 1, i2 + span);
+      for (let j = from; j <= to; j++) keep[j] = 1;
+    }
+    const segments = [];
+    let visible = [];
+    const flush = () => {
+      if (visible.length) segments.push({ kind: "rows", rows: visible });
+      visible = [];
+    };
+    let i = 0;
+    while (i < rows.length) {
+      if (keep[i]) {
+        visible.push(rows[i]);
+        i += 1;
+        continue;
+      }
+      let end = i;
+      while (end < rows.length && !keep[end]) end += 1;
+      const count = end - i;
+      if (count === 1) {
+        visible.push(rows[i]);
+      } else {
+        flush();
+        segments.push({ kind: "skip", count });
+      }
+      i = end;
+    }
+    flush();
+    return segments;
   }
 
   // src/archive/stored-zip.ts
@@ -21716,8 +21916,32 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-row--moved{border-left-color:#7c3aed}
 .kus-dl-row--same{border-left-color:#94a3b8}
 .kus-dl-row:focus,.kus-dl-row.is-current{outline:2px solid #2563eb;outline-offset:1px;background:#f8fbff;box-shadow:0 4px 14px rgba(37,99,235,.13)}
-.kus-dl-row__head{min-width:0}
-.kus-dl-row__identity{min-width:0}
+.kus-dl-row:not(.is-open){display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:3px 10px;padding:8px 12px}
+.kus-dl-row:not(.is-open) .kus-dl-row__head{display:contents}
+.kus-dl-row:not(.is-open) .kus-dl-row__identity{grid-column:1;display:flex;flex-wrap:wrap;align-items:baseline;gap:1px 10px;cursor:pointer}
+.kus-dl-row:not(.is-open) .kus-dl-row__headline{flex:0 1 auto;min-width:0}
+.kus-dl-row:not(.is-open) .kus-dl-row__title{flex:0 1 auto;min-width:0;font-size:14px}
+.kus-dl-row:not(.is-open) .kus-dl-row__subtitle{flex:0 1 auto;min-width:0;margin:0}
+.kus-dl-row:not(.is-open) .kus-dl-row__toggle{grid-column:2;grid-row:1/span 2}
+.kus-dl-row:not(.is-open) .kus-dl-row__brief{grid-column:1}
+.kus-dl-row__head{display:flex;align-items:flex-start;gap:8px;min-width:0;cursor:pointer}
+.kus-dl-row__identity{flex:1 1 0;min-width:0}
+.kus-dl-row__toggle{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;gap:5px;margin:0;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#1d4ed8;padding:0 10px;font:700 13px/1.4 -apple-system,Segoe UI,sans-serif;white-space:nowrap;cursor:pointer}
+.kus-dl-row__toggle::before{content:'▸';font-size:12px;transition:transform .12s}
+.kus-dl-row__toggle[aria-expanded="true"]::before{transform:rotate(90deg)}
+.kus-dl-row__toggle:hover{border-color:#60a5fa;background:#eff6ff}
+.kus-dl-row__brief{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;min-width:0;color:#334155;font-size:13px;line-height:1.5;cursor:pointer}
+.kus-dl-chip{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;max-width:100%;padding:1px 6px;border-radius:5px;background:#f1f5f9;color:#475569;font:13px/1.5 ui-monospace,Menlo,monospace;overflow-wrap:anywhere;white-space:normal}
+.kus-dl-chip--before{background:#fef2f2;color:#991b1b}
+.kus-dl-chip--after{background:#f0fdf4;color:#166534}
+.kus-dl-chip--empty{font-family:-apple-system,Segoe UI,sans-serif;font-style:italic}
+.kus-dl-arrow{color:#64748b}
+.kus-dl-brief__count{padding:0 6px;border-radius:5px;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap}
+.kus-dl-brief__count--del{background:#fef2f2;color:#991b1b}
+.kus-dl-brief__count--add{background:#f0fdf4;color:#166534}
+.kus-dl-brief__note{color:#64748b;font-size:12.5px}
+.kus-dl-row__detail{display:flex;flex-direction:column;gap:10px;min-width:0}
+.kus-dl-row__detail[hidden]{display:none}
 .kus-dl-row__headline{display:flex;flex-wrap:wrap;align-items:center;gap:5px 6px}
 .kus-dl-row__title{min-width:150px;flex:1;color:#10253f;font-size:15px;font-weight:800;line-height:1.45}
 .kus-dl-row__subtitle{margin:4px 0 0;color:#64748b;font-size:13px;line-height:1.55}
@@ -21732,13 +21956,31 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-row__technical[open]>summary::before{transform:rotate(90deg)}
 .kus-dl-row__raw{display:block;margin-top:3px;padding:5px 7px;border:1px dashed #cbd5e1;border-radius:5px;background:#f8fafc;color:#475569;font:12.5px/1.45 ui-monospace,Menlo,monospace;word-break:break-all}
 .kus-dl-row__cols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;font-family:ui-monospace,Menlo,monospace;font-size:13px}
-.kus-dl-row__mobile-toggle{display:none;width:100%;margin:0;align-items:center;justify-content:center;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#1d4ed8;padding:7px 9px;font:700 13px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer}
 .kus-dl-value{position:relative;min-width:0}
 .kus-dl-pre{box-sizing:border-box;width:100%;margin:0;padding:8px 10px;background:#f8fafc;color:#1e293b;border-radius:8px;border:1px solid #dbe3ec;white-space:pre-wrap;word-break:break-word;overflow:auto}
 .kus-dl-value.is-collapsed .kus-dl-pre{max-height:126px;overflow:hidden}
 .kus-dl-value__footer{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:24px;padding:3px 2px 0;color:#64748b;font:12.5px/1.3 -apple-system,Segoe UI,sans-serif}
 .kus-dl-value__toggle{margin-left:auto;padding:2px 6px;border:1px solid #cbd5e1;border-radius:5px;background:#fff;color:#1d4ed8;font:700 12.5px/1.35 -apple-system,Segoe UI,sans-serif;cursor:pointer}
 .kus-dl-value__toggle:hover{border-color:#60a5fa;background:#eff6ff}
+.kus-dl-linediff{grid-column:1/-1;min-width:0;border:1px solid #dbe3ec;border-radius:8px;background:#fff;overflow:hidden}
+.kus-dl-linediff__head{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border-bottom:1px solid #dbe3ec;background:#f1f5f9;color:#475569;font:800 12.5px/1.3 -apple-system,Segoe UI,sans-serif;letter-spacing:.06em}
+.kus-dl-linediff__head>span{padding:5px 10px}
+.kus-dl-linediff__head>span+span{border-left:1px solid #dbe3ec}
+.kus-dl-linediff__body{min-width:0;font:12.5px/1.55 ui-monospace,Menlo,monospace;color:#1e293b}
+.kus-dl-linediff__note{margin:0;padding:8px 10px;color:#475569;font:13px/1.55 -apple-system,Segoe UI,sans-serif}
+.kus-dl-row__cols>.kus-dl-linediff__note{grid-column:1/-1;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc}
+.kus-dl-ld-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+.kus-dl-ld-cell{display:grid;grid-template-columns:3.6em 1.5em minmax(0,1fr);min-width:0;min-height:1.55em}
+.kus-dl-ld-cell[data-side="after"]{border-left:1px solid #dbe3ec}
+.kus-dl-ld-no{padding:0 6px;color:#64748b;text-align:right;font-variant-numeric:tabular-nums;-webkit-user-select:none;user-select:none}
+.kus-dl-ld-alt{display:none;padding:0 6px;color:#64748b;text-align:right;font-variant-numeric:tabular-nums;-webkit-user-select:none;user-select:none}
+.kus-dl-ld-mark{text-align:center;font-weight:800;-webkit-user-select:none;user-select:none}
+.kus-dl-ld-text{min-width:0;padding-right:8px;white-space:pre-wrap;overflow-wrap:anywhere}
+.kus-dl-ld-cell--del{background:#fef2f2;color:#7f1d1d}
+.kus-dl-ld-cell--add{background:#f0fdf4;color:#14532d}
+.kus-dl-ld-cell--pad{background:#f8fafc}
+.kus-dl-ld-skip{padding:3px 10px;border-block:1px dashed #cbd5e1;background:#f1f5f9;color:#64748b;text-align:center;font:12.5px/1.5 -apple-system,Segoe UI,sans-serif}
+.kus-dl-linediff>.kus-dl-value__footer{padding:4px 10px;border-top:1px solid #dbe3ec;background:#f8fafc}
 .kus-dl-pre.del{background:#fef2f2;border-color:#fecaca;color:#7f1d1d}
 .kus-dl-pre.add{background:#f0fdf4;border-color:#bbf7d0;color:#14532d}
 .kus-dl-pre.empty{color:#64748b;font-style:italic}
@@ -21755,6 +21997,10 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-reviewbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin:0;padding:6px 8px;border-radius:0 0 11px 11px;background:#fff;font:600 12.5px/1.4 -apple-system,Segoe UI,sans-serif}
 .kus-dl-reviewbar__nav,.kus-dl-reviewbar__tools,.kus-dl-reviewbar__filters{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
 .kus-dl-reviewbar__filters{min-width:120px;flex:1}
+.kus-dl-reviewbar__modes{display:inline-flex;gap:0}
+.kus-dl-reviewbar__modes .kus-dl-navbtn:first-child{border-radius:8px 0 0 8px}
+.kus-dl-reviewbar__modes .kus-dl-navbtn:last-child{margin-left:-1px;border-radius:0 8px 8px 0}
+.kus-dl-reviewbar__modes .kus-dl-navbtn[aria-pressed="true"]{border-color:#1d4ed8;background:#dbeafe;color:#1e3a8a}
 .kus-dl-filter-empty{padding:2px 5px;color:#64748b;font-weight:600}
 .kus-dl-filterchip{display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border:1px solid #93c5fd;border-radius:999px;background:#fff;color:#1e3a8a;font:700 12.5px/1.35 -apple-system,Segoe UI,sans-serif;cursor:pointer;max-width:180px}
 .kus-dl-filterchip>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -21768,12 +22014,29 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-navbtn:disabled{border-color:#e2e8f0;background:#f1f5f9;color:#94a3b8;cursor:not-allowed}
 .kus-dl-result--compact .kus-dl-row{gap:5px;padding:6px 7px;font-size:12px}
 .kus-dl-result--compact .kus-dl-row__context{display:none}
+.kus-dl-result--compact .kus-dl-row__brief{font-size:12px}
+.kus-dl-result--compact .kus-dl-chip{font-size:12px}
+.kus-dl-result--compact .kus-dl-linediff__body{font-size:11.5px;line-height:1.45}
 .kus-dl-result--compact .kus-dl-pre{padding:4px 6px;font-size:11.5px}
 .kus-dl-result--compact .kus-dl-value.is-collapsed .kus-dl-pre{max-height:92px}
 .kus-dl-result--compact .kus-dl-section__body{padding:3px}
 .kus-dl-result--comfortable .kus-dl-row{padding:9px 10px}
 .kus-dl-result--comfortable .kus-dl-value.is-collapsed .kus-dl-pre{max-height:164px}
 .kus-dl-result--stacked .kus-dl-row__cols{grid-template-columns:1fr}
+.kus-dl-result--stacked .kus-dl-ld-row{grid-template-columns:minmax(0,1fr)}
+.kus-dl-result--stacked .kus-dl-ld-cell{grid-template-columns:3.2em 3.2em 1.5em minmax(0,1fr)}
+.kus-dl-result--stacked .kus-dl-ld-cell>*{grid-row:1}
+.kus-dl-result--stacked .kus-dl-ld-cell[data-side="before"]>.kus-dl-ld-no,.kus-dl-result--stacked .kus-dl-ld-cell[data-side="after"]>.kus-dl-ld-alt{grid-column:1}
+.kus-dl-result--stacked .kus-dl-ld-cell[data-side="before"]>.kus-dl-ld-alt,.kus-dl-result--stacked .kus-dl-ld-cell[data-side="after"]>.kus-dl-ld-no{grid-column:2}
+.kus-dl-result--stacked .kus-dl-ld-alt{display:block}
+.kus-dl-result--stacked .kus-dl-ld-mark{grid-column:3}
+.kus-dl-result--stacked .kus-dl-ld-text{grid-column:4}
+.kus-dl-result--stacked .kus-dl-ld-cell[data-side="after"]{border-left:0}
+.kus-dl-result--stacked .kus-dl-ld-cell--pad,.kus-dl-result--stacked .kus-dl-ld-row--same .kus-dl-ld-cell[data-side="after"]{display:none}
+.kus-dl-result--stacked .kus-dl-linediff__head{display:flex;gap:14px}
+.kus-dl-result--stacked .kus-dl-linediff__head>span+span{border-left:0}
+.kus-dl-result--stacked .kus-dl-linediff__head>span:first-child::before{content:'− '}
+.kus-dl-result--stacked .kus-dl-linediff__head>span:last-child::before{content:'+ '}
 .kus-dl-result--stacked .kus-dl-pre::before{content:attr(data-side-label);display:block;margin:0 0 5px;color:#64748b;font:700 12.5px/1.3 -apple-system,Segoe UI,sans-serif;letter-spacing:.04em}
 .kus-dl-result mark.diff-char-del{background:#fca5a5;color:#7f1d1d;border-radius:2px;padding:0 1px;text-decoration:line-through;text-decoration-thickness:2px}
 .kus-dl-result mark.diff-char-add{background:#86efac;color:#14532d;border-radius:2px;padding:0 1px;text-decoration:underline;text-decoration-thickness:2px}
@@ -21981,6 +22244,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
 .kus-dl-filter-row>.kus-lp__label{display:flex;align-items:center;min-width:0;min-height:44px;color:#334155;font-size:13px;font-weight:700}
 .kus-dl-filter-controls{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;align-items:end;gap:8px 10px;min-width:0}
 .kus-dl-filter-controls--single{grid-template-columns:minmax(0,1fr)}
+.kus-dl-filter-row--display .kus-dl-filter-controls{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
 .kus-dl-filter-field{display:flex;flex-direction:column;gap:3px;min-width:0}
 .kus-dl-filter-field__cap{color:#64748b;font-size:12.5px;font-weight:700;line-height:1.3}
 .kus-dl-filter-controls .kus-lp__select,.kus-dl-filter-controls .kus-lp__input{width:100%;min-width:0;box-sizing:border-box}
@@ -22021,6 +22285,20 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   .kus-dl-pair-row__error{grid-column:2/-1}
   .kus-dl-swap{flex-direction:row;width:100%;max-width:none}
   .kus-dl-row__cols{grid-template-columns:1fr}
+  .kus-dl-ld-row{grid-template-columns:minmax(0,1fr)}
+  .kus-dl-ld-cell{grid-template-columns:3.2em 3.2em 1.5em minmax(0,1fr)}
+  .kus-dl-ld-cell>*{grid-row:1}
+  .kus-dl-ld-cell[data-side="before"]>.kus-dl-ld-no,.kus-dl-ld-cell[data-side="after"]>.kus-dl-ld-alt{grid-column:1}
+  .kus-dl-ld-cell[data-side="before"]>.kus-dl-ld-alt,.kus-dl-ld-cell[data-side="after"]>.kus-dl-ld-no{grid-column:2}
+  .kus-dl-ld-alt{display:block}
+  .kus-dl-ld-mark{grid-column:3}
+  .kus-dl-ld-text{grid-column:4}
+  .kus-dl-ld-cell[data-side="after"]{border-left:0}
+  .kus-dl-ld-cell--pad,.kus-dl-ld-row--same .kus-dl-ld-cell[data-side="after"]{display:none}
+  .kus-dl-linediff__head{display:flex;gap:14px}
+  .kus-dl-linediff__head>span+span{border-left:0}
+  .kus-dl-linediff__head>span:first-child::before{content:'− '}
+  .kus-dl-linediff__head>span:last-child::before{content:'+ '}
   .kus-dl-presence{grid-template-columns:1fr}
   .kus-dl-sticky{top:-13px;z-index:6}
   .kus-dl-disclosure>summary{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"title mark" "desc desc";align-items:center;gap:1px 10px}
@@ -22061,12 +22339,10 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   .kus-dl-pair-side__fields{grid-template-columns:1fr}
   .kus-dl-pair-side__preview{grid-column:1}
   .kus-dl-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .kus-dl-row__mobile-toggle{display:inline-flex;min-height:44px}
   .kus-dl-row__title{flex-basis:100%;min-width:0}
   #kus-diff-lite .kus-wf-jump{gap:5px}
   #kus-diff-lite .kus-wf-jump button{gap:5px;padding:0 4px;font-size:12.5px}
-  .kus-dl-row__cols{display:none;grid-template-columns:1fr}
-  .kus-dl-row__cols.is-expanded{display:grid}
+  .kus-dl-row__cols{grid-template-columns:1fr}
   .kus-dl-contextlane{padding:5px 8px}
   .kus-dl-contextlane--before{grid-column:1;grid-row:1}
   .kus-dl-contextlane--after{grid-column:3;grid-row:1}
@@ -22106,12 +22382,19 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   .kus-dl-section>summary::before{transition:none}
 }
 @media(prefers-contrast:more){
-  .kus-dl-row,.kus-dl-section,.kus-dl-pre,.kus-dl-reviewbar,.kus-dl-contextbar,.kus-dl-contextlane{border-color:#334155}
+  .kus-dl-row,.kus-dl-section,.kus-dl-pre,.kus-dl-reviewbar,.kus-dl-contextbar,.kus-dl-contextlane,.kus-dl-linediff,.kus-dl-linediff__head,.kus-dl-ld-cell[data-side="after"],.kus-dl-row__toggle{border-color:#334155}
+  .kus-dl-chip--before,.kus-dl-brief__count--del,.kus-dl-ld-cell--del{color:#450a0a}
+  .kus-dl-chip--after,.kus-dl-brief__count--add,.kus-dl-ld-cell--add{color:#052e16}
+  .kus-dl-chip,.kus-dl-brief__note,.kus-dl-ld-no,.kus-dl-ld-skip{color:#1e293b}
   .kus-dl-row__raw,.kus-dl-filter-empty,.kus-dl-pre.empty,.kus-dl-pre:empty{color:#1e293b}
 }
 @media(forced-colors:active){
   .kus-dl-row,.kus-dl-contextlane{forced-color-adjust:auto;border-left-width:5px}
-  .kus-dl-filterchip,.kus-dl-value__toggle,.kus-dl-navbtn,.kus-dl-row__action{border:1px solid ButtonText}
+  .kus-dl-filterchip,.kus-dl-value__toggle,.kus-dl-navbtn,.kus-dl-row__action,.kus-dl-row__toggle{border:1px solid ButtonText}
+  .kus-dl-chip,.kus-dl-brief__count{border:1px solid CanvasText}
+  .kus-dl-linediff{border:1px solid CanvasText}
+  .kus-dl-ld-cell--del,.kus-dl-ld-cell--add{border-left:3px solid CanvasText}
+  .kus-dl-ld-cell--pad{border-left:3px dotted GrayText}
 }
 `;
   function ensureResultStyles() {
@@ -22371,18 +22654,145 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     };
     const sectionLabel2 = SECTION_DEFS.find((definition) => definition.key === row.sectionKey)?.label || row.section || "設定";
     const fallbackTitle = label && label !== path ? label : `${sectionLabel2}の${leafLabels[leaf] || (leaf ? `「${leaf}」` : "設定項目")}`;
-    const baseTitle = semanticTitle || reason || fallbackTitle;
+    const locatedTitle = decoded && reason ? reason : "";
+    const propLabel = String(decoded?.propLabel || "").trim();
+    const baseTitle = locatedTitle || semanticTitle || reason || fallbackTitle;
     const fieldText = decoded ? "" : fieldRowIdentityText(row, fieldLabels);
     const title = fieldText ? `${fieldText} · ${baseTitle}` : baseTitle;
     const subtitleCandidates = [
-      semanticTitle && reason !== semanticTitle ? reason : "",
+      locatedTitle ? propLabel && !locatedTitle.includes(propLabel) ? propLabel : "" : semanticTitle && reason !== semanticTitle ? reason : "",
       label && label !== path && label !== title ? label : ""
     ].filter(Boolean);
     return { title, subtitle: [...new Set(subtitleCandidates)].join(" · ") };
   }
-  function rowColumnsHtml(row, useCharDiff, decoded, rowKey, expandedValueKeys) {
+  var BRIEF_VALUE_MAX_CHARS = 120;
+  var BRIEF_LINE_MAX_CHARS = 80;
+  var BRIEF_TITLE_MAX_CHARS = 600;
+  var LINE_DIFF_OMITTED_NOTE = "違う行が多いため、行単位の表示を省略しました。";
+  var LINE_DIFF_NEWLINE_BRIEF = "改行コードだけが異なります";
+  var LINE_DIFF_NEWLINE_DETAIL = "行の内容は同じです。改行コード（CRLF / LF）だけが異なります。";
+  var rowLineDiffCache = /* @__PURE__ */ new WeakMap();
+  var lineDiffSummaryCache = /* @__PURE__ */ new WeakMap();
+  function cachedLineDiff(row, leftStr, rightStr) {
+    if (rowLineDiffCache.has(row)) return rowLineDiffCache.get(row) ?? null;
+    const result = computeLineDiff(leftStr, rightStr);
+    rowLineDiffCache.set(row, result);
+    return result;
+  }
+  function lineDiffSummary(result) {
+    let summary = lineDiffSummaryCache.get(result);
+    if (!summary) {
+      let first;
+      let count = 0;
+      for (const item of result.rows) {
+        if (item.type === "same") continue;
+        if (!first) first = item;
+        count += 1;
+      }
+      summary = { first, count };
+      lineDiffSummaryCache.set(result, summary);
+    }
+    return summary;
+  }
+  function rowValueView(row, decoded, lineDiffEnabled) {
     const leftStr = decoded?.beforeText ?? stringifyRowValueForDiff(row.left, row.path);
     const rightStr = decoded?.afterText ?? stringifyRowValueForDiff(row.right, row.path);
+    const kind = row.type === "added" || row.type === "removed" || row.type === "same" ? row.type : "changed";
+    const multiline = kind === "changed" && leftStr !== rightStr && (/[\r\n]/.test(leftStr) || /[\r\n]/.test(rightStr));
+    const lineDiff = multiline && lineDiffEnabled ? cachedLineDiff(row, leftStr, rightStr) : null;
+    return { kind, leftStr, rightStr, multiline, lineDiffEnabled, lineDiff };
+  }
+  function clipChars(text2, max) {
+    if (text2.length <= max) return text2;
+    let end = max;
+    const code = text2.charCodeAt(end - 1);
+    if (code >= 55296 && code <= 56319) end -= 1;
+    return `${text2.slice(0, end)}…`;
+  }
+  function flattenText(text2) {
+    return String(text2 ?? "").replace(/\s+/g, " ").trim();
+  }
+  function briefChipHtml(text2, tone, max = BRIEF_VALUE_MAX_CHARS, emptyLabel = "（空）") {
+    const flat = flattenText(text2);
+    const clipped = clipChars(flat, max);
+    const title = clipped !== flat ? ` title="${esc(clipChars(flat, BRIEF_TITLE_MAX_CHARS))}"` : "";
+    return `<span class="kus-dl-chip kus-dl-chip--${tone}${flat ? "" : " kus-dl-chip--empty"}"${title}>${esc(flat ? clipped : emptyLabel)}</span>`;
+  }
+  var BRIEF_ARROW_HTML = '<span class="kus-dl-arrow" role="img" aria-label="から">→</span>';
+  function rowBriefHtml(view) {
+    const inner = rowBriefInnerHtml(view);
+    return inner ? `<div class="kus-dl-row__brief" data-kus-dl-brief>${inner}</div>` : "";
+  }
+  function rowBriefInnerHtml(view) {
+    const { leftStr, rightStr } = view;
+    if (view.kind === "added") return briefChipHtml(rightStr, "after");
+    if (view.kind === "removed") return briefChipHtml(leftStr, "before");
+    if (view.kind === "same") return briefChipHtml(leftStr, "same");
+    if (leftStr === rightStr) return briefChipHtml(leftStr, "same");
+    const pair = `${briefChipHtml(leftStr, "before")}${BRIEF_ARROW_HTML}${briefChipHtml(rightStr, "after")}`;
+    if (!view.multiline) return pair;
+    const result = view.lineDiff;
+    if (!result) {
+      const lines = `${splitDiffLines(leftStr).length}行 → ${splitDiffLines(rightStr).length}行`;
+      return `${pair}<span class="kus-dl-brief__note">${esc(lines)}</span>`;
+    }
+    if (result.newlineOnly) return `<span class="kus-dl-brief__note">${LINE_DIFF_NEWLINE_BRIEF}</span>`;
+    const parts = [];
+    if (result.removed) parts.push(`<span class="kus-dl-brief__count kus-dl-brief__count--del" role="img" aria-label="削除 ${result.removed}行">−${result.removed}行</span>`);
+    if (result.added) parts.push(`<span class="kus-dl-brief__count kus-dl-brief__count--add" role="img" aria-label="追加 ${result.added}行">+${result.added}行</span>`);
+    const { first, count } = lineDiffSummary(result);
+    if (first) {
+      if (first.type === "replace") {
+        parts.push(`${briefChipHtml(first.left ?? "", "before", BRIEF_LINE_MAX_CHARS, "（空行）")}${BRIEF_ARROW_HTML}${briefChipHtml(first.right ?? "", "after", BRIEF_LINE_MAX_CHARS, "（空行）")}`);
+      } else if (first.type === "del") {
+        parts.push(briefChipHtml(first.left ?? "", "before", BRIEF_LINE_MAX_CHARS, "（空行）"));
+      } else {
+        parts.push(briefChipHtml(first.right ?? "", "after", BRIEF_LINE_MAX_CHARS, "（空行）"));
+      }
+      if (count > 1) parts.push(`<span class="kus-dl-brief__note">ほか ${count - 1} 行</span>`);
+    }
+    return parts.join("");
+  }
+  function lineDiffBlockHtml(rowKey, result, useCharDiff, expandedValueKeys) {
+    if (result.newlineOnly) {
+      return `<div class="kus-dl-linediff" role="group" aria-label="行単位の差分" data-kus-dl-linediff><p class="kus-dl-linediff__note">${LINE_DIFF_NEWLINE_DETAIL}</p></div>`;
+    }
+    const linesKey = `${rowKey}:lines`;
+    const folded = foldLineDiffRows(result.rows);
+    const hasSkip = folded.some((segment) => segment.kind === "skip");
+    const showAll = hasSkip && expandedValueKeys.has(linesKey);
+    const segments = showAll ? [{ kind: "rows", rows: result.rows }] : folded;
+    const cell = (side, tone, no, mark, textHtml, altNo) => `<div class="kus-dl-ld-cell${tone ? ` kus-dl-ld-cell--${tone}` : ""}" data-side="${side}">${altNo === void 0 ? "" : `<span class="kus-dl-ld-alt">${altNo}</span>`}<span class="kus-dl-ld-no">${no ?? ""}</span><span class="kus-dl-ld-mark">${mark}</span><span class="kus-dl-ld-text">${textHtml}</span></div>`;
+    const pad = (side) => `<div class="kus-dl-ld-cell kus-dl-ld-cell--pad" data-side="${side}" aria-hidden="true"></div>`;
+    const rowHtml = (item) => {
+      if (item.type === "same") {
+        return `<div class="kus-dl-ld-row kus-dl-ld-row--same">${cell("before", "", item.leftNo, "", esc(item.left ?? ""), item.rightNo)}${cell("after", "", item.rightNo, "", esc(item.right ?? ""))}</div>`;
+      }
+      if (item.type === "del") {
+        return `<div class="kus-dl-ld-row kus-dl-ld-row--del">${cell("before", "del", item.leftNo, "−", esc(item.left ?? ""))}${pad("after")}</div>`;
+      }
+      if (item.type === "add") {
+        return `<div class="kus-dl-ld-row kus-dl-ld-row--add">${pad("before")}${cell("after", "add", item.rightNo, "+", esc(item.right ?? ""))}</div>`;
+      }
+      let leftHtml = esc(item.left ?? "");
+      let rightHtml = esc(item.right ?? "");
+      if (useCharDiff && item.similar) {
+        const charDiff = buildCharDiffHtml(item.left ?? "", item.right ?? "");
+        if (charDiff) {
+          leftHtml = charDiff.left;
+          rightHtml = charDiff.right;
+        }
+      }
+      return `<div class="kus-dl-ld-row kus-dl-ld-row--replace">${cell("before", "del", item.leftNo, "−", leftHtml)}${cell("after", "add", item.rightNo, "+", rightHtml)}</div>`;
+    };
+    const bodyId = `kus-dl-linediff-body-${rowKey}`;
+    const body = segments.map((segment) => segment.kind === "skip" ? `<div class="kus-dl-ld-skip">変更のない ${segment.count} 行を省略</div>` : segment.rows.map(rowHtml).join("")).join("");
+    const counts = `−${result.removed}行 / +${result.added}行 · 比較元 ${result.leftLines}行 → 比較先 ${result.rightLines}行`;
+    const toggle = hasSkip ? `<button type="button" class="kus-dl-value__toggle" data-kus-dl-lines-toggle="${esc(rowKey)}" aria-expanded="${showAll ? "true" : "false"}" aria-controls="${esc(bodyId)}">${showAll ? "変更のある行の前後だけ表示" : "すべての行を表示"}</button>` : "";
+    return `<div class="kus-dl-linediff" role="group" aria-label="行単位の差分" data-kus-dl-linediff><div class="kus-dl-linediff__head"><span>比較元</span><span>比較先</span></div><div id="${esc(bodyId)}" class="kus-dl-linediff__body">${body}</div><div class="kus-dl-value__footer"><span>${esc(counts)}</span>${toggle}</div></div>`;
+  }
+  function rowColumnsHtml(row, useCharDiff, view, rowKey, expandedValueKeys) {
+    const { leftStr, rightStr } = view;
     const pre = (value, className, label, side, rawHtml = false, measuredValue = value) => {
       const valueKey = `${rowKey}:${side}`;
       const lineCount = Math.max(1, measuredValue.split(/\r?\n/).length);
@@ -22418,6 +22828,12 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       }
     }
     return { left: pre(leftStr, "del", "比較元の値", "before"), right: pre(rightStr, "add", "比較先の値", "after") };
+  }
+  function rowValuesHtml(row, useCharDiff, view, rowKey, expandedValueKeys) {
+    if (view.lineDiff) return lineDiffBlockHtml(rowKey, view.lineDiff, useCharDiff, expandedValueKeys);
+    const cols = rowColumnsHtml(row, useCharDiff, view, rowKey, expandedValueKeys);
+    const omittedNote = view.multiline && view.lineDiffEnabled ? `<p class="kus-dl-linediff__note" role="note">${LINE_DIFF_OMITTED_NOTE}</p>` : "";
+    return `${omittedNote}${cols.left}${cols.right}`;
   }
   function displayBundleSide(bundle, fallbackRole) {
     const appId = String(bundle?.appId || "").trim();
@@ -22541,6 +22957,9 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     for (const def of SECTION_DEFS) if (bySection.has(def.key)) orderedKeys.push(def.key);
     for (const k of bySection.keys()) if (!orderedKeys.includes(k)) orderedKeys.push(k);
     const expandedValueKeys = options.expandedValueKeys || /* @__PURE__ */ new Set();
+    const detailByDefault = (options.rowMode ?? "detail") === "detail";
+    const lineDiffEnabled = options.lineDiff !== false;
+    const toggledRowKeys = options.toggledRowKeys || /* @__PURE__ */ new Set();
     const parts = [];
     parts.push(`<div class="kus-dl-result__summary">${summary}</div>`);
     for (const k of orderedKeys) {
@@ -22561,10 +22980,11 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       for (const r of list) {
         const decoded = safeDecodeRow(r);
         const rowKey = buildLiteDiffRowKey(r);
-        const cols = rowColumnsHtml(r, useCharDiff, decoded, rowKey, expandedValueKeys);
+        const view = rowValueView(r, decoded, lineDiffEnabled);
         const identity = rowDisplayIdentity(r, decoded, options.fieldLabels);
-        const rowValuesExpanded = !!options.expandedRowKeys?.has(rowKey);
+        const rowOpen = detailByDefault !== toggledRowKeys.has(rowKey);
         const rowValuesId = `kus-dl-row-values-${rowKey}`;
+        const rowDetailId = `kus-dl-row-detail-${rowKey}`;
         const current = rowKey === options.currentRowKey;
         const typeKey = r.moved ? "moved" : r.type || "same";
         const factLabel = FACT_LABEL[typeKey] || TYPE_LABEL[typeKey] || typeKey;
@@ -22579,8 +22999,10 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         const positionalPath = /\[\d+\]/.test(String(r.path || ""));
         const ignoreAction = r.type !== "same" && r.path ? positionalPath ? '<span class="kus-dl-flag" title="並び替え後に別の対象を指す可能性があるため、自動で無視ルールには追加できません">並び順に依存（自動除外不可）</span>' : `<button type="button" class="kus-dl-row__action" data-kus-dl-ignore-path="${esc(r.path)}" title="この項目だけを次回比較から除外" aria-label="${esc(`${identity.title}を次回の比較から除外（無視ルールへ追加）`)}">次回から除外</button>` : "";
         const footerHtml = technicalHtml || ignoreAction ? `<div class="kus-dl-row__footer">${technicalHtml}${ignoreAction}</div>` : "";
-        const rowValuesAction = rowValuesExpanded ? "閉じる" : "確認";
-        parts.push(`<article class="kus-dl-row kus-dl-row--${esc(typeKey)}${current ? " is-current" : ""}" data-kus-dl-row-key="${esc(rowKey)}" tabindex="-1"${current ? ' aria-current="true"' : ""} aria-label="${esc(`${typeLabel2}・${factLabel}: ${identity.title}`)}"><div class="kus-dl-row__head"><div class="kus-dl-row__identity"><div class="kus-dl-row__headline">${typeBadge}<span class="kus-dl-row__title">${esc(identity.title)}</span>${flagHtml}</div>${identity.subtitle ? `<div class="kus-dl-row__subtitle">${esc(identity.subtitle)}</div>` : ""}</div></div>${contextHtml}<button type="button" class="kus-dl-row__mobile-toggle" data-kus-dl-mobile-row-toggle="${esc(rowKey)}" aria-expanded="${rowValuesExpanded ? "true" : "false"}" aria-controls="${esc(rowValuesId)}" aria-label="${esc(`${identity.title}の比較元・比較先の値を${rowValuesAction}`)}">比較元・比較先の値を${rowValuesAction}</button><div id="${esc(rowValuesId)}" class="kus-dl-row__cols${rowValuesExpanded ? " is-expanded" : ""}">${cols.left}${cols.right}</div>${footerHtml}</article>`);
+        const rowValuesAction = rowOpen ? "閉じる" : "表示";
+        const headHtml = `<div class="kus-dl-row__head"><div class="kus-dl-row__identity"><div class="kus-dl-row__headline">${typeBadge}<span class="kus-dl-row__title">${esc(identity.title)}</span>${flagHtml}</div>${identity.subtitle ? `<div class="kus-dl-row__subtitle">${esc(identity.subtitle)}</div>` : ""}</div><button type="button" class="kus-dl-row__toggle" data-kus-dl-row-toggle="${esc(rowKey)}" aria-expanded="${rowOpen ? "true" : "false"}" aria-controls="${esc(rowDetailId)}" aria-label="${esc(`${identity.title}の比較元・比較先の値を${rowValuesAction}`)}">値を${rowValuesAction}</button></div>`;
+        const bodyHtml = rowOpen ? `<div id="${esc(rowDetailId)}" class="kus-dl-row__detail">${contextHtml}<div id="${esc(rowValuesId)}" class="kus-dl-row__cols">${rowValuesHtml(r, useCharDiff, view, rowKey, expandedValueKeys)}</div>${footerHtml}</div>` : `${rowBriefHtml(view)}<div id="${esc(rowDetailId)}" class="kus-dl-row__detail" hidden></div>`;
+        parts.push(`<article class="kus-dl-row kus-dl-row--${esc(typeKey)}${current ? " is-current" : ""}${rowOpen ? " is-open" : ""}" data-kus-dl-row-key="${esc(rowKey)}" tabindex="-1"${current ? ' aria-current="true"' : ""} aria-label="${esc(`${typeLabel2}・${factLabel}: ${identity.title}`)}">${headHtml}${bodyHtml}</article>`);
       }
       parts.push("</div></details>");
     }
@@ -24065,7 +24487,15 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       ["stacked", "上下に比較（長文向け）"]
     ], "split");
     layoutSelect.setAttribute("aria-label", "差分一覧の比較レイアウト");
-    cardFilter.body.appendChild(makeFilterRow("表示", [makeFilterField("表示密度", densitySelect), makeFilterField("並べ方", layoutSelect), charDiffCb.label]));
+    const rowModeSelect = makeSelect([
+      ["list", "一覧（要点だけ）"],
+      ["detail", "詳細（値も表示）"]
+    ], "list");
+    rowModeSelect.setAttribute("aria-label", "差分の表示方法");
+    const lineDiffCb = makeCheck({ label: "行単位の差分", checked: true, help: "複数行の値（JS/CSS の本文、長い設定値）を行ごとに比べ、違う行とその前後だけを表示します" });
+    const displayRow = makeFilterRow("表示", [makeFilterField("表示方法", rowModeSelect), makeFilterField("表示密度", densitySelect), makeFilterField("並べ方", layoutSelect), charDiffCb.label, lineDiffCb.label]);
+    displayRow.classList.add("kus-dl-filter-row--display");
+    cardFilter.body.appendChild(displayRow);
     let filterRenderTimer;
     const resetResultPage = () => {
       resultLimit = RESULT_PAGE_SIZE;
@@ -24088,6 +24518,13 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       filterRenderTimer = window.setTimeout(rerenderFromFilter, 160);
     });
     charDiffCb.checkbox.addEventListener("change", () => {
+      if (cache) rerender();
+    });
+    lineDiffCb.checkbox.addEventListener("change", () => {
+      if (cache) rerender();
+    });
+    rowModeSelect.addEventListener("change", () => {
+      toggledRowKeys.clear();
       if (cache) rerender();
     });
     densitySelect.addEventListener("change", () => {
@@ -24255,7 +24692,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     let announceResultOverview = false;
     const collapsedSections = /* @__PURE__ */ new Set();
     const expandedValueKeys = /* @__PURE__ */ new Set();
-    const expandedRowKeys = /* @__PURE__ */ new Set();
+    const toggledRowKeys = /* @__PURE__ */ new Set();
     let importedSourceBundle = null;
     let importedTargetBundle = null;
     const jsonImporter = createLiteDiffJsonImporter(syncJsonImportControls);
@@ -24301,7 +24738,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       currentRowKey = "";
       collapsedSections.clear();
       expandedValueKeys.clear();
-      expandedRowKeys.clear();
+      toggledRowKeys.clear();
       summaryText = "";
       resetResultPage();
       setCompletionActionsVisible(false);
@@ -24530,7 +24967,9 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
             charDiff: charDiffCb.checkbox.checked,
             showResultList: showResultList.checkbox.checked,
             density: densitySelect.value,
-            layout: layoutSelect.value
+            layout: layoutSelect.value,
+            rowMode: rowModeSelect.value,
+            lineDiff: lineDiffCb.checkbox.checked
           }
         });
         downloadText(`差分比較条件_${nowStamp()}.json`, serializeDiffComparisonProfile(profile), "application/json;charset=utf-8");
@@ -24577,12 +25016,14 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
           showResultList.checkbox.checked = profile.display.showResultList;
           densitySelect.value = profile.display.density;
           layoutSelect.value = profile.display.layout;
+          rowModeSelect.value = profile.display.rowMode;
+          lineDiffCb.checkbox.checked = profile.display.lineDiff;
           cache = null;
           multiXlsxExports = [];
           currentRowKey = "";
           collapsedSections.clear();
           expandedValueKeys.clear();
-          expandedRowKeys.clear();
+          toggledRowKeys.clear();
           setCompletionActionsVisible(false);
           summaryText = "";
           resetResultPage();
@@ -24682,7 +25123,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       const nextDisabled = !queue.length || currentIndex === queue.length - 1;
       const incomplete = isIncompleteLiteDiff(cache);
       const progressLabel = position ? `${position} / 全${queue.length}件目` : `未選択 / 全${queue.length}件`;
-      return `<div class="kus-dl-contextbar" role="group" aria-label="比較方向と確認位置"><div class="kus-dl-contextlane kus-dl-contextlane--before" title="${esc(`${source.name} · ${source.environment}`)}"><span class="kus-dl-contextlane__role">BEFORE · 比較元</span><strong class="kus-dl-contextlane__name">${esc(source.name)}</strong></div><div class="kus-dl-progress${position ? "" : " kus-dl-progress--idle"} kus-dl-reviewbar__count" role="status" aria-live="polite" aria-atomic="true" aria-label="${esc(progressLabel + (incomplete ? "・比較不完全" : ""))}"><span class="kus-dl-progress__numbers"><strong class="kus-dl-progress__current">${position || "–"}</strong><span class="kus-dl-progress__total">/ ${queue.length}</span></span><span class="kus-dl-progress__label">${incomplete ? "比較不完全" : position ? "確認位置" : "未選択"}</span></div><div class="kus-dl-contextlane kus-dl-contextlane--after" title="${esc(`${target.name} · ${target.environment}`)}"><span class="kus-dl-contextlane__role">AFTER · 比較先</span><strong class="kus-dl-contextlane__name">${esc(target.name)}</strong></div></div><nav class="kus-dl-reviewbar" aria-label="差分レビュー操作"><span class="kus-dl-reviewbar__nav"><button type="button" class="kus-dl-navbtn" data-kus-dl-nav="prev" aria-keyshortcuts="K"${prevDisabled ? " disabled" : ""}>↑ 前 (K)</button><button type="button" class="kus-dl-navbtn" data-kus-dl-nav="next" aria-keyshortcuts="J"${nextDisabled ? " disabled" : ""}>次 (J) ↓</button></span><span class="kus-dl-reviewbar__tools"><button type="button" class="kus-dl-navbtn" data-kus-dl-sections="collapse">すべて折りたたむ</button><button type="button" class="kus-dl-navbtn" data-kus-dl-sections="expand">すべて展開</button></span><span class="kus-dl-reviewbar__filters" aria-label="有効なフィルタ">${renderActiveFilterChipsHtml()}</span></nav>`;
+      return `<div class="kus-dl-contextbar" role="group" aria-label="比較方向と確認位置"><div class="kus-dl-contextlane kus-dl-contextlane--before" title="${esc(`${source.name} · ${source.environment}`)}"><span class="kus-dl-contextlane__role">BEFORE · 比較元</span><strong class="kus-dl-contextlane__name">${esc(source.name)}</strong></div><div class="kus-dl-progress${position ? "" : " kus-dl-progress--idle"} kus-dl-reviewbar__count" role="status" aria-live="polite" aria-atomic="true" aria-label="${esc(progressLabel + (incomplete ? "・比較不完全" : ""))}"><span class="kus-dl-progress__numbers"><strong class="kus-dl-progress__current">${position || "–"}</strong><span class="kus-dl-progress__total">/ ${queue.length}</span></span><span class="kus-dl-progress__label">${incomplete ? "比較不完全" : position ? "確認位置" : "未選択"}</span></div><div class="kus-dl-contextlane kus-dl-contextlane--after" title="${esc(`${target.name} · ${target.environment}`)}"><span class="kus-dl-contextlane__role">AFTER · 比較先</span><strong class="kus-dl-contextlane__name">${esc(target.name)}</strong></div></div><nav class="kus-dl-reviewbar" aria-label="差分レビュー操作"><span class="kus-dl-reviewbar__nav"><button type="button" class="kus-dl-navbtn" data-kus-dl-nav="prev" aria-keyshortcuts="K"${prevDisabled ? " disabled" : ""}>↑ 前 (K)</button><button type="button" class="kus-dl-navbtn" data-kus-dl-nav="next" aria-keyshortcuts="J"${nextDisabled ? " disabled" : ""}>次 (J) ↓</button></span><span class="kus-dl-reviewbar__tools"><span class="kus-dl-reviewbar__modes" role="group" aria-label="差分の表示方法"><button type="button" class="kus-dl-navbtn" data-kus-dl-row-mode="list" aria-pressed="${rowModeSelect.value === "detail" ? "false" : "true"}">一覧</button><button type="button" class="kus-dl-navbtn" data-kus-dl-row-mode="detail" aria-pressed="${rowModeSelect.value === "detail" ? "true" : "false"}">詳細</button></span><button type="button" class="kus-dl-navbtn" data-kus-dl-sections="collapse">セクションを閉じる</button><button type="button" class="kus-dl-navbtn" data-kus-dl-sections="expand">セクションを開く</button></span><span class="kus-dl-reviewbar__filters" aria-label="有効なフィルタ">${renderActiveFilterChipsHtml()}</span></nav>`;
     }
     function focusAppliedFilter(key) {
       window.requestAnimationFrame(() => {
@@ -24757,7 +25198,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       const target = displayBundleSide(cache.targetBundle, "比較先");
       const more = rows.length > visibleRows.length ? `<div class="kus-dl-more"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-more>さらに ${Math.min(RESULT_PAGE_SIZE, rows.length - visibleRows.length)} 件表示（残り ${rows.length - visibleRows.length} 件）</button></div>` : "";
       resultBox.className = `kus-dl-result kus-dl-result--${densitySelect.value} kus-dl-result--${layoutSelect.value}`;
-      resultBox.innerHTML = overview + `<div class="kus-dl-sticky">${renderReviewBarHtml(rows, source, target)}</div>` + renderRowsHtml(visibleRows, charDiffCb.checkbox.checked, summary, rows, { collapsedSections, currentRowKey, expandedValueKeys, expandedRowKeys, fieldLabels: fieldLabelsFor(cache) }) + more;
+      resultBox.innerHTML = overview + `<div class="kus-dl-sticky">${renderReviewBarHtml(rows, source, target)}</div>` + renderRowsHtml(visibleRows, charDiffCb.checkbox.checked, summary, rows, { collapsedSections, currentRowKey, expandedValueKeys, rowMode: rowModeSelect.value === "detail" ? "detail" : "list", lineDiff: lineDiffCb.checkbox.checked, toggledRowKeys, fieldLabels: fieldLabelsFor(cache) }) + more;
       cardFilter.card.style.display = "block";
       filterDetails.style.display = "";
     }
@@ -24779,16 +25220,50 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         });
         return;
       }
-      const mobileRowToggle = target?.closest("[data-kus-dl-mobile-row-toggle]");
-      if (mobileRowToggle) {
-        const rowKey = mobileRowToggle.dataset.kusDlMobileRowToggle || "";
-        if (!rowKey) return;
-        if (expandedRowKeys.has(rowKey)) expandedRowKeys.delete(rowKey);
-        else expandedRowKeys.add(rowKey);
+      const rowModeButton = target?.closest("[data-kus-dl-row-mode]");
+      if (rowModeButton) {
+        const mode = rowModeButton.dataset.kusDlRowMode === "detail" ? "detail" : "list";
+        rowModeSelect.value = mode;
+        toggledRowKeys.clear();
         rerender();
         window.requestAnimationFrame(() => {
-          resultBox.querySelector(`[data-kus-dl-mobile-row-toggle="${rowKey}"]`)?.focus({ preventScroll: true });
+          resultBox.querySelector(`[data-kus-dl-row-mode="${mode}"]`)?.focus({ preventScroll: true });
         });
+        return;
+      }
+      const toggleRowValues = (rowKey) => {
+        if (!rowKey) return;
+        if (toggledRowKeys.has(rowKey)) toggledRowKeys.delete(rowKey);
+        else toggledRowKeys.add(rowKey);
+        rerender();
+        window.requestAnimationFrame(() => {
+          resultBox.querySelector(`[data-kus-dl-row-toggle="${rowKey}"]`)?.focus({ preventScroll: true });
+        });
+      };
+      const rowToggle = target?.closest("[data-kus-dl-row-toggle]");
+      if (rowToggle) {
+        toggleRowValues(rowToggle.dataset.kusDlRowToggle || "");
+        return;
+      }
+      const linesToggle = target?.closest("[data-kus-dl-lines-toggle]");
+      if (linesToggle) {
+        const rowKey = linesToggle.dataset.kusDlLinesToggle || "";
+        if (!rowKey) return;
+        const linesKey = `${rowKey}:lines`;
+        if (expandedValueKeys.has(linesKey)) expandedValueKeys.delete(linesKey);
+        else expandedValueKeys.add(linesKey);
+        rerender();
+        window.requestAnimationFrame(() => {
+          resultBox.querySelector(`[data-kus-dl-lines-toggle="${rowKey}"]`)?.focus({ preventScroll: true });
+        });
+        return;
+      }
+      const headArea = target?.closest(".kus-dl-row__head, .kus-dl-row__brief");
+      const interactive = target?.closest("button, a, summary, details, input, select, textarea, label");
+      if (headArea && !(interactive && headArea.contains(interactive))) {
+        const selection = window.getSelection();
+        if (selection && !selection.isCollapsed && selection.toString().trim()) return;
+        toggleRowValues(headArea.closest("[data-kus-dl-row-key]")?.dataset.kusDlRowKey || "");
         return;
       }
       const valueToggle = target?.closest("[data-kus-dl-value-toggle]");
@@ -25256,7 +25731,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       currentRowKey = "";
       collapsedSections.clear();
       expandedValueKeys.clear();
-      expandedRowKeys.clear();
+      toggledRowKeys.clear();
       setCompletionActionsVisible(false);
       setExportControlsEnabled(false);
       summaryText = "";
@@ -25414,7 +25889,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       currentRowKey = "";
       collapsedSections.clear();
       expandedValueKeys.clear();
-      expandedRowKeys.clear();
+      toggledRowKeys.clear();
       setCompletionActionsVisible(false);
       setExportControlsEnabled(false);
       summaryText = "";
@@ -25568,7 +26043,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       currentRowKey = "";
       collapsedSections.clear();
       expandedValueKeys.clear();
-      expandedRowKeys.clear();
+      toggledRowKeys.clear();
       setCompletionActionsVisible(false);
       setExportControlsEnabled(false);
       summaryText = "";

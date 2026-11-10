@@ -22,6 +22,7 @@
     "src/diff/filter.ts",
     "src/diff/engine.ts",
     "src/diff/enrich.ts",
+    "src/diff/line-diff.ts",
     "src/diff/export.ts",
     "src/diff/category-view.ts",
     "src/ui/components.ts",

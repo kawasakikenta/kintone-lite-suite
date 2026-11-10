@@ -22,7 +22,7 @@ describe('diff/comparison-profile', () => {
         unknownPreset: true,
         constructor: true
       },
-      display: { charDiff: false, showResultList: true, density: 'compact', layout: 'stacked', unsafe: 'discard' },
+      display: { charDiff: false, showResultList: true, density: 'compact', layout: 'stacked', rowMode: 'detail', lineDiff: false, unsafe: 'discard' },
       appId: 123,
       guestId: '9',
       sourceBundle: { secret: 'DO_NOT_EXPORT' },
@@ -41,7 +41,7 @@ describe('diff/comparison-profile', () => {
       ignoreKeys: 'revision, updatedAt',
       includeSame: true,
       normalizationPresetState: { viewOrder: true, permissionOrder: false },
-      display: { charDiff: false, showResultList: true, density: 'compact', layout: 'stacked' }
+      display: { charDiff: false, showResultList: true, density: 'compact', layout: 'stacked', rowMode: 'detail', lineDiff: false }
     });
     expect(JSON.stringify(input)).toBe(before);
     const serialized = JSON.stringify(profile);
@@ -70,7 +70,7 @@ describe('diff/comparison-profile', () => {
     expect(parsed.savedAt).toBe('2023-11-14T22:13:20.000Z');
     expect(parsed.scopes).toEqual(['layoutSettings']);
     expect(parsed.ignoreKeys).toBe('revision, creator');
-    expect(parsed.display).toEqual({ charDiff: true, showResultList: false, density: 'comfortable', layout: 'stacked' });
+    expect(parsed.display).toEqual({ charDiff: true, showResultList: false, density: 'comfortable', layout: 'stacked', rowMode: 'list', lineDiff: true });
     expect(serialized).not.toContain('appId');
   });
 
@@ -82,6 +82,36 @@ describe('diff/comparison-profile', () => {
     });
 
     expect(profile.display.layout).toBe('split');
+  });
+
+  it('saves the row mode and the line-by-line option, and reads an older display block with the defaults', () => {
+    const saved = parseDiffComparisonProfile(serializeDiffComparisonProfile({
+      name: '詳細表示',
+      scopes: ['customizeSettings'],
+      display: { rowMode: 'detail', lineDiff: false }
+    }));
+    expect(saved.display.rowMode).toBe('detail');
+    expect(saved.display.lineDiff).toBe(false);
+    expect(saved.version).toBe(1);
+
+    const older = parseDiffComparisonProfile({
+      kind: DIFF_COMPARISON_PROFILE_KIND,
+      version: 1,
+      name: '旧表示',
+      scopes: ['customizeSettings'],
+      display: { charDiff: false, showResultList: true, density: 'compact', layout: 'stacked' }
+    });
+    expect(older.display).toEqual({ charDiff: false, showResultList: true, density: 'compact', layout: 'stacked', rowMode: 'list', lineDiff: true });
+  });
+
+  it('falls back to the defaults for an unsupported row mode or a non-boolean line option', () => {
+    const profile = buildDiffComparisonProfile({
+      name: 'invalid display',
+      scopes: ['fieldSettings'],
+      display: { rowMode: 'table', lineDiff: 'yes' }
+    });
+    expect(profile.display.rowMode).toBe('list');
+    expect(profile.display.lineDiff).toBe(true);
   });
 
   it('safely parses a legacy minimal object and supplies optional defaults', () => {
@@ -97,7 +127,7 @@ describe('diff/comparison-profile', () => {
     expect(parsed.ignoreKeys).toBe('');
     expect(parsed.includeSame).toBe(false);
     expect(parsed.normalizationPresetState).toEqual({});
-    expect(parsed.display).toEqual({ charDiff: true, showResultList: true, density: 'standard', layout: 'split' });
+    expect(parsed.display).toEqual({ charDiff: true, showResultList: true, density: 'standard', layout: 'split', rowMode: 'list', lineDiff: true });
   });
 
   it('round-trips an exact ignore path whose entity name contains spaces', () => {
@@ -138,7 +168,7 @@ describe('diff/comparison-profile', () => {
     const profile = buildDiffComparisonProfile(input);
 
     expect(profile.includeSame).toBe(false);
-    expect(profile.display).toEqual({ charDiff: true, showResultList: true, density: 'standard', layout: 'split' });
+    expect(profile.display).toEqual({ charDiff: true, showResultList: true, density: 'standard', layout: 'split', rowMode: 'list', lineDiff: true });
     expect(profile.normalizationPresetState).toEqual({ viewOrder: true });
     expect(profile.ignoreKeys).toBe('');
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
