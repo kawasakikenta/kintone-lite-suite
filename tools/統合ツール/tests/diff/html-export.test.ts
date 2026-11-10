@@ -1886,6 +1886,165 @@ describe('diff/html export audit regressions', () => {
     expect(extractInlineScript(html)).toContain("REPORT_META.incompleteComparison ? ' no-diff--incomplete' : ''");
     expect(contrast('#0f766e', '#ffffff')).toBeGreaterThanOrEqual(4.5);
   });
+
+  // 生成した HTML の中の関数を取り出して実行する（次の関数の手前までを 1 つの関数として切り出す）。
+  function evalReportFunctions(script: string, names: string[], prelude = ''): Record<string, any> {
+    const functions = names.map((name) => {
+      const start = script.indexOf(`  function ${name}(`);
+      if (start < 0) throw new Error(`${name} was not found in generated HTML`);
+      const end = script.indexOf('\n  function ', start + 1);
+      return script.slice(start, end < 0 ? undefined : end);
+    }).join('\n');
+    return new Function(`${prelude}\n${functions}\nreturn { ${names.join(', ')} };`)();
+  }
+
+  it('marks a changed run of characters once and leaves dissimilar values unmarked', () => {
+    const script = extractInlineScript(buildAuditHtml());
+    const maxCells = Number(script.match(/const CHAR_DIFF_MAX_CELLS = (\d+);/)?.[1]);
+    const { buildCharDiff } = evalReportFunctions(script, ['escHtml', 'buildCharDiff'], `const CHAR_DIFF_MAX_CELLS = ${maxCells};`);
+
+    // 連続する文字は 1 つの印にまとめる（1 文字ずつ印を付けない）。
+    expect(buildCharDiff('"開発環境"', '"本番環境"')).toEqual({
+      left: '&quot;<mark class="cdel">開発</mark>環境&quot;',
+      right: '&quot;<mark class="cadd">本番</mark>環境&quot;'
+    });
+    expect(buildCharDiff('"営業案件管理（開発）"', '"営業案件管理"')).toEqual({
+      left: '&quot;営業案件管理<mark class="cdel">（開発）</mark>&quot;',
+      right: '&quot;営業案件管理&quot;'
+    });
+    // 表記だけの違いは、違う文字だけに印を付ける。
+    expect(buildCharDiff('"100"', '100')).toEqual({
+      left: '<mark class="cdel">&quot;</mark>100<mark class="cdel">&quot;</mark>',
+      right: '100'
+    });
+    // 変更に挟まれた 1 文字だけの一致は、前後とつなげる。
+    expect(buildCharDiff('"a,b,c"', '"x,y,z"')).toEqual({
+      left: '&quot;<mark class="cdel">a,b,c</mark>&quot;',
+      right: '&quot;<mark class="cadd">x,y,z</mark>&quot;'
+    });
+    // 共通部分が半分に満たない値は、文字単位の印を付けない（呼び出し側が値全体をそのまま表示する）。
+    expect(buildCharDiff('false', 'true')).toBeNull();
+    expect(buildCharDiff('"開発版"', '"本番運用中"')).toBeNull();
+    expect(buildCharDiff('"BLUE"', '"WHITE"')).toBeNull();
+    // 片方に文字を足しただけの違いは、共通部分が短くても足した文字に印を付ける。印の中の文字も HTML として解釈させない。
+    expect(buildCharDiff('"<b>案件情報</b>"', '"案件情報"')).toEqual({
+      left: '&quot;<mark class="cdel">&lt;b&gt;</mark>案件情報<mark class="cdel">&lt;/b&gt;</mark>&quot;',
+      right: '&quot;案件情報&quot;'
+    });
+  });
+
+  it('shows the fact that tells the rows apart first and keeps both facts on every row', () => {
+    const script = extractInlineScript(buildAuditHtml());
+    const { renderRowFacts } = evalReportFunctions(script, ['escHtml', 'rowExistenceLabel', 'rowDifferenceLabels', 'renderRowFacts']);
+    const chips = (row: any) => [...String(renderRowFacts(row)).matchAll(/<span class="([^"]+)"[^>]*>([^<]+)<\/span>/g)]
+      .map((match) => ({ primary: /\bfact-chip--primary\b/.test(match[1]), moved: /\bfact-chip--moved\b/.test(match[1]), text: match[2] }));
+
+    expect(chips({ type: 'changed' })).toEqual([
+      { primary: true, moved: false, text: '内容が異なる' },
+      { primary: false, moved: false, text: '両方に存在' }
+    ]);
+    expect(chips({ type: 'changed', moved: true })).toEqual([
+      { primary: true, moved: true, text: '並び順が異なる' },
+      { primary: false, moved: false, text: '両方に存在' }
+    ]);
+    expect(chips({ type: 'added' })).toEqual([
+      { primary: true, moved: false, text: '比較先のみに存在' },
+      { primary: false, moved: false, text: '片側のみ' }
+    ]);
+    expect(chips({ type: 'removed' })).toEqual([
+      { primary: true, moved: false, text: '比較元のみに存在' },
+      { primary: false, moved: false, text: '片側のみ' }
+    ]);
+    for (const row of [{ type: 'changed' }, { type: 'added' }, { type: 'removed' }, { type: 'same' }]) {
+      const html = String(renderRowFacts(row));
+      expect(html.match(/data-row-existence="/g)).toHaveLength(1);
+      expect(html.match(/data-row-difference="/g)).toHaveLength(1);
+    }
+  });
+
+  it('explains an order-only row instead of an empty side-by-side comparison', () => {
+    const script = extractInlineScript(buildAuditHtml());
+    const { renderValueArea, wrapLongValueHtml } = evalReportFunctions(script, [
+      'escHtml', 'safeText', 'issueSideLabel', 'buildLineDiffOps', 'buildCharDiff', 'isInlineText', 'renderInlineLane',
+      'renderDuoLaneHeader', 'shouldHideUnchangedDiffLines', 'activeViewSide', 'renderChangedDuo', 'renderChangedSolo',
+      'renderIdenticalValueNote', 'renderValueAreaOneSide', 'renderValueArea', 'wrapLongValueHtml', 'rowStateKey'
+    ], `const LINE_DIFF_MAX_CELLS = 1000000; const CHAR_DIFF_MAX_CELLS = 1000000;
+      let viewSideValue = 'both'; const expandedVals = new Set(['open-row']);
+      const document = { getElementById: () => ({ checked: true }) };`);
+    const layoutRow = { fields: [{ code: 'memo', type: 'SINGLE_LINE_TEXT' }], type: 'ROW' };
+    const moved = { _reviewKey: 'closed-row', type: 'changed', moved: true, left: layoutRow, right: layoutRow };
+
+    const closed = String(renderValueArea(moved, true));
+    expect(closed).toContain('内容は同じです。並び順だけが異なります。');
+    expect(closed).toContain('data-row-toggle="closed-row" aria-expanded="false">内容を表示 ▾');
+    expect(closed).not.toContain('変更行はありません');
+    expect(closed).not.toContain('memo');
+    // 長い値の折りたたみで、注記を隠さない。
+    const longMoved = { ...moved, left: { text: 'a'.repeat(2000) }, right: { text: 'a'.repeat(2000) } };
+    expect(String(wrapLongValueHtml(longMoved, 'NOTE'))).toBe('NOTE');
+    expect(String(wrapLongValueHtml({ type: 'changed', left: 'a'.repeat(2000), right: 'b'.repeat(2000) }, 'VALUE'))).toContain('長い設定値を表示');
+
+    const open = String(renderValueArea({ ...moved, _reviewKey: 'open-row' }, true));
+    expect(open).toContain('aria-expanded="true">内容を隠す ▴');
+    expect(open).toContain('&quot;memo&quot;');
+
+    // 値が違う行は、これまでどおり比較元と比較先を並べる。
+    const changed = String(renderValueArea({ _reviewKey: 'x', type: 'changed', left: '開発環境', right: '本番環境' }, true));
+    expect(changed).toContain('class="val-inline val-inline--lanes"');
+    expect(changed).toContain('<mark class="cdel">開発</mark>');
+    expect(changed).not.toContain('内容は同じです');
+    expect(script).toContain("restoreToggleFocus('data-row-toggle', key)");
+  });
+
+  it('keeps the row heading, its facts and the values compact without dropping the review contract', () => {
+    const html = buildAuditHtml();
+    const script = extractInlineScript(html);
+
+    // 見出しの下の 1 行に、違いの種類・理由・技術情報・関連設定をまとめる。
+    expect(script).toContain("'<span class=\"drow-facts\">' + renderRowFacts(row) + '</span>' + renderRowMeta(row)");
+    expect(script).toContain("'</div><div class=\"drow-meta\">' + html + '</div>'");
+    expect(script).not.toContain("+   '<span class=\"drow-facts\">' + renderRowFacts(row) + '</span>'");
+    expect(html).toContain('.drow-meta>details[open]{flex:1 1 100%}');
+    expect(html).toContain('.val-lane,body.diff-density-compact .val-lane{flex-direction:row;');
+    // 塗りの「確認して次へ」は現在の行だけにする（ほかの行は枠線だけ）。
+    expect(html).toContain('.row-review-next{border-color:var(--border);background:var(--card);color:var(--accent-strong)}');
+    expect(html).toContain('.drow--focus .row-review-next{border-color:var(--accent-solid-strong);background:var(--accent-solid);color:#fff}');
+    // 狭い画面の操作対象の大きさ（44px）は、行の詰め方より優先する。
+    expect(html).toMatch(/@media \(min-width:769px\)\{\s*\.drow-meta>details>summary\{min-height:24px\}/);
+    expect(html).toMatch(/@media \(max-width:768px\)\{\s*\.val-inline--lanes \.vi-arrow\{display:none\}/);
+
+    // 主表示のチップは、明暗どちらのテーマでも 4.5:1 以上にする。
+    const chipRule = (prefix: string, tone: string) => {
+      const escaped = `${prefix}.fact-chip--primary.fact-chip--${tone}`.replace(/[.]/g, '\\.');
+      const match = html.match(new RegExp(`(?:^|\\n)\\s*${escaped}\\{border-color:#[0-9a-f]{6};background:(#[0-9a-f]{6});color:(#[0-9a-f]{6})\\}`, 'i'));
+      if (!match) throw new Error(`${prefix}${tone} のチップの色が見つかりません`);
+      return contrast(match[2], match[1]);
+    };
+    for (const tone of ['added', 'removed', 'changed', 'moved']) {
+      expect(chipRule('', tone)).toBeGreaterThanOrEqual(4.5);
+      expect(chipRule('body.dark ', tone)).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it('keeps the sticky review bar to the type and navigation rows on wide screens', () => {
+    const html = buildAuditHtml();
+    const script = extractInlineScript(html);
+    const toolbar = script.slice(script.indexOf('  function buildToolbarHtml('), script.indexOf('  function sectionCountChips('));
+
+    // 件数は移動ナビの行に置く（見出しの行を追従させない）。
+    const nextIndex = toolbar.indexOf('data-diff-nav="next"');
+    const countsIndex = toolbar.indexOf('class="diff-scope-counts"');
+    const sortIndex = toolbar.indexOf('id="diffToolbarSort"');
+    expect(nextIndex).toBeGreaterThan(0);
+    expect(countsIndex).toBeGreaterThan(nextIndex);
+    expect(sortIndex).toBeGreaterThan(countsIndex);
+    expect(toolbar.match(/class="diff-scope-counts"/g)).toHaveLength(1);
+    // 同一行を収録していないレポートで、常に 0 件の「同じ」を並べない。
+    expect(toolbar).toContain("if (!hideSame && (s.same || typeFilterValue === 'same')) chips.push({ key: 'same'");
+    // 「条件を開く」を出す 560px 以下だけ、見出しの行を残す。
+    expect(html).toMatch(/@media \(min-width:561px\)\{\s*\.diff-toolbar-heading,\.active-filters--empty\{display:none\}/);
+    expect(html).toMatch(/@media \(max-width:560px\)\{\s*\.diff-toolbar-row--navigation>\.diff-scope-counts\{grid-column:1\/-1\}/);
+  });
 });
 
 
