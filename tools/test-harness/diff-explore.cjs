@@ -297,10 +297,31 @@ async function runSingle(page, { source = '101', target = '202', sourcePreview =
   return { elapsed, htmlDownload: html };
 }
 
-/** パネルの結果（概要・行）を読み取る。 */
+/**
+ * パネルの結果（概要・行）を読み取る。
+ * 行の値は「詳細」の表示（比較元・比較先の値が開いた状態）で読み、読んだ後に元の表示方法へ戻す。
+ * 既定の「一覧」は値を閉じて要点だけを出すため、値の取りこぼしを調べる検査は詳細で行う。
+ * list には、読み取り前（利用者が最初に見る状態）の行の開閉と要点の数を入れる。
+ */
 async function readPanel(page) {
   return page.locator('#kus-diff-lite').evaluate((rootElement) => {
     const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+    const modeSelect = rootElement.querySelector('select[aria-label="差分の表示方法"]');
+    const originalMode = modeSelect?.value || '';
+    const list = {
+      mode: originalMode,
+      rows: rootElement.querySelectorAll('[data-kus-dl-row-key]').length,
+      closed: rootElement.querySelectorAll('[data-kus-dl-row-toggle][aria-expanded="false"]').length,
+      briefs: rootElement.querySelectorAll('.kus-dl-row__brief').length,
+      briefText: [...rootElement.querySelectorAll('.kus-dl-row__brief')].slice(0, 400).map((element) => norm(element.textContent)),
+      valueBlocks: rootElement.querySelectorAll('.kus-dl-row__cols').length
+    };
+    const setMode = (mode) => {
+      if (!modeSelect || modeSelect.value === mode) return;
+      modeSelect.value = mode;
+      modeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    setMode('detail');
     const statusElement = [...rootElement.querySelectorAll('[data-tone]')].find((element) => ['neutral', 'info', 'busy', 'ok', 'warn', 'err'].includes(element.getAttribute('data-tone') || ''));
     const overview = rootElement.querySelector('[data-kus-dl-overview]');
     const verdict = rootElement.querySelector('[data-kus-dl-completeness]');
@@ -312,9 +333,10 @@ async function readPanel(page) {
     const rows = [...rootElement.querySelectorAll('details[data-kus-dl-section-key]')].flatMap((section) => [...section.querySelectorAll('[data-kus-dl-row-key]')].map((row) => ({
       section: section.getAttribute('data-kus-dl-section-key'),
       key: row.getAttribute('data-kus-dl-row-key'),
-      text: String(row.innerText || '').replace(/\n+/g, ' | ')
+      text: String(row.innerText || '').replace(/\n+/g, ' | ').replace(/ \| 値を(?:表示|閉じる)(?= \| |$)/, '')
     })));
-    return {
+    const result = {
+      list,
       statusTone: statusElement?.getAttribute('data-tone') || '',
       statusText: norm(statusElement?.textContent),
       completeness: verdict?.getAttribute('data-kus-dl-completeness') || '',
@@ -322,6 +344,8 @@ async function readPanel(page) {
       overviewText: norm(overview?.textContent),
       metrics, total, sections, alerts, rows
     };
+    setMode(originalMode);
+    return result;
   });
 }
 
@@ -433,11 +457,13 @@ const scenario = (name, fn, options = {}) => scenarios.push({ name, fn, ...optio
 
 let browser;
 const shotsDir = () => { fs.mkdirSync(OUT, { recursive: true }); return OUT; };
-/** 行の見出し（セクション・種別・見出し）。値や添字を含めず、条件を変えても同じ差を同じ行と見なせるようにする。 */
+/**
+ * 行の見出し（セクション・種別・見出し）。値や添字を含めず、条件を変えても同じ差を同じ行と見なせるようにする。
+ * 見出しは「場所と項目」で、値（A → B）を含まない（値は要点と、開いた行の比較元・比較先に出る）。
+ */
 const rowKeyOf = (row) => {
   const parts = row.text.split(' | ');
-  const headline = /^(比較元|比較先)/.test(parts[3] || '') ? parts[2].replace(/（名前: .*$/, '') : parts[3];
-  return `${row.section}|${parts[0]}|${String(headline).replace(/行 #\d+/g, '行')}`;
+  return `${row.section}|${parts[0]}|${String(parts[2]).replace(/（名前: .*$/, '').replace(/行 #\d+/g, '行')}`;
 };
 /** keys の多重集合から、other の多重集合を引いた残りの行。 */
 const rowsNotIn = (rows, other) => {
@@ -464,6 +490,14 @@ scenario('baseline: 業務アプリの全セクション（1対1）', async () =
   const formRows = panel.rows.filter((row) => row.section === 'formSettings').length;
   assert.ok(formRows > 0 && panel.overviewText.includes(`フォーム設定の ${formRows} 件は、フィールド設定・レイアウト設定の変更の再掲です`), `旧フォーム設定が再掲であることが概要に示されていません（${formRows} 件）`);
   checkReadableText('baseline', panel.overviewText + '\n' + panel.rows.map((row) => row.text).join('\n'));
+  // 既定の「一覧」: 行は閉じていて値を描画せず、変更の要点だけを出す（差分のある項目を 1 画面で見渡せる）
+  assert.equal(panel.list.mode, 'list', '差分の表示方法の既定が一覧になっていません');
+  assert.ok(panel.list.rows > 0 && panel.list.closed === panel.list.rows, `一覧の初期状態で値が開いている行があります（${panel.list.closed} / ${panel.list.rows}）`);
+  assert.equal(panel.list.valueBlocks, 0, '一覧の初期状態で、閉じた行の値を描画しています');
+  assert.ok(panel.list.briefs >= panel.list.rows * 0.8, `閉じた行に変更の要点がほとんど出ていません（${panel.list.briefs} / ${panel.list.rows}）`);
+  checkReadableText('baseline-list', panel.list.briefText.join('\n'));
+  assert.ok(panel.list.briefText.some((text) => /.+→.+/.test(text)), '要点に「変更前 → 変更後」の形が出ていません');
+  ok('baseline: 既定は一覧で、行は閉じて要点（変更前 → 変更後）だけを出す');
   ok('baseline: 画面の件数・完了メッセージ・文言');
 
   const saved = await exportOutputs(page, path.join(OUT, 'baseline'), 'baseline');
@@ -530,10 +564,10 @@ scenario('exclude: 環境固有IDを比較から除外', async () => {
   const removed = rowsNotIn(baselineRows, panel.rows);
   const added = rowsNotIn(panel.rows, baselineRows);
   assert.deepEqual(added.map((row) => row.text.slice(0, 80)), [], '除外すると、新しい差が現れています');
-  const envPattern = /(ビューID|グラフID|アクションID|対象アプリ|参照するアプリ|アプリID: 101 → 202|"301" \| 比較先 \| "401")/;
+  const envPattern = /(ビューID|グラフID|アクションID|対象アプリ|参照するアプリ|アプリ情報変更 \| アプリID \| 比較元 \| 101 \| 比較先 \| 202|"301" \| 比較先 \| "401")/;
   const unexpected = removed.filter((row) => !envPattern.test(row.text));
   assert.deepEqual(unexpected.map((row) => row.text.slice(0, 100)), [], '環境固有ID以外の差が消えています');
-  const leftovers = panel.rows.filter((row) => /(ビューID|グラフID|アクションID)/.test(row.text) || (row.section !== 'pluginSettings' && /301 → 401|302 → 402/.test(row.text)));
+  const leftovers = panel.rows.filter((row) => /(ビューID|グラフID|アクションID)/.test(row.text) || (row.section !== 'pluginSettings' && /比較元 \| "?30[12]"? \| 比較先 \| "?40[12]"?( \||$)/.test(row.text)));
   assert.deepEqual(leftovers.map((row) => row.text.slice(0, 100)), [], '環境固有IDの差が残っています');
   // 説明どおり、フィールドコード・プラグイン設定・一覧条件は除外されない
   assert.ok(panel.rows.some((row) => row.section === 'pluginSettings' && /sourceApp/.test(row.text)), 'プラグイン設定内のIDまで除外されています（説明では比較する）');
@@ -653,8 +687,8 @@ scenario('scale: フィールド 300・差分 1000 件規模', async () => {
     const { elapsed } = await runSingle(page);
     const panel = await readPanel(page);
     const t0 = Date.now();
-    await page.getByRole('button', { name: 'すべて展開' }).first().click();
-    await page.getByRole('button', { name: 'すべて折りたたむ' }).first().click();
+    await page.getByRole('button', { name: 'セクションを開く' }).first().click();
+    await page.getByRole('button', { name: 'セクションを閉じる' }).first().click();
     const expandMs = Date.now() - t0;
     const saved = await exportOutputs(page, path.join(OUT, `scale-${changes}`), `scale-${changes}`);
     const exportMs = Date.now() - t0 - expandMs;
