@@ -1101,6 +1101,47 @@ function registerScenarios(scenario, ctx) {
     ok('source: 選択と修正の保存・読み込みと、反映後の内容の確認（配布物。保存 → 読み込み直し → 抽出 → 読み込み → 実行 → 確認）');
   });
 
+  scenario('source: 参照先変換の候補（反映先のルックアップが別のアプリを指す）を示し、追加して抽出し直す（配布物）', async () => {
+    const lookupWorld = () => {
+      const world = businessWorld();
+      // 反映先の業務アプリは、マスタ（301）を指す参照先をすべて本番のマスタ（401）へ向けている
+      world.apps[1].production = JSON.parse(JSON.stringify(world.apps[1].production).replace(/"app":"301"/g, '"app":"401"'));
+      world.apps.push(masterApp({ id: '401', name: '取引先マスタ（本番）' }));
+      return world;
+    };
+    const notice = stage => page.locator(`[data-lookup-candidates="${stage}"]`);
+    const lookupText = () => page.getByLabel('参照先変換（旧AppID → 新AppID）', { exact: true });
+
+    // 候補を入れないまま進む: 段階 2 と最終確認で警告し、書き込みでは反映先の参照先が反映元のアプリに書き換わる
+    await reset(lookupWorld());
+    await extract();
+    assert.equal(await notice('select').isVisible(), true, '段階 2 に候補を警告で示す');
+    assert.match(await page.locator('[data-lookup-candidate="301>401"]').innerText(), /^301（取引先マスタ） → 401（取引先マスタ（本番））（ルックアップ「.*customer_code.*」/);
+    await shot('source-lookup-candidates');
+    await toEdit(); await toConfirm();
+    assert.equal(await notice('confirm').isVisible(), true, '最終確認にも警告を示す');
+    await runSource();
+    const unmapped = await assertOnlyAllowedWrites('候補を入れないまま');
+    const fieldWrites = unmapped.writes.filter(write => write.body.properties?.customer_code);
+    assert.ok(fieldWrites.some(write => write.body.properties.customer_code.lookup?.relatedApp?.app === '301'), '候補を入れないと、反映先の参照先が反映元のアプリに書き換わる');
+
+    // 候補を追加して抽出し直す: 反映先の参照先のまま
+    await reset(lookupWorld());
+    await extract();
+    await notice('select').locator('[data-lookup-apply]').click();
+    await idle();
+    assert.equal(await lookupText().inputValue(), '301 → 401');
+    assert.equal(await notice('select').count(), 0, '追加すると警告は消える');
+    assert.match(await statusText(), /^参照先変換に候補 1 件を追加して、差分を取り直しました。/);
+    await toEdit(); await toConfirm();
+    assert.equal(await notice('confirm').count(), 0);
+    await runSource();
+    const mapped = await assertOnlyAllowedWrites('候補を追加して反映');
+    assert.equal(mapped.writes.some(write => write.body.properties?.customer_code?.lookup?.relatedApp?.app === '301'), false, '反映元の参照先は書き込まない');
+    assert.equal(mapped.apps['202'].prod.fieldSettings.properties.customer_code.lookup.relatedApp.app, '401', '反映先の参照先のまま');
+    ok('source: 参照先変換の候補を示し、追加して抽出し直すと反映先の参照先のまま反映される（配布物）');
+  });
+
   /**
    * 選び方の組み合わせを 1 つ試す。画面が事前に止めるか、止めない場合は書き込みと結果の見え方がどうなるかを返す。
    */

@@ -1478,5 +1478,129 @@ module.exports = async function verifyDeploySourceEngine({ page, script, out, on
     ok('source engine: verify the reflected content after the run');
   }
 
+  // =========================================================================
+  // s. 参照先変換の候補（反映元と反映先で、同じコードのルックアップが別のアプリを指す）
+  // =========================================================================
+  if (wanted('s')) {
+    const lastDownload = () => page.evaluate(async () => {
+      const list = window.__engine.downloads, item = list[list.length - 1];
+      return item ? { name: item.name, text: await item.blob.text() } : null;
+    });
+    const lookupOf = (app, code = 'cust') => ({ relatedApp: { app, ...(code ? { code } : {}) }, relatedKeyField: 'code', fieldMappings: [], lookupPickerFields: [], filterCond: '', sort: '' });
+    const lookupWorld = (extra = {}) => ({
+      apps: [
+        sourceApp({
+          production: stripUndefined({
+            fieldSettings: props(text('name', '顧客名'), text('customer', '顧客', { lookup: lookupOf('301', '') }), ...(extra.second ? [text('product', '商品', { lookup: lookupOf('301', '') })] : [])),
+            layoutSettings: { layout: [rowOf('name'), rowOf('customer')] },
+            viewSettings: { views: {} }
+          })
+        }),
+        targetApp({
+          production: stripUndefined({
+            fieldSettings: props(text('name', '取引先'), text('customer', '顧客', { lookup: lookupOf('401') }), ...(extra.second ? [text('product', '商品', { lookup: lookupOf('402') })] : [])),
+            layoutSettings: { layout: [rowOf('name')] },
+            viewSettings: { views: {} }
+          })
+        }),
+        { id: '301', name: '顧客台帳（開発）', prodRevision: '1', previewRevision: '1' },
+        { id: '401', name: '顧客台帳', prodRevision: '1', previewRevision: '1' },
+        { id: '402', name: '商品台帳', prodRevision: '1', previewRevision: '1' }
+      ]
+    });
+    const notice = stage => page.locator(`[data-lookup-candidates="${stage}"]`);
+    const lookupText = () => page.getByLabel('参照先変換（旧AppID → 新AppID）', { exact: true });
+    const relatedAppOf = body => body.properties.customer.lookup.relatedApp;
+
+    // --- 現状: 参照先変換が空のまま進むと、反映先の参照先が反映元のアプリに書き換わる。段階 2 と最終確認で警告し、記録に残す
+    await reset(lookupWorld());
+    await extract();
+    assert.equal(await notice('select').isVisible(), true, '段階 2 に候補を警告で示す');
+    assert.match(await notice('select').innerText(), /^参照先変換の候補があります\n反映元と反映先で、ルックアップ・関連レコード一覧・アクションの参照先アプリが違います。参照先変換に入れずに反映すると、反映先の参照先が反映元のアプリに書き換わります。/);
+    assert.match(await page.locator('[data-lookup-candidate="301>401"]').innerText(), /^301（顧客台帳（開発）） → 401（顧客台帳）（ルックアップ「.*customer.*」）$/);
+    assert.equal(await notice('select').locator('[data-lookup-apply]').innerText(), '候補を参照先変換に追加して差分を取り直す');
+    assert.equal(await page.locator('[data-lookup-conflict]').count(), 0);
+    await shot('s-select-candidates');
+    await toEdit(); await toConfirm();
+    const confirmNotice = notice('confirm');
+    assert.equal(await confirmNotice.isVisible(), true, '最終確認にも同じ警告を示す');
+    assert.match(await confirmNotice.innerText(), /候補を入れないまま反映すると、本番の参照先が反映元のアプリに書き換わります。/);
+    assert.equal(await confirmNotice.locator('[data-lookup-apply]').count(), 0, '最終確認には追加の操作を出さない');
+    const order = await page.evaluate(() => { const a = document.querySelector('[data-confirm="lookup"]'), b = document.querySelector('[data-confirm="pending"]'); return !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING); });
+    assert.equal(order, true, '未公開の変更の了承の近く（その前）に置く');
+    await page.locator('[data-confirm="lookup"]').scrollIntoViewIfNeeded();
+    await shot('s-confirm-candidates');
+    await run();
+    const unmapped = await assertOnlyAllowedWrites('s 候補を入れないまま');
+    const unmappedWrite = unmapped.writes.find(write => write.body.properties?.customer);
+    assert.equal(relatedAppOf(unmappedWrite.body).app, '301', '候補を入れないと、反映先の参照先が反映元のアプリに書き換わる');
+    assert.equal(unmapped.apps['202'].production.fieldSettings.properties.customer.lookup.relatedApp.app, '301');
+    await button('記録をMarkdownで保存').click();
+    const record = (await lastDownload()).text;
+    assert.match(record, /## 注意: 参照先変換の候補\r?\n\r?\n- 反映元と反映先で、ルックアップ・関連レコード一覧・アクションの参照先アプリが違います。/);
+    assert.match(record, /- 候補: 301 → 401（ルックアップ「.*customer.*」）/);
+    await button('結果JSONを保存').click();
+    assert.deepEqual(JSON.parse((await lastDownload()).text).lookupCandidates.candidates.map(item => [item.from, item.to]), [['301', '401']]);
+
+    // --- 候補を追加して抽出し直す: 反映先の参照先はそのまま。選択（レイアウトを外した状態）は引き継ぐ
+    await reset(lookupWorld());
+    await extract();
+    await selectNone('layoutSettings');
+    await notice('select').locator('[data-lookup-apply]').click();
+    await idle();
+    assert.equal(await tab('差分を選ぶ').getAttribute('aria-selected'), 'true');
+    assert.equal(await lookupText().inputValue(), '301 → 401', '候補が参照先変換へ入る');
+    assert.equal(await notice('select').count(), 0, '追加すると候補の警告は消える');
+    assert.match(await statusText(), /^参照先変換に候補 1 件を追加して、差分を取り直しました。差分のある項目/);
+    assert.match(await statusText(), /前回の選択 \d+ 件を引き継ぎました。/, '参照先変換を変えても、選択は引き継ぐ');
+    assert.equal(await page.locator('[data-carry-over]').isVisible(), true);
+    assert.match(await selectCount('layoutSettings').innerText(), /^選んだ変更 0\//, '外したレイアウトは外したまま');
+    await toEdit(); await toConfirm();
+    assert.equal(await notice('confirm').count(), 0, '候補を入れたときは最終確認に警告を出さない');
+    await run();
+    const mapped = await assertOnlyAllowedWrites('s 候補を追加');
+    assert.equal(mapped.writes.some(write => write.body.properties?.customer?.lookup), false, '参照先が同じになったので、ルックアップは書き込まない');
+    assert.ok(mapped.writes.some(write => write.body.properties?.name), '表示名などの変更は書き込む');
+    assert.equal(mapped.apps['202'].production.fieldSettings.properties.customer.lookup.relatedApp.app, '401');
+    await button('記録をMarkdownで保存').click();
+    assert.doesNotMatch((await lastDownload()).text, /参照先変換の候補/, '入れたときは記録に注意を残さない');
+
+    // --- 入力済みの参照先変換は上書きしない。入力済みの旧ID は候補にしない
+    await reset(lookupWorld());
+    await button('詳細設定…').click();
+    await lookupText().fill('301 → 402');
+    await page.getByRole('button', { name: '詳細設定を閉じる', exact: true }).click();
+    await page.waitForFunction(() => !document.querySelector('dialog[open]'));
+    await extract();
+    assert.equal(await notice('select').count(), 0, '入力済みの旧ID は候補にしない');
+    assert.equal(await lookupText().inputValue(), '301 → 402');
+
+    // --- 食い違い（同じ旧ID に反映先の参照先が複数）: 自動では入れず、食い違いを示す
+    await reset(lookupWorld({ second: true }));
+    await extract();
+    assert.match(await page.locator('[data-lookup-conflict="301"]').innerText(), /^301（顧客台帳（開発）） → 401（顧客台帳） または 402（商品台帳）：反映先の参照先が一致していません/);
+    assert.equal(await page.locator('[data-lookup-candidate]').count(), 0);
+    assert.equal(await notice('select').locator('[data-lookup-apply]').count(), 0, '食い違いだけのときは追加の操作を出さない');
+    assert.equal(await lookupText().inputValue(), '', '食い違いは参照先変換に入れない');
+    await toEdit(); await toConfirm();
+    assert.equal(await page.locator('[data-confirm="lookup"] [data-lookup-conflict="301"]').count(), 1, '最終確認にも食い違いを示す');
+
+    // --- 320〜1440px のはみ出し・キーボードだけで追加して抽出し直せる
+    await reset(lookupWorld());
+    await extract();
+    for (const width of [320, 390, 768, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      const overflow = await page.evaluate(() => { const canvas = document.querySelector('.kus-dp-canvas'); return canvas.scrollWidth - canvas.clientWidth; });
+      assert.ok(overflow <= 1, `${width}px: 参照先変換の候補が横にはみ出す（${overflow}px）`);
+      if (width === 320) await shot('s-select-candidates-320');
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await notice('select').locator('[data-lookup-apply]').focus();
+    await page.keyboard.press('Enter');
+    await idle();
+    assert.equal(await lookupText().inputValue(), '301 → 401', 'キーボードだけで候補を追加して抽出し直せる');
+    ok('source engine: lookup map candidates are shown, added with re-extraction, and recorded when left out');
+  }
+
   return checks;
 };

@@ -25,6 +25,8 @@ import {
 import { hasJsonOverride, isChangeSelected, selectedCount, type SelectionResult, type SourceSession } from '../deploy/sourceSession.js';
 import type { SelectableChange } from '../reflect/selectionTypes.js';
 import type { ReflectTargetPending } from '../reflect/targetPending.js';
+import type { LookupMapCandidates } from '../reflect/lookupCandidates.js';
+import { LOOKUP_APPLY_LABEL, LOOKUP_CANDIDATES_CONFIRM_TEXT, LOOKUP_CANDIDATES_TEXT, LOOKUP_CANDIDATES_TITLE, describeLookupConflict, describeSourceLookupCandidate, type LookupNameOf } from '../deploy/sourceLookup.js';
 import type { ReflectTargetDeployStatus } from '../tabs/reflect-standalone.js';
 import { attachCardHelp, makeButton, makeCard, makeInput, makeNote, makeSelect } from './litePanelTheme.js';
 import { el, firstLines, setButtonText } from './deployProgressView.js';
@@ -46,6 +48,8 @@ export interface SelectViewHost {
   notify(message: string): void;
   /** 抽出結果が現在の入力と一致しているか */
   isFresh(): boolean;
+  /** 参照先変換の候補の表示（無ければ null）。apply があれば「候補を参照先変換に追加して差分を取り直す」を出す */
+  lookupNotice(): { candidates: LookupMapCandidates; nameOf: LookupNameOf; apply?: () => void } | null;
 }
 
 export interface SelectView {
@@ -71,6 +75,38 @@ export function renderTargetPending(host: HTMLElement, pending: ReflectTargetPen
     box.className = `kus-ds-note kus-ds-note--${pending.state === 'unknown' ? 'info' : 'ok'}${emphasis ? '' : ' kus-ds-note--quiet'}`;
     const title = pending.state === 'clean' ? '✓ 未公開の変更なし' : pending.state === 'own' ? '✓ 未公開の変更はこのツールの反映分だけ' : 'ⓘ 未公開の変更は未確認';
     box.append(el('strong', '', title), text);
+  }
+  host.appendChild(box);
+  return box;
+}
+
+/**
+ * 参照先変換の候補の表示（段階 2 と最終確認で共通）。入れずに本番まで反映すると、反映先の参照先が反映元のアプリに書き換わるため、警告色で示す。
+ * 候補は「反映先の現在の設定がそうなっている」ことだけが根拠。食い違うものは自動では入れない。
+ */
+export function renderLookupCandidates(host: HTMLElement, candidates: LookupMapCandidates, options: { nameOf: LookupNameOf; apply?: () => void; confirm?: boolean }): HTMLElement {
+  const box = el('div', 'kus-ds-note kus-ds-note--warn');
+  box.dataset.lookupCandidates = options.confirm ? 'confirm' : 'select';
+  box.append(el('strong', '', LOOKUP_CANDIDATES_TITLE), el('span', '', LOOKUP_CANDIDATES_TEXT));
+  const list = el('ul', 'kus-ds-card__problems');
+  list.dataset.lookupCandidateList = 'true';
+  for (const candidate of candidates.candidates) {
+    const item = el('li', '', describeSourceLookupCandidate(candidate, options.nameOf));
+    item.dataset.lookupCandidate = `${candidate.from}>${candidate.to}`;
+    list.appendChild(item);
+  }
+  for (const conflict of candidates.conflicts) {
+    const item = el('li', '', describeLookupConflict(conflict, options.nameOf));
+    item.dataset.lookupConflict = conflict.from;
+    list.appendChild(item);
+  }
+  box.appendChild(list);
+  if (options.confirm) box.appendChild(el('span', '', LOOKUP_CANDIDATES_CONFIRM_TEXT));
+  if (options.apply && candidates.candidates.length) {
+    const apply = makeButton(LOOKUP_APPLY_LABEL, 'sub');
+    apply.dataset.lookupApply = 'true';
+    apply.addEventListener('click', options.apply);
+    box.appendChild(apply);
   }
   host.appendChild(box);
   return box;
@@ -345,6 +381,8 @@ export function createSelectView(host: SelectViewHost): SelectView {
     attachCardHelp(summaryCard.card);
     summaryHost.append(summaryCard.card);
     renderTargetPending(summaryHost, session.preview.targetPending);
+    const lookup = host.lookupNotice();
+    if (lookup) renderLookupCandidates(summaryHost, lookup.candidates, { nameOf: lookup.nameOf, apply: lookup.apply });
     renderTargetDeployStatus(summaryHost, session.preview.targetDeployStatus);
   }
 

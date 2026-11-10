@@ -13,6 +13,8 @@ import type { ReflectTargetPending } from '../reflect/targetPending.js';
 import { countOutcomes, describeDeployMessage, describeDeployStatus, describeRunResult, formatDeployApp } from './display.js';
 import { buildDeployResultJson, type DeployResultJson } from './report.js';
 import { describeDeploySkippedFollowUp, describeSourceResult, sourceUndoGuidance, summarizeItemKinds, type SourceResultMessage } from './sourceDisplay.js';
+import type { LookupMapCandidates } from '../reflect/lookupCandidates.js';
+import { LOOKUP_CANDIDATES_TEXT, describeLookupConflict, describeSourceLookupCandidate } from './sourceLookup.js';
 import { describeVerifyResult, verifySideFor, verifyState, type SourceVerifyResult, type VerifyState } from './sourceVerify.js';
 import type { SourceDeployGoal, SourceDeployResult } from './sourceTypes.js';
 
@@ -52,6 +54,8 @@ export interface SourceRecordInput {
   preserveTargetOnly: boolean;
   lookupMap: Record<string, string>;
   targetPending?: ReflectTargetPending;
+  /** 実行したときに、参照先変換に入れないまま反映した、参照先アプリの違い（候補・食い違い） */
+  lookupCandidates?: LookupMapCandidates;
   allowPendingChanges?: boolean;
   /** 実行した項目の選択・修正の内容 */
   sections: readonly SourceRecordSection[];
@@ -125,6 +129,15 @@ export function buildSourceDeployRecordMarkdown(input: SourceRecordInput): strin
     for (const file of backup?.unavailableFiles || []) lines.push(`  - 本体を保存できなかったファイル: App ${esc(file.appId)} / ${esc(file.name)}（${esc(file.reason)}）`);
   }
   lines.push(`- 取り消し方: ${esc(sourceUndoGuidance(input.goal, input.targetPending))}`, '');
+
+  const candidates = input.lookupCandidates;
+  if (candidates && (candidates.candidates.length || candidates.conflicts.length)) {
+    lines.push('## 注意: 参照先変換の候補', '');
+    lines.push(`- ${esc(LOOKUP_CANDIDATES_TEXT)}`);
+    for (const candidate of candidates.candidates) lines.push(`- 候補: ${esc(describeSourceLookupCandidate(candidate))}`);
+    for (const conflict of candidates.conflicts) lines.push(`- 食い違い（自動では入れません）: ${esc(describeLookupConflict(conflict))}`);
+    lines.push('');
+  }
 
   lines.push('## 項目別の結果', '');
   lines.push('| 項目 | 選んだ変更 | 修正した値 | 結果 | 理由 |');
@@ -225,6 +238,8 @@ export interface SourceDeployResultJson {
   deploySummary?: ReturnType<typeof countOutcomes>;
   /** 反映後の内容の確認（確認していれば） */
   verification?: SourceVerifyResultJson;
+  /** 参照先変換に入れないまま反映した、参照先アプリの違い（あれば） */
+  lookupCandidates?: LookupMapCandidates;
 }
 
 export interface SourceVerifyResultJson extends SourceVerifyResult {
@@ -233,7 +248,7 @@ export interface SourceVerifyResultJson extends SourceVerifyResult {
   message: string;
 }
 
-export function buildSourceDeployResultJson(input: Pick<SourceRecordInput, 'goal' | 'source' | 'target' | 'sections' | 'startedAt' | 'finishedAt' | 'result' | 'verification'>): SourceDeployResultJson {
+export function buildSourceDeployResultJson(input: Pick<SourceRecordInput, 'goal' | 'source' | 'target' | 'sections' | 'startedAt' | 'finishedAt' | 'result' | 'verification' | 'lookupCandidates'>): SourceDeployResultJson {
   const { result } = input;
   return {
     kind: 'kintone-source-deploy-result',
@@ -255,6 +270,7 @@ export function buildSourceDeployResultJson(input: Pick<SourceRecordInput, 'goal
     },
     ...(result.deploy ? { deploy: buildDeployResultJson(result.deploy), deploySummary: countOutcomes(result.deploy.apps) } : {}),
     ...(result.deploySkipped ? { deploySkipped: result.deploySkipped } : {}),
+    ...(input.lookupCandidates && (input.lookupCandidates.candidates.length || input.lookupCandidates.conflicts.length) ? { lookupCandidates: input.lookupCandidates } : {}),
     ...(input.verification ? { verification: { ...input.verification, state: verifyState(input.verification), message: describeVerifyResult(input.verification).text } } : {})
   };
 }
