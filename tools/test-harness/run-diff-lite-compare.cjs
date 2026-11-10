@@ -418,6 +418,11 @@ async function inspectPanel(page) {
         .map((element) => element.getAttribute('data-kus-dl-step') || ''),
       technicalDetails: technicalDetails.length,
       technicalDetailsCollapsed: technicalDetails.filter((element) => !element.open).length,
+      rowToggles: root.querySelectorAll('[data-kus-dl-row-toggle]').length,
+      rowTogglesOpen: root.querySelectorAll('[data-kus-dl-row-toggle][aria-expanded="true"]').length,
+      rowBriefs: root.querySelectorAll('.kus-dl-row__brief').length,
+      valueBlocks: root.querySelectorAll('.kus-dl-row__cols').length,
+      rowMode: root.querySelector('select[aria-label="差分の表示方法"]')?.value || '',
       reviewActions: root.querySelectorAll('[data-kus-dl-nav="prev"],[data-kus-dl-nav="next"]').length,
       exportActions: root.querySelectorAll('[data-kus-dl-export="xlsx"],[data-kus-dl-export="html"],[data-kus-dl-export="md"]').length,
       markdownExportActions: root.querySelectorAll('[data-kus-dl-export="md"]').length,
@@ -579,22 +584,27 @@ async function captureResponsivePanelMatrix(page, outDir) {
     await page.setViewportSize(viewport);
     const result = page.locator('#kus-diff-lite [data-kus-dl-result],#kus-diff-lite .kus-dl-result').first();
     if (await result.count()) await result.scrollIntoViewIfNeeded();
-    if (viewport.width <= 390) {
-      const mobileValueToggle = page.locator('#kus-diff-lite [data-kus-dl-mobile-row-toggle]').first();
-      assert.equal(await mobileValueToggle.count(), 1, `${viewport.width}px: 差分値のモバイル展開ボタンがありません`);
-      assert.equal(await mobileValueToggle.isVisible(), true, `${viewport.width}px: 差分値のモバイル展開ボタンが見えません`);
-      assert.equal(await mobileValueToggle.getAttribute('aria-expanded'), 'false', `${viewport.width}px: 差分値が初期展開されています`);
-      const controlledId = await mobileValueToggle.getAttribute('aria-controls');
+    {
+      const rowToggle = page.locator('#kus-diff-lite [data-kus-dl-row-toggle]').first();
+      assert.equal(await rowToggle.count(), 1, `${viewport.width}px: 差分値の開閉ボタンがありません`);
+      await rowToggle.scrollIntoViewIfNeeded();
+      assert.equal(await rowToggle.isVisible(), true, `${viewport.width}px: 差分値の開閉ボタンが見えません`);
+      assert.equal(await rowToggle.getAttribute('aria-expanded'), 'false', `${viewport.width}px: 差分値が初期展開されています`);
+      const touchTarget = await rowToggle.boundingBox();
+      assert.ok(touchTarget && touchTarget.height >= 43.5 && touchTarget.width >= 43.5, `${viewport.width}px: 差分値の開閉ボタンが 44px 未満です`);
+      const controlledId = await rowToggle.getAttribute('aria-controls');
       assert.ok(controlledId, `${viewport.width}px: 差分値の展開先が関連付けられていません`);
       assert.equal(await page.locator(`#${controlledId}`).isVisible(), false, `${viewport.width}px: 折りたたみ中の差分値が見えています`);
-      await mobileValueToggle.click();
-      assert.equal(await mobileValueToggle.getAttribute('aria-expanded'), 'true', `${viewport.width}px: 差分値を展開できません`);
-      assert.equal(await page.locator(`#${controlledId}`).isVisible(), true, `${viewport.width}px: 展開した比較元・比較先の値が見えません`);
+      assert.equal(await page.locator(`#${controlledId} *`).count(), 0, `${viewport.width}px: 閉じた行が値を描画しています`);
+      await rowToggle.click();
       // The rerendered control receives focus on the next animation frame.
-      await page.waitForFunction(() => document.querySelector('#kus-diff-lite [data-kus-dl-mobile-row-toggle]') === document.activeElement, null, { timeout: 5000 });
-      assert.equal(await mobileValueToggle.evaluate((element) => element === document.activeElement), true,
-        `${viewport.width}px: 差分値の展開後にフォーカスが失われました`);
-      await mobileValueToggle.click();
+      await page.waitForFunction(() => document.querySelector('#kus-diff-lite [data-kus-dl-row-toggle]') === document.activeElement, null, { timeout: 5000 });
+      assert.equal(await rowToggle.getAttribute('aria-expanded'), 'true', `${viewport.width}px: 差分値を展開できません`);
+      assert.equal(await page.locator(`#${controlledId}`).isVisible(), true, `${viewport.width}px: 展開した比較元・比較先の値が見えません`);
+      assertPanelLayout(await inspectPanelLayout(page), `after: ${viewport.width}px（行を開いた状態）`);
+      await rowToggle.click();
+      await page.waitForFunction(() => document.querySelector('#kus-diff-lite [data-kus-dl-row-toggle]') === document.activeElement, null, { timeout: 5000 });
+      assert.equal(await rowToggle.getAttribute('aria-expanded'), 'false', `${viewport.width}px: 差分値を閉じられません`);
     }
     if (viewport.width === 390) {
       const changedMetric = page.locator('#kus-diff-lite [data-kus-dl-type-filter="changed"]').first();
@@ -729,6 +739,279 @@ async function captureObjectiveStateScenarios(browser, bundleSource, fixture, ou
   assertPanelLayout(zero.layout, 'after: 差分0件');
   assert.deepEqual(zero.errors, [], 'after: 差分0件でブラウザエラーが発生しました');
   return { partial, zero };
+}
+
+// 差分の表示方法（一覧／詳細）と、行ごとの値の開閉を確かめる。終了時は「詳細」にする（後続の検査は値が開いている前提）。
+async function assertRowListMode(page, outDir) {
+  const root = '#kus-diff-lite';
+  const focusIsRowToggle = () => page.waitForFunction(() => document.activeElement?.hasAttribute('data-kus-dl-row-toggle'), null, { timeout: 5000 });
+  await page.locator(`${root} [data-kus-dl-result]`).first().scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(outDir, 'after-panel-list.png'), fullPage: false, animations: 'disabled' });
+
+  const modeGroup = page.locator(`${root} [role="group"][aria-label="差分の表示方法"]`);
+  assert.equal(await modeGroup.count(), 1, 'after: 確認バーに表示方法の切り替えグループがありません');
+  assert.equal(await page.locator(`${root} [data-kus-dl-row-mode="list"]`).getAttribute('aria-pressed'), 'true', 'after: 一覧ボタンが押下状態ではありません');
+  assert.equal(await page.locator(`${root} [data-kus-dl-row-mode="detail"]`).getAttribute('aria-pressed'), 'false', 'after: 詳細ボタンが押下状態です');
+  assert.ok(await page.locator(`${root} .kus-dl-chip--before`).count() > 0, 'after: 閉じた行に比較元の要点（赤系のチップ）がありません');
+  assert.ok(await page.locator(`${root} .kus-dl-chip--after`).count() > 0, 'after: 閉じた行に比較先の要点（緑系のチップ）がありません');
+  const chipColors = await page.evaluate(() => {
+    const color = (selector) => getComputedStyle(document.querySelector(selector)).backgroundColor;
+    return { before: color('#kus-diff-lite .kus-dl-chip--before'), after: color('#kus-diff-lite .kus-dl-chip--after') };
+  });
+  assert.notEqual(chipColors.before, chipColors.after, 'after: 比較元・比較先のチップが同じ色です');
+
+  const firstToggle = page.locator(`${root} [data-kus-dl-row-toggle]`).first();
+  const firstRow = firstToggle.locator('xpath=ancestor::*[@data-kus-dl-row-key][1]');
+  assert.equal(await firstRow.locator('.kus-dl-row__cols').count(), 0, 'after: 閉じた行が値を描画しています');
+  await firstToggle.click();
+  await focusIsRowToggle();
+  assert.equal(await firstToggle.getAttribute('aria-expanded'), 'true', 'after: 値を開けません');
+  assert.match(await firstToggle.textContent(), /値を閉じる/, 'after: 開いた行のボタン名が「値を閉じる」ではありません');
+  assert.equal(await firstRow.locator('.kus-dl-row__cols').isVisible(), true, 'after: 開いた行の値が見えません');
+  assert.equal(await firstRow.locator('.kus-dl-row__brief').count(), 0, 'after: 開いた行に要点が残っています');
+  assert.ok(await firstRow.locator('details[data-kus-dl-technical]').count() > 0, 'after: 開いた行に技術情報がありません');
+  assert.equal(await firstRow.locator('details[data-kus-dl-technical][open]').count(), 0, 'after: 技術情報が初期状態で展開されています');
+  assert.ok(await firstRow.locator('[data-kus-dl-ignore-path],.kus-dl-flag').count() > 0, 'after: 開いた行に「次回から除外」の操作がありません');
+  await page.screenshot({ path: path.join(outDir, 'after-panel-list-row-open.png'), fullPage: false, animations: 'disabled' });
+  // 開いた行の中の操作要素（技術情報）を押しても、行は閉じない
+  await firstRow.locator('details[data-kus-dl-technical] summary').first().click();
+  assert.equal(await firstToggle.getAttribute('aria-expanded'), 'true', 'after: 技術情報を開く操作で行が閉じました');
+  await firstRow.locator('details[data-kus-dl-technical] summary').first().click();
+  await firstToggle.click();
+  await focusIsRowToggle();
+  assert.equal(await firstToggle.getAttribute('aria-expanded'), 'false', 'after: 値を閉じられません');
+  assert.equal(await firstRow.locator('.kus-dl-row__cols').count(), 0, 'after: 閉じた行が値を残しています');
+
+  // 見出しの文字を押しても開閉する。操作要素（ボタン・リンク・details）の上では開閉しない。
+  await firstRow.locator('.kus-dl-row__title').click();
+  assert.equal(await firstToggle.getAttribute('aria-expanded'), 'true', 'after: 見出しの押下で値が開きません');
+  await firstRow.locator('.kus-dl-row__title').click();
+  assert.equal(await firstToggle.getAttribute('aria-expanded'), 'false', 'after: 見出しの再押下で値が閉じません');
+  if (await firstRow.locator('.kus-dl-row__brief').count()) {
+    await firstRow.locator('.kus-dl-row__brief').click({ position: { x: 3, y: 3 } });
+    assert.equal(await firstToggle.getAttribute('aria-expanded'), 'true', 'after: 要点の押下で値が開きません');
+    await firstToggle.click();
+  }
+
+  // 表示方法の切り替え。切り替えると行ごとの開閉はやり直し、押したボタンへフォーカスを戻す。
+  await firstToggle.click();
+  const listButton = page.locator(`${root} [data-kus-dl-row-mode="list"]`);
+  const detailButton = page.locator(`${root} [data-kus-dl-row-mode="detail"]`);
+  const modeSelect = page.locator(`${root} select[aria-label="差分の表示方法"]`);
+  await listButton.click();
+  assert.equal((await inspectPanel(page)).rowTogglesOpen, 0, 'after: 「一覧」へ切り替えても個別に開いた行が残っています');
+  await detailButton.click();
+  await page.waitForFunction(() => document.activeElement?.getAttribute('data-kus-dl-row-mode') === 'detail', null, { timeout: 5000 });
+  let panel = await inspectPanel(page);
+  assert.equal(panel.rowTogglesOpen, panel.rowToggles, 'after: 「詳細」へ切り替えても値が開きません');
+  assert.equal(panel.rowBriefs, 0, 'after: 詳細で要点が残っています');
+  assert.equal(panel.rowMode, 'detail', 'after: ボタンの切り替えが表示方法の選択に同期されません');
+  assert.equal(await detailButton.getAttribute('aria-pressed'), 'true', 'after: 詳細ボタンが押下状態になりません');
+  assert.equal(await listButton.getAttribute('aria-pressed'), 'false', 'after: 一覧ボタンの押下状態が残っています');
+  assert.ok(panel.technicalDetails > 0, 'after: 技術情報の折りたたみ詳細が見つかりません');
+  assert.equal(panel.technicalDetailsCollapsed, panel.technicalDetails, 'after: 技術情報が初期状態で展開されています');
+  assertPanelLayout(await inspectPanelLayout(page), 'after: 詳細');
+  await page.screenshot({ path: path.join(outDir, 'after-panel-detail.png'), fullPage: false, animations: 'disabled' });
+  await modeSelect.selectOption('list');
+  assert.equal(await listButton.getAttribute('aria-pressed'), 'true', 'after: 選択の変更が一覧ボタンへ同期されません');
+  assert.equal((await inspectPanel(page)).rowTogglesOpen, 0, 'after: 選択を「一覧」にしても値が開いたままです');
+  await modeSelect.selectOption('detail');
+  assert.equal(await detailButton.getAttribute('aria-pressed'), 'true', 'after: 選択の変更が詳細ボタンへ同期されません');
+}
+
+// 複数行の値（JS/CSS の本文）を行単位で比べる表示を、専用の fixture で確かめる。
+// 本文は fileKey ごとに window.fetch で返す（kintone.api は本文を扱えないため）。
+function buildMultilineFixture(fixture) {
+  const multiline = clone(fixture);
+  const lines = (count, replaced = {}) => Array.from({ length: count }, (_, index) => replaced[index + 1] ?? `line ${index + 1}: value=${index + 1}`);
+  const longSource = lines(40);
+  const longTarget = lines(40, { 12: 'line 12: value=CHANGED', 30: 'line 30: value=<b>30</b>' });
+  longTarget.splice(20, 0, 'line 20.5: inserted');
+  const file = (fileKey, name) => ({ type: 'FILE', file: { fileKey, name, contentType: 'text/javascript', size: '800' } });
+  multiline.apps[SOURCE_APP_ID]['/app/customize.json'].desktop.js = [file('src-main-js', 'main.js'), file('src-legacy-js', 'legacy.js')];
+  multiline.apps[TARGET_APP_ID]['/app/customize.json'].desktop.js = [file('dst-main-js', 'main.js'), file('dst-legacy-js', 'legacy.js')];
+  multiline.fileBodies = {
+    'src-main-js': longSource.join('\n'),
+    'dst-main-js': longTarget.join('\n'),
+    'src-legacy-js': ['a', 'b', 'c'].join('\r\n'),
+    'dst-legacy-js': ['a', 'b', 'c'].join('\n')
+  };
+  return multiline;
+}
+
+async function installMockFileBodies(page, bodies) {
+  await page.evaluate((files) => {
+    window.fetch = async (url) => {
+      const match = /^\/k(?:\/guest\/\d+)?\/v1\/file\.json\?fileKey=([^&]+)$/.exec(String(url));
+      const key = match ? decodeURIComponent(match[1]) : '';
+      if (!match || files[key] === undefined) return new Response('', { status: 404 });
+      return new Response(new Blob([files[key]], { type: 'text/plain' }));
+    };
+  }, bodies);
+}
+
+async function captureLineDiffScenario(browser, bundleSource, fixture, outDir) {
+  const context = await browser.newContext({ viewport: { width: 1365, height: 900 }, deviceScaleFactor: 1, acceptDownloads: true });
+  const page = await context.newPage();
+  const errors = collectPageErrors(page, 'after-line-diff');
+  await page.setContent('<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>Mock kintone</title></head><body><main id="mock-kintone-portal"></main></body></html>');
+  const multilineFixture = buildMultilineFixture(fixture);
+  await installMockKintone(page, multilineFixture);
+  await installMockFileBodies(page, multilineFixture.fileBodies);
+  await page.addScriptTag({ content: bundleSource });
+  await page.waitForSelector('#kus-diff-lite[role="dialog"]', { timeout: 15000 });
+  await fillComparisonForm(page);
+  const downloadPromise = page.waitForEvent('download', { timeout: 30000 });
+  await page.getByRole('button', { name: /差分比較を実行/ }).click();
+  await downloadPromise;
+  await page.waitForSelector('#kus-diff-lite [data-kus-dl-completeness]', { timeout: 15000 });
+
+  const root = '#kus-diff-lite';
+  const rowByBrief = (selector) => page.locator(`${root} [data-kus-dl-row-key]`).filter({ has: page.locator(`.kus-dl-row__brief ${selector}`) });
+  const bodyRowByBrief = rowByBrief('[aria-label="削除 2行"]');
+  assert.equal(await bodyRowByBrief.count(), 1, 'after: 複数行の値の変更が「−2行」の要点つきで一覧に出ません');
+  // 開くと要点が消えるため、行の識別子で選び直す
+  const bodyRowKey = await bodyRowByBrief.getAttribute('data-kus-dl-row-key');
+  const bodyRow = page.locator(`${root} [data-kus-dl-row-key="${bodyRowKey}"]`);
+  const brief = bodyRow.locator('.kus-dl-row__brief');
+  const briefText = (await brief.innerText()).replace(/\s+/g, ' ');
+  assert.match(briefText, /−2行/, 'after: 要点に削除行数がありません');
+  assert.match(briefText, /\+3行/, 'after: 要点に追加行数がありません');
+  assert.match(briefText, /line 12: value=12/, 'after: 要点に最初の違う行（比較元）がありません');
+  assert.match(briefText, /line 12: value=CHANGED/, 'after: 要点に最初の違う行（比較先）がありません');
+  assert.match(briefText, /ほか 2 行/, 'after: 要点に残りの違う行数がありません');
+  assert.equal(await brief.locator('.kus-dl-chip--before').count(), 1, 'after: 要点の比較元チップがありません');
+  assert.equal(await brief.locator('[aria-label="削除 2行"]').getAttribute('role'), 'img', 'after: 行数の読み上げ名が支援技術に伝わりません');
+  assert.equal(await bodyRow.locator('[data-kus-dl-linediff]').count(), 0, 'after: 閉じた行が行単位の差分を描画しています');
+  const newlineRow = rowByBrief('.kus-dl-brief__note').filter({ hasText: '改行コードだけが異なります' });
+  assert.equal(await newlineRow.count(), 1, 'after: 改行コードだけの違いが要点に出ません');
+  const newlineRowKey = await newlineRow.getAttribute('data-kus-dl-row-key');
+  await bodyRowByBrief.scrollIntoViewIfNeeded();
+  await page.locator(root).screenshot({ path: path.join(outDir, 'after-panel-linediff-list.png'), animations: 'disabled' });
+
+  // 開くと、左右にそろえた行単位の差分が出る
+  const toggle = bodyRow.locator('[data-kus-dl-row-toggle]');
+  await toggle.click();
+  await page.waitForFunction(() => document.activeElement?.hasAttribute('data-kus-dl-row-toggle'), null, { timeout: 5000 });
+  const block = bodyRow.locator('[data-kus-dl-linediff]');
+  assert.equal(await block.count(), 1, 'after: 開いた行に行単位の差分がありません');
+  assert.equal(await block.getAttribute('role'), 'group');
+  assert.equal(await block.getAttribute('aria-label'), '行単位の差分');
+  assert.equal(await block.locator('.kus-dl-ld-row--replace').count(), 2, 'after: 置き換えの行が 2 行になりません');
+  assert.equal(await block.locator('.kus-dl-ld-row--add').count(), 1, 'after: 追加だけの行が 1 行になりません');
+  assert.ok(await block.locator('.kus-dl-ld-skip').count() >= 2, 'after: 変更のない行の省略が示されません');
+  assert.match(await block.locator('.kus-dl-ld-skip').first().innerText(), /変更のない \d+ 行を省略/);
+  const cells = await block.evaluate((element) => {
+    const rect = (node) => { const box = node.getBoundingClientRect(); return { left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: box.width, height: box.height }; };
+    const replace = element.querySelector('.kus-dl-ld-row--replace');
+    const add = element.querySelector('.kus-dl-ld-row--add');
+    return {
+      before: rect(replace.querySelector('[data-side="before"]')),
+      after: rect(replace.querySelector('[data-side="after"]')),
+      addPad: getComputedStyle(add.querySelector('[data-side="before"]')).display,
+      addBeforeRect: rect(add.querySelector('[data-side="before"]')),
+      addAfterRect: rect(add.querySelector('[data-side="after"]')),
+      marks: [...replace.querySelectorAll('.kus-dl-ld-mark')].map((mark) => mark.textContent),
+      numbers: [...replace.querySelectorAll('.kus-dl-ld-no')].map((no) => no.textContent),
+      sameBackground: getComputedStyle(element.querySelector('.kus-dl-ld-row--same .kus-dl-ld-cell')).backgroundColor,
+      delBackground: getComputedStyle(replace.querySelector('[data-side="before"]')).backgroundColor,
+      addBackground: getComputedStyle(replace.querySelector('[data-side="after"]')).backgroundColor,
+      overflow: element.scrollWidth > element.clientWidth + 1
+    };
+  });
+  assert.ok(cells.before.right <= cells.after.left + 2 && Math.abs(cells.before.top - cells.after.top) < 2, 'after: 「左右に比較」で比較元・比較先が横に並びません');
+  assert.equal(cells.addPad, 'grid', 'after: 左右に比較で空のセルが消えて行がそろいません');
+  assert.ok(Math.abs(cells.addBeforeRect.top - cells.addAfterRect.top) < 2, 'after: 追加行の左右がそろっていません');
+  assert.ok(cells.marks.includes('−') && cells.marks.includes('+'), 'after: 色だけでなく「−」「+」の印がありません');
+  assert.deepEqual(cells.numbers, ['12', '12'], 'after: 行番号が示されません');
+  assert.notEqual(cells.delBackground, cells.sameBackground, 'after: 削除行が変更のない行と区別できません');
+  assert.notEqual(cells.addBackground, cells.delBackground, 'after: 削除行と追加行が区別できません');
+  assert.equal(cells.overflow, false, 'after: 行単位の差分が横にはみ出します');
+  const footerText = (await block.locator('.kus-dl-value__footer').innerText()).replace(/\s+/g, ' ');
+  assert.match(footerText, /−2行 \/ \+3行/, 'after: 行数の要約がありません');
+  assert.match(footerText, /比較元 40行 → 比較先 41行/, 'after: 比較元・比較先の行数がありません');
+  assert.equal(await block.locator('.kus-dl-ld-text', { hasText: '<b>30</b>' }).count(), 1, 'after: 値の文字がそのまま表示されません');
+  assert.equal(await block.locator('b').count(), 0, 'after: 値の HTML が解釈されています');
+  assertPanelLayout(await inspectPanelLayout(page), 'after: 行単位の差分（デスクトップ）');
+  await block.locator('.kus-dl-ld-row--replace').first().scrollIntoViewIfNeeded();
+  await page.locator(root).screenshot({ path: path.join(outDir, 'after-panel-linediff-split.png'), animations: 'disabled' });
+
+  // すべての行を表示 / 前後だけに戻す
+  const linesToggle = block.locator('[data-kus-dl-lines-toggle]');
+  assert.equal(await linesToggle.getAttribute('aria-expanded'), 'false');
+  const foldedRows = await block.locator('.kus-dl-ld-row').count();
+  await linesToggle.click();
+  await page.waitForFunction(() => document.activeElement?.hasAttribute('data-kus-dl-lines-toggle'), null, { timeout: 5000 });
+  assert.equal(await linesToggle.getAttribute('aria-expanded'), 'true', 'after: すべての行の表示に切り替わりません');
+  assert.equal(await block.locator('.kus-dl-ld-skip').count(), 0, 'after: すべての行を表示しても省略が残っています');
+  assert.equal(await block.locator('.kus-dl-ld-row').count(), 41, 'after: すべての行（41 行）が表示されません');
+  assert.match(await linesToggle.textContent(), /変更のある行の前後だけ表示/);
+  assert.ok(foldedRows < 41, 'after: 初期表示が前後だけに絞られていません');
+  await linesToggle.click();
+  await page.waitForFunction(() => document.activeElement?.hasAttribute('data-kus-dl-lines-toggle'), null, { timeout: 5000 });
+  assert.equal(await block.locator('.kus-dl-ld-row').count(), foldedRows, 'after: 前後だけの表示に戻りません');
+
+  // 改行コードだけの違い
+  const newlineDetail = page.locator(`${root} [data-kus-dl-row-key="${newlineRowKey}"]`);
+  await newlineDetail.locator('[data-kus-dl-row-toggle]').click();
+  assert.match(await newlineDetail.innerText(), /行の内容は同じです。改行コード（CRLF \/ LF）だけが異なります。/, 'after: 改行コードだけの注記が出ません');
+  assert.equal(await newlineDetail.locator('.kus-dl-ld-row').count(), 0, 'after: 改行コードだけなのに行を並べています');
+
+  // 上下に比較: 1 列に積み、空のセルと変更のない行の比較先側の重複を隠す
+  await page.locator(`${root} select[aria-label="差分一覧の比較レイアウト"]`).selectOption('stacked');
+  const stacked = await block.evaluate((element) => {
+    const replace = element.querySelector('.kus-dl-ld-row--replace');
+    const before = replace.querySelector('[data-side="before"]').getBoundingClientRect();
+    const after = replace.querySelector('[data-side="after"]').getBoundingClientRect();
+    const add = element.querySelector('.kus-dl-ld-row--add');
+    return {
+      stackedAfterBelow: after.top >= before.bottom - 1 && Math.abs(after.left - before.left) < 2,
+      padDisplay: getComputedStyle(add.querySelector('.kus-dl-ld-cell--pad')).display,
+      sameAfterDisplay: getComputedStyle(element.querySelector('.kus-dl-ld-row--same [data-side="after"]')).display,
+      sameBeforeDisplay: getComputedStyle(element.querySelector('.kus-dl-ld-row--same [data-side="before"]')).display
+    };
+  });
+  assert.equal(stacked.stackedAfterBelow, true, 'after: 「上下に比較」で比較先が比較元の下に積まれません');
+  assert.equal(stacked.padDisplay, 'none', 'after: 上下に比較で空のセルが残っています');
+  assert.equal(stacked.sameAfterDisplay, 'none', 'after: 上下に比較で変更のない行の比較先側が重複しています');
+  assert.notEqual(stacked.sameBeforeDisplay, 'none', 'after: 変更のない行が消えています');
+  assertPanelLayout(await inspectPanelLayout(page), 'after: 行単位の差分（上下に比較）');
+  await page.locator(root).screenshot({ path: path.join(outDir, 'after-panel-linediff-stacked.png'), animations: 'disabled' });
+  await page.locator(`${root} select[aria-label="差分一覧の比較レイアウト"]`).selectOption('split');
+
+  // 狭い画面では左右に比較でも 1 列。320〜768px ではみ出さない。
+  for (const width of [768, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.waitForTimeout(100);
+    const narrow = await block.evaluate((element) => {
+      const replace = element.querySelector('.kus-dl-ld-row--replace');
+      const before = replace.querySelector('[data-side="before"]').getBoundingClientRect();
+      const after = replace.querySelector('[data-side="after"]').getBoundingClientRect();
+      return { stacked: after.top >= before.bottom - 1, overflow: element.scrollWidth > element.clientWidth + 1 };
+    });
+    assert.equal(narrow.stacked, true, `after: ${width}px で行単位の差分が 1 列に積まれません`);
+    assert.equal(narrow.overflow, false, `after: ${width}px で行単位の差分が横にはみ出します`);
+    assertPanelLayout(await inspectPanelLayout(page), `after: 行単位の差分（${width}px）`);
+    await block.locator('.kus-dl-ld-row--replace').first().scrollIntoViewIfNeeded();
+    await page.locator(root).screenshot({ path: path.join(outDir, `after-panel-linediff-${width}.png`), animations: 'disabled' });
+  }
+  await page.setViewportSize({ width: 1365, height: 900 });
+
+  // 「行単位の差分」をオフにすると、従来の左右 2 つの値に戻る
+  const lineDiffToggle = page.locator(`${root} label`).filter({ hasText: /^行単位の差分/ }).locator('input[type="checkbox"]');
+  await lineDiffToggle.uncheck();
+  assert.equal(await bodyRow.locator('[data-kus-dl-linediff]').count(), 0, 'after: 行単位の差分をオフにしても残っています');
+  assert.equal(await bodyRow.locator('[aria-label="比較元の値"]').count(), 1, 'after: オフのとき比較元の値が表示されません');
+  assert.equal(await bodyRow.locator('[aria-label="比較先の値"]').count(), 1, 'after: オフのとき比較先の値が表示されません');
+  await lineDiffToggle.check();
+  assert.equal(await bodyRow.locator('[data-kus-dl-linediff]').count(), 1, 'after: 行単位の差分をオンに戻せません');
+
+  // 一覧へ戻しても行単位の状態で壊れない
+  await page.locator(`${root} [data-kus-dl-row-mode="list"]`).click();
+  assert.equal(await bodyRow.locator('[data-kus-dl-linediff]').count(), 0);
+  assert.deepEqual(errors, [], 'after: 行単位の差分でブラウザエラーが発生しました');
+  await context.close();
+  return { ok: true };
 }
 
 async function captureBrowserZoomMatrix(browser, bundleSource, fixture, outDir) {
@@ -1401,6 +1684,7 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
   let responsive = null;
   let objectiveStates = null;
   let browserZoom = null;
+  let lineDiff = null;
   if (variant === 'after') {
     assert.equal(panelDom.completeness, 'complete', 'after: 正常取得した比較の完全性がcompleteではありません');
     assert.deepEqual([...new Set(panelDom.workflowSteps)].sort(), ['export', 'review', 'target'],
@@ -1409,9 +1693,13 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
     assert.ok(panelDom.reviewActions >= 2, 'after: 前後の差分レビュー操作が揃っていません');
     assert.ok(panelDom.exportActions >= 3, 'after: HTML/Excel/Markdownの出力操作契約が揃っていません');
     assert.equal(panelDom.markdownExportActions, 1, 'after: Markdown保存ボタンが一意に見つかりません');
-    assert.ok(panelDom.technicalDetails > 0, 'after: 技術情報の折りたたみ詳細が見つかりません');
-    assert.equal(panelDom.technicalDetailsCollapsed, panelDom.technicalDetails,
-      'after: 技術情報が初期状態で展開されています');
+    // 既定は「一覧」: 行は閉じていて、値・技術情報・除外操作はまだ描画しない。要点（brief）だけを出す。
+    assert.equal(panelDom.rowMode, 'list', 'after: 差分の表示方法の既定が一覧ではありません');
+    assert.equal(panelDom.rowToggles, panelDom.resultRows, 'after: すべての行に値の開閉ボタンがありません');
+    assert.equal(panelDom.rowTogglesOpen, 0, 'after: 一覧の初期状態で値が開いています');
+    assert.equal(panelDom.valueBlocks, 0, 'after: 一覧の初期状態で値の領域を描画しています');
+    assert.equal(panelDom.technicalDetails, 0, 'after: 閉じた行の技術情報を描画しています');
+    assert.ok(panelDom.rowBriefs > 0, 'after: 閉じた行に変更の要点が表示されません');
 
     const contextHeader = await firstContractLocator([
       page.locator('#kus-diff-lite [aria-label*="比較方向"]'),
@@ -1430,6 +1718,7 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
     assert.equal(await page.evaluate(() => document.activeElement?.hasAttribute('data-kus-dl-overview') || false), true,
       'after: 「結果を確認」で完全性サマリーへフォーカスできません');
     assertPanelLayout(await inspectPanelLayout(page), 'after: デスクトップ');
+    await assertRowListMode(page, outDir);
 
     const typeFilter = page.locator('#kus-diff-lite select[aria-label="結果の種別絞り込み"]');
     await typeFilter.selectOption('changed');
@@ -1478,6 +1767,10 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
     assert.equal(focusedDiff.activeIsRow, true, 'after: 差分移動後に行へ実フォーカスされていません');
     assert.match(focusedDiff.counter, /^1 \/ 全\d+件目/, 'after: 差分位置カウンタが更新されていません');
 
+    assert.equal((await page.locator('#kus-diff-lite [data-kus-dl-sections="collapse"]').textContent()).trim(), 'セクションを閉じる',
+      'after: セクションの開閉ボタンが行の開閉と紛れる名前のままです');
+    assert.equal((await page.locator('#kus-diff-lite [data-kus-dl-sections="expand"]').textContent()).trim(), 'セクションを開く',
+      'after: セクションの開閉ボタンが行の開閉と紛れる名前のままです');
     await page.locator('#kus-diff-lite [data-kus-dl-sections="collapse"]').click();
     assert.equal(await page.locator('#kus-diff-lite details[data-kus-dl-section-key][open]').count(), 0, 'after: 全セクションを折りたためません');
     await page.waitForFunction(() => document.activeElement?.getAttribute('data-kus-dl-sections') === 'collapse', null, { timeout: 5000 });
@@ -1493,6 +1786,12 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
     const ignoreTextarea = page.locator('#kus-diff-lite textarea[placeholder*="完全パス"],#kus-diff-lite textarea[aria-label*="無視"]').first();
     assert.ok((await ignoreTextarea.inputValue()).includes(ignoredPath || ''), 'after: 行の完全パスが無視ルールへ追加されません');
 
+    await page.locator('#kus-diff-lite [data-kus-dl-row-mode="list"]').click();
+    // J/K の移動は行を自動では開かない
+    await page.keyboard.press('j');
+    await page.waitForFunction(() => !!document.querySelector('#kus-diff-lite [data-kus-dl-row-key][aria-current="true"]'), null, { timeout: 5000 });
+    assert.equal(await page.locator('#kus-diff-lite [data-kus-dl-row-key][aria-current="true"] [data-kus-dl-row-toggle]').getAttribute('aria-expanded'), 'false',
+      'after: J/K の移動で行の値が自動で開きます');
     responsive = await captureResponsivePanelMatrix(page, outDir);
 
     const density = page.locator('#kus-diff-lite select[aria-label="差分一覧の表示密度"]');
@@ -1501,6 +1800,13 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
     const layout = page.locator('#kus-diff-lite select[aria-label="差分一覧の比較レイアウト"]');
     await layout.selectOption('stacked');
     assert.equal(await layout.inputValue(), 'stacked', 'after: 上下比較レイアウトの選択が反映されません');
+    const rowModeSelect = page.locator('#kus-diff-lite select[aria-label="差分の表示方法"]');
+    const lineDiffToggle = page.locator('#kus-diff-lite label').filter({ hasText: /^行単位の差分/ }).locator('input[type="checkbox"]');
+    assert.equal(await lineDiffToggle.isChecked(), true, 'after: 「行単位の差分」の既定がオンではありません');
+    await rowModeSelect.selectOption('detail');
+    await lineDiffToggle.uncheck();
+    assert.equal(await page.locator('#kus-diff-lite [data-kus-dl-row-mode="detail"]').getAttribute('aria-pressed'), 'true',
+      'after: 表示方法の選択が確認バーのボタンに同期されません');
 
     await openDetailsDialog(page);
     const profileName = page.locator('#kus-diff-lite input[aria-label="比較条件プロファイル名"]');
@@ -1516,6 +1822,9 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
     assert.equal(profilePayload.name, 'レビュー用', 'after: 比較条件名が保存されません');
     assert.equal(profilePayload.display.density, 'comfortable', 'after: 表示密度がプロファイルへ保存されません');
     assert.equal(profilePayload.display.layout, 'stacked', 'after: 比較レイアウトがプロファイルへ保存されません');
+    assert.equal(profilePayload.display.rowMode, 'detail', 'after: 差分の表示方法がプロファイルへ保存されません');
+    assert.equal(profilePayload.display.lineDiff, false, 'after: 行単位の差分の設定がプロファイルへ保存されません');
+    assert.equal(profilePayload.version, 1, 'after: 表示項目の追加で比較条件の version を変えてはいけません');
     assert.equal(Object.prototype.hasOwnProperty.call(profilePayload, 'source'), false, 'after: 比較条件に比較元情報が混入しています');
     assert.equal(containsObjectKey(profilePayload, new Set(['appId', 'guestId', 'source', 'target', 'sourceBundle', 'targetBundle', 'sections', 'rows'])), false, 'after: 比較条件にアプリ・設定情報が混入しています');
     profile = { suggestedFilename: profileDownload.suggestedFilename(), file: path.basename(profileFile) };
@@ -1613,6 +1922,8 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
     await page.waitForFunction(() => [...document.querySelectorAll('#kus-diff-lite [data-tone]')]
       .some((element) => /再比較してください/.test(element.textContent || '')), null, { timeout: 10000 });
     assert.equal(await layout.inputValue(), 'stacked', 'after: 比較条件読込で比較レイアウトが復元されません');
+    assert.equal(await rowModeSelect.inputValue(), 'detail', 'after: 比較条件読込で差分の表示方法が復元されません');
+    assert.equal(await lineDiffToggle.isChecked(), false, 'after: 比較条件読込で行単位の差分の設定が復元されません');
     assert.equal(await page.locator('#kus-diff-lite [data-kus-dl-row-key]').count(), 0, 'after: プロファイル読込後に古い差分結果が残っています');
     assert.equal(await xlsxButton.isDisabled(), true, 'after: プロファイル読込後も古い結果をExcel出力できます');
     assert.deepEqual(errors, [], 'after: 新規レビュー/プロファイル/Excel操作でブラウザエラーが発生しました');
@@ -1623,6 +1934,7 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
   if (variant === 'after') {
     objectiveStates = await captureObjectiveStateScenarios(browser, bundleSource, fixture, outDir);
     browserZoom = await captureBrowserZoomMatrix(browser, bundleSource, fixture, outDir);
+    lineDiff = await captureLineDiffScenario(browser, bundleSource, fixture, outDir);
   }
   return {
     hash: bundleHash(bundleSource),
@@ -1636,6 +1948,7 @@ async function runVariant(browser, variant, bundleSource, fixture, outDir) {
     responsive,
     objectiveStates,
     browserZoom,
+    lineDiff,
     apiCalls,
     errors
   };

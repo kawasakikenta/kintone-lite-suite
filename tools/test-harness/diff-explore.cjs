@@ -297,10 +297,31 @@ async function runSingle(page, { source = '101', target = '202', sourcePreview =
   return { elapsed, htmlDownload: html };
 }
 
-/** パネルの結果（概要・行）を読み取る。 */
+/**
+ * パネルの結果（概要・行）を読み取る。
+ * 行の値は「詳細」の表示（比較元・比較先の値が開いた状態）で読み、読んだ後に元の表示方法へ戻す。
+ * 既定の「一覧」は値を閉じて要点だけを出すため、値の取りこぼしを調べる検査は詳細で行う。
+ * list には、読み取り前（利用者が最初に見る状態）の行の開閉と要点の数を入れる。
+ */
 async function readPanel(page) {
   return page.locator('#kus-diff-lite').evaluate((rootElement) => {
     const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+    const modeSelect = rootElement.querySelector('select[aria-label="差分の表示方法"]');
+    const originalMode = modeSelect?.value || '';
+    const list = {
+      mode: originalMode,
+      rows: rootElement.querySelectorAll('[data-kus-dl-row-key]').length,
+      closed: rootElement.querySelectorAll('[data-kus-dl-row-toggle][aria-expanded="false"]').length,
+      briefs: rootElement.querySelectorAll('.kus-dl-row__brief').length,
+      briefText: [...rootElement.querySelectorAll('.kus-dl-row__brief')].slice(0, 400).map((element) => norm(element.textContent)),
+      valueBlocks: rootElement.querySelectorAll('.kus-dl-row__cols').length
+    };
+    const setMode = (mode) => {
+      if (!modeSelect || modeSelect.value === mode) return;
+      modeSelect.value = mode;
+      modeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    setMode('detail');
     const statusElement = [...rootElement.querySelectorAll('[data-tone]')].find((element) => ['neutral', 'info', 'busy', 'ok', 'warn', 'err'].includes(element.getAttribute('data-tone') || ''));
     const overview = rootElement.querySelector('[data-kus-dl-overview]');
     const verdict = rootElement.querySelector('[data-kus-dl-completeness]');
@@ -312,9 +333,11 @@ async function readPanel(page) {
     const rows = [...rootElement.querySelectorAll('details[data-kus-dl-section-key]')].flatMap((section) => [...section.querySelectorAll('[data-kus-dl-row-key]')].map((row) => ({
       section: section.getAttribute('data-kus-dl-section-key'),
       key: row.getAttribute('data-kus-dl-row-key'),
-      text: String(row.innerText || '').replace(/\n+/g, ' | ')
+      text: String(row.innerText || '').replace(/\n+/g, ' | ').replace(/ \| 値を(?:表示|閉じる)(?= \| |$)/, '')
     })));
+    setMode(originalMode);
     return {
+      list,
       statusTone: statusElement?.getAttribute('data-tone') || '',
       statusText: norm(statusElement?.textContent),
       completeness: verdict?.getAttribute('data-kus-dl-completeness') || '',
@@ -653,8 +676,8 @@ scenario('scale: フィールド 300・差分 1000 件規模', async () => {
     const { elapsed } = await runSingle(page);
     const panel = await readPanel(page);
     const t0 = Date.now();
-    await page.getByRole('button', { name: 'すべて展開' }).first().click();
-    await page.getByRole('button', { name: 'すべて折りたたむ' }).first().click();
+    await page.getByRole('button', { name: 'セクションを開く' }).first().click();
+    await page.getByRole('button', { name: 'セクションを閉じる' }).first().click();
     const expandMs = Date.now() - t0;
     const saved = await exportOutputs(page, path.join(OUT, `scale-${changes}`), `scale-${changes}`);
     const exportMs = Date.now() - t0 - expandMs;
