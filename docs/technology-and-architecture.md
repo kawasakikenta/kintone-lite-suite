@@ -74,7 +74,7 @@ bundle へ同梱して実行時に使うパッケージは、`xlsx-js-style`（`
 
 | パッケージ | 宣言バージョン | 配置 | 用途 |
 | --- | --- | --- | --- |
-| `@playwright/mcp` | `0.0.70` | ルート | Playwright MCP とブラウザ自動操作基盤。ハーネスでは同依存が導入する Playwright を利用 |
+| `@playwright/mcp` | `0.0.80` | ルート | Playwright MCP とブラウザ自動操作基盤。ハーネスでは同依存が導入する Playwright（1.63.0-alpha-2026-08-31、Chromium 153）を利用。CI のランナー（`ubuntu-latest`）の OS に Chromium を入れられる版にそろえる（0.0.70 の Playwright は Ubuntu 26.04 に未対応だった） |
 | `@types/node` | `^22.9.0` | 統合ツール | Node.js API の TypeScript 型定義 |
 | `esbuild` | `^0.25.0` | 統合ツール | TypeScript と CSS を機能別 IIFE に bundle |
 | `typescript` | `^5.6.3` | 統合ツール | 通常および strict の静的型検査 |
