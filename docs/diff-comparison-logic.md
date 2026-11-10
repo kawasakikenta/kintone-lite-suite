@@ -5,7 +5,7 @@
 - 対象: 公開中の Lite 版差分比較パネル、そこから生成する HTML / Excel / AI向けMarkdown
 - 想定読者: 差分をレビューする人、運用担当者、比較ロジックを保守する開発者
 - 正規実装: [`engine.ts`](../tools/統合ツール/src/diff/engine.ts)、[`diff-standalone.ts`](../tools/統合ツール/src/tabs/diff-standalone.ts)
-- 更新日: 2026-11-09
+- 更新日: 2026-11-10
 
 ## 1. 先に読む結論
 
@@ -487,9 +487,18 @@ HTMLの自動保存は比較先ごとに1ファイルをダウンロードする
 | 環境固有ID（アプリ・一覧・グラフ・アクション）の除外変更 | 再比較が必要 | 次の比較から該当ID差分と件数が変わり、Excelにも反映される |
 | 同一行を含める | 再比較が必要 | 同一行の収集有無が変わる |
 | セクション・種別・キーワード絞り込み | しない | 表示中出力の範囲だけが変わる |
-| 行の折りたたみ・表示密度 | しない | 見た目だけが変わる |
+| 行の開閉・差分の表示方法（一覧／詳細）・行単位の差分・表示密度 | しない | 見た目だけが変わる（HTML・Excel・Markdown の内容は変わらない） |
 
 結果行の「次回から除外」は、現在の結果を消しません。完全パスを比較条件へ追加し、再比較後に反映します。
+
+### 12.1 パネルの結果明細の読み方
+
+パネルの結果明細は、差分のある項目を一覧で見渡し、必要な行だけ値を開いて確かめる作りです。表示だけを変える機能で、比較結果・件数・HTML・Excel・AI向けMarkdown の内容は変わりません。
+
+- **一覧と詳細**: 「表示」の「表示方法」（確認バーの「一覧」「詳細」ボタンと同じ設定）で切り替えます。既定の「一覧」は、各行を「種類のバッジ＋項目名」と、その下の変更の要点だけにして、比較元・比較先の値を閉じます。「詳細」は全行の値を開きます。行ごとの「値を表示」「値を閉じる」で個別に開閉でき、行の見出し・要点を押しても開閉します（文字を選択中は開閉しません）。表示方法を切り替えると、個別の開閉はやり直しです。
+- **要点（一覧で閉じた行）**: 追加は比較先の値（緑）、削除は比較元の値（赤）、同一は灰色で示します。内容変更は「比較元の値 → 比較先の値」を 1 行にまとめ、長い値は 120 文字で「…」にします。両側とも同じ表記になる行（型だけの違い、位置だけの違いなど）は、その値を灰色で 1 つ示します。値のどちらかが複数行のときは、削除・追加の行数と最初の違う行の抜粋（80 文字）、ほかに違う行があれば「ほか N 行」を示します。改行コード（CRLF / LF）だけが異なる値は「改行コードだけが異なります」と示します。
+- **行単位の差分**: 内容変更で、どちらかの値が複数行（JS/CSS の本文、長い設定値など）のとき、開いた行で比較元・比較先を行ごとにそろえて示します。違う行とその前後 2 行だけを出し、変更のない続きは「変更のない N 行を省略」とします。「すべての行を表示」で全行に切り替えられます。削除は「−」、追加は「+」の印と色で示し（色だけに頼りません）、置き換えで内容が近い行は文字単位でも強調します（「文字単位ハイライト」がオンのとき）。「行単位の差分」をオフにするか、違う行が多すぎる（追加と削除の合計が 1,500 行を超える）場合は、比較元・比較先の値をそのまま左右に並べる表示です。「上下に比較」と狭い画面では、1 列に積み、変更のない行には比較元・比較先の両方の行番号を示します。
+- **比較条件プロファイル**: 表示方法（`rowMode`: `list` / `detail`）と「行単位の差分」（`lineDiff`）も保存・読込の対象です。これらを持たない古い比較条件は、既定値（一覧・オン）で読み込みます。
 
 ## 13. HTML、Excel、AI向けMarkdownの違い
 
@@ -667,7 +676,8 @@ from/to参照: 仮想補正して連鎖差分を抑制
 | 再帰比較、配列、無視、正規化、上限 | [`engine.ts`](../tools/統合ツール/src/diff/engine.ts) | [`engine.test.ts`](../tools/統合ツール/tests/diff/engine.test.ts) |
 | 人向け補足、改名候補、関連設定 | [`enrich.ts`](../tools/統合ツール/src/diff/enrich.ts) | [`enrich.test.ts`](../tools/統合ツール/tests/diff/enrich.test.ts) |
 | Lite実行API、完全性集約 | [`diff-standalone.ts`](../tools/統合ツール/src/tabs/diff-standalone.ts) | [`standalone.test.ts`](../tools/統合ツール/tests/diff/standalone.test.ts) |
-| Liteパネル、複数比較、画面出力 | [`diff-lite-ui.ts`](../tools/統合ツール/src/entries/diff-lite-ui.ts) | [`lite-ui.test.ts`](../tools/統合ツール/tests/diff/lite-ui.test.ts) |
+| Liteパネル、複数比較、画面出力（結果明細の一覧／詳細、要点、行単位の差分の表示） | [`diff-lite-ui.ts`](../tools/統合ツール/src/entries/diff-lite-ui.ts) | [`lite-ui.test.ts`](../tools/統合ツール/tests/diff/lite-ui.test.ts) |
+| 行単位の差分の計算（Myers、変更のない行の省略） | [`line-diff.ts`](../tools/統合ツール/src/diff/line-diff.ts) | [`line-diff.test.ts`](../tools/統合ツール/tests/diff/line-diff.test.ts) |
 | 人向け自己完結HTML、変更の要点、レビュー状態、反映JSON | [`export.ts`](../tools/統合ツール/src/diff/export.ts) | [`html-export.test.ts`](../tools/統合ツール/tests/diff/html-export.test.ts) |
 | Excel | [`xlsx-export.ts`](../tools/統合ツール/src/diff/xlsx-export.ts) | [`xlsx-export.test.ts`](../tools/統合ツール/tests/diff/xlsx-export.test.ts) |
 | AI向けMarkdown | [`markdown-export.ts`](../tools/統合ツール/src/diff/markdown-export.ts)、[`diff-lite-ui.ts`](../tools/統合ツール/src/entries/diff-lite-ui.ts) | [`markdown-export.test.ts`](../tools/統合ツール/tests/diff/markdown-export.test.ts)、[`run-diff-lite-compare.cjs`](../tools/test-harness/run-diff-lite-compare.cjs)、[`run-diff-lite-multi-dom.cjs`](../tools/test-harness/run-diff-lite-multi-dom.cjs)、[`run-diff-lite-pairs-dom.cjs`](../tools/test-harness/run-diff-lite-pairs-dom.cjs)、[`run-diff-lite-pair-folders-dom.cjs`](../tools/test-harness/run-diff-lite-pair-folders-dom.cjs) |

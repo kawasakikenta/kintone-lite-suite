@@ -274,7 +274,14 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-row--moved{border-left-color:#7c3aed}
 .kus-dl-row--same{border-left-color:#94a3b8}
 .kus-dl-row:focus,.kus-dl-row.is-current{outline:2px solid #2563eb;outline-offset:1px;background:#f8fbff;box-shadow:0 4px 14px rgba(37,99,235,.13)}
-.kus-dl-row:not(.is-open){gap:6px}
+.kus-dl-row:not(.is-open){display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:3px 10px;padding:8px 12px}
+.kus-dl-row:not(.is-open) .kus-dl-row__head{display:contents}
+.kus-dl-row:not(.is-open) .kus-dl-row__identity{grid-column:1;display:flex;flex-wrap:wrap;align-items:baseline;gap:1px 10px;cursor:pointer}
+.kus-dl-row:not(.is-open) .kus-dl-row__headline{flex:0 1 auto;min-width:0}
+.kus-dl-row:not(.is-open) .kus-dl-row__title{flex:0 1 auto;min-width:0;font-size:14px}
+.kus-dl-row:not(.is-open) .kus-dl-row__subtitle{flex:0 1 auto;min-width:0;margin:0}
+.kus-dl-row:not(.is-open) .kus-dl-row__toggle{grid-column:2;grid-row:1/span 2}
+.kus-dl-row:not(.is-open) .kus-dl-row__brief{grid-column:1}
 .kus-dl-row__head{display:flex;align-items:flex-start;gap:8px;min-width:0;cursor:pointer}
 .kus-dl-row__identity{flex:1 1 0;min-width:0}
 .kus-dl-row__toggle{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;gap:5px;margin:0;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#1d4ed8;padding:0 10px;font:700 13px/1.4 -apple-system,Segoe UI,sans-serif;white-space:nowrap;cursor:pointer}
@@ -324,6 +331,7 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-ld-cell{display:grid;grid-template-columns:3.6em 1.5em minmax(0,1fr);min-width:0;min-height:1.55em}
 .kus-dl-ld-cell[data-side="after"]{border-left:1px solid #dbe3ec}
 .kus-dl-ld-no{padding:0 6px;color:#64748b;text-align:right;font-variant-numeric:tabular-nums;-webkit-user-select:none;user-select:none}
+.kus-dl-ld-alt{display:none;padding:0 6px;color:#64748b;text-align:right;font-variant-numeric:tabular-nums;-webkit-user-select:none;user-select:none}
 .kus-dl-ld-mark{text-align:center;font-weight:800;-webkit-user-select:none;user-select:none}
 .kus-dl-ld-text{min-width:0;padding-right:8px;white-space:pre-wrap;overflow-wrap:anywhere}
 .kus-dl-ld-cell--del{background:#fef2f2;color:#7f1d1d}
@@ -374,6 +382,13 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-result--comfortable .kus-dl-value.is-collapsed .kus-dl-pre{max-height:164px}
 .kus-dl-result--stacked .kus-dl-row__cols{grid-template-columns:1fr}
 .kus-dl-result--stacked .kus-dl-ld-row{grid-template-columns:minmax(0,1fr)}
+.kus-dl-result--stacked .kus-dl-ld-cell{grid-template-columns:3.2em 3.2em 1.5em minmax(0,1fr)}
+.kus-dl-result--stacked .kus-dl-ld-cell>*{grid-row:1}
+.kus-dl-result--stacked .kus-dl-ld-cell[data-side="before"]>.kus-dl-ld-no,.kus-dl-result--stacked .kus-dl-ld-cell[data-side="after"]>.kus-dl-ld-alt{grid-column:1}
+.kus-dl-result--stacked .kus-dl-ld-cell[data-side="before"]>.kus-dl-ld-alt,.kus-dl-result--stacked .kus-dl-ld-cell[data-side="after"]>.kus-dl-ld-no{grid-column:2}
+.kus-dl-result--stacked .kus-dl-ld-alt{display:block}
+.kus-dl-result--stacked .kus-dl-ld-mark{grid-column:3}
+.kus-dl-result--stacked .kus-dl-ld-text{grid-column:4}
 .kus-dl-result--stacked .kus-dl-ld-cell[data-side="after"]{border-left:0}
 .kus-dl-result--stacked .kus-dl-ld-cell--pad,.kus-dl-result--stacked .kus-dl-ld-row--same .kus-dl-ld-cell[data-side="after"]{display:none}
 .kus-dl-result--stacked .kus-dl-linediff__head{display:flex;gap:14px}
@@ -629,6 +644,13 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   .kus-dl-swap{flex-direction:row;width:100%;max-width:none}
   .kus-dl-row__cols{grid-template-columns:1fr}
   .kus-dl-ld-row{grid-template-columns:minmax(0,1fr)}
+  .kus-dl-ld-cell{grid-template-columns:3.2em 3.2em 1.5em minmax(0,1fr)}
+  .kus-dl-ld-cell>*{grid-row:1}
+  .kus-dl-ld-cell[data-side="before"]>.kus-dl-ld-no,.kus-dl-ld-cell[data-side="after"]>.kus-dl-ld-alt{grid-column:1}
+  .kus-dl-ld-cell[data-side="before"]>.kus-dl-ld-alt,.kus-dl-ld-cell[data-side="after"]>.kus-dl-ld-no{grid-column:2}
+  .kus-dl-ld-alt{display:block}
+  .kus-dl-ld-mark{grid-column:3}
+  .kus-dl-ld-text{grid-column:4}
   .kus-dl-ld-cell[data-side="after"]{border-left:0}
   .kus-dl-ld-cell--pad,.kus-dl-ld-row--same .kus-dl-ld-cell[data-side="after"]{display:none}
   .kus-dl-linediff__head{display:flex;gap:14px}
@@ -1102,11 +1124,17 @@ function rowDisplayIdentity(
   const fallbackTitle = label && label !== path
     ? label
     : `${sectionLabel}の${leafLabels[leaf] || (leaf ? `「${leaf}」` : '設定項目')}`;
-  const baseTitle = semanticTitle || reason || fallbackTitle;
+  // 場所と項目が分かる行は、それを見出しにする。値（「A → B」）は見出しに重ねず、
+  // 閉じた行では要点、開いた行では比較元・比較先の値で示す。
+  const locatedTitle = decoded && reason ? reason : '';
+  const propLabel = String(decoded?.propLabel || '').trim();
+  const baseTitle = locatedTitle || semanticTitle || reason || fallbackTitle;
   const fieldText = decoded ? '' : fieldRowIdentityText(row, fieldLabels);
   const title = fieldText ? `${fieldText} · ${baseTitle}` : baseTitle;
   const subtitleCandidates = [
-    semanticTitle && reason !== semanticTitle ? reason : '',
+    locatedTitle
+      ? (propLabel && !locatedTitle.includes(propLabel) ? propLabel : '')
+      : (semanticTitle && reason !== semanticTitle ? reason : ''),
     label && label !== path && label !== title ? label : ''
   ].filter(Boolean);
   return { title, subtitle: [...new Set(subtitleCandidates)].join(' · ') };
@@ -1205,7 +1233,8 @@ function rowBriefInnerHtml(view: RowValueView): string {
   if (view.kind === 'added') return briefChipHtml(rightStr, 'after');
   if (view.kind === 'removed') return briefChipHtml(leftStr, 'before');
   if (view.kind === 'same') return briefChipHtml(leftStr, 'same');
-  if (leftStr === rightStr) return '';
+  // 両側とも同じ表記（型だけの違い、位置だけの違いなど）は、その値を 1 つ示す。
+  if (leftStr === rightStr) return briefChipHtml(leftStr, 'same');
   const pair = `${briefChipHtml(leftStr, 'before')}${BRIEF_ARROW_HTML}${briefChipHtml(rightStr, 'after')}`;
   if (!view.multiline) return pair;
   const result = view.lineDiff;
@@ -1246,12 +1275,13 @@ function lineDiffBlockHtml(
   const hasSkip = folded.some((segment) => segment.kind === 'skip');
   const showAll = hasSkip && expandedValueKeys.has(linesKey);
   const segments: LineDiffSegment[] = showAll ? [{ kind: 'rows', rows: result.rows }] : folded;
-  const cell = (side: 'before' | 'after', tone: '' | 'del' | 'add', no: number | undefined, mark: string, textHtml: string) =>
-    `<div class="kus-dl-ld-cell${tone ? ` kus-dl-ld-cell--${tone}` : ''}" data-side="${side}"><span class="kus-dl-ld-no">${no ?? ''}</span><span class="kus-dl-ld-mark">${mark}</span><span class="kus-dl-ld-text">${textHtml}</span></div>`;
+  // altNo: 1 列に積む表示（比較先側のセルを隠す）で、変更のない行に添える比較先の行番号。
+  const cell = (side: 'before' | 'after', tone: '' | 'del' | 'add', no: number | undefined, mark: string, textHtml: string, altNo?: number) =>
+    `<div class="kus-dl-ld-cell${tone ? ` kus-dl-ld-cell--${tone}` : ''}" data-side="${side}">${altNo === undefined ? '' : `<span class="kus-dl-ld-alt">${altNo}</span>`}<span class="kus-dl-ld-no">${no ?? ''}</span><span class="kus-dl-ld-mark">${mark}</span><span class="kus-dl-ld-text">${textHtml}</span></div>`;
   const pad = (side: 'before' | 'after') => `<div class="kus-dl-ld-cell kus-dl-ld-cell--pad" data-side="${side}" aria-hidden="true"></div>`;
   const rowHtml = (item: LineDiffRow): string => {
     if (item.type === 'same') {
-      return `<div class="kus-dl-ld-row kus-dl-ld-row--same">${cell('before', '', item.leftNo, '', esc(item.left ?? ''))}${cell('after', '', item.rightNo, '', esc(item.right ?? ''))}</div>`;
+      return `<div class="kus-dl-ld-row kus-dl-ld-row--same">${cell('before', '', item.leftNo, '', esc(item.left ?? ''), item.rightNo)}${cell('after', '', item.rightNo, '', esc(item.right ?? ''))}</div>`;
     }
     if (item.type === 'del') {
       return `<div class="kus-dl-ld-row kus-dl-ld-row--del">${cell('before', 'del', item.leftNo, '−', esc(item.left ?? ''))}${pad('after')}</div>`;
@@ -3207,8 +3237,8 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   ], 'split');
   layoutSelect.setAttribute('aria-label', '差分一覧の比較レイアウト');
   const rowModeSelect = makeSelect([
-    ['list', '一覧（項目名と変更の要点）'],
-    ['detail', '詳細（比較元・比較先の値も表示）']
+    ['list', '一覧（要点だけ）'],
+    ['detail', '詳細（値も表示）']
   ], 'list');
   rowModeSelect.setAttribute('aria-label', '差分の表示方法');
   const lineDiffCb = makeCheck({ label: '行単位の差分', checked: true, help: '複数行の値（JS/CSS の本文、長い設定値）を行ごとに比べ、違う行とその前後だけを表示します' });

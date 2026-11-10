@@ -634,12 +634,39 @@ describe('diff lite result presentation', () => {
 
     expect(open).toContain(`data-kus-dl-row-toggle="${rowKey}"`);
     expect(open).toContain('aria-expanded="true"');
-    expect(open).toContain('aria-label="名前: 旧名称 → 新名称の比較元・比較先の値を閉じる"');
+    expect(open).toContain('aria-label="アプリ名の変更の比較元・比較先の値を閉じる"');
     expect(open).toContain('>値を閉じる</button>');
     expect(open).toContain(`id="kus-dl-row-values-${rowKey}" class="kus-dl-row__cols"`);
     expect(closed).toContain('aria-expanded="false"');
-    expect(closed).toContain('aria-label="名前: 旧名称 → 新名称の比較元・比較先の値を表示"');
+    expect(closed).toContain('aria-label="アプリ名の変更の比較元・比較先の値を表示"');
     expect(closed).toContain('>値を表示</button>');
+  });
+
+  it('names a row by its place and item, and leaves the values to the brief and the value area', () => {
+    const row = (reasonSummary?: string) => ({
+      sectionKey: 'appSettings', section: 'アプリ設定', path: 'appSettings.name',
+      type: 'changed', left: '旧名称', right: '新名称', ...(reasonSummary ? { reasonSummary } : {})
+    } as any);
+    const title = (html: string) => (/<span class="kus-dl-row__title">([^<]*)<\/span>/.exec(html) || [])[1];
+    const subtitle = (html: string) => (/<div class="kus-dl-row__subtitle">([^<]*)<\/div>/.exec(html) || [])[1];
+
+    // 場所と項目の説明がある行: それを見出しにし、値（A → B）は見出しに重ねない
+    const located = renderRowsHtml([row('アプリ名の変更')], false, '', [row('アプリ名の変更')], { rowMode: 'list' });
+    expect(title(located)).toBe('アプリ名の変更');
+    expect(subtitle(located)).toBe('名前');
+    expect(located).toContain('<span class="kus-dl-chip kus-dl-chip--before">旧名称</span>');
+    expect(located).toContain('<span class="kus-dl-chip kus-dl-chip--after">新名称</span>');
+    expect(located).toContain('aria-label="変更・内容が異なる: アプリ名の変更"');
+
+    // 説明に項目名が入っていれば、項目名を重ねて出さない
+    const named = renderRowsHtml([row('アプリ設定変更：名前')], false, '', [row('アプリ設定変更：名前')], { rowMode: 'list' });
+    expect(title(named)).toBe('アプリ設定変更：名前');
+    expect(subtitle(named)).toBeUndefined();
+
+    // 説明が無い行は、これまでどおり項目と値の要約を見出しにする
+    const bare = renderRowsHtml([row()], false, '', [row()], { rowMode: 'list' });
+    expect(title(bare)).toBe('名前: 旧名称 → 新名称');
+    expect(subtitle(bare)).toBeUndefined();
   });
 
   it('offers literal exact-path ignore for wildcard and delimiter characters', () => {
@@ -769,8 +796,8 @@ describe('diff lite JSON selection lifecycle', () => {
       .replace(/<[^>]+>/g, '|');
     const labels = [...html.matchAll(/aria-label="([^"]*)"/g)].map((match) => match[1]).join('\n');
 
-    expect(visibleText).toContain('ステータス名: 処理中 → 対応中');
-    expect(visibleText).toContain('ステータス改名：処理中 → 対応中（参照を自動補正）');
+    expect(html).toContain('<span class="kus-dl-row__title">ステータス改名：処理中 → 対応中（参照を自動補正）</span>');
+    expect(html).toContain('<div class="kus-dl-row__subtitle">ステータス名</div>');
     expect(visibleText).not.toContain('__rename__');
     expect(labels).not.toContain('__rename__');
   });
@@ -915,10 +942,11 @@ describe('diff lite row list mode and line-by-line values', () => {
     expect(briefOf(added)).not.toContain('kus-dl-arrow');
   });
 
-  it('omits the brief when both sides read the same', () => {
+  it('shows the shared value once when both sides read the same', () => {
     const row = textRow('100', '100');
     const html = render(row, { rowMode: 'list' });
-    expect(html).not.toContain('kus-dl-row__brief');
+    expect(briefOf(html)).toBe('<span class="kus-dl-chip kus-dl-chip--same">100</span>');
+    expect(html).not.toContain('kus-dl-arrow');
     expect(html).toContain('hidden></div>');
   });
 
@@ -1025,6 +1053,9 @@ describe('diff lite row list mode and line-by-line values', () => {
       expect(html).toContain('class="kus-dl-ld-row kus-dl-ld-row--add"');
       expect(html).toContain('<div class="kus-dl-ld-cell kus-dl-ld-cell--pad" data-side="before" aria-hidden="true"></div>');
       expect(html).toContain('class="kus-dl-ld-row kus-dl-ld-row--same"');
+      // 変更のない行は、1 列に積む表示のために比較先の行番号も持つ（41 行目の前で 1 行増えるため、42 行目は 43 行目になる）
+      expect(html).toContain('<div class="kus-dl-ld-cell" data-side="before"><span class="kus-dl-ld-alt">9</span><span class="kus-dl-ld-no">9</span>');
+      expect(html).not.toContain('kus-dl-ld-cell--del" data-side="before"><span class="kus-dl-ld-alt">');
       expect(html).toMatch(/<div class="kus-dl-ld-skip">変更のない \d+ 行を省略<\/div>/);
       // 違う行の前後 2 行だけ（1 行目〜7 行目と 13 行目以降は省略）
       expect(html).toContain('const value8 = 8;');
