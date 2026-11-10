@@ -115,7 +115,9 @@ import { createAppSearchControl } from './appSearchControl.js';
 import { createProgressView, el, firstLines, makeSkipLink, setButtonText, type ProgressView } from './deployProgressView.js';
 import { createEditView } from './deploy-source-edit.js';
 import { sharedMemory } from './deployMemory.js';
-import { createSelectView, renderTargetPending } from './deploy-source-select.js';
+import { createSelectView, renderLookupCandidates, renderTargetPending } from './deploy-source-select.js';
+import { lookupCandidatesFor } from '../deploy/sourceLookup.js';
+import { appendLookupMapCandidates, type LookupMapCandidates } from '../reflect/lookupCandidates.js';
 import { ensureSourceStyles } from './deploy-source-style.js';
 import {
   attachCardHelp,
@@ -155,6 +157,8 @@ interface RunContext {
   preserveTargetOnly: boolean;
   lookupMap: Record<string, string>;
   targetPending: SourceRecordInput['targetPending'];
+  /** 実行したときに、反映先の参照先と違うまま反映した参照先変換の候補（記録に残す） */
+  lookupCandidates?: LookupMapCandidates;
   allowPendingChanges: boolean;
   sections: SourceRecordSection[];
   startedAt: string;
@@ -868,10 +872,50 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
     return firstBlockerText(selectionBlockers());
   }
 
+  // 参照先変換の候補（反映元と反映先で参照先アプリが違うもの）の、アプリ名（分かる範囲で）と、追加して抽出し直す操作
+  const candidateNames = new Map<string, string>();
+  const candidateGuest = (side: 'from' | 'to') => (session ? (side === 'to' ? session.identities.target.guestId : session.identities.source.guestId) : '') || '';
+  function candidateAppName(side: 'from' | 'to', id: string): string {
+    const guest = candidateGuest(side);
+    return candidateNames.get(`${guest}|${id}`) ?? appLookupCache.peek(id, guest)?.name ?? '';
+  }
+  /** 候補の参照先アプリの名前を先に確認する（表示を描く前。確認できないものは ID だけで示す）。 */
+  async function prefetchCandidateNames(candidates: LookupMapCandidates | undefined, identities: { source: { guestId: string }; target: { guestId: string } }) {
+    if (!candidates) return;
+    const jobs: Array<Promise<void>> = [];
+    const add = (guest: string, id: string) => {
+      const key = `${guest}|${id}`;
+      if (candidateNames.has(key) || !isLookupableReflectApp(id, guest) || jobs.length >= 20) return;
+      jobs.push(appLookupCache.get(id, guest).then((result) => { if (result.ok) candidateNames.set(key, result.name); }, () => {}));
+    };
+    for (const candidate of candidates.candidates.slice(0, 10)) { add(identities.source.guestId || '', candidate.from); add(identities.target.guestId || '', candidate.to); }
+    for (const conflict of candidates.conflicts.slice(0, 5)) { add(identities.source.guestId || '', conflict.from); for (const target of conflict.targets) add(identities.target.guestId || '', target.to); }
+    await Promise.all(jobs);
+  }
+  /** いま表示する候補（反映する項目にフィールド設定・アクション設定を含むときだけ）。 */
+  const currentLookupCandidates = (): LookupMapCandidates | undefined => (session && isFresh() ? lookupCandidatesFor(session.preview.lookupCandidates, activeScopes()) : undefined);
+  /** 候補を参照先変換の入力欄へ加えて、同じ入力で差分を抽出し直す（入力済みの変換は上書きしない。選択と入力欄の修正は、同じ変更・同じ場所のものを引き継ぐ）。 */
+  function applyLookupCandidates() {
+    const candidates = currentLookupCandidates();
+    if (busy || restoring() || !session || !candidates) return;
+    const state = currentLookup();
+    if (!state.ok) { panel.setStatus(`参照先変換に誤りがあります。直してから候補を追加してください。${lookupMapError(state)}`, 'warn'); return; }
+    const { text, added } = appendLookupMapCandidates(lookupTa.value, candidates.candidates);
+    if (!added) { panel.setStatus('追加できる候補はありません（入力済みの旧IDは上書きしません）。', 'info'); return; }
+    const carryFrom = session;
+    lookupTa.value = text;
+    onInputsChanged();
+    void startExtract(carryFrom, `参照先変換に候補 ${added} 件を追加して、差分を取り直しました。`);
+  }
+
   const selectView = createSelectView({
     session: () => session,
     activeScopes,
     isFresh,
+    lookupNotice: () => {
+      const candidates = currentLookupCandidates();
+      return candidates ? { candidates, nameOf: candidateAppName, ...(restoring() ? {} : { apply: applyLookupCandidates }) } : null;
+    },
     blockers: selectionBlockers,
     notify: (message) => panel.setStatus(message, 'info'),
     dropScope: (key) => {
@@ -911,7 +955,7 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
     jsonEditsChanged: () => refreshWorkflow()
   });
 
-  async function startExtract() {
+  async function startExtract(carryFrom: SourceSession | null = null, leading = '') {
     if (busy) return;
     const blocker = setupBlocker();
     if (blocker) { panel.setStatus(blocker, 'warn'); return; }
@@ -924,8 +968,9 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
       if (kind !== 'json') sourceNote.adopt({ ok: true, appId: identities.source.appId, name: identities.source.name, code: identities.source.code });
       targetNote.adopt({ ok: true, appId: identities.target.appId, name: identities.target.name, code: identities.target.code });
       const preview = await previewReflectStandalone(options, (message) => panel.setStatus(message, 'busy'), { checkTargetDeployStatus: true });
-      // 書き込み前の検査で止まった後の抽出し直し（同じ入力）は、前回の選択と入力欄の修正をできるだけ引き継ぐ。
-      const previous = extractionStale && session && session.signature === signature ? session : null;
+      await prefetchCandidateNames(preview.lookupCandidates, identities);
+      // 書き込み前の検査で止まった後の抽出し直し（同じ入力）と、参照先変換の候補を追加した抽出し直しは、前回の選択と入力欄の修正をできるだけ引き継ぐ。
+      const previous = carryFrom ?? (extractionStale && session && session.signature === signature ? session : null);
       session = createSourceSession({ signature, opts: options, identities, sourceEnvironment: kind, preview });
       extractionStale = false;
       staleReason = '';
@@ -938,7 +983,7 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
       viewsFresh = true;
       showStage('select');
       const counts = countExtraction(preview.entries, undefined, session.models);
-      const summary = describeExtractionSummary(counts);
+      const summary = `${leading}${describeExtractionSummary(counts)}`;
       const carried = carryNote ? ` ${carryNote}` : '';
       const deployStatus = preview.targetDeployStatus;
       // 反映先が処理中なら先へ進めない（警告）。処理中かを確認できなかったときは、止めずに注意だけ添える。
@@ -1158,6 +1203,13 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
     pendingAck = makeCheck({ label: pendingState === 'pending' ? '反映先プレビューの以前からの未公開の変更も、一緒に本番へ反映されることを了承しました' : '未公開の変更があるか確認できないまま、プレビューの内容がすべて本番へ反映されることを了承しました', checked: false });
     pendingAck.checkbox.setAttribute('aria-label', '未公開の変更も一緒に本番へ反映されることを了承する');
     pendingAck.checkbox.addEventListener('input', refreshConfirmState);
+    // 参照先変換の候補を入れないまま本番まで進むときの警告（未公開の変更の了承と同じ場所。追加の入力は求めない）
+    const lookupCandidates = currentLookupCandidates();
+    if (lookupCandidates) {
+      const lookupFact = fact('lookup', '参照先変換の候補', 'danger');
+      renderLookupCandidates(lookupFact.dd, lookupCandidates, { nameOf: candidateAppName, confirm: true });
+      facts.appendChild(lookupFact.root);
+    }
     const pendingFact = fact('pending', '反映先の未公開の変更', pendingRequired ? 'danger' : '');
     renderTargetPending(pendingFact.dd, pending, false);
     if (pendingRequired) {
@@ -1418,6 +1470,7 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
       preserveTargetOnly: !!current.opts.preserveTargetOnly,
       lookupMap: { ...(current.opts.lookupMap || {}) },
       targetPending: current.preview.targetPending,
+      ...(currentLookupCandidates() ? { lookupCandidates: currentLookupCandidates() } : {}),
       allowPendingChanges,
       sections: run.map((section) => ({ sectionKey: section.sectionKey, label: section.label, selectedCount: section.selectedCount, totalCount: section.totalCount, editedCount: section.editedCount, items: section.plan.items || [] })),
       startedAt: new Date().toISOString(),

@@ -4292,6 +4292,36 @@ ${base}`
   function hasLookupCandidates(result) {
     return !!result && (result.candidates.length > 0 || result.conflicts.length > 0);
   }
+  function appendLookupMapCandidates(text, candidates) {
+    const trimmed = String(text || "").trim();
+    if (trimmed.startsWith("{")) {
+      let parsed;
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch {
+        return { text, added: 0 };
+      }
+      if (!isObject3(parsed)) return { text, added: 0 };
+      const next = { ...parsed };
+      let added = 0;
+      for (const { from, to } of candidates) if (!own2(next, from)) {
+        next[from] = to;
+        added += 1;
+      }
+      return added ? { text: JSON.stringify(next, null, 2), added } : { text, added: 0 };
+    }
+    const existing = new Set(trimmed.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#")).map((line) => line.split(/\s*(?:→|->|=>|=|:|,|\t)\s*|\s+/).filter(Boolean)[0]));
+    const lines = candidates.filter(({ from }) => !existing.has(from)).map(({ from, to }) => `${from} → ${to}`);
+    if (!lines.length) return { text, added: 0 };
+    const head = String(text || "").replace(/\s+$/, "");
+    return { text: head ? `${head}
+${lines.join("\n")}` : lines.join("\n"), added: lines.length };
+  }
+  function describeLookupCandidate(candidate, names = {}) {
+    const idText = (id, name) => name ? `${id}（${name}）` : id;
+    const sources = candidate.sources.join("、") + (candidate.total > candidate.sources.length ? ` ほか ${candidate.total - candidate.sources.length} 件` : "");
+    return `${idText(candidate.from, names.from)} → ${idText(candidate.to, names.to)}（${sources}）`;
+  }
 
   // src/reflect/planReport.ts
   function escapeReflectMarkdown(value) {
@@ -9206,6 +9236,27 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     return compareVerifyExpectations(opts.expectations, read, { checkedAt: (/* @__PURE__ */ new Date()).toISOString(), side: opts.side });
   }
 
+  // src/deploy/sourceLookup.ts
+  var LOOKUP_CANDIDATES_TITLE = "参照先変換の候補があります";
+  var LOOKUP_CANDIDATES_TEXT = "反映元と反映先で、ルックアップ・関連レコード一覧・アクションの参照先アプリが違います。参照先変換に入れずに反映すると、反映先の参照先が反映元のアプリに書き換わります。";
+  var LOOKUP_APPLY_LABEL = "候補を参照先変換に追加して差分を取り直す";
+  var LOOKUP_CANDIDATES_CONFIRM_TEXT = "候補を入れないまま反映すると、本番の参照先が反映元のアプリに書き換わります。入れる場合は「差分の選択」へ戻り、候補を参照先変換に追加して差分を取り直してください。";
+  function describeLookupConflict(conflict, nameOf = () => "") {
+    const label = (id, side) => {
+      const name = nameOf(side, id);
+      return name ? `${id}（${name}）` : id;
+    };
+    const heads = conflict.targets.map((target) => label(target.to, "to")).join(" または ");
+    const details = conflict.targets.map((target) => `${target.to}: ${target.sources.join("、")}${target.total > target.sources.length ? ` ほか ${target.total - target.sources.length} 件` : ""}`).join(" / ");
+    return `${label(conflict.from, "from")} → ${heads}：反映先の参照先が一致していません（${details}）。自動では入れません。参照先変換に自分で入力してください。`;
+  }
+  function describeSourceLookupCandidate(candidate, nameOf = () => "") {
+    return describeLookupCandidate(candidate, { from: nameOf("from", candidate.from), to: nameOf("to", candidate.to) });
+  }
+  function lookupCandidatesFor(candidates, scopes) {
+    return hasLookupCandidates(candidates) && scopes.some((key) => key === "fieldSettings" || key === "actionSettings") ? candidates : void 0;
+  }
+
   // src/deploy/sourceReport.ts
   var ITEMS_PER_SECTION_LIMIT2 = 50;
   var KIND_ORDER3 = ["削除", "変更", "追加", "保持"];
@@ -9270,6 +9321,14 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       for (const file of backup?.unavailableFiles || []) lines.push(`  - 本体を保存できなかったファイル: App ${esc3(file.appId)} / ${esc3(file.name)}（${esc3(file.reason)}）`);
     }
     lines.push(`- 取り消し方: ${esc3(sourceUndoGuidance(input.goal, input.targetPending))}`, "");
+    const candidates = input.lookupCandidates;
+    if (candidates && (candidates.candidates.length || candidates.conflicts.length)) {
+      lines.push("## 注意: 参照先変換の候補", "");
+      lines.push(`- ${esc3(LOOKUP_CANDIDATES_TEXT)}`);
+      for (const candidate of candidates.candidates) lines.push(`- 候補: ${esc3(describeSourceLookupCandidate(candidate))}`);
+      for (const conflict of candidates.conflicts) lines.push(`- 食い違い（自動では入れません）: ${esc3(describeLookupConflict(conflict))}`);
+      lines.push("");
+    }
     lines.push("## 項目別の結果", "");
     lines.push("| 項目 | 選んだ変更 | 修正した値 | 結果 | 理由 |");
     lines.push("| --- | --- | --- | --- | --- |");
@@ -9359,6 +9418,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       },
       ...result.deploy ? { deploy: buildDeployResultJson(result.deploy), deploySummary: countOutcomes(result.deploy.apps) } : {},
       ...result.deploySkipped ? { deploySkipped: result.deploySkipped } : {},
+      ...input.lookupCandidates && (input.lookupCandidates.candidates.length || input.lookupCandidates.conflicts.length) ? { lookupCandidates: input.lookupCandidates } : {},
       ...input.verification ? { verification: { ...input.verification, state: verifyState(input.verification), message: describeVerifyResult(input.verification).text } } : {}
     };
   }
@@ -10369,6 +10429,33 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     host.appendChild(box);
     return box;
   }
+  function renderLookupCandidates(host, candidates, options) {
+    const box = el("div", "kus-ds-note kus-ds-note--warn");
+    box.dataset.lookupCandidates = options.confirm ? "confirm" : "select";
+    box.append(el("strong", "", LOOKUP_CANDIDATES_TITLE), el("span", "", LOOKUP_CANDIDATES_TEXT));
+    const list2 = el("ul", "kus-ds-card__problems");
+    list2.dataset.lookupCandidateList = "true";
+    for (const candidate of candidates.candidates) {
+      const item = el("li", "", describeSourceLookupCandidate(candidate, options.nameOf));
+      item.dataset.lookupCandidate = `${candidate.from}>${candidate.to}`;
+      list2.appendChild(item);
+    }
+    for (const conflict of candidates.conflicts) {
+      const item = el("li", "", describeLookupConflict(conflict, options.nameOf));
+      item.dataset.lookupConflict = conflict.from;
+      list2.appendChild(item);
+    }
+    box.appendChild(list2);
+    if (options.confirm) box.appendChild(el("span", "", LOOKUP_CANDIDATES_CONFIRM_TEXT));
+    if (options.apply && candidates.candidates.length) {
+      const apply = makeButton(LOOKUP_APPLY_LABEL, "sub");
+      apply.dataset.lookupApply = "true";
+      apply.addEventListener("click", options.apply);
+      box.appendChild(apply);
+    }
+    host.appendChild(box);
+    return box;
+  }
   function renderTargetDeployStatus(host, status) {
     if (!status || status.state === "idle") return null;
     const box = el("div", status.state === "processing" ? "kus-ds-note kus-ds-note--warn" : "kus-ds-note kus-ds-note--info");
@@ -10606,6 +10693,8 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       attachCardHelp(summaryCard.card);
       summaryHost.append(summaryCard.card);
       renderTargetPending(summaryHost, session.preview.targetPending);
+      const lookup = host.lookupNotice();
+      if (lookup) renderLookupCandidates(summaryHost, lookup.candidates, { nameOf: lookup.nameOf, apply: lookup.apply });
       renderTargetDeployStatus(summaryHost, session.preview.targetDeployStatus);
     }
     function paintBlockers(session) {
@@ -11493,10 +11582,60 @@ ${P} .kus-ds-impact{margin-top:6px;font-size:13px;line-height:1.6;font-weight:60
       if (session.composeError) return `選んだ内容から反映内容を作れません（${firstLines(session.composeError, 1)}）。`;
       return firstBlockerText(selectionBlockers2());
     }
+    const candidateNames = /* @__PURE__ */ new Map();
+    const candidateGuest = (side) => (session ? side === "to" ? session.identities.target.guestId : session.identities.source.guestId : "") || "";
+    function candidateAppName(side, id) {
+      const guest = candidateGuest(side);
+      return candidateNames.get(`${guest}|${id}`) ?? appLookupCache.peek(id, guest)?.name ?? "";
+    }
+    async function prefetchCandidateNames(candidates, identities) {
+      if (!candidates) return;
+      const jobs = [];
+      const add = (guest, id) => {
+        const key = `${guest}|${id}`;
+        if (candidateNames.has(key) || !isLookupableReflectApp(id, guest) || jobs.length >= 20) return;
+        jobs.push(appLookupCache.get(id, guest).then((result) => {
+          if (result.ok) candidateNames.set(key, result.name);
+        }, () => {
+        }));
+      };
+      for (const candidate of candidates.candidates.slice(0, 10)) {
+        add(identities.source.guestId || "", candidate.from);
+        add(identities.target.guestId || "", candidate.to);
+      }
+      for (const conflict of candidates.conflicts.slice(0, 5)) {
+        add(identities.source.guestId || "", conflict.from);
+        for (const target of conflict.targets) add(identities.target.guestId || "", target.to);
+      }
+      await Promise.all(jobs);
+    }
+    const currentLookupCandidates = () => session && isFresh() ? lookupCandidatesFor(session.preview.lookupCandidates, activeScopes()) : void 0;
+    function applyLookupCandidates() {
+      const candidates = currentLookupCandidates();
+      if (busy || restoring() || !session || !candidates) return;
+      const state3 = currentLookup();
+      if (!state3.ok) {
+        panel.setStatus(`参照先変換に誤りがあります。直してから候補を追加してください。${lookupMapError(state3)}`, "warn");
+        return;
+      }
+      const { text, added } = appendLookupMapCandidates(lookupTa.value, candidates.candidates);
+      if (!added) {
+        panel.setStatus("追加できる候補はありません（入力済みの旧IDは上書きしません）。", "info");
+        return;
+      }
+      const carryFrom = session;
+      lookupTa.value = text;
+      onInputsChanged();
+      void startExtract(carryFrom, `参照先変換に候補 ${added} 件を追加して、差分を取り直しました。`);
+    }
     const selectView = createSelectView({
       session: () => session,
       activeScopes,
       isFresh,
+      lookupNotice: () => {
+        const candidates = currentLookupCandidates();
+        return candidates ? { candidates, nameOf: candidateAppName, ...restoring() ? {} : { apply: applyLookupCandidates } } : null;
+      },
       blockers: selectionBlockers2,
       notify: (message) => panel.setStatus(message, "info"),
       dropScope: (key) => {
@@ -11549,7 +11688,7 @@ ${P} .kus-ds-impact{margin-top:6px;font-size:13px;line-height:1.6;font-weight:60
       },
       jsonEditsChanged: () => refreshWorkflow()
     });
-    async function startExtract() {
+    async function startExtract(carryFrom = null, leading = "") {
       if (busy) return;
       const blocker = setupBlocker();
       if (blocker) {
@@ -11565,7 +11704,8 @@ ${P} .kus-ds-impact{margin-top:6px;font-size:13px;line-height:1.6;font-weight:60
         if (kind !== "json") sourceNote.adopt({ ok: true, appId: identities.source.appId, name: identities.source.name, code: identities.source.code });
         targetNote.adopt({ ok: true, appId: identities.target.appId, name: identities.target.name, code: identities.target.code });
         const preview = await previewReflectStandalone(options, (message) => panel.setStatus(message, "busy"), { checkTargetDeployStatus: true });
-        const previous = extractionStale && session && session.signature === signature ? session : null;
+        await prefetchCandidateNames(preview.lookupCandidates, identities);
+        const previous = carryFrom ?? (extractionStale && session && session.signature === signature ? session : null);
         session = createSourceSession({ signature, opts: options, identities, sourceEnvironment: kind, preview });
         extractionStale = false;
         staleReason = "";
@@ -11578,7 +11718,7 @@ ${P} .kus-ds-impact{margin-top:6px;font-size:13px;line-height:1.6;font-weight:60
         viewsFresh = true;
         showStage("select");
         const counts = countExtraction(preview.entries, void 0, session.models);
-        const summary = describeExtractionSummary(counts);
+        const summary = `${leading}${describeExtractionSummary(counts)}`;
         const carried = carryNote ? ` ${carryNote}` : "";
         const deployStatus = preview.targetDeployStatus;
         const caution = deployStatus?.state === "unknown" ? ` 注意: ${deployStatus.message}` : "";
@@ -11798,6 +11938,12 @@ ${P} .kus-ds-impact{margin-top:6px;font-size:13px;line-height:1.6;font-weight:60
       pendingAck = makeCheck({ label: pendingState === "pending" ? "反映先プレビューの以前からの未公開の変更も、一緒に本番へ反映されることを了承しました" : "未公開の変更があるか確認できないまま、プレビューの内容がすべて本番へ反映されることを了承しました", checked: false });
       pendingAck.checkbox.setAttribute("aria-label", "未公開の変更も一緒に本番へ反映されることを了承する");
       pendingAck.checkbox.addEventListener("input", refreshConfirmState);
+      const lookupCandidates = currentLookupCandidates();
+      if (lookupCandidates) {
+        const lookupFact = fact("lookup", "参照先変換の候補", "danger");
+        renderLookupCandidates(lookupFact.dd, lookupCandidates, { nameOf: candidateAppName, confirm: true });
+        facts.appendChild(lookupFact.root);
+      }
       const pendingFact = fact("pending", "反映先の未公開の変更", pendingRequired ? "danger" : "");
       renderTargetPending(pendingFact.dd, pending, false);
       if (pendingRequired) {
@@ -12048,6 +12194,7 @@ ${P} .kus-ds-impact{margin-top:6px;font-size:13px;line-height:1.6;font-weight:60
         preserveTargetOnly: !!current.opts.preserveTargetOnly,
         lookupMap: { ...current.opts.lookupMap || {} },
         targetPending: current.preview.targetPending,
+        ...currentLookupCandidates() ? { lookupCandidates: currentLookupCandidates() } : {},
         allowPendingChanges,
         sections: run.map((section) => ({ sectionKey: section.sectionKey, label: section.label, selectedCount: section.selectedCount, totalCount: section.totalCount, editedCount: section.editedCount, items: section.plan.items || [] })),
         startedAt: (/* @__PURE__ */ new Date()).toISOString(),
