@@ -169,7 +169,7 @@ tools/統合ツール/
 - 出力形式: IIFE（即時実行関数）
 - CSS: カスタム esbuild プラグインで `.css` ファイルを JS 文字列としてインライン化し、実行時に `<style>` タグとして注入
 - ターゲット: ES2020
-- 外部依存: なし（JSZip, Cytoscape は実行時に動的ロード）
+- 外部依存: ZIP 作成は自前実装、設計書 Excel は xlsx-js-style を `設計書作成.js` にだけ同梱。Mermaid・Cytoscape は実行時に CDN から読み込む（Mermaid は固定版を SRI で検証）
 
 ## 機能一覧（整理版）
 

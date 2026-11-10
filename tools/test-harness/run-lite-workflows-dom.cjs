@@ -35,13 +35,15 @@ function fixtures() {
     calls: [], fail: false,
     async invoke(name, args) {
       // 設定一括取得は第 2 引数の保存オプション（JS/CSSファイルの有無・フォルダ分け）も残す
-      this.calls.push({ name, input: args[0], ...(name === 'runSettingsExportStandalone' ? { options: { includeCustomizeFiles: args[1]?.includeCustomizeFiles, customizeFileLayout: args[1]?.customizeFileLayout, customizeFileOrderPrefix: args[1]?.customizeFileOrderPrefix } } : {}) });
+      this.calls.push({ name, input: args[0], ...(name === 'runSettingsExportStandalone' ? { options: { includeCustomizeFiles: args[1]?.includeCustomizeFiles, customizeFileLayout: args[1]?.customizeFileLayout, excludePluginConfig: args[1]?.excludePluginConfig, customizeFileOrderPrefix: args[1]?.customizeFileOrderPrefix } } : {}) });
       const status = args.find(arg => typeof arg === 'function');
       status?.('サンプルデータを処理中…');
       await new Promise(resolve => setTimeout(resolve, 130));
       if (this.fail) throw new Error('サンプル取得失敗');
       if (name === 'runFetchJsConfigStandalone') {
-        args[2].setJson(JSON.stringify(config, null, 2));
+        // withFile: 取得した JSON にアップロード済みファイル（FILE 形式）が含まれる場合
+        const fetched = this.withFile ? { ...config, desktop: { js: [...config.desktop.js, { type: 'FILE', file: { fileKey: 'src-1', name: 'app.js', contentType: 'text/javascript', size: '120' } }], css: [] } } : config;
+        args[2].setJson(JSON.stringify(fetched, null, 2));
         args[2].setCustomizeHtml('<p>サンプルのJSファイルが1件あります。</p>');
       }
       if (name === 'runRenderProcessFlowStandalone') {
@@ -88,7 +90,7 @@ async function makeBundle(entry) {
   const result = await esbuild.build({
     absWorkingDir: TOOL, entryPoints: [`src/entries/${entry}-lite-ui.ts`], bundle: true, write: false,
     format: 'iife', globalName: 'ToolHarness', platform: 'browser', target: ['chrome110'], logLevel: 'silent',
-    plugins: [{ name: 'workflow-mocks', setup(build) {
+    plugins: [require(path.join(TOOL, 'rawTextPlugin.js')).rawTextPlugin, { name: 'workflow-mocks', setup(build) {
       build.onResolve({ filter: /tabs\/[\w-]+-standalone\.js$/ }, args => {
         const key = args.path.match(/\/([\w-]+)-standalone\.js$/)[1];
         return MODULES[key] ? { path: key, namespace: 'fixture' } : null;
@@ -362,14 +364,38 @@ async function main() {
           const before = await page.evaluate(() => window.__workflowFixture.calls.length);
           await page.getByRole('button', {name:'反映先プレビューへ反映',exact:true}).click(); await idle();
           assert.equal(await page.evaluate(() => window.__workflowFixture.calls.length), before+1);
-          // 同じ JSON を複数の反映先プレビューへ反映する（FILE 形式を含む JSON は止める）
+          const singleCall = await page.evaluate(() => window.__workflowFixture.calls.at(-1));
+          assert.deepEqual(singleCall.input.fileSource.knownFileKeys, [], 'JS/CSS: 取得した JSON のファイルの取得元（なし）を反映に渡す');
+          // 同じ JSON を複数の反映先プレビューへ反映する。FILE 形式を含む JSON も反映できるが、取得元が分からないファイルは確認画面で警告する
           await button('対象・条件を変更').click();
           await chooseAction('複数の反映先プレビューへ反映');
           const multiApp = page.locator('.kus-lp__apptable input[aria-label="アプリID"]:visible').first();
           await multiApp.fill('401, 402');
           await multiApp.dispatchEvent('change');
           await jsonInput.fill(JSON.stringify({ desktop: { js: [{ type: 'FILE', file: { fileKey: 'k1', name: 'a.js' } }], css: [] }, mobile: { js: [], css: [] } }));
-          assert.equal(await button('内容を確認する').isDisabled(), true, 'JS/CSS: 複数の反映先へは FILE 形式を含む JSON を反映しない');
+          assert.equal(await button('内容を確認する').isEnabled(), true, 'JS/CSS: 複数の反映先へ FILE 形式を含む JSON も反映できる');
+          await button('内容を確認する').click();
+          assert.match(await stage(1).innerText(), /ファイル（FILE）[\s\S]*1件[\s\S]*アップロード/, 'JS/CSS: FILE 形式の扱いを確認画面に示す');
+          assert.match(await stage(1).innerText(), /取得元が分からないファイル[\s\S]*「a\.js」[\s\S]*取得元アプリで「取得」してから反映してください/, 'JS/CSS: 取得元が分からないファイルは確認画面で警告する');
+          assert.doesNotMatch(await stage(1).innerText(), /FILE タイプを含む JSON は反映できません/);
+          await page.screenshot({ path: path.join(OUT, 'jsconfig-multi-file-unknown-review.png') });
+          await button('対象・条件を変更').click();
+          // 取得したときの JSON にあるファイルは取得元が分かる。取得元と fileKey を実行に渡す
+          await page.evaluate(() => { window.__workflowFixture.withFile = true; });
+          await jsonInput.fill(validJson);
+          await chooseAction('JS/CSS設定を取得');
+          await button('内容を確認する').click();
+          await button('JS/CSS設定を取得').click(); await idle();
+          await button('対象・条件を変更').click();
+          await chooseAction('複数の反映先プレビューへ反映');
+          assert.match(await jsonInput.inputValue(), /"fileKey": "src-1"/, 'JS/CSS: 取得した JSON に FILE 形式が含まれる');
+          await button('内容を確認する').click();
+          const fileReview = await stage(1).innerText();
+          assert.match(fileReview, /ファイル（FILE）[\s\S]*1件[\s\S]*取得元（[^）]*）から取得して反映先へアップロード/, 'JS/CSS: 取得元からアップロードする旨を示す');
+          assert.doesNotMatch(fileReview, /取得元が分からないファイル/, 'JS/CSS: 取得した JSON のファイルは取得元が分かる');
+          await page.screenshot({ path: path.join(OUT, 'jsconfig-multi-file-review.png') });
+          await button('対象・条件を変更').click();
+          await page.evaluate(() => { window.__workflowFixture.withFile = false; });
           await jsonInput.fill(validJson);
           await button('内容を確認する').click();
           assert.match(await stage(1).innerText(), /#401[\s\S]*#402/, 'JS/CSS: 反映先の一覧を確認画面に示す');
@@ -379,6 +405,7 @@ async function main() {
           assert.equal(await page.evaluate(() => window.__workflowFixture.calls.length), multiBefore + 1);
           assert.equal(multiCall.name, 'runApplyJsConfigMultiStandalone');
           assert.deepEqual(multiCall.input.targets.map(t => t.appId), ['401', '402']);
+          assert.deepEqual(multiCall.input.fileSource.knownFileKeys, ['src-1'], 'JS/CSS: 取得元のファイル（fileKey）を複数反映に渡す');
           assert.match(await stage(2).innerText(), /2 件の反映先への反映が完了/);
         }
         if (id === 'settings-export') {
@@ -410,7 +437,23 @@ async function main() {
           assert.equal(await page.evaluate(() => window.__workflowFixture.calls.length), filesBefore + 1);
           assert.equal(filesCall.name, 'runSettingsExportStandalone');
           assert.equal(filesCall.input, 'zip');
-          assert.deepEqual(filesCall.options, { includeCustomizeFiles: true, customizeFileLayout: 'app', customizeFileOrderPrefix: true }, '設定一括取得: JS/CSSファイル・フォルダ分け・読み込み順を渡す');
+          assert.deepEqual(filesCall.options, { includeCustomizeFiles: true, customizeFileLayout: 'app', customizeFileOrderPrefix: true, excludePluginConfig: false }, '設定一括取得: JS/CSSファイル・フォルダ分け・読み込み順・プラグイン設定値の扱い（既定は含める）を渡す');
+          // プラグインの設定値を含めない選択は詳細設定にあり、確認画面に示して実行へ渡す
+          await button('対象・条件を変更').click();
+          await chooseAction('設定をJSONで保存');
+          await openAdvanced();
+          await page.getByRole('checkbox', { name: 'プラグインの設定値を含めない', exact: true }).check();
+          await closeAdvanced();
+          await button('内容を確認する').click();
+          assert.match(await stage(1).innerText(), /プラグインの設定値\s*含めない（プラグインの一覧だけを保存）/, '設定一括取得: プラグインの設定値を含めないことを確認画面に示す');
+          await button('設定をJSONで保存').click(); await idle();
+          assert.equal((await page.evaluate(() => window.__workflowFixture.calls.at(-1))).options.excludePluginConfig, true, '設定一括取得: プラグインの設定値を含めない指定を渡す');
+          await button('対象・条件を変更').click();
+          await openAdvanced();
+          await page.getByRole('checkbox', { name: 'プラグインの設定値を含めない', exact: true }).uncheck();
+          await closeAdvanced();
+          await button('内容を確認する').click();
+          assert.match(await stage(1).innerText(), /プラグインの設定値\s*含める（API キーなどの機微な値を含む場合があります）/, '設定一括取得: 既定は含めることと、機微な値を含み得ることを示す');
           await button('対象・条件を変更').click();
           await chooseAction(defaultAction);
           await openAdvanced(); await button('全選択').click(); await closeAdvanced();
@@ -420,9 +463,9 @@ async function main() {
           await chooseAction('2アプリの設計差分を保存');
           assert.equal(await button('内容を確認する').isDisabled(), true);
           await chooseAction('全対象をExcel ZIPで保存');
-          await page.getByRole('checkbox', {name:'プレビュー環境から取得（単一出力・2アプリ差分・Markdown ZIP）',exact:true}).check();
+          await page.getByRole('checkbox', {name:'プレビュー環境から取得',exact:true}).check();
           await button('内容を確認する').click();
-          assert.match(await stage(1).innerText(), /#202 · 本番/);
+          assert.match(await stage(1).innerText(), /#202 · プレビュー/, '設計書: Excel ZIP もプレビュー環境から取得する');
           await button('対象・条件を変更').click();
           await chooseAction(defaultAction);
           await chooseAction('AI向けMarkdownを保存');

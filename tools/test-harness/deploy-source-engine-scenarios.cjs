@@ -64,7 +64,9 @@ module.exports = async function verifyDeploySourceEngine({ page, script, out, on
       seq: 0, calls: [], writes: [], posts: [], violations: [], downloads: [], fetches: [], uploads: [], statusGets: 0,
       files: clone(config.files || {}), failApps: config.failApps || [], neverFinish: !!config.neverFinish,
       failWrites: config.failWrites || {}, rejectPost: config.rejectPost || {}, writableApps: config.writableApps || ['202'],
-      pollsToFinish: config.pollsToFinish || 1, holdWrites: false, heldWrites: 0, writeResolvers: [], apps: {}
+      pollsToFinish: config.pollsToFinish || 1, holdWrites: false, heldWrites: 0, writeResolvers: [], apps: {},
+      // 合成 kintone が書き込みの一部の値を受け取らない状況（フィールド定義の指定したキーを捨てる）と、設定の GET の失敗（パスの一覧）を再現する
+      discardFieldKeys: config.discardFieldKeys || [], failGets: config.failGets || []
     };
     for (const def of config.apps) {
       state.apps[def.id] = {
@@ -99,7 +101,9 @@ module.exports = async function verifyDeploySourceEngine({ page, script, out, on
       const { app: _app, revision: _revision, ...rest } = clone(body);
       const section = app.preview[key];
       if (key === 'fieldSettings') {
-        for (const [code, definition] of Object.entries(rest.properties || {})) {
+        for (const [code, rawDefinition] of Object.entries(rest.properties || {})) {
+          const definition = { ...rawDefinition };
+          for (const dropped of state.discardFieldKeys) delete definition[dropped];
           const exists = Object.prototype.hasOwnProperty.call(section.properties, code);
           if (method === 'POST' && exists) throw Object.assign(new Error(`フィールドコード「${code}」は既に使われています。`), { code: 'GAIA_FC03' });
           if (method === 'PUT' && !exists) throw Object.assign(new Error(`フィールド「${code}」が存在しません。`), { code: 'GAIA_FC01' });
@@ -142,6 +146,7 @@ module.exports = async function verifyDeploySourceEngine({ page, script, out, on
         }
         const key = ENDPOINTS[path];
         if (!key) throw violation(`想定外の GET: ${url}`);
+        if (state.failGets.includes(path)) throw Object.assign(new Error('権限がありません。'), { code: 'CB_NO02' });
         const app = appOf(params.app);
         const side = preview ? app.preview : app.production;
         return { ...clone(side[key]), revision: preview ? app.previewRevision : app.prodRevision };
@@ -1140,6 +1145,461 @@ module.exports = async function verifyDeploySourceEngine({ page, script, out, on
     assert.deepEqual(preview.viewSettings, before.preview.viewSettings);
     assert.equal(restored.apps['202'].prodRevision, '10');
     ok('source engine: restore a preview-only reflection');
+  }
+
+  // =========================================================================
+  // q. 選んだ変更と修正の保存 → ページを読み込み直す → 抽出 → 読み込み（承認を待つ間や別の担当者への受け渡し）
+  // =========================================================================
+  if (wanted('q')) {
+    const lastDownload = () => page.evaluate(async () => {
+      const list = window.__engine.downloads, item = list[list.length - 1];
+      return item ? { name: item.name, text: await item.blob.text(), count: list.length } : null;
+    });
+    const stageFile = stage => page.locator(`#kus-ds-stage-${stage} [data-selection-file]`);
+    const loadFile = (stage, content, name = '選択と修正.json') => stageFile(stage).setInputFiles({ name, mimeType: 'application/json', buffer: Buffer.isBuffer(content) ? content : Buffer.from(content) });
+    const fileNote = stage => page.locator(`[data-selection-file-note="${stage}"]`);
+    const noWrites = async where => assert.deepEqual((await assertOnlyAllowedWrites(where)).writes, [], `${where}: 書き込みなし`);
+    const chooseOnly = async (...ids) => {
+      for (const key of ['layoutSettings', 'viewSettings', 'fieldSettings']) await selectNone(key);
+      for (const id of ids) await rowCheck(id).check();
+    };
+    const sourceWithoutMemo = () => sourceApp({
+      production: stripUndefined({
+        fieldSettings: props(text('name', '顧客名', { required: true, unique: true })),
+        layoutSettings: { layout: [rowOf('name')] },
+        viewSettings: { views: { '全件': list('全件', 0, ['name'], 'name != ""', '更新日時 desc') } }
+      })
+    });
+
+    // --- 保存（段階 3）→ 読み込み直し → 抽出 → 読み込み（段階 2）で、選択と入力欄の修正が戻る
+    await reset(world());
+    await extract();
+    assert.equal(await page.locator('#kus-ds-stage-select').getByRole('button', { name: '選択と修正を保存', exact: true }).isEnabled(), true, '抽出後は保存できる');
+    await chooseOnly('fieldSettings:/properties/name/label', 'fieldSettings:/properties/name/required');
+    await toEdit();
+    await editRow('fieldSettings', '/properties/name/label').locator('input').fill('お客様名');
+    await button('選択と修正を保存').click();
+    const saved = await lastDownload();
+    assert.match(saved.name, /^選択と修正_反映元-営業管理（開発）\(app101\)_反映先-営業管理\(app202\)_.+\.json$/, 'ファイル名に反映元・反映先・日時が入る');
+    assert.match(await statusText(), /^選択と修正を保存しました（選んだ変更 2 件・入力欄の修正 1 件）。JS\/CSS の本文は含みません。/);
+    const file = JSON.parse(saved.text);
+    assert.equal(file.kind, 'kintone-source-deploy-selection');
+    assert.equal(file.version, 1);
+    assert.deepEqual(file.source, { appId: '101', guestId: '', name: '営業管理（開発）', environment: 'production' });
+    assert.deepEqual(file.target, { appId: '202', guestId: '', name: '営業管理' });
+    assert.deepEqual(file.scopes, ['fieldSettings', 'layoutSettings', 'viewSettings']);
+    assert.equal(file.goal, 'production');
+    const savedFields = file.sections.find(section => section.sectionKey === 'fieldSettings');
+    assert.deepEqual(savedFields.selected, ['fieldSettings:/properties/name/label', 'fieldSettings:/properties/name/required']);
+    assert.deepEqual(savedFields.overrides, [{ pointer: '/properties/name/label', value: 'お客様名' }]);
+    assert.doesNotMatch(saved.text, /_content|fileKey|bundles/, '機微な内容を含めない');
+    await noWrites('q 保存');
+
+    // ページの読み込み直し（reset で別のページになる）→ 抽出 → 読み込み
+    await reset(world());
+    await extract();
+    assert.equal(await selectCount('fieldSettings').innerText(), '選んだ変更 4/4', '読み込み前は既定どおりすべて選ぶ');
+    const [chooser] = await Promise.all([page.waitForEvent('filechooser'), button('選択と修正を読み込む').click()]);
+    await chooser.setFiles({ name: saved.name, mimeType: 'application/json', buffer: Buffer.from(saved.text) });
+    await idle();
+    assert.equal(await selectCount('fieldSettings').innerText(), '選んだ変更 2/4', '選択が戻る');
+    assert.equal(await selectCount('layoutSettings').innerText(), '選んだ変更 0/1');
+    assert.equal(await rowCheck('fieldSettings:/properties/name/label').isChecked(), true);
+    assert.equal(await rowCheck('fieldSettings:/properties/name/unique').isChecked(), false);
+    assert.equal(await fileNote('select').getAttribute('class'), 'kus-ds-note kus-ds-note--ok');
+    assert.match(await fileNote('select').innerText(), /^選択と修正を読み込みました（保存した日時: .+）。当てはめたもの: 選択 2 件・入力欄の修正 1 件。最終確認は、あらためて必要です。$/);
+    assert.match(await statusText(), /^選択と修正を読み込みました/);
+    assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'ok');
+    await shot('q-loaded');
+    // キーボードだけで読み込める（ボタンへ focus して Enter でファイルの選択が開く）。320〜1440px で横にはみ出さない
+    // ファイル選択の横取りは、filechooser の待ち受けを登録してから有効になるまでに間がある。登録と同時に Enter を送ると、
+    // 有効になる前にキーが届いてイベントが来ないことがある（クリックは前処理の分だけ遅いので起きない）。待ち受けを先に登録しておく。
+    const keepChooserIntercepted = () => {};
+    page.on('filechooser', keepChooserIntercepted);
+    try {
+      await button('選択と修正を読み込む').click({ trial: true });
+      await button('選択と修正を読み込む').focus();
+      assert.equal(await button('選択と修正を読み込む').evaluate(el => document.activeElement === el), true, '「選択と修正を読み込む」へフォーカスを移せる');
+      const [keyboardChooser] = await Promise.all([page.waitForEvent('filechooser'), page.keyboard.press('Enter')]);
+      await keyboardChooser.setFiles({ name: saved.name, mimeType: 'application/json', buffer: Buffer.from(saved.text) });
+    } finally {
+      page.off('filechooser', keepChooserIntercepted);
+    }
+    await idle();
+    assert.match(await fileNote('select').innerText(), /当てはめたもの: 選択 2 件・入力欄の修正 1 件/);
+    for (const width of [320, 390, 768, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      const overflow = await page.evaluate(() => { const canvas = document.querySelector('.kus-dp-canvas'); return canvas.scrollWidth - canvas.clientWidth; });
+      assert.ok(overflow <= 1, `${width}px: 選択と修正の保存・読み込みが横にはみ出す（${overflow}px）`);
+      if (width === 320) await shot('q-loaded-320');
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await toEdit();
+    assert.equal(await editRow('fieldSettings', '/properties/name/label').locator('input').inputValue(), 'お客様名', '入力欄の修正が戻る');
+    assert.match(await fileNote('edit').innerText(), /当てはめたもの: 選択 2 件・入力欄の修正 1 件/, '段階 3 にも結果を示す');
+    // 読み込みで確認が済んだことにはならない: 最終確認のチェックと反映先ID の入力が必要
+    await toConfirm();
+    assert.equal(await ackBox().isChecked(), false);
+    assert.equal(await runButton().isDisabled(), true, '読み込んだだけでは実行できない');
+    await arm();
+    // 確認を済ませたあとで段階 3 へ戻って読み込み直すと、確認はやり直しになる
+    await button('内容の修正に戻る').click();
+    await loadFile('edit', saved.text);
+    await idle();
+    await toConfirm();
+    assert.equal(await ackBox().isChecked(), false, '読み込み後は確認のチェックがやり直し');
+    assert.equal(await idBox().inputValue(), '', '反映先ID の入力もやり直し');
+    assert.equal(await runButton().isDisabled(), true);
+    await run('202');
+    const done = await assertOnlyAllowedWrites('q 読み込んで実行');
+    assert.deepEqual(writeLabels(done), ['PUT /app/form/fields.json'], '選んだ変更がある項目だけ書き込む');
+    assert.equal(done.writes[0].body.properties.name.label, 'お客様名');
+    assert.equal(done.writes[0].body.properties.name.required, true);
+    assert.equal(done.writes[0].body.properties.name.unique, false, '外した重複禁止は反映先のまま');
+
+    // --- 別のアプリのファイルは読み込まない（現在の選択と修正は変えない）
+    const withOther = { apps: [sourceApp(), targetApp(), { ...targetApp(), id: '203', name: '営業管理B' }] };
+    await reset(world(withOther));
+    await extract({ target: '203' });
+    await loadFile('select', saved.text);
+    await idle();
+    assert.equal(await selectCount('fieldSettings').innerText(), '選んだ変更 4/4', '選択は変わらない');
+    assert.equal(await fileNote('select').getAttribute('class'), 'kus-ds-note kus-ds-note--warn');
+    assert.match(await fileNote('select').innerText(), /^このファイルは、いまの反映元・反映先のものではないため読み込めません。反映先のアプリが違います（保存時: 営業管理（#202）、現在: 営業管理B（#203））。 現在の選択と修正は変えていません。$/);
+    assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'warn');
+    await shot('q-other-app');
+    // 壊れたファイル・別種の JSON・大きすぎるファイルも、理由を示して拒否する
+    const rejects = [
+      ['壊れた JSON', '{ not json', /JSON として読み込めませんでした/],
+      ['別種の JSON', JSON.stringify({ kind: 'kintone-deploy-backup', version: 1, bundles: [] }), /選択と修正のファイルではありません（種類: kintone-deploy-backup）/],
+      ['新しすぎる版', JSON.stringify({ ...file, version: 2 }), /版（2）は読み込めません/],
+      ['必須の項目が無い', JSON.stringify({ ...file, source: undefined }), /ファイルの内容が壊れています（反映元の情報がありません）/],
+      ['大きすぎるファイル', Buffer.alloc(21 * 1024 * 1024, 32), /ファイルが大きすぎるため読み込めません（21\.0 MB。上限は 20\.0 MB）/]
+    ];
+    for (const [name, content, pattern] of rejects) {
+      await loadFile('select', content);
+      await idle();
+      assert.match(await fileNote('select').innerText(), pattern, `${name}: 理由を示す`);
+      assert.match(await fileNote('select').innerText(), /現在の選択と修正は変えていません。$/, `${name}: 現在の状態を変えない`);
+      assert.equal(await selectCount('fieldSettings').innerText(), '選んだ変更 4/4', `${name}: 選択は変わらない`);
+    }
+    await noWrites('q 拒否');
+
+    // --- 現在の差分に無い選択・修正は、当てはまらなかった件数として示す
+    await reset(world());
+    await extract();
+    await toEdit();
+    await editRow('fieldSettings', '/properties/memo/label').locator('input').fill('備考（修正）');
+    await button('選択と修正を保存').click();
+    const withMemo = await lastDownload();
+    await reset(world({ apps: [sourceWithoutMemo(), targetApp()] }));
+    await extract();
+    await loadFile('select', withMemo.text);
+    await idle();
+    assert.equal(await fileNote('select').getAttribute('class'), 'kus-ds-note kus-ds-note--warn');
+    assert.match(await fileNote('select').innerText(), /当てはまらなかったもの: 選択 4 件・入力欄の修正 1 件（現在の差分に無いため）。選び直してください。/);
+    assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'warn');
+    assert.equal(await rowCheck('fieldSettings:/properties/name/label').isChecked(), true, '当てはまった選択は戻る');
+    await shot('q-lost');
+
+    // --- JSON での修正は、反映先の設定が保存時と同じときだけ当てはめる
+    await reset(world());
+    await extract();
+    await chooseOnly('viewSettings:/views/全件/filterCond');
+    await toEdit();
+    await editCard('viewSettings').locator('[data-action="json-toggle"]').click();
+    const area = editCard('viewSettings').locator('[data-json-area] textarea');
+    const initial = JSON.parse(await area.inputValue());
+    const edited = { views: { '全件': { ...initial.views['全件'], filterCond: 'name like "山" and name != ""' } } };
+    await area.fill(JSON.stringify(edited, null, 2));
+    await editCard('viewSettings').locator('[data-action="json-apply"]').click();
+    await button('選択と修正を保存').click();
+    const withJson = await lastDownload();
+    assert.match(await statusText(), /^選択と修正を保存しました（選んだ変更 1 件・入力欄の修正 0 件・JSON での修正 1 項目）/);
+    assert.deepEqual(JSON.parse(withJson.text).sections.find(section => section.sectionKey === 'viewSettings').json.value, edited);
+    // 反映先が同じ → 当てはめる
+    await reset(world());
+    await extract();
+    await loadFile('select', withJson.text);
+    await idle();
+    assert.match(await fileNote('select').innerText(), /JSON での修正 1 項目/);
+    assert.match(await fileNote('select').innerText(), /JSON での修正は、反映先の設定が保存時と同じだったため当てはめました。/);
+    assert.equal(await page.locator('#kus-ds-stage-select [data-json-active="viewSettings"]').isVisible(), true, 'JSON で修正中の表示');
+    await toEdit(); await toConfirm(); await run();
+    const jsonDone = await assertOnlyAllowedWrites('q JSON');
+    assert.deepEqual(jsonDone.writes[0].body.views, edited.views, '送信内容は JSON のとおり');
+    // 反映先の一覧が保存時から変わっている → 当てはめない
+    const changedTarget = targetApp();
+    changedTarget.production = { ...changedTarget.production, viewSettings: { views: { '全件': list('全件', 0, ['name'], '', ''), '後から追加': list('後から追加', 1, ['name']) } } };
+    await reset(world({ apps: [sourceApp(), changedTarget] }));
+    await extract();
+    await loadFile('select', withJson.text);
+    await idle();
+    assert.match(await fileNote('select').innerText(), /JSON での修正（ビュー設定）は、反映先の設定が保存時から変わった（または現在の差分に無い）ため当てはめていません。JSON で直し直してください。/);
+    assert.equal(await fileNote('select').getAttribute('class'), 'kus-ds-note kus-ds-note--warn');
+    assert.equal(await page.locator('#kus-ds-stage-select [data-json-active="viewSettings"]').isHidden(), true, 'JSON は当てはめない');
+    await noWrites('q JSON 反映先が変わった');
+    ok('source engine: save and load the selection and edits as a file');
+  }
+
+  // =========================================================================
+  // r. 反映後の内容を確認する（読み取りだけ。選んだ変更が意図した値で入っているか。選ばなかった変更は問題に数えない）
+  // =========================================================================
+  if (wanted('r')) {
+    const lastDownload = () => page.evaluate(async () => {
+      const list = window.__engine.downloads, item = list[list.length - 1];
+      return item ? { name: item.name, text: await item.blob.text(), count: list.length } : null;
+    });
+    const verifyButton = () => page.getByRole('button', { name: /^反映後の内容を確認(する|し直す)$/ });
+    const verifyResult = () => page.locator('[data-verify-result]');
+    const lastSeq = async () => { const calls = (await snapshot()).calls; return calls[calls.length - 1].seq; };
+    const callsAfter = async seq => (await snapshot()).calls.filter(call => call.seq > seq);
+    const chooseOnly = async (...ids) => {
+      for (const key of ['layoutSettings', 'viewSettings', 'fieldSettings']) await selectNone(key);
+      for (const id of ids) await rowCheck(id).check();
+    };
+    /** 表示名と必須を選び、表示名を入力欄で直して実行する。 */
+    const reflectLabelAndRequired = async () => {
+      await extract();
+      await chooseOnly('fieldSettings:/properties/name/label', 'fieldSettings:/properties/name/required');
+      await toEdit();
+      await editRow('fieldSettings', '/properties/name/label').locator('input').fill('お客様名');
+      await toConfirm();
+      await run();
+    };
+
+    // --- 選んだ変更がすべて反映されている（修正した値を含む）
+    await reset(world());
+    await reflectLabelAndRequired();
+    const reflected = await assertOnlyAllowedWrites('r 反映');
+    assert.equal(reflected.apps['202'].production.fieldSettings.properties.name.label, 'お客様名');
+    assert.deepEqual(reflected.apps['202'].production.layoutSettings, { layout: [rowOf('name')] }, '選ばなかったレイアウトは反映先のまま');
+    assert.equal(await verifyButton().isVisible(), true, '本番まで反映が成功した結果に出す');
+    assert.match(await page.locator('.kus-ds-verify__intro').innerText(), /^本番の設定を読み取り、選んだ 2 件の変更が、選んだ値（修正した値を含む）で入っているか確かめます。読み取りだけで、書き込みません。選ばなかった変更は確認しません。$/);
+    assert.equal(await verifyResult().count(), 0, '確認するまで結果は出さない');
+    const seq = await lastSeq();
+    await verifyButton().click();
+    await idle();
+    const reads = await callsAfter(seq);
+    assert.deepEqual(reads.map(call => `${call.method} ${call.url}`), ['GET /k/v1/app/form/fields.json'], '本番の、選んだ項目だけを読み取る（書き込みなし）');
+    assert.equal(await verifyResult().getAttribute('data-verify-result'), 'all');
+    assert.match(await verifyResult().innerText(), /^✓ 選んだ 2 件はすべて反映されています（本番の設定を確認しました。修正した値 1 件も、その値になっています）。\n確認した日時: .+$/);
+    assert.equal(await statusText(), '選んだ 2 件はすべて反映されています（本番の設定を確認しました。修正した値 1 件も、その値になっています）。');
+    assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'ok');
+    assert.equal(await verifyButton().innerText(), '反映後の内容を確認し直す');
+    await shot('r-verified');
+    await assertOnlyAllowedWrites('r 確認');
+    // 記録の Markdown と結果 JSON に、確認した日時と結果を残す
+    await button('記録をMarkdownで保存').click();
+    const record = await lastDownload();
+    assert.match(record.text, /## 反映後の内容の確認\r?\n\r?\n- 確認した日時: .+\r?\n- 確認した設定: 本番\r?\n- 結果: 選んだ 2 件はすべて反映されています/);
+    assert.match(record.text, /件数: 選んだ変更 2・意図した値で反映 2・反映されていない 0・確認できない 0（修正した値 1 件のうち 1 件が反映）/);
+    assert.match(record.text, /選ばなかった変更が反映先に残っているのは正常なため、確認の対象にしていません。/);
+    await button('結果JSONを保存').click();
+    const resultJson = JSON.parse((await lastDownload()).text);
+    assert.equal(resultJson.verification.state, 'all');
+    assert.equal(resultJson.verification.side, 'production');
+    assert.equal(resultJson.verification.total, 2);
+    assert.equal(resultJson.verification.reflected, 2);
+    assert.match(resultJson.verification.checkedAt, /^\d{4}-\d{2}-\d{2}T/);
+
+    // --- 確認する前の記録には「確認していません」と残す
+    await reset(world());
+    await reflectLabelAndRequired();
+    await button('記録をMarkdownで保存').click();
+    assert.match((await lastDownload()).text, /## 反映後の内容の確認\r?\n\r?\n- 確認していません/);
+    await button('結果JSONを保存').click();
+    assert.equal(JSON.parse((await lastDownload()).text).verification, undefined);
+
+    // --- 合成 kintone が一部の値（必須）を受け取らない → 反映されていない変更として、場所・期待した値・現在の値を示す
+    await reset(world({ discardFieldKeys: ['required'] }));
+    await reflectLabelAndRequired();
+    assert.match(await statusText(), /^1 項目を反映先プレビューへ反映し、1 アプリを本番へ反映しました。$/, '書き込み自体は成功したように見える');
+    await verifyButton().click();
+    await idle();
+    assert.equal(await verifyResult().getAttribute('data-verify-result'), 'mismatch');
+    assert.match(await verifyResult().innerText(), /^! 反映されていない変更 1 件（選んだ 2 件中。本番の設定を確認しました）。/);
+    assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'err');
+    const mismatchList = page.locator('[data-verify-list="mismatch"]');
+    assert.match(await mismatchList.innerText(), /反映されていない変更（1 件）/);
+    assert.match(await mismatchList.innerText(), /フィールド設定 \/ .*name.* \/ .*必須.*: 期待した値 はい、現在の値 いいえ/);
+    assert.doesNotMatch(await mismatchList.innerText(), /お客様名/, '反映された修正した値は、反映されていない変更に含めない');
+    await shot('r-mismatch');
+    for (const width of [320, 390, 768, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      const overflow = await page.evaluate(() => { const canvas = document.querySelector('.kus-dp-canvas'); return canvas.scrollWidth - canvas.clientWidth; });
+      assert.ok(overflow <= 1, `${width}px: 反映後の内容の確認が横にはみ出す（${overflow}px）`);
+      if (width === 320) await shot('r-mismatch-320');
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await button('記録をMarkdownで保存').click();
+    const mismatchRecord = (await lastDownload()).text;
+    assert.match(mismatchRecord, /### 反映されていない変更\r?\n\r?\n\| 場所 \| 期待した値 \| 現在の値 \|/);
+    assert.match(mismatchRecord, /\| フィールド設定 \/ .*必須.* \| はい \| いいえ \|/);
+    await button('結果JSONを保存').click();
+    const mismatchJson = JSON.parse((await lastDownload()).text).verification;
+    assert.equal(mismatchJson.state, 'mismatch');
+    assert.equal(mismatchJson.mismatches.length, 1);
+    assert.deepEqual([mismatchJson.mismatches[0].expectedText, mismatchJson.mismatches[0].currentText], ['はい', 'いいえ']);
+    await assertOnlyAllowedWrites('r 反映されていない');
+
+    // --- 設定を取得できない → 「確認できません」（「反映されています」とは言わない）
+    await reset(world());
+    await reflectLabelAndRequired();
+    await page.evaluate(() => { window.__engine.failGets = ['/app/form/fields.json']; });
+    await verifyButton().click();
+    await idle();
+    assert.equal(await verifyResult().getAttribute('data-verify-result'), 'unknown');
+    assert.match(await verifyResult().innerText(), /^ⓘ 確認できません。選んだ 2 件のうち 2 件の内容を確認できませんでした（確認できた 0 件は反映されています）。/);
+    assert.doesNotMatch(await verifyResult().innerText(), /すべて反映されています/);
+    assert.match(await page.locator('[data-verify-list="unknown"]').innerText(), /確認できなかった変更（1 件）[\s\S]*フィールド設定: 2 件（権限がありません。）/);
+    assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'warn');
+    await shot('r-unknown');
+    // 取得できるようになったら、確認し直せる
+    await page.evaluate(() => { window.__engine.failGets = []; });
+    await verifyButton().click();
+    await idle();
+    assert.equal(await verifyResult().getAttribute('data-verify-result'), 'all');
+
+    // --- 目標がプレビューまでのときは、反映先のプレビューを読み取る
+    await reset(world());
+    await page.getByRole('radio', { name: 'プレビューまで（本番へは反映しない）', exact: true }).check();
+    await reflectLabelAndRequired();
+    const previewSeq = await lastSeq();
+    await verifyButton().click();
+    await idle();
+    assert.deepEqual((await callsAfter(previewSeq)).map(call => `${call.method} ${call.url}`), ['GET /k/v1/preview/app/form/fields.json']);
+    assert.match(await verifyResult().innerText(), /^✓ 選んだ 2 件はすべて反映されています（反映先のプレビューの設定を確認しました。/);
+
+    // --- 本番へ反映できなかった結果（FAIL）には出さない
+    await reset(world({ failApps: ['202'] }));
+    await reflectLabelAndRequired();
+    assert.equal(await verifyButton().count(), 0, '本番へ反映できなかった結果には出さない');
+    ok('source engine: verify the reflected content after the run');
+  }
+
+  // =========================================================================
+  // s. 参照先変換の候補（反映元と反映先で、同じコードのルックアップが別のアプリを指す）
+  // =========================================================================
+  if (wanted('s')) {
+    const lastDownload = () => page.evaluate(async () => {
+      const list = window.__engine.downloads, item = list[list.length - 1];
+      return item ? { name: item.name, text: await item.blob.text() } : null;
+    });
+    const lookupOf = (app, code = 'cust') => ({ relatedApp: { app, ...(code ? { code } : {}) }, relatedKeyField: 'code', fieldMappings: [], lookupPickerFields: [], filterCond: '', sort: '' });
+    const lookupWorld = (extra = {}) => ({
+      apps: [
+        sourceApp({
+          production: stripUndefined({
+            fieldSettings: props(text('name', '顧客名'), text('customer', '顧客', { lookup: lookupOf('301', '') }), ...(extra.second ? [text('product', '商品', { lookup: lookupOf('301', '') })] : [])),
+            layoutSettings: { layout: [rowOf('name'), rowOf('customer')] },
+            viewSettings: { views: {} }
+          })
+        }),
+        targetApp({
+          production: stripUndefined({
+            fieldSettings: props(text('name', '取引先'), text('customer', '顧客', { lookup: lookupOf('401') }), ...(extra.second ? [text('product', '商品', { lookup: lookupOf('402') })] : [])),
+            layoutSettings: { layout: [rowOf('name')] },
+            viewSettings: { views: {} }
+          })
+        }),
+        { id: '301', name: '顧客台帳（開発）', prodRevision: '1', previewRevision: '1' },
+        { id: '401', name: '顧客台帳', prodRevision: '1', previewRevision: '1' },
+        { id: '402', name: '商品台帳', prodRevision: '1', previewRevision: '1' }
+      ]
+    });
+    const notice = stage => page.locator(`[data-lookup-candidates="${stage}"]`);
+    const lookupText = () => page.getByLabel('参照先変換（旧AppID → 新AppID）', { exact: true });
+    const relatedAppOf = body => body.properties.customer.lookup.relatedApp;
+
+    // --- 現状: 参照先変換が空のまま進むと、反映先の参照先が反映元のアプリに書き換わる。段階 2 と最終確認で警告し、記録に残す
+    await reset(lookupWorld());
+    await extract();
+    assert.equal(await notice('select').isVisible(), true, '段階 2 に候補を警告で示す');
+    assert.match(await notice('select').innerText(), /^参照先変換の候補があります\n反映元と反映先で、ルックアップ・関連レコード一覧・アクションの参照先アプリが違います。参照先変換に入れずに反映すると、反映先の参照先が反映元のアプリに書き換わります。/);
+    assert.match(await page.locator('[data-lookup-candidate="301>401"]').innerText(), /^301（顧客台帳（開発）） → 401（顧客台帳）（ルックアップ「.*customer.*」）$/);
+    assert.equal(await notice('select').locator('[data-lookup-apply]').innerText(), '候補を参照先変換に追加して差分を取り直す');
+    assert.equal(await page.locator('[data-lookup-conflict]').count(), 0);
+    await shot('s-select-candidates');
+    await toEdit(); await toConfirm();
+    const confirmNotice = notice('confirm');
+    assert.equal(await confirmNotice.isVisible(), true, '最終確認にも同じ警告を示す');
+    assert.match(await confirmNotice.innerText(), /候補を入れないまま反映すると、本番の参照先が反映元のアプリに書き換わります。/);
+    assert.equal(await confirmNotice.locator('[data-lookup-apply]').count(), 0, '最終確認には追加の操作を出さない');
+    const order = await page.evaluate(() => { const a = document.querySelector('[data-confirm="lookup"]'), b = document.querySelector('[data-confirm="pending"]'); return !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING); });
+    assert.equal(order, true, '未公開の変更の了承の近く（その前）に置く');
+    await page.locator('[data-confirm="lookup"]').scrollIntoViewIfNeeded();
+    await shot('s-confirm-candidates');
+    await run();
+    const unmapped = await assertOnlyAllowedWrites('s 候補を入れないまま');
+    const unmappedWrite = unmapped.writes.find(write => write.body.properties?.customer);
+    assert.equal(relatedAppOf(unmappedWrite.body).app, '301', '候補を入れないと、反映先の参照先が反映元のアプリに書き換わる');
+    assert.equal(unmapped.apps['202'].production.fieldSettings.properties.customer.lookup.relatedApp.app, '301');
+    await button('記録をMarkdownで保存').click();
+    const record = (await lastDownload()).text;
+    assert.match(record, /## 注意: 参照先変換の候補\r?\n\r?\n- 反映元と反映先で、ルックアップ・関連レコード一覧・アクションの参照先アプリが違います。/);
+    assert.match(record, /- 候補: 301 → 401（ルックアップ「.*customer.*」）/);
+    await button('結果JSONを保存').click();
+    assert.deepEqual(JSON.parse((await lastDownload()).text).lookupCandidates.candidates.map(item => [item.from, item.to]), [['301', '401']]);
+
+    // --- 候補を追加して抽出し直す: 反映先の参照先はそのまま。選択（レイアウトを外した状態）は引き継ぐ
+    await reset(lookupWorld());
+    await extract();
+    await selectNone('layoutSettings');
+    await notice('select').locator('[data-lookup-apply]').click();
+    await idle();
+    assert.equal(await tab('差分を選ぶ').getAttribute('aria-selected'), 'true');
+    assert.equal(await lookupText().inputValue(), '301 → 401', '候補が参照先変換へ入る');
+    assert.equal(await notice('select').count(), 0, '追加すると候補の警告は消える');
+    assert.match(await statusText(), /^参照先変換に候補 1 件を追加して、差分を取り直しました。差分のある項目/);
+    assert.match(await statusText(), /前回の選択 \d+ 件を引き継ぎました。/, '参照先変換を変えても、選択は引き継ぐ');
+    assert.equal(await page.locator('[data-carry-over]').isVisible(), true);
+    assert.match(await selectCount('layoutSettings').innerText(), /^選んだ変更 0\//, '外したレイアウトは外したまま');
+    await toEdit(); await toConfirm();
+    assert.equal(await notice('confirm').count(), 0, '候補を入れたときは最終確認に警告を出さない');
+    await run();
+    const mapped = await assertOnlyAllowedWrites('s 候補を追加');
+    assert.equal(mapped.writes.some(write => write.body.properties?.customer?.lookup), false, '参照先が同じになったので、ルックアップは書き込まない');
+    assert.ok(mapped.writes.some(write => write.body.properties?.name), '表示名などの変更は書き込む');
+    assert.equal(mapped.apps['202'].production.fieldSettings.properties.customer.lookup.relatedApp.app, '401');
+    await button('記録をMarkdownで保存').click();
+    assert.doesNotMatch((await lastDownload()).text, /参照先変換の候補/, '入れたときは記録に注意を残さない');
+
+    // --- 入力済みの参照先変換は上書きしない。入力済みの旧ID は候補にしない
+    await reset(lookupWorld());
+    await button('詳細設定…').click();
+    await lookupText().fill('301 → 402');
+    await page.getByRole('button', { name: '詳細設定を閉じる', exact: true }).click();
+    await page.waitForFunction(() => !document.querySelector('dialog[open]'));
+    await extract();
+    assert.equal(await notice('select').count(), 0, '入力済みの旧ID は候補にしない');
+    assert.equal(await lookupText().inputValue(), '301 → 402');
+
+    // --- 食い違い（同じ旧ID に反映先の参照先が複数）: 自動では入れず、食い違いを示す
+    await reset(lookupWorld({ second: true }));
+    await extract();
+    assert.match(await page.locator('[data-lookup-conflict="301"]').innerText(), /^301（顧客台帳（開発）） → 401（顧客台帳） または 402（商品台帳）：反映先の参照先が一致していません/);
+    assert.equal(await page.locator('[data-lookup-candidate]').count(), 0);
+    assert.equal(await notice('select').locator('[data-lookup-apply]').count(), 0, '食い違いだけのときは追加の操作を出さない');
+    assert.equal(await lookupText().inputValue(), '', '食い違いは参照先変換に入れない');
+    await toEdit(); await toConfirm();
+    assert.equal(await page.locator('[data-confirm="lookup"] [data-lookup-conflict="301"]').count(), 1, '最終確認にも食い違いを示す');
+
+    // --- 320〜1440px のはみ出し・キーボードだけで追加して抽出し直せる
+    await reset(lookupWorld());
+    await extract();
+    for (const width of [320, 390, 768, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      const overflow = await page.evaluate(() => { const canvas = document.querySelector('.kus-dp-canvas'); return canvas.scrollWidth - canvas.clientWidth; });
+      assert.ok(overflow <= 1, `${width}px: 参照先変換の候補が横にはみ出す（${overflow}px）`);
+      if (width === 320) await shot('s-select-candidates-320');
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await notice('select').locator('[data-lookup-apply]').focus();
+    await page.keyboard.press('Enter');
+    await idle();
+    assert.equal(await lookupText().inputValue(), '301 → 401', 'キーボードだけで候補を追加して抽出し直せる');
+    ok('source engine: lookup map candidates are shown, added with re-extraction, and recorded when left out');
   }
 
   return checks;

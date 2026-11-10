@@ -81,18 +81,40 @@ export function summarizeFieldProps(props: any): { total: number; system: number
   return { total, system, writable, subtable, lookup, calc, byType };
 }
 
+/** 関数呼び出し以外で計算式に現れる語（真偽値など）。フィールドコードとは見なさない。 */
 const FORMULA_WORDS = new Set([
   'IF', 'AND', 'OR', 'NOT', 'SUM', 'ROUND', 'ROUNDDOWN', 'ROUNDUP', 'DATE_FORMAT',
   'DATE', 'TIME', 'DATETIME_FORMAT', 'CONTAINS', 'NUMBER', 'VALUE', 'TRUE', 'FALSE'
 ]);
 
+/** 計算式の語。文字列リテラル（"…"）と、フィールドコード（日本語を含む）の候補を順に取り出す。 */
+const FORMULA_TOKEN = /"(?:[^"\\]|\\.)*"|[\p{L}_][\p{L}\p{N}_]*/gu;
+
+/**
+ * 計算式が参照するフィールドコード。文字列リテラル・関数（直後が「(」）・数値は除く。
+ * 日本語のフィールドコードも拾う。
+ */
 export function collectFormulaRefs(expression: string): string[] {
   const refs = new Set<string>();
-  String(expression || '').replace(/\b[A-Za-z_][A-Za-z0-9_]*\b/g, (token) => {
-    if (!FORMULA_WORDS.has(token.toUpperCase())) refs.add(token);
-    return token;
-  });
+  const text = String(expression || '');
+  for (const match of text.matchAll(FORMULA_TOKEN)) {
+    const token = match[0];
+    if (token.startsWith('"')) continue;
+    if (text.slice((match.index ?? 0) + token.length).trimStart().startsWith('(')) continue;
+    if (FORMULA_WORDS.has(token.toUpperCase())) continue;
+    refs.add(token);
+  }
   return [...refs];
+}
+
+/** 計算式の中のフィールドコードを、codeMap（旧コード → 新コード）に従って書き換える。文字列リテラルと関数名は変えない。 */
+export function rewriteFormulaRefs(expression: string, codeMap: ReadonlyMap<string, string>): string {
+  const text = String(expression ?? '');
+  return text.replace(FORMULA_TOKEN, (token, offset: number) => {
+    if (token.startsWith('"')) return token;
+    if (text.slice(offset + token.length).trimStart().startsWith('(')) return token;
+    return codeMap.get(token) ?? token;
+  });
 }
 
 export function collectFieldApplyWarnings(incomingProps: any, currentProps: any, lookupMap: Record<string, string> = {}): string[] {
@@ -133,7 +155,7 @@ export function collectFieldApplyWarnings(incomingProps: any, currentProps: any,
       }
       if (def?.expression) {
         const missing = collectFormulaRefs(def.expression).filter((code) => !allCodes.has(code));
-        if (missing.length) warnings.push(`${label}: 計算式の参照候補が見つかりません: ${missing.join(', ')}`);
+        if (missing.length) warnings.push(`${label}: 計算式が参照する ${missing.join(', ')} は、この JSON にありません（反映先に同じコードのフィールドがあれば問題ありません。実行前の確認で反映先と照合します）`);
       }
       if (def?.type === 'SUBTABLE') walk(def.fields, label);
     }

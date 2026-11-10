@@ -168,9 +168,9 @@ describe('design/bundleToMarkdown (REST API レスポンス準拠の日本語化
       }
     })));
     expect(md).toContain('| 参照先/制約 |');
-    expect(md).toContain('ルックアップ: App 12 キー `name` / 転記 1項目 / 文字数 1〜64');
+    expect(md).toContain('ルックアップ: App 12 キー `name` / 転記 1項目（`addr` ← `addr`） / 文字数 1〜64');
     expect(md).toContain('単位: 円（後） / 桁区切りあり / 値 0〜');
-    expect(md).toContain('関連レコード: App 20 条件 `customer` = `customer` / 表示 2項目 / 5件表示');
+    expect(md).toContain('関連レコード: App 20 条件 `customer` = `customer` / 表示 2項目（`date`、`memo`） / 5件表示');
     expect(md).toContain('| qty | 数量 | 数値 |  |  |  | 単位: 個 |');
   });
 

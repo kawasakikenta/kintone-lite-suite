@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { kusConfirm } from '../../src/utils';
 import { RunCancelledError, __resetRunControlForTests } from '../../src/runControl';
-import { runApplyJsConfigMultiStandalone, jsConfigMultiTargetProblem, buildJsConfigApplyPlan } from '../../src/tabs/jsconfig-standalone';
+import { runApplyJsConfigMultiStandalone } from '../../src/tabs/jsconfig-standalone';
 
 vi.mock('../../src/utils', async original => ({ ...await original<typeof import('../../src/utils')>(), kusConfirm: vi.fn() }));
 
@@ -69,15 +69,12 @@ describe('apply JS/CSS to many preview targets', () => {
     expect(status).toHaveBeenLastCalledWith(expect.stringContaining('3件の反映先プレビューへ JS/CSS 設定を反映しました'), false);
   });
 
-  it('blocks JSON with FILE entries before any request, and suggests the reflect tool', async () => {
+  it('does not block JSON with FILE entries any more: without a known origin it only reads the targets and writes nothing', async () => {
     const fileJson = JSON.stringify({ desktop: { js: [{ type: 'FILE', file: { fileKey: 'k1', name: 'a.js' } }, { type: 'URL', url: 'https://example.test/a.js' }], css: [] } });
     await expect(runApplyJsConfigMultiStandalone({ targets: targets('5', '6'), jsonText: fileJson }, vi.fn(), vi.fn()))
-      .rejects.toThrow(/FILE タイプ.*1件.*まとめて反映できません[\s\S]*プレビュー反映/);
-    expect(calls).toEqual([]);
+      .rejects.toThrow(/取得元が分からないファイルが 1件[\s\S]*取得元アプリで「取得」してから反映してください/);
+    expect(calls.every(c => c.method === 'GET')).toBe(true);
     expect(kusConfirm).not.toHaveBeenCalled();
-    const plan = buildJsConfigApplyPlan(JSON.parse(fileJson));
-    expect(jsConfigMultiTargetProblem(plan)).toContain('別アプリの JS/CSS 転送');
-    expect(jsConfigMultiTargetProblem(buildJsConfigApplyPlan(JSON.parse(json)))).toBe('');
   });
 
   it('rejects empty or non-numeric targets before any request', async () => {

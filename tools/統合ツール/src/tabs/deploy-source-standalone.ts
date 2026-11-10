@@ -8,10 +8,14 @@
  * 書き込み後に本番へ反映しない場合は、その理由を deploySkipped で返す（プレビューへの書き込みは済んでいる）。
  */
 
+import { fetchBundle } from '../api.js';
+import { compareVerifyExpectations, type SourceVerifyResult, type VerifyExpectation, type VerifyRead, type VerifySide } from '../deploy/sourceVerify.js';
 import type { SourceDeployOptions, SourceDeployResult, SourceApplyResult } from '../deploy/sourceTypes.js';
 import type { DeployAppInspection } from '../deploy/types.js';
 import { isRunCancelledError, RUN_CANCELLED_MESSAGE } from '../runControl.js';
 import { previewWriteState } from '../reflect/applyOutcome.js';
+import { buildReflectSectionPlan } from '../reflect/standalonePlan.js';
+import { isCompleteReflectSection } from '../reflect/standalonePreflight.js';
 import { runApplyPreviewStandalone } from './reflect-standalone.js';
 import { inspectDeployTargetsStandalone, runDeployStandalone } from './deploy-standalone.js';
 
@@ -94,4 +98,42 @@ export async function runSourceToProductionStandalone(opts: SourceDeployOptions)
     onUpdate: opts.onDeployUpdate, setStatus: opts.setStatus, poll: opts.poll
   });
   return { ...result, deploy, deployInspection: record };
+}
+
+export interface VerifySourceDeployOptions {
+  /** 確認する反映先（読み取るだけ。書き込まない） */
+  target: { appId: string; guestId: string };
+  /** 本番まで反映したなら production、プレビューまでなら preview */
+  side: VerifySide;
+  /** 実行したときに控えた、選んだ変更の場所と期待する値 */
+  expectations: readonly VerifyExpectation[];
+  setStatus?: (message: string) => void;
+}
+
+/**
+ * 反映後の内容を確認する（読み取りだけ）。反映先の現在の設定（side の本番またはプレビュー）を、反映と同じ形（PUT 形）で読み取り、
+ * 実行したときに控えた期待する値と比べる。取得に失敗した項目は「確認できません」として返す（例外にしない。中止だけは伝える）。
+ * 設定を PUT 形にするのは、差分の抽出と同じ buildReflectSectionPlan（反映先を反映元にも渡して、before だけを使う）。
+ */
+export async function verifySourceDeployStandalone(opts: VerifySourceDeployOptions): Promise<SourceVerifyResult> {
+  const keys = [...new Set(opts.expectations.map(item => item.sectionKey))];
+  const read: Record<string, VerifyRead> = {};
+  const failAll = (message: string) => { for (const key of keys) read[key] = { ok: false, message }; };
+  opts.setStatus?.(opts.side === 'production' ? '本番の設定を読み取って確認中…' : '反映先プレビューの設定を読み取って確認中…');
+  try {
+    const bundle = await fetchBundle({
+      rawSettings: true, appId: opts.target.appId, guestId: opts.target.guestId || '', preview: opts.side === 'preview', sections: keys,
+      onProgress: (done, label) => opts.setStatus?.(`${opts.side === 'production' ? '本番' : '反映先プレビュー'}の設定を確認中 ${Math.round(done * 100)}%（${label}）`)
+    });
+    for (const key of keys) {
+      const section = bundle.sections?.[key];
+      if (!isCompleteReflectSection(section)) { read[key] = { ok: false, message: String(section?._fetchError || '設定を完全には取得できませんでした') }; continue; }
+      const plan = buildReflectSectionPlan(key, section, section);
+      read[key] = plan.values ? { ok: true, value: plan.values.before } : { ok: false, message: plan.blockers[0] || plan.message || '設定の形式を読み取れませんでした' };
+    }
+  } catch (error) {
+    if (isRunCancelledError(error)) throw error;
+    failAll(`設定を取得できませんでした（${reasonOf(error)}）`);
+  }
+  return compareVerifyExpectations(opts.expectations, read, { checkedAt: new Date().toISOString(), side: opts.side });
 }

@@ -169,6 +169,13 @@ export function mountSettingsExportLitePanel() {
   cardFiles.body.appendChild(makeRow([fileOrder], { label: '読み込み順' }));
   cardFiles.body.appendChild(makeNote('「設定とJS/CSSファイルをZIPで保存」で、アプリごとのフォルダの中の分け方とファイル名を選びます（例: desktop/js/main.js。読み込み順を付けると desktop/js/01_main.js、フォルダを分けないと desktop_js_01_main.js）。URLで指定したJS/CSSは保存しません。', 'help'));
 
+  // ---- 機微な値の扱い（プラグインの設定値は既定で含める。API キーなどを含み得るため、含めない選択を用意する） ----
+  const cardSensitive = makeCard({ title: '機微な値の扱い' });
+  const excludePluginConfig = makeCheck({ label: 'プラグインの設定値を含めない' });
+  cardSensitive.body.appendChild(makeRow([excludePluginConfig.label], { label: 'プラグイン' }));
+  cardSensitive.body.appendChild(makeNote('プラグインの設定値には API キーなどが含まれる場合があります。含めない場合も、プラグインの一覧（ID・名前・有効状態）は保存します。', 'help'));
+  cardSensitive.body.appendChild(makeNote('JS/CSS設定を取得すると、ファイルの本文も保存します（API トークンなどが書かれている場合があります）。共有する前に内容を確認してください。', 'help'));
+
   const btnJson = makeButton('JSON で保存', 'primary', { icon: '↓' });
   const btnZip = makeButton('ZIP で保存', 'primary', { icon: '↓' });
   const btnZipFiles = makeButton('JS/CSSファイルも ZIP で保存', 'primary', { icon: '↓' });
@@ -203,7 +210,7 @@ export function mountSettingsExportLitePanel() {
   const runExport = (mode: 'json' | 'zip', includeCustomizeFiles: boolean) => async () => {
     const { summaryHtml } = await runSettingsExportStandalone(
       mode,
-      { ...opts(), includeCustomizeFiles, customizeFileLayout: fileLayout.value, customizeFileOrderPrefix: fileOrder.value === 'prefix' },
+      { ...opts(), includeCustomizeFiles, customizeFileLayout: fileLayout.value, customizeFileOrderPrefix: fileOrder.value === 'prefix', excludePluginConfig: excludePluginConfig.checkbox.checked },
       // 中止の報告（「中止しました…」）は失敗ではないので警告色にする
       (m: string, e?: boolean) => panel.setStatus(m, /^中止しました/.test(m) ? 'warn' : e ? 'err' : 'busy')
     );
@@ -222,15 +229,22 @@ export function mountSettingsExportLitePanel() {
   };
   const filesExportProblem = () => exportProblem()
     || (chips.some(c => c.checkbox.checked && c.checkbox.value === 'customizeSettings') ? '' : 'JS/CSSファイルも保存するときは、取得する設定に「JS/CSS設定」を含めてください。');
+  const scopeChecked = (key: string) => chips.some(c => c.checkbox.checked && c.checkbox.value === key);
+  /** 機微な値を含むかを、取得する設定に応じて確認画面に示す（プラグイン・JS/CSSを取得しないときは出さない）。 */
+  const sensitiveSummary = (): Array<[string, string]> => [
+    ...(scopeChecked('pluginSettings') ? [['プラグインの設定値', excludePluginConfig.checkbox.checked ? '含めない（プラグインの一覧だけを保存）' : '含める（API キーなどの機微な値を含む場合があります）'] as [string, string]] : []),
+    ...(scopeChecked('customizeSettings') ? [['JS/CSSファイルの本文', 'JSON に含める（API トークンなどが書かれている場合があります）'] as [string, string]] : [])
+  ];
   const exportSummary = (format: string): Array<[string, string]> => [
     ['対象アプリ', summarizeList(appTable.getApps().map(r => connectionSummary(r.appId, r.guestId, prev.checkbox.checked ? 'プレビュー' : '本番')))],
     ['取得する設定', chips.filter(c => c.checkbox.checked).map(c => c.label.textContent || '').join('、')],
-    ['保存形式', format]
+    ['保存形式', format],
+    ...sensitiveSummary()
   ];
   installLiteWorkflow(panel, {
     setup: [cardTarget.card, cardScope.card],
-    advanced: [cardChips.card, cardFiles.card],
-    advancedCopy: '取得する設定を1項目ずつ選ぶとき、JS/CSSファイルの保存形式を変えるときはこちら。',
+    advanced: [cardChips.card, cardSensitive.card, cardFiles.card],
+    advancedCopy: '取得する設定を1項目ずつ選ぶとき、プラグインの設定値を含めないとき、JS/CSSファイルの保存形式を変えるときはこちら。',
     results: [summary],
     beforeRun: () => { summary.replaceChildren(); summary.classList.add('kus-lp__panel-html--empty'); },
     actions: [

@@ -149,6 +149,8 @@ export function uniqueZipEntryName(used: Set<string>, base: string): string {
 export interface BatchWriteFailure {
   /** 失敗したチャンク以前に確定した件数 */
   done: number;
+  /** 応答が届かなかったため、失敗したチャンクが kintone に書き込まれたか確認できない */
+  unconfirmed?: boolean;
   /** 失敗したチャンクの先頭（1 始まり） */
   from: number;
   /** 失敗したチャンクの末尾（1 始まり） */
@@ -164,11 +166,13 @@ const RECORD_ERROR_DETAIL_LIMIT = 10;
  * この詳細が無いと利用者は 100 件のどれが不正か分からない。
  * @param offset 失敗したチャンク先頭の、全体での 0 始まり位置
  * @param describeItem 全体での 0 始まり位置を利用者向けの呼び名（CSV の行番号など）にする
+ * @param describeField フィールドのパス（`code` や `table.value[0].value.qty`）を利用者向けの呼び名（フィールド名［コード］など）にする
  */
 export function describeKintoneRecordErrors(
   error: unknown,
   offset = 0,
-  describeItem: (index: number) => string = (index) => `${index + 1}件目`
+  describeItem: (index: number) => string = (index) => `${index + 1}件目`,
+  describeField: (path: string) => string = (path) => path
 ): string[] {
   let errors: any = null;
   for (let current: any = error, depth = 0; current && typeof current === 'object' && depth < 5; current = current.original, depth++) {
@@ -177,12 +181,29 @@ export function describeKintoneRecordErrors(
   const lines = Object.entries(errors || {}).map(([key, value]: [string, any]) => {
     const messages = Array.isArray(value?.messages) ? value.messages : typeof value === 'string' ? [value] : [];
     const matched = /^records\[(\d+)\]\.?(.*)$/.exec(key);
-    const where = matched ? [describeItem(offset + Number(matched[1])), matched[2].replace(/\.value$/, '')].filter(Boolean).join('・') : key;
+    const where = matched ? [describeItem(offset + Number(matched[1])), describeField(matched[2].replace(/\.value$/, ''))].filter(Boolean).join('・') : key;
     return `${where}: ${messages.map(String).join(' / ') || '(詳細なし)'}`;
   });
   return lines.length > RECORD_ERROR_DETAIL_LIMIT
     ? [...lines.slice(0, RECORD_ERROR_DETAIL_LIMIT), `ほか ${lines.length - RECORD_ERROR_DETAIL_LIMIT}件のエラー`]
     : lines;
+}
+
+const COMMUNICATION_FAILURE = /network|timeout|timed out|failed to fetch|econnreset|通信|タイムアウト|接続/i;
+
+/**
+ * 書き込みの失敗が「kintone が拒否した」のではなく「応答が届かなかった」ためか。
+ * kintone が拒否した（エラー応答の id や errors がある）なら、その塊は書き込まれていない。
+ * 通信エラー・タイムアウト・応答の無い 5xx では、サーバー側で確定したか分からない。
+ */
+export function isUnconfirmedWriteFailure(error: unknown): boolean {
+  const texts: string[] = [];
+  for (let current: any = error, depth = 0; current && typeof current === 'object' && depth < 5; current = current.original, depth++) {
+    if (current.id || (current.errors && typeof current.errors === 'object')) return false;
+    texts.push(`${current.code ?? ''} ${current.message ?? ''}`);
+    if (Number(current.status) >= 500) return true;
+  }
+  return COMMUNICATION_FAILURE.test(texts.join(' '));
 }
 
 /**
@@ -195,6 +216,7 @@ export function describeBatchWriteFailure(label: string, failure: BatchWriteFail
   return [
     `${label}が途中で失敗しました。`,
     `確定済み: ${failure.done}件 / 失敗チャンク: ${failure.from}～${failure.to}件目 / 未処理: ${remaining}件（全${failure.total}件）`,
+    failure.unconfirmed ? `失敗チャンク（${failure.from}～${failure.to}件目）は、応答が届かなかったため、kintone に書き込まれたかどうか確認できません。再実行する前に、kintone 画面で対象アプリのレコード件数を確認してください。` : '',
     reason ? `原因: ${reason}` : '',
     ...(details.length ? ['エラーの詳細（このチャンクは全体が取り消されています）:', ...details] : [])
   ].filter(Boolean).join('\n');
@@ -210,7 +232,8 @@ export async function writeInChunks<T>(
   writeChunk: (chunk: T[], chunkIndex: number) => Promise<void>,
   onProgress?: (done: number, total: number) => void,
   chunkSize: number = RECORDS_WRITE_CHUNK,
-  describeItem?: (index: number) => string
+  describeItem?: (index: number) => string,
+  describeField?: (path: string) => string
 ): Promise<number> {
   const size = Math.max(1, Math.floor(chunkSize) || RECORDS_WRITE_CHUNK);
   let done = 0;
@@ -219,9 +242,10 @@ export async function writeInChunks<T>(
     try {
       await writeChunk(chunk, Math.floor(i / size));
     } catch (error) {
-      const details = describeKintoneRecordErrors(error, i, describeItem);
-      const wrapped = new Error(describeBatchWriteFailure(label, { done, from: i + 1, to: i + chunk.length, total: items.length }, error, details));
-      (wrapped as any).partial = { done, from: i + 1, to: i + chunk.length, total: items.length };
+      const details = describeKintoneRecordErrors(error, i, describeItem, describeField);
+      const unconfirmed = isUnconfirmedWriteFailure(error);
+      const wrapped = new Error(describeBatchWriteFailure(label, { done, from: i + 1, to: i + chunk.length, total: items.length, unconfirmed }, error, details));
+      (wrapped as any).partial = { done, from: i + 1, to: i + chunk.length, total: items.length, ...(unconfirmed ? { unconfirmed } : {}) };
       (wrapped as any).original = error;
       throw wrapped;
     }

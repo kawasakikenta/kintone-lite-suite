@@ -193,6 +193,35 @@ describe('buildErAppModel', () => {
   });
 });
 
+describe('failed app reasons', () => {
+  const apiError = new Error('CB_NO02 このアプリを閲覧する権限がありません。\n[API] GET /k/v1/app/form/fields.json app=133 payload={"app":133}');
+
+  it('shows kintone\'s reason without the internal request line', () => {
+    const failed = buildFailedErAppModel(133, apiError, {});
+    expect(failed.issues[0].message).toBe('CB_NO02 このアプリを閲覧する権限がありません。');
+    expect(JSON.stringify(failed)).not.toContain('[API]');
+  });
+
+  it('keeps the reason of the other failed requests (metadata, actions) free of the request line too', () => {
+    const model = buildErAppModel({
+      appId: 5,
+      fieldsResponse: { properties: { a: { code: 'a', label: 'A', type: 'SINGLE_LINE_TEXT' } } },
+      appInfoError: apiError,
+      actionsError: new Error('GAIA_NO01 権限がありません\n[API] GET /k/v1/app/actions.json app=5')
+    });
+    expect(model.issues.map((issue) => issue.message)).toEqual([
+      'CB_NO02 このアプリを閲覧する権限がありません。',
+      'GAIA_NO01 権限がありません'
+    ]);
+  });
+
+  it('falls back to the original text when nothing but the request line remains', () => {
+    const only = new Error('[API] GET /k/v1/app.json app=1');
+    expect(buildFailedErAppModel(1, only, {}).issues[0].message).toBe('[API] GET /k/v1/app.json app=1');
+    expect(buildFailedErAppModel(1, undefined, {}).issues[0].message).toContain('アプリ 1');
+  });
+});
+
 describe('selectErFieldsForDensity', () => {
   const buildDensityModel = () => buildErAppModel({
     appId: 1,

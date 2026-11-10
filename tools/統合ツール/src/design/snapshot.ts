@@ -1,6 +1,7 @@
 'use strict';
 
 import { SECTION_DEFS, SYSTEM_FIELD_TYPES } from '../constants.js';
+import { isPluginConfigOmittedMarker } from '../pluginConfigMarker.js';
 
 /** 状態は取得結果の意味を保ったまま、空配列と未取得を区別する。 */
 export type DesignSnapshotSectionStatus =
@@ -110,7 +111,8 @@ function firstMessage(value: any): string {
 
 function partialDetail(section: any): string {
   const parts: string[] = [];
-  if (hasOwn(section, '_partial') && section._partial !== false) {
+  // 設定一括取得で「プラグインの設定値を含めない」を選んだ印。設計書はプラグインの設定値を載せないため、部分取得として扱わない。
+  if (hasOwn(section, '_partial') && section._partial !== false && !isPluginConfigOmittedMarker(section._partial)) {
     const text = firstMessage(section._partial);
     parts.push(text ? `_partial: ${text}` : '_partial が付与されています');
   }
@@ -134,7 +136,7 @@ function partialDetail(section: any): string {
 
 function hasPartialMarker(section: any): boolean {
   if (!isObject(section)) return false;
-  if (hasOwn(section, '_partial') && section._partial !== false) return true;
+  if (hasOwn(section, '_partial') && section._partial !== false && !isPluginConfigOmittedMarker(section._partial)) return true;
   return partialDetail(section) !== '';
 }
 

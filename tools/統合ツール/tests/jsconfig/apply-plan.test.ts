@@ -71,9 +71,14 @@ describe('buildJsConfigApplyPlan', () => {
     expect(buildJsConfigApplyConfirmText('5', '', empty, summarizeJsConfigCurrent(current, empty))).toContain('外れる現在の設定: 4件（すべて外れます）');
   });
 
-  it('warns about FILE fileKey reuse only when FILE entries exist and warns when 0 entries will clear settings', () => {
-    const withFile = buildJsConfigApplyPlan({ desktop: { js: [{ type: 'FILE', file: { fileKey: 'k' } }] } });
-    expect(buildJsConfigApplyConfirmText('5', '', withFile)).toContain('fileKey');
+  it('describes FILE handling only when FILE entries exist and warns when 0 entries will clear settings', () => {
+    const withFile = buildJsConfigApplyPlan({ desktop: { js: [{ type: 'FILE', file: { fileKey: 'k', name: 'a.js' } }] } });
+    const filePlan = { items: [{ platform: 'desktop' as const, kind: 'js' as const, index: 0, name: 'a.js', sourceFileKey: 'k', action: 'upload' as const, size: 2048 }, { platform: 'desktop' as const, kind: 'css' as const, index: 0, name: 'b.css', sourceFileKey: 'k2', action: 'reuse' as const, targetFileKey: 't2', size: 10 }], blobs: new Map(), problems: [], onlyUnknownOrigin: false, targetUnavailable: ['「x.js」（HTTP 500）'] };
+    const text = buildJsConfigApplyConfirmText('5', '', withFile, undefined, filePlan, { guestId: '', label: 'App 12 / 本番', knownFileKeys: ['k'] });
+    expect(text).toContain('反映先へアップロードする: 1件（合計 2.0 KB。取得元（App 12 / 本番）から取得し');
+    expect(text).toContain('PC JS: a.js（2.0 KB）');
+    expect(text).toContain('同名・同内容のファイルを使う: 1件');
+    expect(text).toContain('「x.js」（HTTP 500）の本体を確認できなかった');
     const urlOnly = buildJsConfigApplyPlan({ desktop: { js: [{ type: 'URL', url: 'https://x' }] } });
     expect(buildJsConfigApplyConfirmText('5', '2', urlOnly)).not.toContain('fileKey');
     expect(buildJsConfigApplyConfirmText('5', '2', urlOnly)).toContain('App 5（ゲストスペース 2）');

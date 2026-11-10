@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { Script, createContext, runInContext } from 'node:vm';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { buildHTML } from '../src/tabs/er.js';
+import { ER_BUNDLED_LIBRARIES, escapeInlineScriptSource } from '../src/tabs/er-libraries.js';
 
 function extractViewerScript(html: string): string {
   const match = html.match(/<script id="er-main" type="text\/plain">([\s\S]*?)<\/script>/);
@@ -174,12 +177,10 @@ describe('ER diagram HTML', () => {
       startAppId: '1', startAppIds: ['1'], layoutName: 'dagre', fieldDensity: 'standard', source: {}
     });
 
-    expect(html).toContain('ER図ライブラリを読み込めませんでした');
+    expect(html).toContain('ER図を描画できませんでした');
     expect(html).toContain('取得済みのアプリ一覧は下表で確認できます');
     expect(html).toContain('type="text/plain"');
     expect(html).toContain('typeof window.cytoscape==="function"');
-    expect(html.match(/ integrity="sha384-/g)).toHaveLength(3);
-    expect(html).toContain('crossorigin="anonymous"');
     expect(html).toContain('Content-Security-Policy');
     expect(html).toContain("connect-src 'none'");
   });
@@ -194,93 +195,129 @@ describe('ER diagram HTML', () => {
     expect(bootstrap[1]).toContain('C:\\\\users\\\\xdata\\\\u00 it&#39;s');
   });
 
-  describe('CDN fallback loading', () => {
+  describe('bundled drawing libraries', () => {
     const html = buildHTML(baseApps, {
       startAppId: '1', startAppIds: ['1'], layoutName: 'dagre', fieldDensity: 'standard', source: {}
     });
     const bootstrap = html.match(/<script>\r?\n(\(function\(\)\{[\s\S]*?\}\)\(\);)\r?\n<\/script>/)?.[1] ?? '';
 
-    /** 読み込み結果を src ごとに指定して起動スクリプトを実行する。 */
-    function runBootstrap(initial: Record<string, unknown>, loads: Record<string, string | null>) {
-      const requested: Array<{ src: string; integrity: string; crossOrigin: string }> = [];
+    /** 起動スクリプトを、描画ライブラリの有無を指定して実行する。 */
+    function runBootstrap(initial: Record<string, unknown>) {
       const runtime: string[] = [];
+      const created: string[] = [];
       const host: { innerHTML: string; style: Record<string, string> } = { innerHTML: '', style: {} };
+      const bodyChildren: Array<{ tagName: string; style: Record<string, string> }> = [
+        { tagName: 'DIV', style: {} }, { tagName: 'DIV', style: {} }, { tagName: 'SCRIPT', style: {} }
+      ];
       const context: any = {
         document: {
+          body: { children: [...bodyChildren, host] },
           getElementById: (id: string) => {
             if (id === 'er-main') return { textContent: 'VIEWER_SOURCE', after: (el: any) => runtime.push(el.textContent) };
             if (id === 'cy') return host;
             return { setAttribute: () => undefined };
           },
-          createElement: () => ({ setAttribute: () => undefined }),
-          head: {
-            appendChild: (el: any) => {
-              requested.push({ src: el.src, integrity: el.integrity, crossOrigin: el.crossOrigin });
-              // 実ブラウザ同様、読み込み完了は非同期に通知する
-              setTimeout(() => {
-                const global = loads[el.src];
-                if (global) { context.window[global] = () => undefined; el.onload?.(); } else el.onerror?.();
-              }, 0);
-            }
-          }
+          createElement: (tag: string) => { created.push(tag); return { setAttribute: () => undefined }; },
+          head: { appendChild: () => { throw new Error('起動スクリプトは外部ライブラリを後読みしない'); } }
         }
       };
       context.window = context;
       Object.assign(context, initial);
       createContext(context);
       runInContext(bootstrap, context);
-      return { requested, runtime, host };
+      return { runtime, created, host, bodyChildren };
     }
-    /** 起動スクリプトが図の起動か案内表示のどちらかへ到達するまで待つ（CPU負荷でタイマーが遅れても安定させる）。 */
-    async function settled(result: ReturnType<typeof runBootstrap>) {
-      for (let i = 0; i < 400 && !result.runtime.length && !result.host.innerHTML; i += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 5));
+
+    it('embeds the three pinned libraries inline and loads nothing from the network', () => {
+      expect(html).not.toMatch(/<script\b[^>]*\ssrc=/i);
+      expect(html).not.toMatch(/<link\b[^>]*\shref=["']?https?:/i);
+      expect(html).not.toMatch(/cdnjs\.cloudflare\.com|cdn\.jsdelivr\.net|unpkg\.com/);
+      const csp = html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]*)">/)?.[1] ?? '';
+      expect(csp).toContain("script-src 'unsafe-inline';");
+      expect(csp).toContain("connect-src 'none'");
+      expect(csp).not.toMatch(/https?:/);
+      expect(csp).toContain("default-src 'none'");
+      expect(html).not.toContain(' integrity="');
+      expect(html).not.toContain('data-er-fallback-lib');
+      const ids = [...html.matchAll(/<script id="(er-lib-[a-z-]+)">/g)].map((m) => m[1]);
+      expect(ids).toEqual(['er-lib-cytoscape', 'er-lib-dagre', 'er-lib-cytoscape-dagre']);
+      // ライブラリは図の本体より前（head）にある
+      expect(html.indexOf('id="er-lib-cytoscape-dagre"')).toBeLessThan(html.indexOf('id="er-main"'));
+    });
+
+    it('keeps the copyright notices of every bundled library', () => {
+      expect(html).toContain('Copyright (c) 2016-2023, The Cytoscape Consortium.');
+      expect(html).toContain('Copyright (c) 2012-2014 Chris Pettitt');
+      expect(html).toContain('graphlib and lodash');
+      expect(html).toContain('Copyright OpenJS Foundation and other contributors');
+      expect(html).toContain('Copyright (c) 2016-2018, 2020, 2022, The Cytoscape Consortium.');
+      expect(html).toContain('Permission is hereby granted, free of charge');
+    });
+
+    it('registers cytoscape, dagre and the dagre layout when the inline scripts run without a network', () => {
+      const context: any = { console };
+      context.window = context;
+      context.self = context;
+      createContext(context);
+      for (const lib of ER_BUNDLED_LIBRARIES) {
+        const match = html.match(new RegExp(`<script id="${lib.id}">([\\s\\S]*?)</script>`));
+        expect(match, lib.id).not.toBeNull();
+        runInContext(match![1], context, { filename: `${lib.id}.js` });
+        expect(typeof context[lib.globalName], lib.globalName).toBe(lib.globalName === 'dagre' ? 'object' : 'function');
       }
-    }
+      expect(typeof context.dagre.layout).toBe('function');
+      expect(context.dagre.graphlib?.Graph).toBeTypeOf('function');
+      expect(context.cytoscape.version).toBe('3.28.1');
+      expect(() => context.cytoscape.use(context.cytoscapeDagre)).not.toThrow();
+    });
 
-    it('loads the alternate CDN through new script elements when the primary scripts failed', async () => {
-      const result = runBootstrap({}, {
-        'https://cdn.jsdelivr.net/npm/cytoscape@3.26.0/dist/cytoscape.min.js': 'cytoscape',
-        'https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js': 'cytoscapeDagre'
-      });
-      await settled(result);
-      expect(result.requested.map((r) => r.src)).toEqual([
-        'https://cdn.jsdelivr.net/npm/cytoscape@3.26.0/dist/cytoscape.min.js',
-        'https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js'
-      ]);
-      expect(result.requested.every((r) => /^sha384-/.test(r.integrity) && r.crossOrigin === 'anonymous')).toBe(true);
+    it('pins the bundled versions to the ones declared in package.json and installed in node_modules', () => {
+      const root = join(__dirname, '..');
+      const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+      for (const lib of ER_BUNDLED_LIBRARIES) {
+        expect(pkg.devDependencies[lib.name], lib.name).toBe(lib.version);
+        const installed = JSON.parse(readFileSync(join(root, 'node_modules', lib.name, 'package.json'), 'utf8'));
+        expect(installed.version, lib.name).toBe(lib.version);
+      }
+    });
+
+    it('cannot close the inline script early, even if a library source contains a closing tag', () => {
+      expect(ER_BUNDLED_LIBRARIES.filter((lib) => /<\/script/i.test(lib.source))).toEqual([]);
+      expect(escapeInlineScriptSource('a</script>b</SCRIPT >c<script>')).toBe('a<\\/script>b<\\/SCRIPT >c<script>');
+      expect(() => new Script(escapeInlineScriptSource('var s="</script><img>";'))).not.toThrow();
+      expect(eval(escapeInlineScriptSource('"</script>"'))).toBe('</script>');
+    });
+
+    it('starts the viewer without creating any script element when the libraries are present', () => {
+      const result = runBootstrap({ cytoscape: () => undefined, cytoscapeDagre: () => undefined });
       expect(result.runtime).toEqual(['VIEWER_SOURCE']);
+      expect(result.created).toEqual(['script']);
       expect(result.host.innerHTML).toBe('');
     });
 
-    it('marks alternate libraries so edited-HTML export does not freeze them into the saved page', () => {
-      const viewer = extractViewerScript(html);
-      expect(bootstrap).toContain('script.setAttribute("data-er-fallback-lib","1")');
-      expect(viewer).toContain('clone.querySelectorAll("script[data-er-fallback-lib]")');
-    });
-
-    it('does not reload libraries that the primary scripts already provided', async () => {
-      const result = runBootstrap({ cytoscape: () => undefined, cytoscapeDagre: () => undefined }, {});
-      await settled(result);
-      expect(result.requested).toEqual([]);
+    it('keeps the viewer running when only the dagre layout is missing', () => {
+      const result = runBootstrap({ cytoscape: () => undefined });
       expect(result.runtime).toEqual(['VIEWER_SOURCE']);
     });
 
-    it('only retries the missing layout plugin and keeps the viewer when it still fails', async () => {
-      const result = runBootstrap({ cytoscape: () => undefined }, {});
-      await settled(result);
-      expect(result.requested.map((r) => r.src)).toEqual(['https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js']);
-      expect(result.runtime).toEqual(['VIEWER_SOURCE']);
-    });
-
-    it('shows the app table only after every alternate failed', async () => {
-      const result = runBootstrap({}, {});
-      expect(result.host.innerHTML).toBe('');
-      await settled(result);
-      expect(result.requested).toHaveLength(2);
+    it('shows the acquired app table, without mentioning a CDN, when the drawing library cannot initialise', () => {
+      const result = runBootstrap({});
       expect(result.runtime).toEqual([]);
-      expect(result.host.innerHTML).toContain('ER図ライブラリを読み込めませんでした');
+      expect(result.host.innerHTML).toContain('ER図を描画できませんでした');
+      expect(result.host.innerHTML).toContain('描画ライブラリを初期化できませんでした');
       expect(result.host.innerHTML).toContain('<td>物件</td>');
+      expect(result.host.innerHTML).toContain('一部取得');
+      expect(result.host.innerHTML).not.toMatch(/CDN|ネットワーク/);
+      // 操作バーなどの画面部品を display で隠す（hidden 属性は CSS の display に負けて表に重なる）。図の領域と script は触らない
+      expect(result.bodyChildren.map((el) => el.style.display)).toEqual(['none', 'none', undefined]);
+      expect(result.host.style.display).toBeUndefined();
+    });
+
+    it('keeps the saved edited HTML self-contained instead of dropping libraries', () => {
+      const viewer = extractViewerScript(html);
+      expect(viewer).not.toContain('data-er-fallback-lib');
+      expect(viewer).toContain('const clone=document.documentElement.cloneNode(true);');
+      expect(viewer).toContain('clone.querySelector("#er-runtime")');
     });
   });
 
@@ -363,6 +400,20 @@ describe('ER diagram HTML', () => {
     expect(script).toContain('function syncBottomUiOffsets()');
     expect(script).toContain('const shouldStackPath=!!pathfinder?.classList.contains("open");');
     expect(script).toContain('requestAnimationFrame(syncBottomUiOffsets)');
+  });
+
+  it('searches every acquired field, not only the ones the current density draws on the card', () => {
+    const html = buildHTML(baseApps, {
+      startAppId: '1', startAppIds: ['1'], layoutName: 'dagre', fieldDensity: 'none', source: {}
+    });
+    const script = extractViewerScript(html);
+
+    expect(script).toContain('allFieldsForApp(app).some(f=>!isFieldHidden(app,f)&&fieldMatches(f))');
+    expect(script).toContain('searchHiddenOnlyIds.add(n.id())');
+    expect(script).toContain('updateSearchMeta(q, matched.length, searchHiddenOnlyIds.size);');
+    expect(script).toContain('うち" + hiddenOnly + "件は、現在の表示密度では図に出ていない項目で一致したアプリです');
+    expect(script).toContain('pill.innerHTML = "<b>検索</b> " + matched + "件";');
+    expect(script).toContain('（一致した項目は現在の表示密度では図に出ていません）');
   });
 
   it('neutralizes spreadsheet formula prefixes and separates ACTION exports', () => {

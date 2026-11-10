@@ -1,4 +1,5 @@
 import { analyzeErDependencies, type ErDependencyAnalysis } from './er-analysis.js';
+import { withoutApiContextLines } from '../utils.js';
 export { analyzeErDependencies, type ErDependencyAnalysis };
 
 export type ErModelStatus = 'complete' | 'partial' | 'failed';
@@ -34,6 +35,12 @@ export interface ErField {
 
 export type ErRelationKind = 'LOOKUP' | 'REF' | 'ACTION';
 
+/** フィールドの対応（コピー元 → コピー先）。コピー元・コピー先はどちらもフィールドコード。 */
+export interface ErFieldMapping {
+  from: string;
+  to: string;
+}
+
 export interface ErRelation {
   from: string;
   fromPath?: string;
@@ -50,6 +57,16 @@ export interface ErRelation {
   controlFieldLabel?: string;
   /** REFERENCE_TABLE の condition.field。`from` と同じ値。 */
   sourceJoinField?: string;
+  /**
+   * コピーするフィールドの対応。
+   * ルックアップ: コピー元は参照先アプリのフィールド、コピー先はこのアプリのフィールド。
+   * アプリアクション: コピー元はこのアプリのフィールド（またはレコード URL など）、コピー先は起動先アプリのフィールド。
+   */
+  copyFields?: ErFieldMapping[];
+  /** 関連レコード一覧に表示する、参照先アプリのフィールドコード。 */
+  displayFields?: string[];
+  /** 絞り込み条件（ルックアップの取得条件・関連レコード一覧の絞り込み・アクションの実行条件）。 */
+  filterCond?: string;
 }
 
 export interface ErAppModel {
@@ -111,11 +128,18 @@ function normalizeAppId(rawAppId: string | number): number {
   return appId;
 }
 
+/**
+ * 取得に失敗した理由。画面や出力に出す文なので、kintone の応答の文だけにして、内部の通信情報（`[API] GET …` の行）は除く。
+ * 元の文は実行ログ（console）に残る。
+ */
 function errorMessage(error: unknown, fallback: string): string {
-  if (error instanceof Error && error.message) return error.message;
-  if (isRecord(error) && typeof error.message === 'string' && error.message) return error.message;
-  if (typeof error === 'string' && error) return error;
-  return fallback;
+  const raw = error instanceof Error && error.message
+    ? error.message
+    : (isRecord(error) && typeof error.message === 'string' && error.message
+      ? error.message
+      : (typeof error === 'string' && error ? error : ''));
+  if (!raw) return fallback;
+  return withoutApiContextLines(raw) || raw;
 }
 
 function fallbackAppName(appId: number): string {
@@ -135,6 +159,24 @@ function hasOwn(record: Record<string, any>, key: string): boolean {
 function positiveAppId(value: unknown): number | null {
   const id = Number(value);
   return Number.isFinite(id) && id > 0 ? id : null;
+}
+
+function readText(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+/** API の対応表（配列）から、コピー元・コピー先がそろったものだけを取り出す。 */
+function readFieldMappings(raw: unknown, pick: (mapping: Record<string, any>) => { from: unknown; to: unknown }): ErFieldMapping[] {
+  if (!Array.isArray(raw)) return [];
+  const result: ErFieldMapping[] = [];
+  for (const mapping of raw) {
+    if (!isRecord(mapping)) continue;
+    const { from, to } = pick(mapping);
+    const fromCode = readText(from);
+    const toCode = readText(to);
+    if (fromCode && toCode) result.push({ from: fromCode, to: toCode });
+  }
+  return result;
 }
 
 export class ErFieldsUnavailableError extends Error {
@@ -272,6 +314,8 @@ export function buildErAppModel(input: BuildErAppModelInput): ErAppModel {
           ? rawField.lookup.relatedKeyField
           : '';
         if (targetAppId) {
+          const copyFields = readFieldMappings(rawField.lookup.fieldMappings, (m) => ({ from: m.relatedField, to: m.field }));
+          const filterCond = readText(rawField.lookup.filterCond);
           relations.push({
             from: code,
             fromPath: path,
@@ -281,7 +325,9 @@ export function buildErAppModel(input: BuildErAppModelInput): ErAppModel {
             fromTableLabel: parentTableLabel,
             toApp: targetAppId,
             toField,
-            kind: 'LOOKUP'
+            kind: 'LOOKUP',
+            ...(copyFields.length ? { copyFields } : {}),
+            ...(filterCond ? { filterCond } : {})
           });
           if (!toField) {
             issues.push(fieldIssue(
@@ -321,7 +367,13 @@ export function buildErAppModel(input: BuildErAppModelInput): ErAppModel {
         const sourceJoinField = condition && typeof condition.field === 'string' ? condition.field : '';
         const toField = condition && typeof condition.relatedField === 'string' ? condition.relatedField : '';
         if (targetAppId && sourceJoinField) {
+          const displayFields = Array.isArray(referenceTable.displayFields)
+            ? referenceTable.displayFields.map((value: unknown) => readText(value)).filter(Boolean)
+            : [];
+          const filterCond = readText(referenceTable.filterCond);
           relations.push({
+            ...(displayFields.length ? { displayFields } : {}),
+            ...(filterCond ? { filterCond } : {}),
             // kintone 公式仕様: condition.field が元アプリの結合フィールド。
             from: sourceJoinField,
             fromPath: sourceJoinField,
@@ -407,12 +459,20 @@ export function buildErAppModel(input: BuildErAppModelInput): ErAppModel {
         return;
       }
       const name = typeof rawAction.name === 'string' && rawAction.name ? rawAction.name : actionName;
+      // コピー元がフィールド以外（レコード URL など）のときは、種類の名前をコピー元として示す
+      const copyFields = readFieldMappings(rawAction.mappings, (m) => ({
+        from: readText(m.srcType) && readText(m.srcType) !== 'FIELD' ? readText(m.srcType) : m.srcField,
+        to: m.destField
+      }));
+      const filterCond = readText(rawAction.filterCond);
       relations.push({
         from: `__ACTION__${index}`,
         fromLabel: name || `アクション${index + 1}`,
         toApp: targetAppId,
         toField: '',
-        kind: 'ACTION'
+        kind: 'ACTION',
+        ...(copyFields.length ? { copyFields } : {}),
+        ...(filterCond ? { filterCond } : {})
       });
     });
   }
@@ -834,6 +894,33 @@ function erRelationKeyConditionDetail(r: any): string {
 }
 
 /**
+ * 関連の詳細（コピーするフィールド・表示するフィールド・絞り込み条件）を 1 行の文にする。
+ * 図の画面（er.ts の埋め込みスクリプト）の同名関数と同じ結果にする（テストで照合）。
+ * - ルックアップ: 「参照先 取引先名 → 顧客名」（参照先のフィールドをこのアプリのフィールドへコピー）
+ * - アクション: 「案件番号 → 起動先 案件番号」（このアプリのフィールドを起動先のフィールドへコピー）
+ */
+export function describeErRelationCopy(r: any): string {
+  const pairs = Array.isArray(r?.copyFields) ? r.copyFields : [];
+  return pairs
+    .filter((m: any) => m && m.from && m.to)
+    .map((m: any) => (r.kind === 'ACTION' ? `${m.from} → 起動先 ${m.to}` : `参照先 ${m.from} → ${m.to}`))
+    .join(' / ');
+}
+
+/** 「コピー・表示するフィールド」欄。ルックアップ・アクションはコピーの対応、関連レコード一覧は表示するフィールド。 */
+function erRelationFieldsDetail(r: any): string {
+  return r?.kind === 'REF' ? describeErRelationDisplay(r) : describeErRelationCopy(r);
+}
+
+export function describeErRelationDisplay(r: any): string {
+  return (Array.isArray(r?.displayFields) ? r.displayFields : []).filter(Boolean).join(' / ');
+}
+
+export function describeErRelationFilter(r: any): string {
+  return typeof r?.filterCond === 'string' ? r.filterCond.trim() : '';
+}
+
+/**
  * アプリ一覧・リレーション一覧・各アプリのフィールド定義に加え、
  * analyzeErDependencies（循環参照/SCC、ハブアプリ、孤立アプリ、連結成分数など）の
  * グラフ分析サマリを含む「ER図仕様書 (Markdown)」を生成する純粋関数。
@@ -973,8 +1060,8 @@ export function buildErMarkdownSpec(
   lines.push('## リレーション一覧');
   lines.push('');
   if (totalRelations > 0) {
-    lines.push('| 参照元アプリID | 参照元アプリ名 | フィールドコード | フィールド名 | リレーション種別 | 参照先アプリID | 参照先アプリ名 | キー・条件詳細 |');
-    lines.push('|---:|---|---|---|---|---:|---|---|');
+    lines.push('| 参照元アプリID | 参照元アプリ名 | フィールドコード | フィールド名 | リレーション種別 | 参照先アプリID | 参照先アプリ名 | キー・条件詳細 | コピー・表示するフィールド | 絞り込み条件 |');
+    lines.push('|---:|---|---|---|---|---:|---|---|---|---|');
     safeApps.forEach((a) => {
       for (const r of Array.isArray(a.relations) ? a.relations : []) {
         if (!r) continue;
@@ -982,7 +1069,7 @@ export function buildErMarkdownSpec(
         const fieldCode = r.kind === 'REF' ? (r.controlField || r.sourceJoinField || r.from || '') : (r.from || r.controlField || '');
         const fieldName = r.controlFieldLabel || r.fromDisplay || r.fromLabel || r.from || r.kind || '';
         const targetName = t ? (t.name || `アプリ ${t.id}`) : `未取得 (App ${r.toApp ?? '?'})`;
-        lines.push(`| ${erMdEsc(a.id)} | ${erMdEsc(a.name || `アプリ ${a.id}`)} | ${erMdEsc(fieldCode)} | ${erMdEsc(fieldName)} | ${erMdEsc(r.kind || '')} | ${erMdEsc(r.toApp ?? '')} | ${erMdEsc(targetName)} | ${erMdEsc(erRelationKeyConditionDetail(r))} |`);
+        lines.push(`| ${erMdEsc(a.id)} | ${erMdEsc(a.name || `アプリ ${a.id}`)} | ${erMdEsc(fieldCode)} | ${erMdEsc(fieldName)} | ${erMdEsc(r.kind || '')} | ${erMdEsc(r.toApp ?? '')} | ${erMdEsc(targetName)} | ${erMdEsc(erRelationKeyConditionDetail(r))} | ${erMdEsc(erRelationFieldsDetail(r))} | ${erMdEsc(describeErRelationFilter(r))} |`);
       }
     });
   } else {
@@ -1014,12 +1101,12 @@ export function buildErMarkdownSpec(
     if (rels.length) {
       lines.push('### リレーション');
       lines.push('');
-      lines.push('| 種類 | 関連名 | 表示部品 | 結合元フィールド | 宛先アプリ | 宛先フィールド |');
-      lines.push('|---|---|---|---|---|---|');
+      lines.push('| 種類 | 関連名 | 表示部品 | 結合元フィールド | 宛先アプリ | 宛先フィールド | コピー・表示するフィールド | 絞り込み条件 |');
+      lines.push('|---|---|---|---|---|---|---|---|');
       rels.forEach((r: any) => {
         const t = appMap.get(String(r.toApp));
         const targetLabel = t ? `${t.name || `アプリ ${t.id}`} (App ${r.toApp})` : `未取得 (App ${r.toApp})`;
-        lines.push(`| ${erMdEsc(r.kind || '')} | ${erMdEsc(r.fromDisplay || r.fromLabel || r.from || r.kind || '')} | ${erMdEsc(r.controlFieldLabel || r.controlField || '')} | ${erMdEsc(r.kind === 'ACTION' ? '' : (r.sourceJoinField || r.from || ''))} | ${erMdEsc(targetLabel)} | ${erMdEsc(r.toField || '')} |`);
+        lines.push(`| ${erMdEsc(r.kind || '')} | ${erMdEsc(r.fromDisplay || r.fromLabel || r.from || r.kind || '')} | ${erMdEsc(r.controlFieldLabel || r.controlField || '')} | ${erMdEsc(r.kind === 'ACTION' ? '' : (r.sourceJoinField || r.from || ''))} | ${erMdEsc(targetLabel)} | ${erMdEsc(r.toField || '')} | ${erMdEsc(erRelationFieldsDetail(r))} | ${erMdEsc(describeErRelationFilter(r))} |`);
       });
       lines.push('');
     }
@@ -1040,7 +1127,8 @@ function erCsvLine(row: unknown[]): string {
 
 /**
  * BOM (\uFEFF) 付きCSVでリレーション一覧
- * （参照元アプリID, 参照元アプリ名, フィールドコード, フィールド名, リレーション種別, 参照先アプリID, 参照先アプリ名, キー・条件詳細）
+ * （参照元アプリID, 参照元アプリ名, フィールドコード, フィールド名, リレーション種別, 参照先アプリID, 参照先アプリ名, キー・条件詳細,
+ * コピー・表示するフィールド, 絞り込み条件）
  * を出力する純粋関数（CSV数式インジェクション対策込み）。
  */
 export function buildErRelationsCsv(apps: any[]): string {
@@ -1057,7 +1145,9 @@ export function buildErRelationsCsv(apps: any[]): string {
     'リレーション種別',
     '参照先アプリID',
     '参照先アプリ名',
-    'キー・条件詳細'
+    'キー・条件詳細',
+    'コピー・表示するフィールド',
+    '絞り込み条件'
   ]];
   for (const a of safeApps) {
     const fromAppName = a.name || `アプリ ${a.id}`;
@@ -1077,7 +1167,9 @@ export function buildErRelationsCsv(apps: any[]): string {
         r.kind || '',
         r.toApp ?? '',
         targetName,
-        erRelationKeyConditionDetail(r)
+        erRelationKeyConditionDetail(r),
+        erRelationFieldsDetail(r),
+        describeErRelationFilter(r)
       ]);
     }
   }

@@ -3,7 +3,8 @@
 import { buildExportFilename, buildAppFilenameLabel, extractAppNameFromBundle, deepClone } from '../utils.js';
 import { apiGet, apiPost, apiPut, buildApiPrefix, decorateRevisionConflict, fetchAppDeployStatus, fetchBundle, pickRevision, isRevisionConflictError, uploadKintoneFile } from '../api.js';
 import { captureReflectBaseline, assertReflectBaselineMatches, assertCompleteReflectBackup, isCompleteReflectSection, type ReflectBaseline } from '../reflect/standalonePreflight.js';
-import { embedCustomizeFileContents, resolveCustomizeFiles, type CustomizeFileResolution } from '../reflect/customizeFiles.js';
+import { embedCustomizeFileContents, resolveCustomizeFiles, type CustomizeFileDownloader, type CustomizeFileResolution } from '../reflect/customizeFiles.js';
+import { findLookupMapCandidates, hasLookupCandidates, type LookupMapCandidates } from '../reflect/lookupCandidates.js';
 import { reflectFieldLabels } from '../reflect/changeSummary.js';
 import { buildReflectSectionPlan, reflectInspectionScopes, reflectSelectionBlockers, listReflectFieldCodes, listReflectSystemFieldCodes, type ReflectSectionPlan } from '../reflect/standalonePlan.js';
 import { pickSettingsBundle } from '../settingsBundleImport.js';
@@ -14,6 +15,7 @@ import { RUN_CANCELLED_MESSAGE, isRunCancelledError } from '../runControl.js';
 import type { ComposedReflectSelection, ComposedSection, SectionSelectionState } from '../reflect/selectionTypes.js';
 import { buildPlanFromComposedAfter, buildSectionSelectionModel, composeSectionSelection, defaultSelectionState } from '../reflect/selection.js';
 import { SYSTEM_FIELD_TYPES } from '../constants.js';
+import { isPluginConfigOmittedMarker } from '../pluginConfigMarker.js';
 
 export interface ReflectOptions {
   sourceAppId: string; sourceGuestId?: string; sourcePreview?: boolean; sourceBundle?: unknown;
@@ -33,6 +35,11 @@ export interface PreviewReflectResult {
   fieldLabels?: Record<string, string>;
   /** 反映先の反映状況（kintone が前回の反映を処理中か）。checkTargetDeployStatus を指定した抽出だけが返す。取得に失敗しても抽出は止めない */
   targetDeployStatus?: ReflectTargetDeployStatus;
+  /**
+   * 参照先変換の候補。反映元と反映先の同じコードのルックアップ・関連レコード一覧（と同じ名前のアクション）の参照先アプリが食い違っていて、
+   * 入力済みの参照先変換に旧IDが無いものを、反映先の現在の設定だけを根拠に示す。候補も食い違いも無ければ含めない
+   */
+  lookupCandidates?: LookupMapCandidates;
 }
 /** 反映先のアプリの更新（deploy）の状況。processing のとき、kintone が処理を終えるまで反映先へ書き込めない。 */
 export interface ReflectTargetDeployStatus { state: 'processing' | 'idle' | 'unknown'; message: string }
@@ -132,14 +139,55 @@ async function withAppPrefix<T>(role: '反映元' | '反映先', appId: string, 
   }
 }
 
-async function getReflectBundles(opts: ReflectOptions, scopes: string[], setStatus: (message: string) => void) {
+/**
+ * 反映元の取得結果。複数の反映先を続けて確認するとき（一括事前確認）に、反映元を 1 回だけ取得して使い回すためのもの。
+ * 反映先ごとに複製して使うため、確認の途中で内容が書き換わっても次の反映先に影響しない。
+ */
+export interface PreparedReflectSource {
+  /** 取得した反映元の設定（rawSettings）。reflectInspectionScopes(scopes) の範囲 */
+  bundle: any;
+  /** 取得した範囲。これを満たさない項目の確認には使えない */
+  scopes: string[];
+  /** JS/CSS のファイル本体の取得（反映元のファイルを反映先ごとに取得し直さないよう、直近の本体を保持する） */
+  download?: CustomizeFileDownloader;
+}
+
+async function fetchReflectSourceBundle(opts: ReflectOptions, scopes: string[], setStatus: (message: string) => void) {
   setStatus(opts.sourceBundle ? '反映元の設定JSONを読み込み中...' : '反映元の設定を取得中...');
-  const source = opts.sourceBundle ? importedReflectSource(opts) : await withAppPrefix('反映元', opts.sourceAppId, () => fetchBundle({
+  return opts.sourceBundle ? importedReflectSource(opts) : await withAppPrefix('反映元', opts.sourceAppId, () => fetchBundle({
     rawSettings: true,
     // フィールド設定を選んでいなくても、参照するフィールドの有無と表示名を示せるよう反映先と同じ範囲を取得する。
     appId: opts.sourceAppId, guestId: opts.sourceGuestId || '', preview: !!opts.sourcePreview, sections: reflectInspectionScopes(scopes),
     onProgress: (p, label) => setStatus(`反映元取得 ${Math.round(p * 100)}% (${label})`)
   }));
+}
+
+/**
+ * 反映元の設定を 1 回だけ取得する（書き込みなし）。previewReflectStandalone の options.source に渡すと、反映先ごとの確認で反映元を取得し直さない。
+ * 反映先のIDは使わない（opts.targetAppId は空でもよい）。
+ */
+export async function prepareReflectSourceStandalone(opts: ReflectOptions, setStatus: (message: string) => void, download?: CustomizeFileDownloader): Promise<PreparedReflectSource> {
+  // 反映元の入力だけを確認する（反映先とは比べない。反映元と反映先が同じプレビューかどうかは、反映先ごとの確認で判定する）。
+  if (!opts.sourceBundle && !/^[1-9]\d*$/.test(String(opts.sourceAppId || ''))) throw new Error('反映元アプリIDには正の整数を入力してください。');
+  if (opts.sourceGuestId && !/^[1-9]\d*$/.test(String(opts.sourceGuestId))) throw new Error('反映元ゲストスペースIDには正の整数を入力してください。');
+  const scopes = orderedScopes(opts.scopes);
+  const bundle = await fetchReflectSourceBundle(opts, scopes, setStatus);
+  return { bundle, scopes: reflectInspectionScopes(scopes), ...(download ? { download } : {}) };
+}
+
+/** 反映先の ID と名前を確認する（本番側の app.json。書き込みなし）。反映元は確認しない。一括事前確認で、反映先ごとの名前を示すために使う。 */
+export async function resolveReflectTargetStandalone(opts: Pick<ReflectOptions, 'targetAppId' | 'targetGuestId'>): Promise<ReflectAppIdentity> {
+  const appId = String(opts.targetAppId || ''), guestId = opts.targetGuestId || '';
+  if (!/^[1-9]\d*$/.test(appId) || (guestId && !/^[1-9]\d*$/.test(guestId))) throw new Error('反映先アプリIDには正の整数を入力してください。');
+  const info: any = await withAppPrefix('反映先', appId, () => apiGet(buildApiPrefix(guestId, false), '/app.json', { id: appId }));
+  if (String(info?.appId) !== appId || typeof info?.name !== 'string' || !info.name) throw new Error(`反映先 #${appId} の名前とIDを確認できません。入力と閲覧権限を確認してください。`);
+  return { appId, guestId, name: info.name, code: String(info.code || '') };
+}
+
+async function getReflectBundles(opts: ReflectOptions, scopes: string[], setStatus: (message: string) => void, prepared?: PreparedReflectSource) {
+  // 準備済みの反映元は、必要な範囲を取得済みのときだけ使う（反映先ごとに複製して、確認の途中の変更が次の反映先に及ばないようにする）。
+  const needed = reflectInspectionScopes(scopes);
+  const source = prepared && needed.every(key => prepared.scopes.includes(key)) ? deepClone(prepared.bundle) : await fetchReflectSourceBundle(opts, scopes, setStatus);
   setStatus('反映先プレビューの設定を確認中...');
   const target = await withAppPrefix('反映先', opts.targetAppId, () => fetchBundle({
     rawSettings: true,
@@ -157,17 +205,20 @@ function importedReflectSource(opts: ReflectOptions) {
   const bundle = pickSettingsBundle(opts.sourceBundle, { side: 'source', appId: String(opts.sourceAppId || '').trim(), rawSettings: true });
   const customize = bundle.sections?.customizeSettings;
   if (customize && typeof customize === 'object' && customize._partial?.kind === 'customizeBody' && !customize._fetchError) delete customize._partial;
+  // 設定一括取得で「プラグインの設定値を含めない」を選んだ設定JSON。反映はプラグインの ID だけを使い、固有の設定値はコピーしないため、不完全の印にしない。
+  const plugins = bundle.sections?.pluginSettings;
+  if (plugins && typeof plugins === 'object' && isPluginConfigOmittedMarker(plugins._partial) && !plugins._fetchError) delete plugins._partial;
   return bundle;
 }
 
 /** JS/CSS の FILE 項目を反映先へ渡せるか解決する（両側のセクションが完全なときだけ）。 */
-async function resolveReflectCustomizeFiles(opts: ReflectOptions, scopes: string[], source: any, target: any, setStatus: (message: string) => void): Promise<CustomizeFileResolution | undefined> {
+async function resolveReflectCustomizeFiles(opts: ReflectOptions, scopes: string[], source: any, target: any, setStatus: (message: string) => void, download?: CustomizeFileDownloader): Promise<CustomizeFileResolution | undefined> {
   if (!scopes.includes('customizeSettings')) return undefined;
   const sourceSection = source.sections?.customizeSettings, targetSection = target.sections?.customizeSettings;
   if (!isCompleteReflectSection(sourceSection) || !isCompleteReflectSection(targetSection)) return undefined;
   setStatus('JS/CSSファイルを確認中…');
   const sourceGuestId = opts.sourceBundle ? String((opts.sourceBundle as any)?.guestId || '') : opts.sourceGuestId || '';
-  return resolveCustomizeFiles(sourceSection, targetSection, { sourceGuestId, targetGuestId: opts.targetGuestId || '' });
+  return resolveCustomizeFiles(sourceSection, targetSection, { sourceGuestId, targetGuestId: opts.targetGuestId || '', ...(download ? { download } : {}) });
 }
 
 /** 反映元・反映先のどちらかに実在するフィールドコード（システムフィールドを含む）。計算式・クエリが参照するフィールドの判定に使う。 */
@@ -192,14 +243,17 @@ export async function inspectTargetDeployStatus(opts: { targetAppId: string; tar
   }
 }
 
-export async function previewReflectStandalone(opts: ReflectOptions, setStatus: (message: string) => void, options: { /** 反映先の反映状況（処理中か）も確認する。本番へ反映する流れで使う */ checkTargetDeployStatus?: boolean } = {}): Promise<PreviewReflectResult> {
+export async function previewReflectStandalone(opts: ReflectOptions, setStatus: (message: string) => void, options: {
+  /** 反映先の反映状況（処理中か）も確認する。本番へ反映する流れで使う */ checkTargetDeployStatus?: boolean;
+  /** 取得済みの反映元（prepareReflectSourceStandalone）。指定すると反映元を取得し直さない。一括事前確認で使う */ source?: PreparedReflectSource;
+} = {}): Promise<PreviewReflectResult> {
   const invalid = reflectConnectionError(opts);
   if (invalid) throw new Error(invalid);
   const scopes = orderedScopes(opts.scopes);
-  const { source, target } = await getReflectBundles(opts, scopes, setStatus);
+  const { source, target } = await getReflectBundles(opts, scopes, setStatus, options.source);
   setStatus('反映先の未公開の変更を確認中…');
   const targetPending = await inspectTargetPendingChanges({ targetAppId: opts.targetAppId, targetGuestId: opts.targetGuestId, scopes: reflectInspectionScopes(scopes) }, target);
-  const customizeFiles = await resolveReflectCustomizeFiles(opts, scopes, source, target, setStatus);
+  const customizeFiles = await resolveReflectCustomizeFiles(opts, scopes, source, target, setStatus, options.source?.download);
   let targetDeployStatus: ReflectTargetDeployStatus | undefined;
   if (options.checkTargetDeployStatus) {
     setStatus('反映先の反映状況を確認中…');
@@ -226,12 +280,21 @@ export async function previewReflectStandalone(opts: ReflectOptions, setStatus: 
       }
     }
   }
+  // 参照先変換の入れ忘れに気づけるよう、反映先の現在の設定から候補を求める（フィールド設定・アクションを反映するときだけ）。
+  const lookupCandidates = scopes.some(key => key === 'fieldSettings' || key === 'actionSettings')
+    ? findLookupMapCandidates({
+      ...(scopes.includes('fieldSettings') && isCompleteReflectSection(source.sections?.fieldSettings) && isCompleteReflectSection(target.sections?.fieldSettings) ? { sourceFields: source.sections.fieldSettings, targetFields: target.sections.fieldSettings } : {}),
+      ...(scopes.includes('actionSettings') && isCompleteReflectSection(source.sections?.actionSettings) && isCompleteReflectSection(target.sections?.actionSettings) ? { sourceActions: source.sections.actionSettings, targetActions: target.sections.actionSettings } : {}),
+      lookupMap: opts.lookupMap, fieldLabels
+    })
+    : undefined;
   return {
     totalSections: entries.length, changedSections: entries.filter(entry => entry.status === 'change').length,
     sameSections: entries.filter(entry => entry.status === 'same').length,
     errorSections: entries.filter(entry => !['change', 'same'].includes(entry.status)).length,
     entries, sourceFieldCodes: listReflectFieldCodes(source, true), targetFieldCodes: listReflectFieldCodes(target), sourceSystemFieldCodes: listReflectSystemFieldCodes(source), baseline, targetPending, fieldLabels,
-    ...(targetDeployStatus ? { targetDeployStatus } : {})
+    ...(targetDeployStatus ? { targetDeployStatus } : {}),
+    ...(hasLookupCandidates(lookupCandidates) ? { lookupCandidates } : {})
   };
 }
 

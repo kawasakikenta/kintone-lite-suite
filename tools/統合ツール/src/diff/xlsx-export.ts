@@ -2993,6 +2993,9 @@ function customerGenericSettingLabel(sectionKey: string, path: string, decodedLa
   if (sectionKey === 'processSettings' && leaf === 'enable') {
     return 'プロセス管理を有効にする';
   }
+  if (sectionKey === 'processSettings' && /\.states\.[^.[\]]+\.assignee\.entities(?:\[\d+\])?$/.test(path)) {
+    return '作業者';
+  }
   if ((sectionKey === 'perRecordNotifications' || sectionKey === 'reminderNotifications') && leaf === 'title') {
     return '通知内容';
   }
@@ -3189,6 +3192,14 @@ function isActionMappingPayload(value: unknown): value is Record<string, unknown
  * 行が関連付け全体を持つ場合はその内容から、子項目（コピー先など）の変更行は
  * エンジンが付与したコピー元キー（arrayKeyValue）から比較元/比較先の関連付けを引く。
  */
+/** アプリアクション自体（アクション直下）の行か。配下の行（関連付けなど）には entityKind も付くため、path で見分ける。 */
+function isAppActionRootRow(row: DiffXlsxRow): boolean {
+  const path = String(row.path || '');
+  if (/^actionSettings\.actions(?:\[[^\]]+\]|\.[^.]+)$/.test(path)) return true;
+  const entityCode = String((row as any).entityCode || '');
+  return (row as any).entityKind === 'appAction' && !!entityCode && path === `actionSettings.actions.${entityCode}`;
+}
+
 function customerActionMappingIdentity(
   row: DiffXlsxRow,
   actionName: string,
@@ -3431,7 +3442,9 @@ function customerLayoutItemParts(
       ? fallbackPayload
       : null;
   const entityRootPath = /(?:^|\.)(?:layout|fields)\[\d+\]$/.test(path);
-  const layoutAt = (bundle?: DiffXlsxBundle) => bundle?.sections?.layoutSettings?.layout?.[rowIndex];
+  // 並び順を無視した比較では、path の添字が並べ替え後の位置のため、元の設定の同じ添字を引くと別の要素になる。
+  const indexReliable = !(row as any)._orderNormalized;
+  const layoutAt = (bundle?: DiffXlsxBundle) => (indexReliable ? bundle?.sections?.layoutSettings?.layout?.[rowIndex] : null);
   let entity = entityRootPath ? payloadEntity : null;
   if (!entity) entity = layoutAt(preferredBundle) || layoutAt(fallbackBundle) || null;
   const childRoutes = [...match[2].matchAll(/\.(fields|layout)\[(\d+)\]/g)]
@@ -4134,8 +4147,7 @@ function buildCustomerDiffItems(ctx: DiffXlsxContext, includeTableChildren = fal
       const wholeNamedEntityExistenceChange = (row.type === 'added' || row.type === 'removed') && (
         wholeFieldExistenceChange
         || !!viewIdentity?.isRoot
-        || (sectionKey === 'actionSettings'
-          && (!!(row as any).entityKind || /^actionSettings\.actions(?:\[[^\]]+\]|\.[^.]+)$/.test(String(row.path || ''))))
+        || (sectionKey === 'actionSettings' && isAppActionRootRow(row))
       );
       const positionLabel = (value: unknown, fallbackSide: 'source' | 'target'): string => (
         Number.isInteger(value) && Number(value) >= 0
