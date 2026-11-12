@@ -1258,7 +1258,15 @@ export function makeDialog(opts: { title: string; id?: string; wide?: boolean })
   let pressedOnBackdrop = false;
   dialog.addEventListener('pointerdown', (e: PointerEvent) => { pressedOnBackdrop = e.target === dialog; });
   dialog.addEventListener('click', (e: MouseEvent) => { if (e.target === dialog && pressedOnBackdrop) close(); pressedOnBackdrop = false; });
-  dialog.addEventListener('close', () => { if (opener?.isConnected) { try { opener.focus({ preventScroll: true } as any); } catch { /* noop */ } } });
+  // 閉じたら、開いたボタンへフォーカスを戻す。showModal() で開いたポップアップは、閉じた時点でブラウザが戻している。
+  // close イベントは閉じた直後ではなく次の描画のときに届くので、それまでに利用者が別の入力欄へ移っていたら、
+  // フォーカスを奪わない（奪うと、続けて打ったキーが入力欄ではなく開いたボタンへ届く）。
+  dialog.addEventListener('close', () => {
+    const active = document.activeElement;
+    const movedElsewhere = !!active && active !== document.body && active !== opener && !dialog.contains(active);
+    if (movedElsewhere || !opener?.isConnected) return;
+    try { opener.focus({ preventScroll: true } as any); } catch { /* noop */ }
+  });
   return { dialog, body, open, close };
 }
 
