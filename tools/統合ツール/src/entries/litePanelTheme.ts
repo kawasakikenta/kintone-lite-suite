@@ -653,6 +653,15 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
   body.appendChild(result);
 
   function setStatus(msg: string, tone: StatusTone = 'neutral') {
+    // 色が同じまま文言だけが変わるとき（処理中の進捗など）は、文言だけを書き換える。
+    // アイコンごと作り直すと、処理中のスピナーが書き換えのたびに最初から回り直し、そのための描画も増える
+    // （対象が 1000 アプリの画面で、1 回の書き換えにかかる描画が約 2 倍になる）。
+    const currentText = status.querySelector<HTMLElement>(':scope > .kus-lp__status-text');
+    if (currentText && status.dataset.tone === tone) {
+      currentText.textContent = msg || '';
+      currentText.scrollTop = 0; // 長い文言を途中まで送っていても、次の文言は先頭から見せる（作り直していたときと同じ）
+      return;
+    }
     status.dataset.tone = tone;
     status.className = 'kus-lp__status' + (tone !== 'neutral' ? ` kus-lp__status--${tone}` : '');
     const icon = tone === 'ok' ? '✓' :

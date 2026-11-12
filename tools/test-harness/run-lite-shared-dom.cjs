@@ -251,7 +251,24 @@ async function main() {
     assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'err');
     assert.match(await page.locator('.kus-lp__result').innerText(), /対象アプリ: 42/);
     assert.equal(await page.locator('#shared-test').getAttribute('aria-busy'), 'false');
-    results.push('部分成功の警告保持・エラー詳細・処理中状態の復帰・ステータス読み上げ');
+    // 処理中の進捗のように、色が同じまま文言だけが変わるときは、スピナーを作り直さない（作り直すと毎回最初から回り直し、描画も増える）。
+    // 色が変わるときは、アイコン・色・文言を入れ替える。
+    const statusWrites = await page.evaluate(() => {
+      const { status, setStatus } = window.panel;
+      const snapshot = () => ({ tone: status.dataset.tone, className: status.className, icon: status.querySelector('.kus-lp__status-icon').className, text: status.querySelector('.kus-lp__status-text').textContent, children: status.childElementCount });
+      setStatus('確認中…（1/1000 アプリ）', 'busy');
+      const spinner = status.querySelector('.kus-lp__status-icon');
+      setStatus('確認中…（2/1000 アプリ）', 'busy');
+      const progress = { ...snapshot(), sameSpinner: status.querySelector('.kus-lp__status-icon') === spinner };
+      setStatus('完了しました', 'ok');
+      const done = { ...snapshot(), mark: status.querySelector('.kus-lp__status-icon').textContent, sameSpinner: status.querySelector('.kus-lp__status-icon') === spinner };
+      setStatus('', 'neutral');
+      return { progress, done, cleared: snapshot() };
+    });
+    assert.deepEqual(statusWrites.progress, { tone: 'busy', className: 'kus-lp__status kus-lp__status--busy', icon: 'kus-lp__status-icon kus-lp__status-busy', text: '確認中…（2/1000 アプリ）', children: 2, sameSpinner: true });
+    assert.deepEqual(statusWrites.done, { tone: 'ok', className: 'kus-lp__status kus-lp__status--ok', icon: 'kus-lp__status-icon', text: '完了しました', children: 2, mark: '✓', sameSpinner: false });
+    assert.deepEqual(statusWrites.cleared, { tone: 'neutral', className: 'kus-lp__status', icon: 'kus-lp__status-icon', text: '', children: 2 });
+    results.push('部分成功の警告保持・エラー詳細・処理中状態の復帰・ステータス読み上げ・同じ色の書き換えでスピナーを作り直さない');
 
     // 対象アプリ表は「×」などの操作列を含めて横にはみ出さない（行が複数あっても同じ）
     await page.evaluate(() => window.table.setApps([{ appId: '303', guestId: '7' }, { appId: '1234567890', guestId: '12345' }]));

@@ -6020,6 +6020,12 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
     body.appendChild(status);
     body.appendChild(result);
     function setStatus(msg, tone = "neutral") {
+      const currentText = status.querySelector(":scope > .kus-lp__status-text");
+      if (currentText && status.dataset.tone === tone) {
+        currentText.textContent = msg || "";
+        currentText.scrollTop = 0;
+        return;
+      }
       status.dataset.tone = tone;
       status.className = "kus-lp__status" + (tone !== "neutral" ? ` kus-lp__status--${tone}` : "");
       const icon = tone === "ok" ? "✓" : tone === "err" ? "⚠" : tone === "warn" ? "!" : tone === "info" ? "i" : tone === "busy" ? "" : "·";
@@ -7326,6 +7332,37 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
   function firstLines(message, max = 6) {
     return String(message || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(0, max).join("\n");
   }
+  var PROGRESS_RENDER_INTERVAL_MS = 80;
+  function createProgressStatus(write, intervalMs = PROGRESS_RENDER_INTERVAL_MS) {
+    let timer;
+    let pending = null;
+    let lastAt = Number.NEGATIVE_INFINITY;
+    let stopped = false;
+    function flush() {
+      timer = void 0;
+      if (stopped || pending === null) return;
+      const message = pending;
+      pending = null;
+      lastAt = Date.now();
+      write(message);
+    }
+    return {
+      update(message) {
+        if (stopped) return;
+        pending = message;
+        if (timer !== void 0) return;
+        const wait = lastAt + intervalMs - Date.now();
+        if (wait <= 0) flush();
+        else timer = setTimeout(flush, wait);
+      },
+      stop() {
+        stopped = true;
+        pending = null;
+        if (timer !== void 0) clearTimeout(timer);
+        timer = void 0;
+      }
+    };
+  }
   function createProgressView(host, mode, initial) {
     host.replaceChildren();
     const rows = /* @__PURE__ */ new Map();
@@ -7382,7 +7419,7 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
     }
     function schedule() {
       if (timer || disposed) return;
-      timer = window.setTimeout(render, 80);
+      timer = window.setTimeout(render, PROGRESS_RENDER_INTERVAL_MS);
     }
     render();
     return {
@@ -13318,10 +13355,18 @@ ${P2} .kus-rl-items__more{margin-top:8px}
       const signature = currentSignature();
       const previous = inspection;
       await runLite(onlyProblems ? "取得失敗・処理中のアプリを確認し直し中…" : "未公開の変更を確認中…", async () => {
-        const result = await inspectDeployTargetsStandalone({
-          targets,
-          onProgress: (done, total, label) => panel.setStatus(`未公開の変更を確認中…（${done}/${total} アプリ${label ? ` · ${label}` : ""}）`, "busy")
+        const progress = createProgressStatus((message) => {
+          if (!panel.isCancelRequested()) panel.setStatus(message, "busy");
         });
+        let result;
+        try {
+          result = await inspectDeployTargetsStandalone({
+            targets,
+            onProgress: (done, total, label) => progress.update(`未公開の変更を確認中…（${done}/${total} アプリ${label ? ` · ${label}` : ""}）`)
+          });
+        } finally {
+          progress.stop();
+        }
         const apps = mergeInspection(result, problemKeys ? previous : null, problemKeys);
         inspection = { apps, signature, at: Date.now(), inspectedAt: result.inspectedAt || (/* @__PURE__ */ new Date()).toISOString() };
         recordCounts.clear();

@@ -227,7 +227,8 @@ async function main() {
   const ROOT_SEL = '#kus-deploy-lite';
   const button = name => page.getByRole('button', { name, exact: true });
   const tab = name => page.getByRole('tab', { name: new RegExp(name) });
-  const idle = () => page.waitForFunction(() => document.querySelector('#kus-deploy-lite').getAttribute('aria-busy') !== 'true');
+  // options は waitForFunction にそのまま渡す（件数の多いシナリオが、判定の間隔を指定する）。
+  const idle = options => page.waitForFunction(() => document.querySelector('#kus-deploy-lite').getAttribute('aria-busy') !== 'true', null, options);
   const dockText = () => page.locator('.kus-dp-dock-copy').innerText();
   const statusText = () => page.locator('.kus-lp__status-text').innerText();
   const mockGet = fn => page.evaluate(fn);
@@ -243,7 +244,7 @@ async function main() {
     await first.fill(ids.join(','));
     await first.press('Tab');
   }
-  async function inspect() { await button('未公開の変更を確認する').click(); await idle(); }
+  async function inspect(waitOptions) { await button('未公開の変更を確認する').click(); await idle(waitOptions); }
   const reviewRow = id => page.locator(`tr.kus-dp-row[data-deploy-app="${id}"]`);
   const resultItem = id => page.locator(`.kus-dp-result-item[data-deploy-app="${id}"]`);
   const stubClipboard = () => page.evaluate(() => {
@@ -261,12 +262,12 @@ async function main() {
     await button('最終確認に進む').click();
     assert.equal(await tab('最終確認').getAttribute('aria-selected'), 'true');
   }
-  async function confirmAndRun(value) {
+  async function confirmAndRun(value, waitOptions) {
     await ackBox().check();
     await confirmBox().fill(String(value));
     assert.equal(await runButton().isEnabled(), true, '確認後は実行できる');
     await runButton().click();
-    await idle();
+    await idle(waitOptions);
   }
   async function overflowOf(where) {
     const geometry = await page.evaluate(() => {
@@ -384,7 +385,8 @@ async function main() {
     assert.match(await statusText(), /未公開の変更を確認中/);
     for (let i = 0; i < 6; i += 1) {
       await page.waitForFunction(() => window.__deployMock.inspectWaiting);
-      if (i === 2) assert.match(await statusText(), /（2\/6 アプリ/, '進捗を N/M アプリで示す');
+      // 進捗を N/M アプリで示す。画面は進捗を一定間隔（80 ミリ秒）にまとめて書くので、書かれるまで待つ（合成エンジンは 3 件目の前で止まっている）
+      if (i === 2) await page.waitForFunction(() => /（2\/6 アプリ/.test(document.querySelector('.kus-lp__status-text').textContent), null, { timeout: 5000 });
       await page.evaluate(() => { const w = window.__deployMock.inspectWaiting; window.__deployMock.inspectWaiting = null; w(); });
       await page.waitForTimeout(20);
     }
@@ -766,9 +768,13 @@ async function main() {
     await page.getByRole('button', { name: '候補 1000 件をすべて対象アプリに追加' }).click();
     assert.match(await page.locator('.kus-dp-count').innerText(), /^1000 アプリ（最大 1000）$/);
     await button('詳細設定…').click(); await page.getByRole('radio', { name: '残りも続ける', exact: true }).check(); await page.getByRole('button', { name: '詳細設定を閉じる', exact: true }).click();
+    // 完了は 100 ミリ秒ごとに確かめる（待ちの上限は既定の 30 秒のまま）。waitForFunction の既定は描画のたびに確かめるため、
+    // ページに毎秒 60 回の描画を求め続ける。処理中はスピナーが動いていて、対象が 1000 アプリの画面ではその 1 回ごとに
+    // 10 ミリ秒以上かかるので、測りたい処理（合成エンジンのタイマー）を待たせてしまう。このツールの画面には、処理中に描画を求め続ける処理は無い。
+    const bulkWait = { polling: 100 };
     const t0 = Date.now();
     timings.bulk1000 = { inspectMs: null, totalMs: null };
-    await inspect();
+    await inspect(bulkWait);
     timings.bulk1000.inspectMs = Date.now() - t0;
     assert.equal(await page.locator('tr.kus-dp-row').count(), 200, '表は先頭 200 件だけ描画する');
     assert.match(await button('さらに表示（残り 800 アプリ）').innerText(), /残り 800 アプリ/);
@@ -777,7 +783,7 @@ async function main() {
     await toConfirm();
     assert.match(await facts('targets').innerText(), /…ほか 980 件（合計 1000 件）/, '対象は先頭 20 件＋件数');
     assert.equal(await confirmBox().getAttribute('aria-label'), '確認用の対象アプリ数');
-    await confirmAndRun(1000);
+    await confirmAndRun(1000, bulkWait);
     const elapsed = Date.now() - t0;
     timings.bulk1000.totalMs = elapsed;
     assert.ok(await page.locator('.kus-dp-result-item').count() <= 220, `件数が多いときは全行を描画しない（${await page.locator('.kus-dp-result-item').count()} 行）`);
