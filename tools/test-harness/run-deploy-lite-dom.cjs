@@ -211,6 +211,8 @@ async function main() {
   await page.route('**/*', route => route.abort());
   const checks = [];
   const ok = name => { checks.push(name); };
+  // 件数の多いシナリオの所要時間（ミリ秒）。results.json と標準出力に残し、遅くなったときに実行ごとの差を追えるようにする。
+  const timings = {};
 
   // 既定は「反映元アプリから本番へ」。従来の流れ（プレビューの変更を公開）を検証する reset は、操作を切り替えてから始める。
   const flowRadio = name => page.getByRole('radio', { name, exact: true });
@@ -765,7 +767,9 @@ async function main() {
     assert.match(await page.locator('.kus-dp-count').innerText(), /^1000 アプリ（最大 1000）$/);
     await button('詳細設定…').click(); await page.getByRole('radio', { name: '残りも続ける', exact: true }).check(); await page.getByRole('button', { name: '詳細設定を閉じる', exact: true }).click();
     const t0 = Date.now();
+    timings.bulk1000 = { inspectMs: null, totalMs: null };
     await inspect();
+    timings.bulk1000.inspectMs = Date.now() - t0;
     assert.equal(await page.locator('tr.kus-dp-row').count(), 200, '表は先頭 200 件だけ描画する');
     assert.match(await button('さらに表示（残り 800 アプリ）').innerText(), /残り 800 アプリ/);
     await button('さらに表示（残り 800 アプリ）').click();
@@ -775,6 +779,7 @@ async function main() {
     assert.equal(await confirmBox().getAttribute('aria-label'), '確認用の対象アプリ数');
     await confirmAndRun(1000);
     const elapsed = Date.now() - t0;
+    timings.bulk1000.totalMs = elapsed;
     assert.ok(await page.locator('.kus-dp-result-item').count() <= 220, `件数が多いときは全行を描画しない（${await page.locator('.kus-dp-result-item').count()} 行）`);
     assert.equal(await page.locator('.kus-dp-result-item[data-deploy-status="failed"]').count(), 2, '問題のある行は優先して表示する');
     assert.match(await page.locator('.kus-dp-progress__summary').innerText(), /^1000\/1000 アプリが完了（成功 998・失敗 2）$/);
@@ -851,13 +856,15 @@ async function main() {
     for (const name of await require('./deploy-source-engine-scenarios.cjs')({ page, script: realScript, out: OUT })) ok(name);
 
     assert.deepEqual(errors, []);
-    fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({ passed: true, sizes, checks }, null, 2));
+    fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({ passed: true, sizes, checks, timings }, null, 2));
     console.log(`PASS deploy-lite: ${checks.join(', ')}`);
+    console.log(`Timings (ms): ${JSON.stringify(timings)}`);
     console.log(`Artifacts: ${OUT}`);
   } catch (error) {
     await page.screenshot({ path: path.join(OUT, 'failure.png') }).catch(() => {});
     console.error(await page.locator(ROOT_SEL).innerText().catch(() => '(パネルなし)'));
     console.error('Browser errors:', errors);
+    console.error(`Timings (ms): ${JSON.stringify(timings)}`);
     throw error;
   } finally { await browser.close(); }
 }
