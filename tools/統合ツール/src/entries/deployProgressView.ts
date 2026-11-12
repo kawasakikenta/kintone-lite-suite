@@ -61,6 +61,58 @@ export function formatStamp(at: number | Date): string {
 }
 
 // =============================================================================
+// 進捗の表示（数千件でも固まらない）
+// =============================================================================
+
+/**
+ * アプリごとに届く進捗を画面へ書く間隔（ミリ秒）。
+ * 対象アプリが多い画面では、1 か所を書き換えるだけでもブラウザが画面全体を描き直す
+ * （1000 アプリで 1 回 15〜30 ミリ秒）。届くたびに書き換えると、処理そのものより描き直しに時間を使う。
+ */
+export const PROGRESS_RENDER_INTERVAL_MS = 80;
+
+export interface ProgressStatus {
+  /** 進捗の文言を渡す。前回の表示から間隔が空いていればすぐ表示し、空いていなければ最後に渡した文言だけを間隔の終わりに表示する。 */
+  update(message: string): void;
+  /** 処理が終わったら呼ぶ。まだ表示していない進捗は捨てる（このあと出す完了・中止・エラーの文言を、遅れて上書きしない）。 */
+  stop(): void;
+}
+
+/** アプリごとに届く進捗の文言を、PROGRESS_RENDER_INTERVAL_MS ごとにまとめて write へ渡す。 */
+export function createProgressStatus(write: (message: string) => void, intervalMs = PROGRESS_RENDER_INTERVAL_MS): ProgressStatus {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let pending: string | null = null;
+  let lastAt = Number.NEGATIVE_INFINITY;
+  let stopped = false;
+
+  function flush() {
+    timer = undefined;
+    if (stopped || pending === null) return;
+    const message = pending;
+    pending = null;
+    lastAt = Date.now();
+    write(message);
+  }
+
+  return {
+    update(message) {
+      if (stopped) return;
+      pending = message;
+      if (timer !== undefined) return;
+      const wait = lastAt + intervalMs - Date.now();
+      if (wait <= 0) flush();
+      else timer = setTimeout(flush, wait);
+    },
+    stop() {
+      stopped = true;
+      pending = null;
+      if (timer !== undefined) clearTimeout(timer);
+      timer = undefined;
+    }
+  };
+}
+
+// =============================================================================
 // 実行中・実行後の一覧（数千件でも固まらない）
 // =============================================================================
 
@@ -147,7 +199,7 @@ export function createProgressView(host: HTMLElement, mode: DeployMode, initial:
 
   function schedule() {
     if (timer || disposed) return;
-    timer = window.setTimeout(render, 80);
+    timer = window.setTimeout(render, PROGRESS_RENDER_INTERVAL_MS);
   }
 
   render();
