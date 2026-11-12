@@ -206,7 +206,7 @@ cd tools/統合ツール && npm run check   # 型検査・単体テスト（depl
 npm run test:deploy-dom -- --browser chromium
 ```
 
-`test:deploy-dom` は、エンジンを合成エンジンに差し替えて、画面の 4 段階・進めない理由・差分確認の表示・取得失敗を選んだままでは進めないこと・最終確認の入力と Enter・条件変更での確認解除・実行中の状態更新・成功／部分失敗／blocked／中止の表示・二重実行防止・Markdown と JSON の保存・1000 件の実行・320〜1440px の横はみ出しを実ブラウザで検証します。実アプリには通信せず、画面と結果は `.iter-shots/deploy-lite-dom/`（Git 管理外）に保存します。
+`test:deploy-dom` は、エンジンを合成エンジンに差し替えて、画面の 4 段階・進めない理由・差分確認の表示・取得失敗を選んだままでは進めないこと・最終確認の入力と Enter・条件変更での確認解除・実行中の状態更新・成功／部分失敗／blocked／中止の表示・二重実行防止・Markdown と JSON の保存・1000 件の実行・320〜1440px の横はみ出しを実ブラウザで検証します。1000 件の差分確認と実行にかかった時間は、`results.json` の `timings` と標準出力に残します（確認から実行までの上限は 60 秒）。実アプリには通信せず、画面と結果は `.iter-shots/deploy-lite-dom/`（Git 管理外）に保存します。
 
 同じコマンドの後半（`tools/test-harness/deploy-engine-scenarios.cjs`）では、エンジンを差し替えず、画面と実エンジンを束ねたまま、通信（`kintone.api`・`fetch`）だけを合成 kintone に差し替えて検証します。合成 kintone は、本番とプレビューの全比較項目の GET（revision はアプリ単位）、`POST /preview/app/deploy.json`（確認時のプレビュー revision と食い違えば `GAIA_CO02` で拒否。受け付けたら PROCESSING → SUCCESS／FAIL／CANCEL。revert ならプレビューを本番へ戻す）、状態確認の GET、ファイル本体の GET を再現し、それ以外の書き込みと想定外の URL は例外にして失敗させます。確認する内容は次のとおりです。各シナリオで、書き込みが deploy.json の POST だけであることも確認します。
 
