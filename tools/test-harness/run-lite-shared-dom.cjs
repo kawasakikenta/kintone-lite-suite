@@ -459,6 +459,21 @@ async function main() {
     await page.keyboard.press('Escape');
     assert.equal(await advancedDialog.evaluate(dialog => dialog.open), false, 'Esc はポップアップだけを閉じる');
     assert.equal(await popupPanel.count(), 1, 'パネルは閉じない');
+    // 閉じたら、開いたボタンへフォーカスを戻す。dialog の close イベントは閉じた直後ではなく次の描画のときに届くので、
+    // それまでに別の入力欄へ移っていたら、フォーカスを奪わない（奪うと、続けて打ったキーが開いたボタンへ届く）。
+    await page.getByRole('button', { name: '詳細設定…' }).click();
+    const focusAfterClose = await page.evaluate(async () => {
+      const dialog = document.querySelector('#popup-test-advanced');
+      const focused = () => document.activeElement?.getAttribute('aria-label') || (document.activeElement?.textContent || '').trim();
+      const closed = new Promise(resolve => dialog.addEventListener('close', resolve, { once: true }));
+      dialog.querySelector('.kus-lp__dialog-foot button').click();
+      const atClose = focused();
+      document.querySelector('input[aria-label="ポップアップ用アプリID"]').focus();
+      await closed;
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return { open: dialog.open, atClose, afterCloseEvent: focused() };
+    });
+    assert.deepEqual(focusAfterClose, { open: false, atClose: '詳細設定…', afterCloseEvent: 'ポップアップ用アプリID' }, '閉じた時点で開いたボタンへ戻し、その後に移った入力欄からは close イベントでフォーカスを奪わない');
     await page.getByRole('button', { name: '詳細設定…' }).click();
     await advancedDialog.getByRole('combobox', { name: '形式' }).selectOption('b');
     await advancedDialog.getByRole('button', { name: '詳細設定を閉じる' }).click();
@@ -483,7 +498,7 @@ async function main() {
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.evaluate(() => window.popupPanel.close());
     assert.equal(await popupPanel.count(), 0);
-    results.push('ポップアップ: 詳細設定・ほかの操作・「?」ヘルプ・Esc の扱い・確認画面への反映・320/768px');
+    results.push('ポップアップ: 詳細設定・ほかの操作・「?」ヘルプ・Esc の扱い・閉じた後のフォーカス・確認画面への反映・320/768px');
 
     await page.locator('#launcher').focus();
     await page.evaluate(() => {

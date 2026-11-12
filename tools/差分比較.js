@@ -13643,11 +13643,12 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
       pressedOnBackdrop = false;
     });
     dialog.addEventListener("close", () => {
-      if (opener?.isConnected) {
-        try {
-          opener.focus({ preventScroll: true });
-        } catch {
-        }
+      const active2 = document.activeElement;
+      const movedElsewhere = !!active2 && active2 !== document.body && active2 !== opener && !dialog.contains(active2);
+      if (movedElsewhere || !opener?.isConnected) return;
+      try {
+        opener.focus({ preventScroll: true });
+      } catch {
       }
     });
     return { dialog, body, open, close };
