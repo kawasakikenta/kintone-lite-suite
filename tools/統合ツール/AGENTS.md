@@ -83,6 +83,7 @@ tools/統合ツール/
 - ER図の関連（`ErRelation`）は、キーと結合条件に加えて `copyFields`（コピーするフィールドの対応）・`displayFields`・`filterCond` を持つ。説明文は `er-model.ts` の `describeErRelationCopy`・`describeErRelationDisplay`・`describeErRelationFilter` が正で、図の画面（`er.ts` の埋め込みスクリプトの `relCopyText` ほか）は同じ結果にする（`tests/er-relation-details.test.ts` で照合）。
 - `entries/litePanelTheme.ts` の `createLitePanel`／`makeRow` 等は全 lite 系パネルの共通 UI 基盤。変更時は軽量バンドル全体に影響する。
 - `createLitePanel` の `setStatus` は、色（tone）が同じなら文言だけを書き換え、アイコンは作り直さない（処理中のスピナーが進捗のたびに最初から回り直さないようにする。作り直すと、1 回の書き換えにかかる描画も約 2 倍になる）。色が変わるときだけ、アイコンと文言を入れ替える。
+- `makeDialog`（ポップアップ）は、閉じたら開いたボタンへフォーカスを戻す。`<dialog>` の `close` イベントは `close()` の直後ではなく次の描画のときに届くので、イベントの処理でフォーカスを動かすときは、それまでに利用者が移った先から奪わないこと（`showModal()` で開いたポップアップは、閉じた時点でブラウザが戻している）。`run-lite-shared-dom.cjs` で検査する。
 - `kintoneGuard.ts` の `isKintonePage`／`runOnKintonePage` は全 lite エントリ共通の kintone 画面ガード。文言・判定を変えると全エントリに波及する。
 - `diff/export.ts` の `bundleToMarkdown` は設計書 lite（`tabs/design-standalone.ts`）から参照される。
 - 1対多・ペア一括の結果は保存のためにメモリへ保持する。保持する前に `diff/retention.ts` の `stripComparisonScratchForRetention` で、JS/CSS の本文（`_bodyText`・`_bodyHash`）とプラグイン設定の取得結果（`_config`）を取り除く（出力は読まない。比較先が数百件で保持量の大半だった）。一部未検証の判定（`collectPartialComparisonIssues`）は本文の有無を見るため、必ず取り除く前に行う。
