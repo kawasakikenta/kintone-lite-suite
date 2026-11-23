@@ -70,8 +70,40 @@ export function restorableScopes(bundle: Pick<Bundle, 'sections'> | undefined, d
   return REFLECT_SECTION_KEYS.filter((key) => {
     if (limit && !limit.has(key)) return false;
     const section = sections[key];
+    if (key === 'customizeSettings' && customizeFilesWithoutContent(section).length) return false;
     return Object.prototype.hasOwnProperty.call(sections, key) && !!section && typeof section === 'object' && !section._fetchError;
   });
+}
+
+/** JS/CSS 設定のうち、ファイル本体（_content）がバックアップに入っていない FILE（unavailable: 保存しようとして取得できなかった）。 */
+function customizeFilesWithoutContent(section: any): Array<{ name: string; unavailable: boolean }> {
+  if (!section || typeof section !== 'object') return [];
+  const files: Array<{ name: string; unavailable: boolean }> = [];
+  for (const platform of ['desktop', 'mobile']) for (const kind of ['js', 'css']) {
+    for (const item of Array.isArray(section[platform]?.[kind]) ? section[platform][kind] : []) {
+      if (item?.type === 'FILE' && !(item.file?._content && typeof item.file._content.base64 === 'string')) {
+        files.push({ name: String(item.file?.name || item.file?.fileKey || ''), unavailable: !!item.file?._contentUnavailable });
+      }
+    }
+  }
+  return files;
+}
+
+/**
+ * 戻す項目に含めなかった項目と理由（段階 1 の「バックアップから戻しています」に添える）。
+ * JS/CSS 設定は、変更しなかった反映ではファイル本体をバックアップに入れない。kintone の JS/CSS 一覧のファイルのキーは、
+ * アプリを更新した後は古いキーで取得できなくなるため（実テナントで HTTP 404）、本体の無いバックアップからは戻せない。
+ */
+export function restoreSkippedNotes(bundle: Pick<Bundle, 'sections'> | undefined, declared?: unknown): string[] {
+  const sections = (bundle?.sections || {}) as Record<string, any>;
+  if (Array.isArray(declared) && !declared.map(String).includes('customizeSettings')) return [];
+  const missing = customizeFilesWithoutContent(sections.customizeSettings);
+  if (!missing.length || sections.customizeSettings?._fetchError) return [];
+  const names = [...new Set(missing.map((file) => file.name))];
+  const why = missing.some((file) => file.unavailable)
+    ? '反映前にファイル本体を保存できませんでした'
+    : 'このバックアップを作った反映では JS/CSS 設定を変えていないため、本体を保存していません';
+  return [`JS/CSS 設定は、バックアップにファイル本体（${names.slice(0, 3).join('、')}${names.length > 3 ? ` ほか ${names.length - 3} 件` : ''}）が無いため、戻す項目に含めていません（${why}。kintone のファイルのキーは、アプリを更新すると古いキーで取得できなくなります）。`];
 }
 
 const sameApp = (bundle: Pick<Bundle, 'appId' | 'guestId'>, appId: string, guestId: string) => String(bundle.appId || '') === appId && String(bundle.guestId || '') === guestId;
