@@ -17675,7 +17675,7 @@ ${fence}`;
         const parts = [];
         if (f.format && labelMap[f.format]) parts.push(labelMap[f.format]);
         if (f.digit !== void 0) parts.push(`桁区切り: ${f.digit ? "あり" : "なし"}`);
-        if (f.displayScale !== void 0) parts.push(`小数点: ${f.displayScale}桁`);
+        if (f.displayScale != null && String(f.displayScale).trim() !== "") parts.push(`小数点: ${f.displayScale}桁`);
         if (f.unit) {
           const pos = f.unitPosition === "BEFORE" ? "前置" : f.unitPosition === "AFTER" ? "後置" : "";
           parts.push(`単位: ${f.unit}${pos ? `(${pos})` : ""}`);
@@ -18964,7 +18964,8 @@ ${fence}`;
             field.tableCode ? `${tableLabels.get(field.tableCode) || field.tableCode}（${field.tableCode}）` : "-",
             field.label || field.code || "-",
             field.code || "-",
-            FIELD_TYPE[field.type] || field.type || "不明",
+            // 項目定義シートと同じく、ルックアップは「ルックアップ(元の種類)」にする。
+            definition.lookup ? `ルックアップ(${FIELD_TYPE[field.type] || field.type})` : FIELD_TYPE[field.type] || field.type || "不明",
             definition.required == null ? "-" : UtilsX.formatBoolean(definition.required),
             detailRow ? "詳細へ" : "詳細シート対象外"
           ];
@@ -19596,13 +19597,16 @@ ${fence}`;
       const filename = `設計書_${appLabel}_${nowStampZip()}.xlsx`;
       if (returnWorkbook) {
         notifyCompletion();
+        const liveFailures = Object.values(liveSections);
+        const unreadable = !bundle && liveFailures.length > 0 && liveFailures.every((section) => section && section._fetchError) ? String((liveSections.appInfo || liveFailures[0])._fetchError).split("\n")[0] : "";
         return {
           wb,
           filename,
           appId: APP_ID,
           appName: appSettings?.name || `App${APP_ID}`,
           failedAPIs: UI.failedAPIs.slice(),
-          completionSummary
+          completionSummary,
+          ...unreadable ? { unreadable } : {}
         };
       }
       const downloadExcel = (wb2, fname) => {
@@ -19727,7 +19731,8 @@ ${fence}`;
         if (!ret || ret === true) {
           throw new Error("ワークブックが生成できませんでした");
         }
-        const { wb, filename, appName, failedAPIs: failedAPIs2 } = ret;
+        const { wb, filename, appName, failedAPIs: failedAPIs2, unreadable } = ret;
+        if (unreadable) throw new Error(`設定を取得できませんでした（${unreadable}）`);
         const doc2 = getToolDocument();
         const innerOverlay = doc2.getElementById("kintone-exporter-overlay");
         if (innerOverlay && innerOverlay !== doc2.getElementById("kintone-exporter-overlay")) {
@@ -20285,6 +20290,14 @@ ${lines.join("\n")}`), { partialSuccess: true });
           }
         }
         const primaryBundle = aiBundle || mdBundle;
+        if (!target.bundle) {
+          const fetched = buildDesignSnapshot(primaryBundle).sections.filter((row) => scopes.includes(row.key));
+          const failed = fetched.filter((row) => row.status === "fetch-error");
+          if (failed.length && failed.length === fetched.length) {
+            const detail = String(failed.find((row) => row.key === "appInfo")?.detail || failed[0].detail || "").split("\n")[0].replace(/^取得失敗:\s*/, "");
+            throw new Error(`設定を取得できませんでした（${detail || "取得失敗"}）`);
+          }
+        }
         const appName = extractAppNameFromBundle(primaryBundle) || "";
         const appLabel = appLabelFromBundle(primaryBundle) || `app${sanitizeFilenamePart(target.appId)}`;
         const guestPrefix = target.guestId && (appIdCounts.get(target.appId) || 0) > 1 ? `guest${target.guestId}_` : "";

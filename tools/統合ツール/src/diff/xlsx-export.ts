@@ -1617,7 +1617,8 @@ function coarseTargetIdentifier(target: string, sectionKey: string): string {
   return quoted || sectionKey;
 }
 
-const VIEW_SETTING_PROPERTY_PATTERN = /^(fields(?:\[\d+\])?|filterCond|sort|type|name|pagination|paginationStyle|pager|builtinType|device|date|title|html|index)$/;
+// 一覧の ID（id）も一覧の設定項目として扱う（一覧名の一部と読み違えて「一覧「名前.id」」にしない）。
+const VIEW_SETTING_PROPERTY_PATTERN = /^(id|fields(?:\[\d+\])?|filterCond|sort|type|name|pagination|paginationStyle|pager|builtinType|device|date|title|html|index)$/;
 
 interface CoarseViewIdentity {
   viewName: string;
@@ -1677,7 +1678,7 @@ function resolveCoarseViewIdentity(
   }
   if (exactName) return { viewName: exactName, property: null, isRoot: true };
 
-  const fallbackLeaf = /^(.*)\.(fields(?:\[\d+\])?|filterCond|sort|type|name|pagination|paginationStyle|pager|builtinType|device|date|title|html|index)$/.exec(remainder);
+  const fallbackLeaf = /^(.*)\.(id|fields(?:\[\d+\])?|filterCond|sort|type|name|pagination|paginationStyle|pager|builtinType|device|date|title|html|index)$/.exec(remainder);
   if (hasDefinitionPayload || !fallbackLeaf) {
     return { viewName: customerPlainText(remainder), property: null, isRoot: true };
   }
@@ -1759,9 +1760,10 @@ function coarseStableIdentity(row: DiffXlsxRow, sectionKey: string): CoarseStabl
 }
 
 function coarseRowIsGenericEntityRoot(row: DiffXlsxRow, sectionKey: string): boolean {
-  if (String(row.entityPropLabel || '').trim()) return false;
   const rootPath = coarseGenericEntityRootPath(row, sectionKey);
+  // 要素全体の行（プロセス管理のアクション・JS/CSS のファイルなど）は、entityPropLabel が要素の種類名（「遷移アクション」「CSS」）でも対象自体の追加・削除。
   if (rootPath && rootPath === String(row.path || '')) return true;
+  if (String(row.entityPropLabel || '').trim()) return false;
   const keyedObjectRootKinds = new Set(['report', 'category', 'state']);
   return (row.type === 'added' || row.type === 'removed')
     && keyedObjectRootKinds.has(String(row.entityKind || ''))
@@ -3363,9 +3365,14 @@ interface CustomerFieldColumns {
 function customerFieldSettingLabel(settingKey: string, fallback: string): string {
   if (settingKey === '(field)') return 'フィールド全体';
   if (settingKey.startsWith('options.')) {
-    const tokens = settingKey.split('.');
-    const option = customerPlainText(tokens[1] || '名称不明');
-    const property = FIELD_SETTING_LABELS[tokens.at(-1) || ''] || fallback.split(' / ').at(-1) || '設定内容';
+    // 選択肢名は「.」を含みうるため、末尾の選択肢の項目（label / index）より前をすべて選択肢名とする。
+    // 選択肢そのものの追加・削除の行は項目名を付けない（「選択肢「VIP」：選択肢「VIP」」にしない）。
+    const tokens = settingKey.split('.').slice(1);
+    const last = tokens.at(-1) || '';
+    const hasProperty = tokens.length > 1 && (last === 'label' || last === 'index');
+    const option = customerPlainText((hasProperty ? tokens.slice(0, -1) : tokens).join('.') || '名称不明');
+    if (!hasProperty) return `選択肢「${option}」`;
+    const property = FIELD_SETTING_LABELS[last] || fallback.split(' / ').at(-1) || '設定内容';
     return `選択肢「${option}」：${property}`;
   }
   const prefix = settingKey.startsWith('lookup.')
@@ -3747,7 +3754,10 @@ const CUSTOMER_MAIN_VALUE_COLUMN_WIDTH = 32;
 function customerFieldCodeLabel(codeValue: unknown, bundle?: DiffXlsxBundle): string {
   const code = String(codeValue ?? '').trim();
   if (!code) return code;
-  const definition = fieldSettingsProperties(bundle)[code];
+  const properties = fieldSettingsProperties(bundle);
+  // テーブル内のフィールド（レイアウトのテーブルの列など）は、テーブルの fields から引く。
+  const definition = properties[code]
+    || Object.values<any>(properties).map((root) => (root?.type === 'SUBTABLE' ? root.fields?.[code] : null)).find((child) => child && typeof child === 'object');
   const label = fieldDefinitionLabel(definition);
   return label && label !== code ? `${label}（${code}）` : code;
 }

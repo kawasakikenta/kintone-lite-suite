@@ -275,14 +275,22 @@ export interface JsConfigCurrentSummary {
   removed: number;
 }
 
-/** 反映先の現在設定（GET 応答）と反映計画から、現在の件数と外れる件数を数える。 */
-export function summarizeJsConfigCurrent(current: any, plan: JsConfigApplyPlan): JsConfigCurrentSummary {
+/**
+ * 反映先の現在設定（GET 応答）と反映計画から、現在の件数と外れる件数を数える。
+ * filePlan（FILE 形式のファイルの扱い）を渡すと、反映先の同名・同内容のファイルを再利用する枠は、そのファイルが残るものとして数える。
+ */
+export function summarizeJsConfigCurrent(current: any, plan: JsConfigApplyPlan, filePlan?: JsConfigFilePlan): JsConfigCurrentSummary {
   const now = buildCustomizeSettingsPutPayload(current) as any;
   const keyOf = (r: any) => (r.type === 'FILE' ? `F:${r.file?.fileKey}` : `U:${r.url}`);
+  // 再利用する枠は、反映先のファイルのキーで照合する（取得元のキーのままだと、残るファイルを「外れる」と数えてしまう）
+  const reused = new Map((filePlan?.items || []).filter((item) => item.action === 'reuse' && item.targetFileKey).map((item) => [`${item.platform}/${item.kind}/${item.index}`, item.targetFileKey as string]));
   let removed = 0;
   for (const platform of ['desktop', 'mobile'] as const) {
     for (const kind of ['js', 'css'] as const) {
-      const next = new Set(((plan.payload as any)[platform]?.[kind] || []).map(keyOf));
+      const next = new Set(((plan.payload as any)[platform]?.[kind] || []).map((r: any, index: number) => {
+        const targetKey = r?.type === 'FILE' ? reused.get(`${platform}/${kind}/${index}`) : undefined;
+        return targetKey ? `F:${targetKey}` : keyOf(r);
+      }));
       removed += ((now[platform]?.[kind] || []) as any[]).filter((r) => !next.has(keyOf(r))).length;
     }
   }
@@ -544,7 +552,6 @@ export async function runApplyJsConfigStandalone(p, setStatus, setLogHtml) {
     throw new Error('反映先の JS/CSS 設定の revision を確認できないため反映を中止しました。最新の設定を取得し直してください');
   }
 
-  const currentSummary = summarizeJsConfigCurrent(current, plan);
   // 反映先のプレビューを取得した JSON を編集して戻す場合は、取得時の revision を基準にする。
   // 反映直前に取り直した revision だけを使うと、取得後〜反映前の別更新を黙って上書きしてしまう。
   const baseRevision = String(p.baseRevision || '').trim();
@@ -562,6 +569,7 @@ export async function runApplyJsConfigStandalone(p, setStatus, setLogHtml) {
     filePlan = await planJsConfigFiles(plan, current, { source: fileSource, targetGuestId: guestId });
     if (filePlan.problems.length) throw new Error(formatJsConfigFileProblems(filePlan));
   }
+  const currentSummary = summarizeJsConfigCurrent(current, plan, filePlan);
 
   if (!p.skipConfirm && !kusConfirm(buildJsConfigApplyConfirmText(targetAppId, guestId, plan, currentSummary, filePlan, fileSource))) {
     setStatus('JS/CSS設定反映をキャンセルしました');
@@ -732,13 +740,13 @@ export async function runApplyJsConfigMultiStandalone(
       const current = await apiGet(buildApiPrefix(target.guestId, true), '/app/customize.json', { app: target.appId });
       const revision = pickRevision(current);
       if (!/^\d+$/.test(revision)) throw new Error('JS/CSS 設定の revision を確認できません');
-      const summary = summarizeJsConfigCurrent(current, plan);
       let filePlan: JsConfigFilePlan | undefined;
       if (plan.files.length) {
         setStatus(`[${i + 1}/${total}] JS/CSSファイルを確認中: ${multiTargetLabel(target)}`);
         filePlan = await planJsConfigFiles(plan, current, { source: fileSource, targetGuestId: target.guestId, cache: sourceCache });
         if (filePlan.problems.length) throw new FileProblemError(formatJsConfigFileProblems(filePlan, multiTargetLabel(target)), filePlan);
       }
+      const summary = summarizeJsConfigCurrent(current, plan, filePlan);
       prechecked.push({ target, revision, removed: summary.removed, nowTotal: summary.desktopJs + summary.desktopCss + summary.mobileJs + summary.mobileCss, filePlan });
     } catch (e: any) {
       if (isCancelStop(e)) throw e;

@@ -71,6 +71,19 @@ describe('buildJsConfigApplyPlan', () => {
     expect(buildJsConfigApplyConfirmText('5', '', empty, summarizeJsConfigCurrent(current, empty))).toContain('外れる現在の設定: 4件（すべて外れます）');
   });
 
+  it('同名・同内容のファイルを再利用する枠は、そのファイルが残るので「外れる」に数えない', () => {
+    const plan = buildJsConfigApplyPlan({ desktop: { js: [{ type: 'FILE', file: { fileKey: 'src-a', name: 'a.js' } }], css: [{ type: 'FILE', file: { fileKey: 'src-b', name: 'b.css' } }] } });
+    const current = { desktop: { js: [{ type: 'FILE', file: { fileKey: 'tgt-a', name: 'a.js' } }], css: [{ type: 'FILE', file: { fileKey: 'tgt-b', name: 'b.css' } }, { type: 'URL', url: 'https://x/old.css' }] }, mobile: { js: [], css: [] } };
+    const filePlan = { items: [
+      { platform: 'desktop' as const, kind: 'js' as const, index: 0, name: 'a.js', sourceFileKey: 'src-a', action: 'reuse' as const, targetFileKey: 'tgt-a', size: 1 },
+      { platform: 'desktop' as const, kind: 'css' as const, index: 0, name: 'b.css', sourceFileKey: 'src-b', action: 'upload' as const, size: 1 }
+    ], blobs: new Map(), problems: [], onlyUnknownOrigin: false, targetUnavailable: [] };
+    // 取得元のキーだけで照合すると、再利用して残る a.js も外れると数えてしまう
+    expect(summarizeJsConfigCurrent(current, plan).removed).toBe(3);
+    // 再利用する a.js は残り、アップロードで差し替わる b.css と、一覧から外れる old.css だけが外れる
+    expect(summarizeJsConfigCurrent(current, plan, filePlan).removed).toBe(2);
+  });
+
   it('describes FILE handling only when FILE entries exist and warns when 0 entries will clear settings', () => {
     const withFile = buildJsConfigApplyPlan({ desktop: { js: [{ type: 'FILE', file: { fileKey: 'k', name: 'a.js' } }] } });
     const filePlan = { items: [{ platform: 'desktop' as const, kind: 'js' as const, index: 0, name: 'a.js', sourceFileKey: 'k', action: 'upload' as const, size: 2048 }, { platform: 'desktop' as const, kind: 'css' as const, index: 0, name: 'b.css', sourceFileKey: 'k2', action: 'reuse' as const, targetFileKey: 't2', size: 10 }], blobs: new Map(), problems: [], onlyUnknownOrigin: false, targetUnavailable: ['「x.js」（HTTP 500）'] };

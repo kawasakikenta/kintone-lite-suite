@@ -8457,7 +8457,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       const info = extractFieldPathInfo(fullPath);
       if (info) {
         const code = info.activeCode || '';
-        const field = getFieldRowPayload(row) || getFieldDefinition(code, 'source') || getFieldDefinition(code, 'target') || ({});
+        // 行の値がフィールド定義なのはフィールド全体の行だけ（設定項目の行の値は「10」や選択肢の定義）。それ以外は比較元・比較先の定義から表示名を引く。
+        const payload = info.isFieldRoot || info.isSubFieldRoot ? getFieldRowPayload(row) : null;
+        const field = (payload && typeof payload === 'object' ? payload : null) || getFieldDefinition(code, 'source') || getFieldDefinition(code, 'target') || ({});
         const fieldLabel = String(field.label || field.name || code || 'フィールド');
         const propTitle = fieldChangePropTitle(info, row);
         return fieldLabel + (propTitle ? ' · ' + propTitle : '');
@@ -16032,7 +16034,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     const quoted = /「([^」]+)」/.exec(target)?.[1];
     return quoted || sectionKey;
   }
-  var VIEW_SETTING_PROPERTY_PATTERN = /^(fields(?:\[\d+\])?|filterCond|sort|type|name|pagination|paginationStyle|pager|builtinType|device|date|title|html|index)$/;
+  var VIEW_SETTING_PROPERTY_PATTERN = /^(id|fields(?:\[\d+\])?|filterCond|sort|type|name|pagination|paginationStyle|pager|builtinType|device|date|title|html|index)$/;
   function viewDefinitionNames(sourceBundle, targetBundle) {
     return [...new Set([sourceBundle, targetBundle].flatMap((bundle) => {
       const views = bundle?.sections?.viewSettings?.views;
@@ -16083,7 +16085,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
       return { viewName: leaf.name, property: leaf.property, isRoot: false };
     }
     if (exactName) return { viewName: exactName, property: null, isRoot: true };
-    const fallbackLeaf = /^(.*)\.(fields(?:\[\d+\])?|filterCond|sort|type|name|pagination|paginationStyle|pager|builtinType|device|date|title|html|index)$/.exec(remainder);
+    const fallbackLeaf = /^(.*)\.(id|fields(?:\[\d+\])?|filterCond|sort|type|name|pagination|paginationStyle|pager|builtinType|device|date|title|html|index)$/.exec(remainder);
     if (hasDefinitionPayload || !fallbackLeaf) {
       return { viewName: customerPlainText(remainder), property: null, isRoot: true };
     }
@@ -16147,9 +16149,9 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     return { key: JSON.stringify([sectionKey, "path", path]), identifier: path };
   }
   function coarseRowIsGenericEntityRoot(row, sectionKey) {
-    if (String(row.entityPropLabel || "").trim()) return false;
     const rootPath = coarseGenericEntityRootPath(row, sectionKey);
     if (rootPath && rootPath === String(row.path || "")) return true;
+    if (String(row.entityPropLabel || "").trim()) return false;
     const keyedObjectRootKinds = /* @__PURE__ */ new Set(["report", "category", "state"]);
     return (row.type === "added" || row.type === "removed") && keyedObjectRootKinds.has(String(row.entityKind || "")) && [row.left, row.right].some((value) => !!value && typeof value === "object" && !Array.isArray(value));
   }
@@ -17415,9 +17417,12 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
   function customerFieldSettingLabel(settingKey, fallback) {
     if (settingKey === "(field)") return "フィールド全体";
     if (settingKey.startsWith("options.")) {
-      const tokens = settingKey.split(".");
-      const option = customerPlainText(tokens[1] || "名称不明");
-      const property = FIELD_SETTING_LABELS[tokens.at(-1) || ""] || fallback.split(" / ").at(-1) || "設定内容";
+      const tokens = settingKey.split(".").slice(1);
+      const last = tokens.at(-1) || "";
+      const hasProperty = tokens.length > 1 && (last === "label" || last === "index");
+      const option = customerPlainText((hasProperty ? tokens.slice(0, -1) : tokens).join(".") || "名称不明");
+      if (!hasProperty) return `選択肢「${option}」`;
+      const property = FIELD_SETTING_LABELS[last] || fallback.split(" / ").at(-1) || "設定内容";
       return `選択肢「${option}」：${property}`;
     }
     const prefix = settingKey.startsWith("lookup.") ? "ルックアップ" : settingKey.startsWith("referenceTable.") ? "関連レコード一覧" : "";
@@ -17694,7 +17699,8 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
   function customerFieldCodeLabel(codeValue, bundle) {
     const code = String(codeValue ?? "").trim();
     if (!code) return code;
-    const definition = fieldSettingsProperties(bundle)[code];
+    const properties = fieldSettingsProperties(bundle);
+    const definition = properties[code] || Object.values(properties).map((root2) => root2?.type === "SUBTABLE" ? root2.fields?.[code] : null).find((child) => child && typeof child === "object");
     const label = fieldDefinitionLabel(definition);
     return label && label !== code ? `${label}（${code}）` : code;
   }

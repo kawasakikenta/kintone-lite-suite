@@ -290,4 +290,19 @@ describe('lite design export', () => {
     }));
     expect(zipFiles[manifest.items[1].aiMdFile]).toContain('raw-settings-api');
   });
+
+  it('設定を 1 つも取得できなかったアプリ（存在しないアプリ）は、成功に数えず失敗として示す', async () => {
+    const notFound = '指定したアプリ（ID: 999999）が見つかりません。';
+    vi.mocked(fetchBundle).mockImplementation(async (params: any) => {
+      if (params.appId === '999999') return bundle('999999', Object.fromEntries(SECTION_DEFS.map((section) => [section.key, { _fetchError: notFound }]))) as any;
+      return bundle(params.appId, { ...emptySections(), appSettings: { name: `ライブアプリ_${params.appId}` } }) as any;
+    });
+    const result = await runBatchDesignExportMdZipStandalone({ apps: [{ appId: '200' }, { appId: '999999' }], format: 'md', preview: false }, vi.fn());
+    expect(result.successCount).toBe(1);
+    expect(result.failedApps).toEqual([{ appId: '999999', guestId: '', error: `設定を取得できませんでした（${notFound}）` }]);
+    expect(zipFiles['overview.md']).toContain('成功 1 / 失敗 1');
+    const manifest = JSON.parse(zipFiles['_manifest.json']);
+    expect(manifest.items.map((item: any) => item.appId)).toEqual(['200']);
+    expect(Object.keys(zipFiles).filter((name) => name.includes('999999'))).toEqual([]);
+  });
 });

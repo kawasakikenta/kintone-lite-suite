@@ -6,9 +6,9 @@ import { captureReflectBaseline, assertReflectBaselineMatches, assertCompleteRef
 import { embedCustomizeFileContents, resolveCustomizeFiles, type CustomizeFileDownloader, type CustomizeFileResolution } from '../reflect/customizeFiles.js';
 import { findLookupMapCandidates, hasLookupCandidates, type LookupMapCandidates } from '../reflect/lookupCandidates.js';
 import { reflectFieldLabels } from '../reflect/changeSummary.js';
-import { buildReflectSectionPlan, reflectInspectionScopes, reflectSelectionBlockers, listReflectFieldCodes, listReflectSystemFieldCodes, type ReflectSectionPlan } from '../reflect/standalonePlan.js';
+import { buildReflectSectionPlan, reflectInspectionScopes, reflectSelectionBlockers, listProcessFieldCodes, listReflectFieldCodes, listReflectSystemFieldCodes, type ReflectSectionPlan } from '../reflect/standalonePlan.js';
 import { pickSettingsBundle } from '../settingsBundleImport.js';
-import { REFLECT_SECTION_KEYS } from '../reflect/sections.js';
+import { REFLECT_SECTION_KEYS, orderReflectWrites } from '../reflect/sections.js';
 import { inspectTargetPendingChanges, type ReflectTargetPending } from '../reflect/targetPending.js';
 import { pushReflectErrorLog as pushErrorLog, type ApplySectionOutcome } from '../reflect/applyOutcome.js';
 import { RUN_CANCELLED_MESSAGE, isRunCancelledError } from '../runControl.js';
@@ -35,6 +35,8 @@ export interface PreviewReflectResult {
   fieldLabels?: Record<string, string>;
   /** 反映先の反映状況（kintone が前回の反映を処理中か）。checkTargetDeployStatus を指定した抽出だけが返す。取得に失敗しても抽出は止めない */
   targetDeployStatus?: ReflectTargetDeployStatus;
+  /** 反映元・反映先のプロセス管理のフィールド（ステータス・作業者）のコード。画面で書き込みの順番（orderReflectWrites）を示すのに使う */
+  processFieldCodes?: string[];
   /**
    * 参照先変換の候補。反映元と反映先の同じコードのルックアップ・関連レコード一覧（と同じ名前のアクション）の参照先アプリが食い違っていて、
    * 入力済みの参照先変換に旧IDが無いものを、反映先の現在の設定だけを根拠に示す。候補も食い違いも無ければ含めない
@@ -293,6 +295,7 @@ export async function previewReflectStandalone(opts: ReflectOptions, setStatus: 
     sameSections: entries.filter(entry => entry.status === 'same').length,
     errorSections: entries.filter(entry => !['change', 'same'].includes(entry.status)).length,
     entries, sourceFieldCodes: listReflectFieldCodes(source, true), targetFieldCodes: listReflectFieldCodes(target), sourceSystemFieldCodes: listReflectSystemFieldCodes(source), baseline, targetPending, fieldLabels,
+    processFieldCodes: listProcessFieldCodes(source, target),
     ...(targetDeployStatus ? { targetDeployStatus } : {}),
     ...(hasLookupCandidates(lookupCandidates) ? { lookupCandidates } : {})
   };
@@ -361,7 +364,8 @@ export async function runApplyPreviewStandalone(
   const defaultPlans = scopes.map(key => buildReflectSectionPlan(key, source.sections?.[key], target.sections?.[key], { ...opts, customizeFiles, fieldLabels, knownFieldCodes }));
   // 差分の選択・修正がある項目は、確認済みの送る設定から計画を作り直す（再取得した既定の計画を土台に、baseline の照合は済んでいる）。
   const composed = opts.composed;
-  const plans = composed ? defaultPlans.map(plan => Object.prototype.hasOwnProperty.call(composed, plan.sectionKey) ? buildPlanFromComposedAfter(plan, composed[plan.sectionKey], fieldLabels, knownFieldCodes) : plan) : defaultPlans;
+  // 書き込む順番は、プロセス管理を有効・無効にする向きに合わせて決める（orderReflectWrites）。
+  const plans = orderReflectWrites(composed ? defaultPlans.map(plan => Object.prototype.hasOwnProperty.call(composed, plan.sectionKey) ? buildPlanFromComposedAfter(plan, composed[plan.sectionKey], fieldLabels, knownFieldCodes) : plan) : defaultPlans, listProcessFieldCodes(source, target));
   const sourceFields = composed && Object.prototype.hasOwnProperty.call(composed, 'fieldSettings') ? composedFieldCodes(composed.fieldSettings) : listReflectFieldCodes(source, true);
   const issues = reflectSelectionBlockers(plans, scopes, sourceFields, listReflectFieldCodes(target), listReflectSystemFieldCodes(source), addableFieldCodes(defaultPlans));
   if (issues.length) throw new Error(`反映前の検査で停止しました。まだ書き込んでいません。\n${issues.join('\n')}`);

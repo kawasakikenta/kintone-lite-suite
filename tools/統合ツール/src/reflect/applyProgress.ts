@@ -29,11 +29,12 @@ export function describeApplyProgressStatus(status: ApplyProgressStatus, stopped
   return { icon: '○', text: '待機中', tone: 'waiting' };
 }
 
-/** 実行予定の項目を、反映エンジンの処理順に「待機中」で並べる。 */
-export function createApplyProgressRows(sectionKeys: readonly string[], labelOf: (key: string) => string): ApplyProgressRow[] {
+/** 実行予定の項目を、反映エンジンの処理順に「待機中」で並べる。writeOrder は実際の書き込み順（orderReflectWrites。無ければ既定の順）。 */
+export function createApplyProgressRows(sectionKeys: readonly string[], labelOf: (key: string) => string, writeOrder?: readonly string[]): ApplyProgressRow[] {
+  const keys = writeOrder?.length ? [...writeOrder, ...REFLECT_SECTION_KEYS.filter((key) => !writeOrder.includes(key))] : REFLECT_SECTION_KEYS;
   const order = (key: string) => {
-    const index = REFLECT_SECTION_KEYS.indexOf(key);
-    return index < 0 ? REFLECT_SECTION_KEYS.length : index;
+    const index = keys.indexOf(key);
+    return index < 0 ? keys.length : index;
   };
   return [...new Set(sectionKeys)]
     .sort((a, b) => order(a) - order(b))

@@ -341,7 +341,8 @@ export const assertErAnalysed = (apps: any[], options: any = {}): void => {
   const targets = (startIds.length ? startIds : apps.map((app) => String(app?.id))).map((id) => {
     const app: any = byId.get(id);
     const name = app?.name && app.name !== `アプリ ${id}` ? `（${app.name}）` : '';
-    const reason = app?.issues?.[0]?.message || app?.issues?.[0]?.code || '原因不明';
+    // kintone のエラー文は「。」で終わることが多い。続けて「。」を付けるため、末尾の句点は外す（「。。」にしない）。
+    const reason = String(app?.issues?.[0]?.message || app?.issues?.[0]?.code || '原因不明').replace(/[。．.\s]+$/, '');
     return `起点アプリ ${id}${name}を取得できませんでした: ${reason}`;
   });
   throw new Error(`ER図を作成できませんでした。${targets.join(' / ')}。アプリIDと閲覧権限を確認してください`);

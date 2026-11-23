@@ -2251,6 +2251,27 @@ ${base}`
     keys.splice(anchor + 1, 0, "appSettings");
     return keys;
   })();
+  var PROCESS_FIELD_TYPES = /* @__PURE__ */ new Set(["STATUS", "STATUS_ASSIGNEE"]);
+  var PROCESS_LEAD_KEYS = ["fieldSettings", "layoutSettings", "appSettings"];
+  function orderReflectWrites(plans, processFieldCodes) {
+    const rank = (key) => {
+      const index = REFLECT_SECTION_KEYS.indexOf(key);
+      return index < 0 ? REFLECT_SECTION_KEYS.length : index;
+    };
+    const base = [...plans].sort((a, b) => rank(a.sectionKey) - rank(b.sectionKey));
+    const process = base.find((plan) => plan.sectionKey === "processSettings");
+    const enable = process?.operations?.find((operation) => typeof operation?.body?.enable === "boolean")?.body.enable;
+    if (!process || typeof enable !== "boolean") return base;
+    const disabling = !enable && process.values?.before?.enable === true;
+    if (!enable && !disabling) return base;
+    const lead = base.filter((plan) => PROCESS_LEAD_KEYS.includes(plan.sectionKey));
+    const rest = base.filter((plan) => plan !== process && !PROCESS_LEAD_KEYS.includes(plan.sectionKey));
+    if (enable) return [...lead, process, ...rest];
+    const codes = new Set(processFieldCodes);
+    const usesProcess = (plan) => !!plan.requiredFields?.some((code) => codes.has(code)) || plan.sectionKey === "viewSettings" && !!plan.operations?.some((operation) => Object.values(operation?.body?.views || {}).some((view) => view?.builtinType === "ASSIGNEE"));
+    const first = rest.filter(usesProcess);
+    return [...lead, ...first, process, ...rest.filter((plan) => !first.includes(plan))];
+  }
   var APP_SETTINGS_REFLECT_KEYS = ["theme", "titleField", "enableThumbnails", "enableBulkDeletion", "enableComments", "enableDuplicateRecord", "enableInlineRecordEditing", "numberPrecision", "firstMonthOfFiscalYear"];
   var APP_SETTINGS_LABELS = {
     theme: "テーマ",
@@ -4875,10 +4896,15 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
           after.enabled = source.enabled;
         }
         if (key === "reminderNotifications" && !after.timezone) after.timezone = before.timezone;
+        if (key === "processSettings" && after.enable === false && !(object(source.states) && Object.keys(source.states).length)) {
+          after.states = deepClone(before.states);
+          after.actions = deepClone(before.actions);
+        }
         if (key === "processSettings") {
           const firstState = (states) => object(states) ? String(Object.values(states).sort((a, b) => Number(a?.index) - Number(b?.index))[0]?.name || "") : "";
           const sourceFirst = firstState(source.states), targetFirst = firstState(target.states);
           if (sourceFirst && targetFirst && sourceFirst !== targetFirst) plan.warnings.push(`先頭のステータスが異なります（反映先「${targetFirst}」→ 反映元「${sourceFirst}」）。kintone は先頭のステータスの入れ替えを拒否することがあります。拒否された場合は、反映先の管理画面で先頭のステータスを合わせてから再実行してください。`);
+          if (target.enable === true && source.enable === false) plan.warnings.push("プロセス管理を無効にすると、kintone が反映先の「（作業者が自分）」の一覧を削除し、ほかの一覧・グラフの条件や集計からステータス・作業者を外します。");
         }
         if (key === "notifications") {
           if (typeof target.notifyToCommenter === "boolean") before.notifyToCommenter = after.notifyToCommenter = target.notifyToCommenter;
@@ -4947,6 +4973,12 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
     const props = bundle?.sections?.fieldSettings?.properties;
     if (!object(props)) return [];
     return Object.entries(props).filter(([, def]) => SYSTEM_FIELD_TYPES.has(def?.type)).map(([code]) => code);
+  }
+  function listProcessFieldCodes(...bundles) {
+    return [...new Set(bundles.flatMap((bundle) => {
+      const props = bundle?.sections?.fieldSettings?.properties;
+      return object(props) ? Object.entries(props).filter(([, def]) => PROCESS_FIELD_TYPES.has(def?.type)).map(([code]) => code) : [];
+    }))];
   }
   function listReflectFieldCodes(bundle, writableOnly = false) {
     const props = bundle?.sections?.fieldSettings?.properties;
@@ -5199,10 +5231,11 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
     if (status === "pending") return { icon: "○", text: "未実行", tone: "pending" };
     return { icon: "○", text: "待機中", tone: "waiting" };
   }
-  function createApplyProgressRows(sectionKeys, labelOf) {
+  function createApplyProgressRows(sectionKeys, labelOf, writeOrder) {
+    const keys = writeOrder?.length ? [...writeOrder, ...REFLECT_SECTION_KEYS.filter((key) => !writeOrder.includes(key))] : REFLECT_SECTION_KEYS;
     const order = (key) => {
-      const index = REFLECT_SECTION_KEYS.indexOf(key);
-      return index < 0 ? REFLECT_SECTION_KEYS.length : index;
+      const index = keys.indexOf(key);
+      return index < 0 ? keys.length : index;
     };
     return [...new Set(sectionKeys)].sort((a, b) => order(a) - order(b)).map((sectionKey) => ({ sectionKey, label: labelOf(sectionKey), status: "waiting" }));
   }
@@ -8890,6 +8923,7 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
       baseline,
       targetPending,
       fieldLabels,
+      processFieldCodes: listProcessFieldCodes(source, target),
       ...targetDeployStatus ? { targetDeployStatus } : {},
       ...hasLookupCandidates(lookupCandidates) ? { lookupCandidates } : {}
     };
@@ -8942,7 +8976,7 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
     const knownFieldCodes = knownFieldCodesOf(source, target);
     const defaultPlans = scopes.map((key) => buildReflectSectionPlan(key, source.sections?.[key], target.sections?.[key], { ...opts, customizeFiles, fieldLabels, knownFieldCodes }));
     const composed = opts.composed;
-    const plans = composed ? defaultPlans.map((plan) => Object.prototype.hasOwnProperty.call(composed, plan.sectionKey) ? buildPlanFromComposedAfter(plan, composed[plan.sectionKey], fieldLabels, knownFieldCodes) : plan) : defaultPlans;
+    const plans = orderReflectWrites(composed ? defaultPlans.map((plan) => Object.prototype.hasOwnProperty.call(composed, plan.sectionKey) ? buildPlanFromComposedAfter(plan, composed[plan.sectionKey], fieldLabels, knownFieldCodes) : plan) : defaultPlans, listProcessFieldCodes(source, target));
     const sourceFields = composed && Object.prototype.hasOwnProperty.call(composed, "fieldSettings") ? composedFieldCodes(composed.fieldSettings) : listReflectFieldCodes(source, true);
     const issues = reflectSelectionBlockers(plans, scopes, sourceFields, listReflectFieldCodes(target), listReflectSystemFieldCodes(source), addableFieldCodes(defaultPlans));
     if (issues.length) throw new Error(`反映前の検査で停止しました。まだ書き込んでいません。
@@ -12206,7 +12240,8 @@ ${P} .kus-ds-impact{margin-top:6px;font-size:13px;line-height:1.6;font-weight:60
       currentRunGoal = goal;
       clearConfirmation();
       running = true;
-      progress = createApplyProgressView(applyHost, createApplyProgressRows(run.map((section) => section.sectionKey), (key) => run.find((section) => section.sectionKey === key)?.label || key));
+      const writeOrder = orderReflectWrites(run.map((section) => section.plan), current.preview.processFieldCodes || []).map((plan) => plan.sectionKey);
+      progress = createApplyProgressView(applyHost, createApplyProgressRows(run.map((section) => section.sectionKey), (key) => run.find((section) => section.sectionKey === key)?.label || key, writeOrder));
       deployProgress?.dispose();
       deployProgress = goal === "production" ? createProgressView(deployHost, "deploy", [{ appId: target.appId, guestId: target.guestId, name: target.name, status: "waiting" }]) : null;
       if (!deployProgress) deployHost.replaceChildren();
