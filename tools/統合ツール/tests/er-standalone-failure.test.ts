@@ -33,6 +33,13 @@ describe('ER図 Lite: 起点アプリを取得できなかった場合', () => {
     expect(setStatus.mock.calls.some(([message]) => String(message).includes('保存しました'))).toBe(false);
   });
 
+  it('kintone のエラー文が句点で終わっても、句点を重ねない（「。。」にしない）', async () => {
+    vi.mocked(crawl).mockResolvedValue([failedApp(999999, '指定したアプリ（ID: 999999）が見つかりません。削除されているか、アクセス権がありません。')] as any);
+    const message = await runExportERDiagramHtmlStandalone({ appId: '999999' }, vi.fn()).then(() => '', (error: Error) => error.message);
+    expect(message).toContain('起点アプリ 999999を取得できませんでした: 指定したアプリ（ID: 999999）が見つかりません。削除されているか、アクセス権がありません。アプリIDと閲覧権限を確認してください');
+    expect(message).not.toContain('。。');
+  });
+
   it('別タブ表示も開いたタブを閉じ、図を表示せず失敗にする', async () => {
     vi.mocked(crawl).mockResolvedValue([failedApp(5, '403 Forbidden')] as any);
     const popup = { document: { write: vi.fn() }, close: vi.fn(), opener: {}, location: { href: '' } };

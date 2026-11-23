@@ -2,7 +2,7 @@ import { SECTION_DEFS, SYSTEM_FIELD_TYPES } from '../constants.js';
 import { deepClone } from '../utils.js';
 import { extractQueryFieldCodes } from '../kintone-query.js';
 import { isRunCancelledError } from '../runControl.js';
-import { APP_SETTINGS_LABELS, APP_SETTINGS_REFLECT_KEYS, reflectSectionLabel } from './sections.js';
+import { APP_SETTINGS_LABELS, APP_SETTINGS_REFLECT_KEYS, PROCESS_FIELD_TYPES, reflectSectionLabel } from './sections.js';
 import { comparableCustomizePayload, customizeFileNames, customizeSlotKey, type CustomizeFileResolution } from './customizeFiles.js';
 import { reclassifyLayoutRemovals, retainedItemNames, summarizeReflectItems, type ReflectItemSummary } from './changeSummary.js';
 import {
@@ -367,10 +367,17 @@ export function buildReflectSectionPlan(key: string, source: any, target: any, o
       before = def.putBuilder(target); after = def.putBuilder(source);
       if (key === 'categories') { before.enabled = target.enabled; after.enabled = source.enabled; }
       if (key === 'reminderNotifications' && !after.timezone) after.timezone = before.timezone;
+      if (key === 'processSettings' && after.enable === false && !(object(source.states) && Object.keys(source.states).length)) {
+        // 反映元がプロセス管理を使っていない（ステータス・アクションが null）ときは、有効・無効だけを反映し、反映先のステータス・アクションは残す。
+        // kintone は空のステータス・アクションを拒否し（states は 2〜500 件、actions は 1〜1,000 件）、無効にしてもステータス・アクションは保持する。
+        after.states = deepClone(before.states);
+        after.actions = deepClone(before.actions);
+      }
       if (key === 'processSettings') {
         const firstState = (states: any) => object(states) ? String((Object.values(states) as any[]).sort((a, b) => Number(a?.index) - Number(b?.index))[0]?.name || '') : '';
         const sourceFirst = firstState(source.states), targetFirst = firstState(target.states);
         if (sourceFirst && targetFirst && sourceFirst !== targetFirst) plan.warnings.push(`先頭のステータスが異なります（反映先「${targetFirst}」→ 反映元「${sourceFirst}」）。kintone は先頭のステータスの入れ替えを拒否することがあります。拒否された場合は、反映先の管理画面で先頭のステータスを合わせてから再実行してください。`);
+        if (target.enable === true && source.enable === false) plan.warnings.push('プロセス管理を無効にすると、kintone が反映先の「（作業者が自分）」の一覧を削除し、ほかの一覧・グラフの条件や集計からステータス・作業者を外します。');
       }
       if (key === 'notifications') {
         // Older exported JSON may omit this optional property: omission means unchanged.
@@ -437,6 +444,14 @@ export function listReflectSystemFieldCodes(bundle: any): string[] {
   const props = bundle?.sections?.fieldSettings?.properties;
   if (!object(props)) return [];
   return Object.entries(props).filter(([, def]) => SYSTEM_FIELD_TYPES.has(def?.type)).map(([code]) => code);
+}
+
+/** プロセス管理のフィールド（ステータス・作業者）のコード。書き込みの順番（orderReflectWrites）に使う。 */
+export function listProcessFieldCodes(...bundles: any[]): string[] {
+  return [...new Set(bundles.flatMap(bundle => {
+    const props = bundle?.sections?.fieldSettings?.properties;
+    return object(props) ? Object.entries(props).filter(([, def]) => PROCESS_FIELD_TYPES.has(def?.type)).map(([code]) => code) : [];
+  }))];
 }
 
 export function listReflectFieldCodes(bundle: any, writableOnly = false): string[] {

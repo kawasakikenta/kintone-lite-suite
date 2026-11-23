@@ -6183,6 +6183,11 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
   }
 
   // src/tabs/record-template.ts
+  function templateDefaultText(value) {
+    if (value == null || value === "") return "";
+    const item = (entry) => entry && typeof entry === "object" ? String(entry.code ?? entry.value ?? JSON.stringify(entry)) : String(entry);
+    return Array.isArray(value) ? value.map(item).join(",") : item(value);
+  }
   function buildCsvImportTemplate(properties) {
     if (!properties || typeof properties !== "object" || Array.isArray(properties)) throw new Error("フィールド設定の応答が不正です");
     const codes = [], excluded = [];
@@ -6205,9 +6210,9 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
       for (const [key, label] of [["minLength", "最小文字数"], ["maxLength", "最大文字数"], ["minValue", "最小値"], ["maxValue", "最大値"]]) {
         if (field[key] !== void 0 && field[key] !== null && field[key] !== "") notes.push(`${label}: ${field[key]}`);
       }
-      const defaults = field.defaultNowValue === true || field.defaultNowValue === "true" ? "現在の日付・日時" : JSON.stringify(field.defaultValue ?? "");
+      const defaults = field.defaultNowValue === true || field.defaultNowValue === "true" ? "現在の日付・日時" : templateDefaultText(field.defaultValue);
       const choices = Object.entries(field.options || {}).sort(([, a], [, b]) => Number(a.index) - Number(b.index)).map(([value]) => value);
-      guide.push([code, field.label || code, field.type, field.required === true || field.required === "true" ? "必須" : "", field.unique === true || field.unique === "true" ? "禁止" : "", defaults, JSON.stringify(choices), notes.join(" / ")]);
+      guide.push([code, field.label || code, field.type, field.required === true || field.required === "true" ? "必須" : "", field.unique === true || field.unique === "true" ? "禁止" : "", defaults, choices.join(" / "), notes.join(" / ")]);
     }
     if (!codes.length) throw new Error("CSV取込に対応するフィールドがありません");
     return {

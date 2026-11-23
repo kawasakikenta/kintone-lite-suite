@@ -728,7 +728,8 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       const parts = [];
       if (f.format && labelMap[f.format]) parts.push(labelMap[f.format]);
       if (f.digit !== undefined) parts.push(`桁区切り: ${f.digit ? 'あり' : 'なし'}`);
-      if (f.displayScale !== undefined) parts.push(`小数点: ${f.displayScale}桁`);
+      // 空（kintone の「指定なし」）は桁数を書かない（「小数点: 桁」にしない）。
+      if (f.displayScale != null && String(f.displayScale).trim() !== '') parts.push(`小数点: ${f.displayScale}桁`);
       if (f.unit) {
         const pos = f.unitPosition === 'BEFORE' ? '前置' : (f.unitPosition === 'AFTER' ? '後置' : '');
         parts.push(`単位: ${f.unit}${pos ? `(${pos})` : ''}`);
@@ -2055,7 +2056,8 @@ export async function runAdvancedDesignExporter(params: any = {}) {
           field.tableCode ? `${tableLabels.get(field.tableCode) || field.tableCode}（${field.tableCode}）` : '-',
           field.label || field.code || '-',
           field.code || '-',
-          FIELD_TYPE[field.type] || field.type || '不明',
+          // 項目定義シートと同じく、ルックアップは「ルックアップ(元の種類)」にする。
+          definition.lookup ? `ルックアップ(${FIELD_TYPE[field.type] || field.type})` : (FIELD_TYPE[field.type] || field.type || '不明'),
           definition.required == null ? '-' : UtilsX.formatBoolean(definition.required),
           detailRow ? '詳細へ' : '詳細シート対象外'
         ];
@@ -2735,13 +2737,18 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     if (returnWorkbook) {
       // バッチ用: ダウンロードせず、ワークブックと付帯情報を返す。UI の表示制御は呼び出し元に委ねる。
       notifyCompletion();
+      // 設定を 1 つも取得できなかった（存在しないアプリ・閲覧できないアプリなど）ときは、一括出力で失敗として数えられるよう理由を返す。
+      const liveFailures = Object.values(liveSections);
+      const unreadable = !bundle && liveFailures.length > 0 && liveFailures.every((section: any) => section && section._fetchError)
+        ? String((liveSections.appInfo || liveFailures[0])._fetchError).split('\n')[0] : '';
       return {
         wb,
         filename,
         appId: APP_ID,
         appName: appSettings?.name || `App${APP_ID}`,
         failedAPIs: UI.failedAPIs.slice(),
-        completionSummary
+        completionSummary,
+        ...(unreadable ? { unreadable } : {})
       };
     }
 
@@ -2926,7 +2933,9 @@ export async function runBatchDesignExportXlsxZip(params: {
         // 想定外（returnWorkbook=true の場合は必ずオブジェクトが返る）
         throw new Error('ワークブックが生成できませんでした');
       }
-      const { wb, filename, appName, failedAPIs } = ret as any;
+      const { wb, filename, appName, failedAPIs, unreadable } = ret as any;
+      // 設定を 1 つも取得できなかったアプリは、空の設計書を ZIP に入れず失敗として数える。
+      if (unreadable) throw new Error(`設定を取得できませんでした（${unreadable}）`);
       // 内部 UI の overlay を閉じてバッチ UI を前面に戻す
       const doc = getToolDocument();
       const innerOverlay = doc.getElementById('kintone-exporter-overlay');

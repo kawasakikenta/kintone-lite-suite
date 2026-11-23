@@ -3873,13 +3873,17 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     }
     return files;
   }
-  function summarizeJsConfigCurrent(current, plan) {
+  function summarizeJsConfigCurrent(current, plan, filePlan) {
     const now = buildCustomizeSettingsPutPayload(current);
     const keyOf = (r) => r.type === "FILE" ? `F:${r.file?.fileKey}` : `U:${r.url}`;
+    const reused = new Map((filePlan?.items || []).filter((item) => item.action === "reuse" && item.targetFileKey).map((item) => [`${item.platform}/${item.kind}/${item.index}`, item.targetFileKey]));
     let removed = 0;
     for (const platform of ["desktop", "mobile"]) {
       for (const kind of ["js", "css"]) {
-        const next = new Set((plan.payload[platform]?.[kind] || []).map(keyOf));
+        const next = new Set((plan.payload[platform]?.[kind] || []).map((r, index) => {
+          const targetKey = r?.type === "FILE" ? reused.get(`${platform}/${kind}/${index}`) : void 0;
+          return targetKey ? `F:${targetKey}` : keyOf(r);
+        }));
         removed += (now[platform]?.[kind] || []).filter((r) => !next.has(keyOf(r))).length;
       }
     }
@@ -4065,7 +4069,6 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     if (!/^\d+$/.test(revision)) {
       throw new Error("反映先の JS/CSS 設定の revision を確認できないため反映を中止しました。最新の設定を取得し直してください");
     }
-    const currentSummary = summarizeJsConfigCurrent(current, plan);
     const baseRevision = String(p.baseRevision || "").trim();
     if (baseRevision && baseRevision !== revision) {
       const stale = new Error(`取得時の revision ${baseRevision} と現在の revision ${revision} が異なります`);
@@ -4079,6 +4082,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       filePlan = await planJsConfigFiles(plan, current, { source: fileSource, targetGuestId: guestId });
       if (filePlan.problems.length) throw new Error(formatJsConfigFileProblems(filePlan));
     }
+    const currentSummary = summarizeJsConfigCurrent(current, plan, filePlan);
     if (!p.skipConfirm && !kusConfirm(buildJsConfigApplyConfirmText(targetAppId, guestId, plan, currentSummary, filePlan, fileSource))) {
       setStatus("JS/CSS設定反映をキャンセルしました");
       return;
@@ -4178,13 +4182,13 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         const current = await apiGet(buildApiPrefix(target.guestId, true), "/app/customize.json", { app: target.appId });
         const revision = pickRevision(current);
         if (!/^\d+$/.test(revision)) throw new Error("JS/CSS 設定の revision を確認できません");
-        const summary = summarizeJsConfigCurrent(current, plan);
         let filePlan;
         if (plan.files.length) {
           setStatus(`[${i + 1}/${total}] JS/CSSファイルを確認中: ${multiTargetLabel(target)}`);
           filePlan = await planJsConfigFiles(plan, current, { source: fileSource, targetGuestId: target.guestId, cache: sourceCache });
           if (filePlan.problems.length) throw new FileProblemError(formatJsConfigFileProblems(filePlan, multiTargetLabel(target)), filePlan);
         }
+        const summary = summarizeJsConfigCurrent(current, plan, filePlan);
         prechecked.push({ target, revision, removed: summary.removed, nowTotal: summary.desktopJs + summary.desktopCss + summary.mobileJs + summary.mobileCss, filePlan });
       } catch (e) {
         if (isCancelStop(e)) throw e;
