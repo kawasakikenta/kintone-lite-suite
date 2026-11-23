@@ -997,8 +997,9 @@ function registerScenarios(scenario, ctx) {
     await shot('source-granular-confirm');
     await runSource();
     const done = await assertOnlyAllowedWrites('粒度の選択');
-    assert.deepEqual(writeLabels(done), ['POST /app/form/fields.json', 'PUT /app/form/fields.json', 'PUT /app/views.json', 'PUT /app/status.json', 'PUT /app/acl.json', 'PUT /app/categories.json'], '書き込みは選んだ項目だけ（レイアウト・一般設定・グラフ・プラグイン・JS/CSS・アクション・通知は送らない）');
-    const [add, update, views, process, acl, categories] = done.writes;
+    // 反映後もプロセス管理が有効なので、プロセス管理を一覧より先に書く（一覧の条件が新しいステータス名を使えるように。orderReflectWrites）
+    assert.deepEqual(writeLabels(done), ['POST /app/form/fields.json', 'PUT /app/form/fields.json', 'PUT /app/status.json', 'PUT /app/views.json', 'PUT /app/acl.json', 'PUT /app/categories.json'], '書き込みは選んだ項目だけ（レイアウト・一般設定・グラフ・プラグイン・JS/CSS・アクション・通知は送らない）');
+    const [add, update, process, views, acl, categories] = done.writes;
     assert.deepEqual(Object.keys(add.body.properties), ['items']);
     assert.deepEqual(Object.keys(add.body.properties.items.fields), ['discount'], '追加は値引き（テーブル内）だけ。顧客・送料・地域は追加しない');
     assert.deepEqual(Object.keys(update.body.properties).sort(), ['amount', 'customer', 'items', 'status'], '更新は選んだフィールドだけ');

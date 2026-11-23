@@ -1965,3 +1965,69 @@ describe('generated HTML field reflect requests', () => {
     expect(requests.map((request) => Object.keys(request.payload.properties).length)).toEqual([100, 1]);
   });
 });
+
+describe('generated HTML row titles', () => {
+  /** 生成した HTML の報告用スクリプトから、差分行の見出し（reportRowTitle）を取り出して実行する。 */
+  function reportRowTitlesFromHtml(sourceProperties: Record<string, any>, targetProperties: Record<string, any>, exportContentMode: 'diffOnly' | 'withCompared' = 'diffOnly'): string[] {
+    const sourceBundle = { appId: '1', sections: { fieldSettings: { properties: sourceProperties } }, meta: {} };
+    const targetBundle = { appId: '2', sections: { fieldSettings: { properties: targetProperties } }, meta: {} };
+    const comparison = computeDiffRows(sourceBundle, targetBundle, ['fieldSettings'], '');
+    const rows = enrichDiffRows(comparison.rows, sourceBundle, targetBundle).filter((row: any) => row.type !== 'same');
+    const html = buildDiffHtml(sourceBundle, targetBundle, rows, ['fieldSettings'], '', { truncation: null, exportContentMode });
+    const script = extractInlineScript(html);
+    const declarations = ['FIELD_PROPS_SRC', 'FIELD_PROPS_TGT', 'SECTION_LABEL_MAP', 'ENTITY_KIND_LABEL_MAP']
+      .map((name) => `const ${name} = ${JSON.stringify(extractInlineJsonConst(html, name))};`).join('\n');
+    const labelsStart = script.indexOf('  const FIELD_SETTING_LABELS = {');
+    const labels = script.slice(labelsStart, script.indexOf('\n  };', labelsStart) + 5);
+    const functions = [
+      'reportRowTitle', 'relativePathLabel', 'relativePathFromRow', 'tokenizePath', 'extractFieldPathInfo',
+      'getFieldRowPayload', 'getFieldDefinition', 'fieldChangePropTitle', 'collectFlatFieldMap'
+    ].map((name) => {
+      const start = script.indexOf(`  function ${name}(`);
+      if (start < 0) throw new Error(`${name} was not found in generated HTML`);
+      const end = script.indexOf('\n  function ', start + 1);
+      return script.slice(start, end < 0 ? undefined : end);
+    }).join('\n');
+    return new Function('rows', `${declarations}
+      ${labels}
+      const FIELD_SECTION_KEY = 'fieldSettings';
+      ${functions}
+      const FLAT_FIELD_PROPS_SRC = collectFlatFieldMap(FIELD_PROPS_SRC);
+      const FLAT_FIELD_PROPS_TGT = collectFlatFieldMap(FIELD_PROPS_TGT);
+      return rows.map((row) => reportRowTitle(row));
+    `)(rows);
+  }
+
+  it('設定項目・選択肢・テーブル内の行の見出しは、値ではなくフィールドの表示名にする（比較設定込み）', () => {
+    const source = {
+      amount: { code: 'amount', type: 'NUMBER', label: '金額', minValue: '0' },
+      dd: { code: 'dd', type: 'DROP_DOWN', label: '区分', options: { A: { label: 'A', index: '0' }, VIP: { label: 'VIP', index: '1' } } },
+      T: { code: 'T', type: 'SUBTABLE', fields: { item_name: { code: 'item_name', type: 'SINGLE_LINE_TEXT', label: '商品名', maxLength: '20' } } }
+    };
+    const target = {
+      amount: { code: 'amount', type: 'NUMBER', label: '金額', minValue: '10' },
+      dd: { code: 'dd', type: 'DROP_DOWN', label: '区分', options: { A: { label: 'A', index: '0' } } },
+      T: { code: 'T', type: 'SUBTABLE', fields: { item_name: { code: 'item_name', type: 'SINGLE_LINE_TEXT', label: '商品名', maxLength: '40' } } }
+    };
+    const titles = reportRowTitlesFromHtml(source, target, 'withCompared');
+    expect(titles.length).toBeGreaterThanOrEqual(3);
+    expect(titles).toContainEqual(expect.stringMatching(/^金額 · /));
+    expect(titles).toContain('区分 · 項目と順番');
+    expect(titles).toContainEqual(expect.stringMatching(/^商品名 · /));
+    expect(titles.filter((title) => /^(amount|VIP|10|0|20|40) · /.test(title))).toEqual([]);
+    // 差分行のみ（既定）は比較元・比較先の設定を収録しないため、表示名の代わりにコードを使い、行の値（選択肢名など）は使わない
+    const diffOnly = reportRowTitlesFromHtml(source, target, 'diffOnly');
+    expect(diffOnly).toContain('dd · 項目と順番');
+    expect(diffOnly).toContainEqual(expect.stringMatching(/^amount · /));
+    expect(diffOnly).toContainEqual(expect.stringMatching(/^item_name · /));
+    expect(diffOnly.filter((title) => /^(VIP|10|0|20|40) · /.test(title))).toEqual([]);
+  });
+
+  it('フィールド全体の追加・削除の行は、その行のフィールド定義の表示名を使う', () => {
+    const titles = reportRowTitlesFromHtml(
+      { added: { code: 'added', type: 'SINGLE_LINE_TEXT', label: '追加した項目' } },
+      { removed: { code: 'removed', type: 'SINGLE_LINE_TEXT', label: '削除した項目' } }
+    );
+    expect(titles.sort()).toEqual(['削除した項目', '追加した項目']);
+  });
+});

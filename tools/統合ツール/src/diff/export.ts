@@ -4670,7 +4670,9 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       const info = extractFieldPathInfo(fullPath);
       if (info) {
         const code = info.activeCode || '';
-        const field = getFieldRowPayload(row) || getFieldDefinition(code, 'source') || getFieldDefinition(code, 'target') || ({});
+        // 行の値がフィールド定義なのはフィールド全体の行だけ（設定項目の行の値は「10」や選択肢の定義）。それ以外は比較元・比較先の定義から表示名を引く。
+        const payload = info.isFieldRoot || info.isSubFieldRoot ? getFieldRowPayload(row) : null;
+        const field = (payload && typeof payload === 'object' ? payload : null) || getFieldDefinition(code, 'source') || getFieldDefinition(code, 'target') || ({});
         const fieldLabel = String(field.label || field.name || code || 'フィールド');
         const propTitle = fieldChangePropTitle(info, row);
         return fieldLabel + (propTitle ? ' · ' + propTitle : '');

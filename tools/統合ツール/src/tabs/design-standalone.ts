@@ -623,6 +623,15 @@ export async function runBatchDesignExportMdZipStandalone(
       }
 
       const primaryBundle = aiBundle || mdBundle;
+      // 設定を 1 つも取得できなかったアプリ（存在しない・閲覧できないなど）は、空の設計書を入れず失敗として数える。
+      if (!target.bundle) {
+        const fetched = buildDesignSnapshot(primaryBundle).sections.filter((row) => scopes.includes(row.key));
+        const failed = fetched.filter((row) => row.status === 'fetch-error');
+        if (failed.length && failed.length === fetched.length) {
+          const detail = String(failed.find((row) => row.key === 'appInfo')?.detail || failed[0].detail || '').split('\n')[0].replace(/^取得失敗:\s*/, '');
+          throw new Error(`設定を取得できませんでした（${detail || '取得失敗'}）`);
+        }
+      }
       const appName = extractAppNameFromBundle(primaryBundle) || '';
       const appLabel = appLabelFromBundle(primaryBundle) || `app${sanitizeFilenamePart(target.appId)}`;
       const guestPrefix = target.guestId && (appIdCounts.get(target.appId) || 0) > 1 ? `guest${target.guestId}_` : '';

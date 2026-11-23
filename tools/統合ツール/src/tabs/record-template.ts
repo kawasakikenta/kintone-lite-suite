@@ -4,6 +4,16 @@ import { csvImportUnsupportedFields } from './record-csv-import.js';
 import { csvEscape } from './record-query.js';
 import { reportCsv } from './record-quality.js';
 
+/**
+ * 初期値を、import.csv のセルに書くときと同じ形で示す（JSON の書き方にしない）。
+ * 複数の値はセル内カンマ区切り、ユーザー・組織・グループはコード。未設定は空欄。
+ */
+function templateDefaultText(value: unknown): string {
+  if (value == null || value === '') return '';
+  const item = (entry: any): string => entry && typeof entry === 'object' ? String(entry.code ?? entry.value ?? JSON.stringify(entry)) : String(entry);
+  return Array.isArray(value) ? value.map(item).join(',') : item(value);
+}
+
 export function buildCsvImportTemplate(properties: Record<string, any>) {
   if (!properties || typeof properties !== 'object' || Array.isArray(properties)) throw new Error('フィールド設定の応答が不正です');
   const codes: string[] = [], excluded: Array<{ code: string; reason: string }> = [];
@@ -23,9 +33,9 @@ export function buildCsvImportTemplate(properties: Record<string, any>) {
     for (const [key, label] of [['minLength', '最小文字数'], ['maxLength', '最大文字数'], ['minValue', '最小値'], ['maxValue', '最大値']]) {
       if (field[key] !== undefined && field[key] !== null && field[key] !== '') notes.push(`${label}: ${field[key]}`);
     }
-    const defaults = field.defaultNowValue === true || field.defaultNowValue === 'true' ? '現在の日付・日時' : JSON.stringify(field.defaultValue ?? '');
+    const defaults = field.defaultNowValue === true || field.defaultNowValue === 'true' ? '現在の日付・日時' : templateDefaultText(field.defaultValue);
     const choices = Object.entries(field.options || {}).sort(([, a]: any, [, b]: any) => Number(a.index) - Number(b.index)).map(([value]) => value);
-    guide.push([code, field.label || code, field.type, field.required === true || field.required === 'true' ? '必須' : '', field.unique === true || field.unique === 'true' ? '禁止' : '', defaults, JSON.stringify(choices), notes.join(' / ')]);
+    guide.push([code, field.label || code, field.type, field.required === true || field.required === 'true' ? '必須' : '', field.unique === true || field.unique === 'true' ? '禁止' : '', defaults, choices.join(' / '), notes.join(' / ')]);
   }
   if (!codes.length) throw new Error('CSV取込に対応するフィールドがありません');
   return {

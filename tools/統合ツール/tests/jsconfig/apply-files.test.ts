@@ -316,6 +316,17 @@ describe('apply JS/CSS with FILE entries to many preview targets', () => {
     expect(posts().length).toBe(1);
     expect(puts().map(c => c.body.desktop.js[0].file.fileKey)).toEqual(['up-1', 'tgt-a', 'src-a']);
     expect(res.results.map(r => r.files)).toEqual([{ uploaded: 1, reused: 0, kept: 0 }, { uploaded: 0, reused: 1, kept: 0 }, { uploaded: 0, reused: 0, kept: 1 }]);
+    // 再利用・そのまま使うファイルは外れないので、確認とログの「外れる」件数に数えない
+    const text = vi.mocked(kusConfirm).mock.calls[0][0];
+    expect(text).toContain('この反映で外れる現在の設定: 合計 0件');
+    expect(text).toContain('App 6（現在 1件 → 外れる 0件');
+  });
+
+  it('reports reused files as kept, not removed, in the single-target confirmation', async () => {
+    storedFiles['tgt-a'] = storedFiles['src-a'];
+    setApp('5', { ...emptyCurrent(), desktop: { js: [fileItem('tgt-a', 'a.js'), urlItem('https://example.test/old.js')], css: [] } });
+    await runApplyJsConfigStandalone({ targetAppId: '5', jsonText: json, fileSource: source() }, vi.fn(), vi.fn());
+    expect(vi.mocked(kusConfirm).mock.calls[0][0]).toContain('外れる現在の設定: 1件');
   });
 
   it('shows one message and stops before the confirmation when no target can receive the files because the origin is unknown', async () => {
