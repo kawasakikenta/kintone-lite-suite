@@ -34,6 +34,11 @@ describe('settings export stops at the first cancel', () => {
     expect(payload.failedAppCount).toBe(0);
     expect(status).toHaveBeenLastCalledWith(expect.stringContaining('中止しました（1/3 件を処理、残り 2 件は未実行）'), true);
     expect(result.summaryHtml).toContain('未実行（中止）');
+    // 結果画面の「取得できなかったアプリだけを対象に残す」は、中止で取得しなかったアプリを残す
+    expect(result.retryApps).toEqual([
+      { appId: '2', guestId: '', appName: '', reason: 'notRun' },
+      { appId: '3', guestId: '', appName: '', reason: 'notRun' }
+    ]);
   });
 
   it('records not-run apps in the ZIP manifest instead of failed apps', async () => {

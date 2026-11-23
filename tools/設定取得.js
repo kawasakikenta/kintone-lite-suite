@@ -3887,6 +3887,9 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     }
     return lines.join("\n") + "\n";
   }
+  function settingsExportRetryApps(rows) {
+    return rows.filter((row) => row.notRun || row.ngCount > 0 || (row.failedFiles || 0) > 0).map((row) => ({ appId: row.appId, guestId: row.guestId || "", appName: row.appName || "", reason: row.notRun ? "notRun" : "failed" }));
+  }
   function renderSettingsExportSummaryHtml(rows, scopes, notes = []) {
     const labels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k).join(", ");
     const noteHtml = notes.map((text) => `<div style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#fffbeb;color:#78350f">${esc(text)}</div>`).join("");
@@ -4070,7 +4073,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       throw createCancelReport(0, targets.length, [`未実行（中止）: ${notRunLabels.join(", ")}`, "何も保存していません"]);
     }
     for (const t of notRun) {
-      rows.push({ appId: t.appId, appName: "", guestId: t.guestId, okCount: 0, ngCount: 0, omittedBodies: 0, omittedPlugins: 0, savedFiles: 0, failedFiles: 0, note: "未実行（中止）" });
+      rows.push({ appId: t.appId, appName: "", guestId: t.guestId, okCount: 0, ngCount: 0, omittedBodies: 0, omittedPlugins: 0, savedFiles: 0, failedFiles: 0, notRun: true, note: "未実行（中止）" });
     }
     const cancelNote = notRun.length ? `${formatCancelledHeadline(stoppedAt, targets.length)}。取得済みの ${bundles.length}アプリだけを保存しました。` : "";
     const guestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];
@@ -4109,7 +4112,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       apps: bundles
     };
     const failedSections = rows.reduce((sum, row) => sum + row.ngCount, 0);
-    const failureNote = failedSections ? `。${failedAppCount}アプリ・${failedSections}セクションの取得に失敗しています。結果表を確認して再取得してください` : "";
+    const failureNote = failedSections ? `。${failedAppCount}アプリ・${failedSections}セクションの取得に失敗しています。結果表を確認し、「取得できなかったアプリだけを対象に残す」で取得し直してください` : "";
     const omittedBodies = rows.reduce((sum, row) => sum + row.omittedBodies, 0);
     const omittedNote = omittedBodies ? `。JS/CSSファイル ${omittedBodies}件は本文を取得できず fileKey のみ記録しています（結果表を確認してください）` : "";
     const savedFiles = rows.reduce((sum, row) => sum + row.savedFiles, 0);
@@ -4200,11 +4203,11 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       downloadBlob(buildExportFilename("設定一括取得", "zip", { appLabel: settingsExportLabel(bundles) }), zipBlob);
       const countText = includeCustomizeFiles ? `${bundles.length}アプリ・JS/CSSファイル ${savedFiles}件` : `${bundles.length}アプリ`;
       setStatus(`${cancelNote}設定一括取得ZIPを保存しました（${countText}）${failureNote}${omittedNote}${filesFailureNote}${configNote}`, hasWarning);
-      return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes, resultNotes) };
+      return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes, resultNotes), retryApps: settingsExportRetryApps(rows) };
     }
     downloadText(buildExportFilename("設定一括取得", "json", { appLabel: settingsExportLabel(bundles) }), JSON.stringify(payload, null, 2), "application/json");
     setStatus(`${cancelNote}設定一括取得JSONを保存しました（${bundles.length}アプリ）${failureNote}${omittedNote}${configNote}`, hasWarning);
-    return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes, resultNotes) };
+    return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes, resultNotes), retryApps: settingsExportRetryApps(rows) };
   }
 
   // src/entries/appSearchControl.ts
@@ -4661,6 +4664,17 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const summary = document.createElement("div");
     summary.className = "kus-lp__panel-html kus-lp__panel-html--empty";
     panel.body.insertBefore(summary, panel.status);
+    const retryBox = document.createElement("div");
+    const retryBtn = makeButton("取得できなかったアプリだけを対象に残す", "sub");
+    retryBtn.hidden = true;
+    retryBox.appendChild(retryBtn);
+    let retryRows = [];
+    let retryCounts = { failed: 0, notRun: 0 };
+    const clearRetry = () => {
+      retryRows = [];
+      retryCounts = { failed: 0, notRun: 0 };
+      retryBtn.hidden = true;
+    };
     function opts() {
       return {
         apps: appTable.getApps(),
@@ -4681,7 +4695,9 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       panel.setStatus(`スペース内のアプリ ${apps.length}件を取得しました（対象アプリ表に新規追加 ${added}件 / 追加済み ${result.existing}件）`, "ok");
     }));
     const runExport = (mode, includeCustomizeFiles) => async () => {
-      const { summaryHtml } = await runSettingsExportStandalone(
+      clearRetry();
+      const ranWith = appTable.getApps();
+      const { summaryHtml, retryApps } = await runSettingsExportStandalone(
         mode,
         { ...opts(), includeCustomizeFiles, customizeFileLayout: fileLayout.value, customizeFileOrderPrefix: fileOrder.value === "prefix", excludePluginConfig: excludePluginConfig.checkbox.checked },
         // 中止の報告（「中止しました…」）は失敗ではないので警告色にする
@@ -4689,6 +4705,16 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       );
       summary.innerHTML = summaryHtml;
       summary.classList.remove("kus-lp__panel-html--empty");
+      retryRows = retryApps.map((app) => ({
+        appId: app.appId,
+        guestId: app.guestId,
+        appName: app.appName || ranWith.find((row) => row.appId === app.appId && (row.guestId || "") === app.guestId)?.appName || ""
+      }));
+      retryCounts = {
+        failed: retryApps.filter((app) => app.reason === "failed").length,
+        notRun: retryApps.filter((app) => app.reason === "notRun").length
+      };
+      retryBtn.hidden = !retryRows.length;
     };
     btnJson.addEventListener("click", () => liteRun(panel, "設定一括取得（JSON）中…", runExport("json", false)));
     btnZip.addEventListener("click", () => liteRun(panel, "設定一括取得（ZIP）中…", runExport("zip", false)));
@@ -4711,20 +4737,30 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       ["保存形式", format],
       ...sensitiveSummary()
     ];
-    installLiteWorkflow(panel, {
+    const workflow = installLiteWorkflow(panel, {
       setup: [cardTarget.card, cardScope.card],
       advanced: [cardChips.card, cardSensitive.card, cardFiles.card],
       advancedCopy: "取得する設定を1項目ずつ選ぶとき、プラグインの設定値を含めないとき、JS/CSSファイルの保存形式を変えるときはこちら。",
-      results: [summary],
+      results: [summary, retryBox],
       beforeRun: () => {
         summary.replaceChildren();
         summary.classList.add("kus-lp__panel-html--empty");
+        clearRetry();
       },
       actions: [
         { id: "json", label: "設定をJSONで保存", description: "全対象アプリの設定を、1つのJSONファイルにまとめて保存します。", button: btnJson, validate: exportProblem, summary: () => exportSummary("全アプリを1つのJSON") },
         { id: "zip", label: "設定をZIPで保存", description: "アプリごとのJSONと、取得結果の一覧（manifest.json）をZIPで保存します。", button: btnZip, validate: exportProblem, summary: () => exportSummary("1アプリ1JSONとmanifest.jsonをZIPに保存") },
         { id: "zip-files", label: "設定とJS/CSSファイルをZIPで保存", description: "設定のZIPに、JS/CSSファイルの本体をアプリごとのフォルダに入れて保存します。フォルダ分けと読み込み順は「詳細設定…」で選べます。", button: btnZipFiles, validate: filesExportProblem, summary: () => [...exportSummary("1アプリ1JSON・JS/CSSファイル・manifest.jsonをZIPに保存"), ["JS/CSSファイルのフォルダ分け", fileLayout.selectedOptions[0]?.textContent || ""], ["JS/CSSファイルの読み込み順", fileOrder.selectedOptions[0]?.textContent || ""]] }
       ]
+    });
+    retryBtn.addEventListener("click", () => {
+      if (!retryRows.length) return;
+      const { failed, notRun } = retryCounts;
+      appTable.setApps(retryRows);
+      clearRetry();
+      workflow.show(0);
+      const kept = [failed ? `取得に失敗した ${failed} アプリ` : "", notRun ? `中止で未実行の ${notRun} アプリ` : ""].filter(Boolean).join("と");
+      panel.setStatus(`${kept}を対象アプリ表に残しました。取得する設定を確認して、もう一度保存してください。`, "info");
     });
   }
 

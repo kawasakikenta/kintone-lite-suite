@@ -108,8 +108,10 @@ describe('settings export with JS/CSS files', () => {
       return new Blob(['x']);
     });
     const status = vi.fn();
-    const { summaryHtml } = await runSettingsExportStandalone('zip', { apps: [{ appId: '1' }], includeCustomizeFiles: true }, status);
+    const { summaryHtml, retryApps } = await runSettingsExportStandalone('zip', { apps: [{ appId: '1' }], includeCustomizeFiles: true }, status);
 
+    // 設定は取得できてもファイルを取得できなかったアプリは、取り直す対象に残す
+    expect(retryApps).toEqual([{ appId: '1', guestId: '', appName: '顧客管理', reason: 'failed' }]);
     expect(zipPaths()).toHaveLength(3);
     const failed = manifest().apps[0].customizeFiles.files.find((item: any) => item.name === 'style.css');
     expect(failed).toMatchObject({ path: '', error: 'ファイルを取得できません（HTTP 403）' });
