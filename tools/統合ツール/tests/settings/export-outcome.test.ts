@@ -136,4 +136,28 @@ describe('settings export completion', () => {
     ]);
     expect(buildSettingsMarkdownIndex({ generatedAt: '2026-10-31', preview: false, apps: manifest.apps })).toContain('2件');
   });
+  it.each(['json', 'zip'])('returns only the apps to fetch again, in table order with the guest space (%s)', async mode => {
+    const ok = (appId: string, extra: Record<string, unknown> = {}) => ({ appId, guestId: '', preview: false, fetchedAt: '', meta: { sectionRevisions: {} },
+      sections: { appSettings: { name: `対象${appId}` }, fieldSettings: { properties: {} }, ...extra } });
+    vi.mocked(fetchBundle)
+      .mockResolvedValueOnce(ok('1') as any)
+      .mockResolvedValueOnce({ ...ok('2'), sections: { appSettings: { name: '対象2' }, fieldSettings: { _fetchError: '権限不足' } } } as any)
+      .mockRejectedValueOnce(new Error('通信タイムアウト'))
+      // 本文がサイズ上限で省略されただけ（fileKey のみ記録）のアプリは、取り直しても同じなので含めない
+      .mockResolvedValueOnce(ok('4', { customizeSettings: { _partial: { files: [{ fileKey: 'fk1', name: 'huge.js' }] } } }) as any);
+    const status = vi.fn();
+    const result = await runSettingsExportStandalone(mode, { apps: [{ appId: '1' }, { appId: '2', guestId: '7' }, { appId: '3' }, { appId: '4' }], scopeRoot: {} }, status);
+
+    expect(result.retryApps).toEqual([
+      { appId: '2', guestId: '7', appName: '対象2', reason: 'failed' },
+      { appId: '3', guestId: '', appName: '', reason: 'failed' }
+    ]);
+    expect(status).toHaveBeenLastCalledWith(expect.stringContaining('「取得できなかったアプリだけを対象に残す」で取得し直してください'), true);
+  });
+  it('returns no app to fetch again when every app was fetched', async () => {
+    vi.mocked(fetchBundle).mockResolvedValue({ appId: '1', guestId: '', preview: false, fetchedAt: '', meta: { sectionRevisions: {} },
+      sections: { appSettings: { name: '対象' }, fieldSettings: { properties: {} } } });
+    const result = await runSettingsExportStandalone('json', { apps: [{ appId: '1' }, { appId: '2' }] }, vi.fn());
+    expect(result.retryApps).toEqual([]);
+  });
 });

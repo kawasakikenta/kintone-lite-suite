@@ -260,7 +260,31 @@ export interface SettingsExportRowSummary {
   guestId?: string;
   okCount: number;
   ngCount: number;
+  /** 取得できなかった JS/CSS ファイルの数（「設定とJS/CSSファイルをZIPで保存」のとき）。 */
+  failedFiles?: number;
+  /** 中止で取得しなかったアプリ。 */
+  notRun?: boolean;
   note?: string;
+}
+
+/** 結果画面の「失敗したアプリだけを対象に残す」で、対象アプリ表に戻すアプリ。 */
+export interface SettingsExportRetryApp {
+  appId: string;
+  guestId: string;
+  appName: string;
+  /** failed: 取得に失敗したセクションか JS/CSS ファイルがある / notRun: 中止で取得していない */
+  reason: 'failed' | 'notRun';
+}
+
+/**
+ * もう一度取得し直すアプリを、結果表の並びのまま返す。
+ * 取得に失敗したセクション・JS/CSS ファイルがあるアプリと、中止で取得しなかったアプリが対象。
+ * 本文がサイズ上限などで省略されただけのファイル（fileKey のみ記録）は、取得し直しても同じなので含めない。
+ */
+export function settingsExportRetryApps(rows: SettingsExportRowSummary[]): SettingsExportRetryApp[] {
+  return rows
+    .filter((row) => row.notRun || row.ngCount > 0 || (row.failedFiles || 0) > 0)
+    .map((row) => ({ appId: row.appId, guestId: row.guestId || '', appName: row.appName || '', reason: row.notRun ? 'notRun' : 'failed' }));
 }
 
 export function renderSettingsExportSummaryHtml(rows: SettingsExportRowSummary[], scopes: string[], notes: string[] = []) {
@@ -537,7 +561,7 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
     throw createCancelReport(0, targets.length, [`未実行（中止）: ${notRunLabels.join(', ')}`, '何も保存していません']);
   }
   for (const t of notRun) {
-    rows.push({ appId: t.appId, appName: '', guestId: t.guestId, okCount: 0, ngCount: 0, omittedBodies: 0, omittedPlugins: 0, savedFiles: 0, failedFiles: 0, note: '未実行（中止）' });
+    rows.push({ appId: t.appId, appName: '', guestId: t.guestId, okCount: 0, ngCount: 0, omittedBodies: 0, omittedPlugins: 0, savedFiles: 0, failedFiles: 0, notRun: true, note: '未実行（中止）' });
   }
   const cancelNote = notRun.length ? `${formatCancelledHeadline(stoppedAt, targets.length)}。取得済みの ${bundles.length}アプリだけを保存しました。` : '';
   const guestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];
@@ -577,7 +601,7 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
   };
 
   const failedSections = rows.reduce((sum, row) => sum + row.ngCount, 0);
-  const failureNote = failedSections ? `。${failedAppCount}アプリ・${failedSections}セクションの取得に失敗しています。結果表を確認して再取得してください` : '';
+  const failureNote = failedSections ? `。${failedAppCount}アプリ・${failedSections}セクションの取得に失敗しています。結果表を確認し、「取得できなかったアプリだけを対象に残す」で取得し直してください` : '';
   const omittedBodies = rows.reduce((sum, row) => sum + row.omittedBodies, 0);
   const omittedNote = omittedBodies ? `。JS/CSSファイル ${omittedBodies}件は本文を取得できず fileKey のみ記録しています（結果表を確認してください）` : '';
   const savedFiles = rows.reduce((sum, row) => sum + row.savedFiles, 0);
@@ -669,10 +693,10 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
     downloadBlob(buildExportFilename('設定一括取得', 'zip', { appLabel: settingsExportLabel(bundles) }), zipBlob);
     const countText = includeCustomizeFiles ? `${bundles.length}アプリ・JS/CSSファイル ${savedFiles}件` : `${bundles.length}アプリ`;
     setStatus(`${cancelNote}設定一括取得ZIPを保存しました（${countText}）${failureNote}${omittedNote}${filesFailureNote}${configNote}`, hasWarning);
-    return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes, resultNotes) };
+    return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes, resultNotes), retryApps: settingsExportRetryApps(rows) };
   }
 
   downloadText(buildExportFilename('設定一括取得', 'json', { appLabel: settingsExportLabel(bundles) }), JSON.stringify(payload, null, 2), 'application/json');
   setStatus(`${cancelNote}設定一括取得JSONを保存しました（${bundles.length}アプリ）${failureNote}${omittedNote}${configNote}`, hasWarning);
-  return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes, resultNotes) };
+  return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes, resultNotes), retryApps: settingsExportRetryApps(rows) };
 }

@@ -80,7 +80,7 @@ import {
   type AppTableRow
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
-import { createProgressView, el, firstLines, makeSkipLink, setButtonText, type ProgressView } from './deployProgressView.js';
+import { createProgressStatus, createProgressView, el, firstLines, makeSkipLink, setButtonText, type ProgressView } from './deployProgressView.js';
 import { createSourceFlow } from './deploy-source-ui.js';
 import { sharedMemory } from './deployMemory.js';
 import { appendReflectItems } from './reflectPlanView.js';
@@ -889,10 +889,18 @@ export function mountDeployLitePanel() {
     const signature = currentSignature();
     const previous = inspection;
     await runLite(onlyProblems ? '取得失敗・処理中のアプリを確認し直し中…' : '未公開の変更を確認中…', async () => {
-      const result = await inspectDeployTargetsStandalone({
-        targets,
-        onProgress: (done, total, label) => panel.setStatus(`未公開の変更を確認中…（${done}/${total} アプリ${label ? ` · ${label}` : ''}）`, 'busy')
-      });
+      // 進捗はアプリごとに届く。届くたびにステータス欄を書き換えると、対象が多いときは画面の描き直しが確認より重くなるため、
+      // 一定間隔にまとめて書く（実行中の一覧と同じ間隔）。中止の要求後は「中止しています…」を進捗で上書きしない。
+      const progress = createProgressStatus((message) => { if (!panel.isCancelRequested()) panel.setStatus(message, 'busy'); });
+      let result: DeployInspectResult;
+      try {
+        result = await inspectDeployTargetsStandalone({
+          targets,
+          onProgress: (done, total, label) => progress.update(`未公開の変更を確認中…（${done}/${total} アプリ${label ? ` · ${label}` : ''}）`)
+        });
+      } finally {
+        progress.stop();
+      }
       const apps = mergeInspection(result, problemKeys ? previous : null, problemKeys);
       inspection = { apps, signature, at: Date.now(), inspectedAt: result.inspectedAt || new Date().toISOString() };
       recordCounts.clear();

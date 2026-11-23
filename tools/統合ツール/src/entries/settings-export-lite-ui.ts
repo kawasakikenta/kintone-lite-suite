@@ -19,7 +19,8 @@ import {
   makeAppTable,
   makeCard,
   makeNote,
-  liteRun
+  liteRun,
+  type AppTableRow
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
 
@@ -185,6 +186,15 @@ export function mountSettingsExportLitePanel() {
   summary.className = 'kus-lp__panel-html kus-lp__panel-html--empty';
   panel.body.insertBefore(summary, panel.status);
 
+  // ---- 取得できなかったアプリだけで取り直す（一部のアプリの取得に失敗した・途中で中止したあと） ----
+  const retryBox = document.createElement('div');
+  const retryBtn = makeButton('取得できなかったアプリだけを対象に残す', 'sub');
+  retryBtn.hidden = true;
+  retryBox.appendChild(retryBtn);
+  let retryRows: AppTableRow[] = [];
+  let retryCounts = { failed: 0, notRun: 0 };
+  const clearRetry = () => { retryRows = []; retryCounts = { failed: 0, notRun: 0 }; retryBtn.hidden = true; };
+
   function opts() {
     return {
       apps: appTable.getApps(),
@@ -208,7 +218,9 @@ export function mountSettingsExportLitePanel() {
   }));
 
   const runExport = (mode: 'json' | 'zip', includeCustomizeFiles: boolean) => async () => {
-    const { summaryHtml } = await runSettingsExportStandalone(
+    clearRetry();
+    const ranWith = appTable.getApps();
+    const { summaryHtml, retryApps } = await runSettingsExportStandalone(
       mode,
       { ...opts(), includeCustomizeFiles, customizeFileLayout: fileLayout.value, customizeFileOrderPrefix: fileOrder.value === 'prefix', excludePluginConfig: excludePluginConfig.checkbox.checked },
       // 中止の報告（「中止しました…」）は失敗ではないので警告色にする
@@ -216,6 +228,17 @@ export function mountSettingsExportLitePanel() {
     );
     summary.innerHTML = summaryHtml;
     summary.classList.remove('kus-lp__panel-html--empty');
+    // 表に残すときは、取得できなかったアプリ名の代わりに、実行前の表の名前（検索から追加した名前など）を使う
+    retryRows = retryApps.map((app) => ({
+      appId: app.appId,
+      guestId: app.guestId,
+      appName: app.appName || ranWith.find((row) => row.appId === app.appId && (row.guestId || '') === app.guestId)?.appName || ''
+    }));
+    retryCounts = {
+      failed: retryApps.filter((app) => app.reason === 'failed').length,
+      notRun: retryApps.filter((app) => app.reason === 'notRun').length
+    };
+    retryBtn.hidden = !retryRows.length;
   };
   btnJson.addEventListener('click', () => liteRun(panel, '設定一括取得（JSON）中…', runExport('json', false)));
   btnZip.addEventListener('click', () => liteRun(panel, '設定一括取得（ZIP）中…', runExport('zip', false)));
@@ -241,12 +264,12 @@ export function mountSettingsExportLitePanel() {
     ['保存形式', format],
     ...sensitiveSummary()
   ];
-  installLiteWorkflow(panel, {
+  const workflow = installLiteWorkflow(panel, {
     setup: [cardTarget.card, cardScope.card],
     advanced: [cardChips.card, cardSensitive.card, cardFiles.card],
     advancedCopy: '取得する設定を1項目ずつ選ぶとき、プラグインの設定値を含めないとき、JS/CSSファイルの保存形式を変えるときはこちら。',
-    results: [summary],
-    beforeRun: () => { summary.replaceChildren(); summary.classList.add('kus-lp__panel-html--empty'); },
+    results: [summary, retryBox],
+    beforeRun: () => { summary.replaceChildren(); summary.classList.add('kus-lp__panel-html--empty'); clearRetry(); },
     actions: [
       { id: 'json', label: '設定をJSONで保存', description: '全対象アプリの設定を、1つのJSONファイルにまとめて保存します。', button: btnJson, validate: exportProblem, summary: () => exportSummary('全アプリを1つのJSON') },
       { id: 'zip', label: '設定をZIPで保存', description: 'アプリごとのJSONと、取得結果の一覧（manifest.json）をZIPで保存します。', button: btnZip, validate: exportProblem, summary: () => exportSummary('1アプリ1JSONとmanifest.jsonをZIPに保存') },
@@ -254,4 +277,14 @@ export function mountSettingsExportLitePanel() {
     ]
   });
 
+  // 取得できなかったアプリだけを対象アプリ表に残して最初の段階へ戻る（取得する設定・保存形式はそのまま）
+  retryBtn.addEventListener('click', () => {
+    if (!retryRows.length) return;
+    const { failed, notRun } = retryCounts;
+    appTable.setApps(retryRows);
+    clearRetry();
+    workflow.show(0);
+    const kept = [failed ? `取得に失敗した ${failed} アプリ` : '', notRun ? `中止で未実行の ${notRun} アプリ` : ''].filter(Boolean).join('と');
+    panel.setStatus(`${kept}を対象アプリ表に残しました。取得する設定を確認して、もう一度保存してください。`, 'info');
+  });
 }
