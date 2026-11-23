@@ -7,6 +7,7 @@ import {
   prepareSourceRestoreFromFile,
   restorableScopes,
   restoreGoalFor,
+  restoreSkippedNotes,
   restoreSelectionFor,
   restoreSourceLabel
 } from '../../src/deploy/sourceRestore';
@@ -37,6 +38,40 @@ describe('restorableScopes', () => {
   it('バックアップが書き込んだ項目を記録しているときは、その範囲に絞る', () => {
     expect(restorableScopes(bundle('1'), ['viewSettings', 'fieldSettings'])).toEqual(['fieldSettings', 'viewSettings']);
     expect(restorableScopes(undefined)).toEqual([]);
+  });
+});
+
+describe('ファイル本体の無い JS/CSS 設定', () => {
+  const file = (name: string, extra: Record<string, any> = {}) => ({ type: 'FILE', file: { fileKey: `key-${name}`, name, ...extra } });
+  const customize = (js: any[]) => ({ scope: 'ALL', desktop: { js, css: [] }, mobile: { js: [], css: [] } });
+
+  it('本体の無い FILE がある JS/CSS 設定は戻す項目に含めず、理由を示す（アプリを更新した後は古いキーで取得できない）', () => {
+    const backup = bundle('1', { customizeSettings: customize([file('a.js'), { type: 'URL', url: 'https://example.test/b.js' }]) });
+    expect(restorableScopes(backup)).toEqual(['fieldSettings', 'layoutSettings', 'viewSettings']);
+    const notes = restoreSkippedNotes(backup);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain('JS/CSS 設定は、バックアップにファイル本体（a.js）が無いため、戻す項目に含めていません');
+    expect(notes[0]).toContain('JS/CSS 設定を変えていないため');
+    // 保存しようとして取得できなかったときは、その理由にする
+    expect(restoreSkippedNotes(bundle('1', { customizeSettings: customize([file('a.js', { _contentUnavailable: 'HTTP 500' })]) }))[0]).toContain('反映前にファイル本体を保存できませんでした');
+  });
+
+  it('本体を埋め込んだ JS/CSS 設定と、URL だけの JS/CSS 設定は、これまでどおり戻す項目に含める', () => {
+    const embedded = bundle('1', { customizeSettings: customize([file('a.js', { _content: { base64: 'YQ==', contentType: 'text/javascript', byteSize: 1 } })]) });
+    expect(restorableScopes(embedded)).toContain('customizeSettings');
+    expect(restoreSkippedNotes(embedded)).toEqual([]);
+    const urlOnly = bundle('1', { customizeSettings: customize([{ type: 'URL', url: 'https://example.test/b.js' }]) });
+    expect(restorableScopes(urlOnly)).toContain('customizeSettings');
+    expect(restoreSkippedNotes(urlOnly)).toEqual([]);
+    // バックアップが JS/CSS を書き込んだ項目に含めていなければ、注意も出さない
+    expect(restoreSkippedNotes(bundle('1', { customizeSettings: customize([file('a.js')]) }), ['fieldSettings'])).toEqual([]);
+  });
+
+  it('本番反映のバックアップから戻す準備でも、本体の無い JS/CSS 設定を外す', () => {
+    const content = backupFile([bundle('1', { customizeSettings: customize([file('a.js')]) })], { scopes: ['fieldSettings', 'customizeSettings'] });
+    const prepared = prepareSourceRestoreFromFile(content);
+    expect(prepared.ok).toBe(true);
+    expect(prepared.plan!.scopes).toEqual(['fieldSettings']);
   });
 });
 

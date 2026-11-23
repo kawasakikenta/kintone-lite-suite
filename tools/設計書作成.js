@@ -15857,6 +15857,9 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   function crc32Finish(state3) {
     return (state3 ^ 4294967295) >>> 0;
   }
+  function crc32(bytes) {
+    return crc32Finish(crc32Update(CRC32_INITIAL, bytes));
+  }
 
   // src/archive/lite-zip.ts
   var ZipLimitError = class extends RangeError {
@@ -20743,6 +20746,120 @@ ${detail}`);
     setStatus(`設計書差分レポートを出力しました（${srcAppId} ⇔ ${tgtAppId}）${notes.length ? `。${notes.join("。")}。差分は不完全です` : ""}${completeness ? ` ${completeness}` : ""}`, notes.length > 0 || !!completeness);
   }
 
+  // src/archive/zip-read.ts
+  var SIG_END = 101010256;
+  var SIG_CENTRAL = 33639248;
+  var SIG_LOCAL = 67324752;
+  var DEFAULT_MAX_TOTAL = 512 * 1024 * 1024;
+  function looksLikeZip(bytes) {
+    return bytes.length >= 4 && bytes[0] === 80 && bytes[1] === 75 && (bytes[2] === 3 && bytes[3] === 4 || bytes[2] === 5 && bytes[3] === 6);
+  }
+  async function inflateRaw(bytes) {
+    if (typeof DecompressionStream !== "function") throw new Error("このブラウザは ZIP の展開（deflate-raw）に対応していません。設定JSONを読み込んでください");
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+  async function readZipEntries(bytes, options = {}) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const u16 = (offset) => view.getUint16(offset, true);
+    const u32 = (offset) => view.getUint32(offset, true);
+    let end = -1;
+    for (let pos2 = bytes.length - 22; pos2 >= Math.max(0, bytes.length - 22 - 65535); pos2 -= 1) {
+      if (u32(pos2) === SIG_END) {
+        end = pos2;
+        break;
+      }
+    }
+    if (end < 0) throw new Error("ZIP の終端が見つかりません（ZIP ファイルではないか、壊れています）");
+    const count = u16(end + 10);
+    const centralOffset = u32(end + 16);
+    if (count === 65535 || centralOffset === 4294967295) throw new Error("ZIP64 形式の ZIP には対応していません");
+    if (count > (options.maxEntries ?? 65535)) throw new Error(`ZIP のファイル数（${count}）が多すぎます`);
+    const decoder = new TextDecoder("utf-8");
+    const maxTotal = options.maxTotalBytes ?? DEFAULT_MAX_TOTAL;
+    const entries = [];
+    let total = 0;
+    let pos = centralOffset;
+    for (let i = 0; i < count; i += 1) {
+      if (pos + 46 > bytes.length || u32(pos) !== SIG_CENTRAL) throw new Error("ZIP の中央ディレクトリが壊れています");
+      const flags = u16(pos + 8);
+      const method = u16(pos + 10);
+      const crc = u32(pos + 16);
+      const compressedSize = u32(pos + 20);
+      const size = u32(pos + 24);
+      const nameLength = u16(pos + 28);
+      const extraLength = u16(pos + 30);
+      const commentLength = u16(pos + 32);
+      const localOffset = u32(pos + 42);
+      const name = decoder.decode(bytes.subarray(pos + 46, pos + 46 + nameLength));
+      pos += 46 + nameLength + extraLength + commentLength;
+      if (name.endsWith("/")) {
+        entries.push({ name, data: new Uint8Array(0) });
+        continue;
+      }
+      if (options.include && !options.include(name)) continue;
+      if (flags & 1) throw new Error(`暗号化された ZIP には対応していません（${name}）`);
+      if (method !== 0 && method !== 8) throw new Error(`未対応の圧縮方式です（${name}・方式 ${method}）`);
+      total += size;
+      if (total > maxTotal) throw new Error("ZIP の展開後の大きさが上限を超えます");
+      if (localOffset + 30 > bytes.length || u32(localOffset) !== SIG_LOCAL) throw new Error(`ZIP のファイル「${name}」の位置が壊れています`);
+      const dataStart = localOffset + 30 + u16(localOffset + 26) + u16(localOffset + 28);
+      if (dataStart + compressedSize > bytes.length) throw new Error(`ZIP のファイル「${name}」が途中で切れています`);
+      const raw = bytes.subarray(dataStart, dataStart + compressedSize);
+      const data = method === 8 ? await inflateRaw(raw) : raw.slice();
+      if (data.length !== size || crc32(data) !== crc) throw new Error(`ZIP のファイル「${name}」の内容が壊れています（大きさ・CRC が一致しません）`);
+      entries.push({ name, data });
+    }
+    return entries;
+  }
+
+  // src/settingsZipImport.ts
+  var isBundle = (value) => !!value && typeof value === "object" && !Array.isArray(value) && !!value.sections && typeof value.sections === "object";
+  async function readSettingsZip(bytes) {
+    const entries = await readZipEntries(bytes, { include: (name) => /\.json$/i.test(name) });
+    const decoder = new TextDecoder("utf-8");
+    const jsonByName = new Map(entries.filter((entry) => !entry.name.endsWith("/")).map((entry) => [entry.name, entry.data]));
+    const parse = (name) => {
+      try {
+        return JSON.parse(decoder.decode(jsonByName.get(name)));
+      } catch {
+        throw new Error(`ZIP 内の「${name}」を JSON として読み込めません`);
+      }
+    };
+    const warnings = [];
+    const bundles = [];
+    const files = [];
+    const manifest = jsonByName.has("manifest.json") ? parse("manifest.json") : null;
+    const listed = Array.isArray(manifest?.apps) ? manifest.apps.map((app) => String(app?.file || "")).filter(Boolean) : [];
+    if (listed.length) {
+      const missing = [];
+      for (const name of listed) {
+        if (!jsonByName.has(name)) {
+          missing.push(name);
+          continue;
+        }
+        const bundle = parse(name);
+        if (!isBundle(bundle)) {
+          missing.push(name);
+          continue;
+        }
+        bundles.push(bundle);
+        files.push(name);
+      }
+      if (missing.length) warnings.push(`manifest.json にある ${missing.length} 件の設定JSONを ZIP から読み込めませんでした（${missing.slice(0, 3).join("、")}${missing.length > 3 ? " ほか" : ""}）`);
+    } else {
+      for (const name of [...jsonByName.keys()].filter((key) => key !== "manifest.json").sort()) {
+        const value = parse(name);
+        if (isBundle(value)) {
+          bundles.push(value);
+          files.push(name);
+        }
+      }
+    }
+    if (!bundles.length) throw new Error("ZIP 内に設定JSONが見つかりません。設定取得の「設定をZIPで保存」で保存した ZIP か確認してください");
+    return { raw: { bundles }, files, warnings };
+  }
+
   // src/entries/appSearchControl.ts
   var RESULT_CSS_ID = "kus-app-search-styles";
   var RESULT_CSS = `
@@ -21102,10 +21219,10 @@ ${detail}`);
     cardTarget.body.appendChild(makeNote("アプリごとに別のゲストスペースを指定できます。各行の「↑コピー」で上の行を複製できます。", "help"));
     panel.body.insertBefore(cardTarget.card, panel.status);
     const cardImport = makeCard({ title: "設定JSON読込（任意）", soft: true });
-    cardImport.body.appendChild(makeNote("「設定一括取得」で保存した JSON を読み込むと、そのアプリは kintone から取得せず、JSON の内容だけで設計書を作ります。読み込んだアプリは対象アプリ表に追加されます。", "help"));
+    cardImport.body.appendChild(makeNote("「設定一括取得」で保存した JSON（「設定をZIPで保存」の ZIP も可）を読み込むと、そのアプリは kintone から取得せず、JSON の内容だけで設計書を作ります。読み込んだアプリは対象アプリ表に追加されます。", "help"));
     const importFile = document.createElement("input");
     importFile.type = "file";
-    importFile.accept = ".json,application/json";
+    importFile.accept = ".json,.zip,application/json,application/zip";
     importFile.className = "kus-lp__file";
     const clearImportBtn = makeButton("読込解除", "ghost");
     const importStatus = document.createElement("span");
@@ -21161,18 +21278,25 @@ ${detail}`);
     importFile.addEventListener("change", () => liteRun(panel, "設定JSONを読み込み中…", async () => {
       const file = importFile.files?.[0];
       if (!file) return;
-      const text = await file.text();
+      const bytes = new Uint8Array(await file.arrayBuffer());
       let raw;
-      try {
-        raw = JSON.parse(text);
-      } catch {
-        throw new Error("設定JSONとして読み込めません。JSON形式のファイルか確認してください");
+      const zipWarnings = [];
+      if (looksLikeZip(bytes)) {
+        const zip = await readSettingsZip(bytes);
+        raw = zip.raw;
+        zipWarnings.push(...zip.warnings);
+      } else {
+        try {
+          raw = JSON.parse(new TextDecoder("utf-8").decode(bytes));
+        } catch {
+          throw new Error("設定JSONとして読み込めません。JSON形式のファイル（または設定取得の ZIP）か確認してください");
+        }
       }
       importedBundles.clear();
       importedSlotBundles.clear();
       let added = 0;
       const loadedLabels = [];
-      const warnings = [];
+      const warnings = [...zipWarnings];
       if (raw && typeof raw === "object" && raw.source && raw.target) {
         const srcBundles = pickAllSettingsBundles(raw, "source", true, true);
         const tgtBundles = pickAllSettingsBundles(raw, "target", true, true);
