@@ -5361,8 +5361,30 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
     return REFLECT_SECTION_KEYS.filter((key) => {
       if (limit && !limit.has(key)) return false;
       const section = sections[key];
+      if (key === "customizeSettings" && customizeFilesWithoutContent(section).length) return false;
       return Object.prototype.hasOwnProperty.call(sections, key) && !!section && typeof section === "object" && !section._fetchError;
     });
+  }
+  function customizeFilesWithoutContent(section) {
+    if (!section || typeof section !== "object") return [];
+    const files = [];
+    for (const platform of ["desktop", "mobile"]) for (const kind of ["js", "css"]) {
+      for (const item of Array.isArray(section[platform]?.[kind]) ? section[platform][kind] : []) {
+        if (item?.type === "FILE" && !(item.file?._content && typeof item.file._content.base64 === "string")) {
+          files.push({ name: String(item.file?.name || item.file?.fileKey || ""), unavailable: !!item.file?._contentUnavailable });
+        }
+      }
+    }
+    return files;
+  }
+  function restoreSkippedNotes(bundle, declared) {
+    const sections = bundle?.sections || {};
+    if (Array.isArray(declared) && !declared.map(String).includes("customizeSettings")) return [];
+    const missing = customizeFilesWithoutContent(sections.customizeSettings);
+    if (!missing.length || sections.customizeSettings?._fetchError) return [];
+    const names = [...new Set(missing.map((file) => file.name))];
+    const why = missing.some((file) => file.unavailable) ? "反映前にファイル本体を保存できませんでした" : "このバックアップを作った反映では JS/CSS 設定を変えていないため、本体を保存していません";
+    return [`JS/CSS 設定は、バックアップにファイル本体（${names.slice(0, 3).join("、")}${names.length > 3 ? ` ほか ${names.length - 3} 件` : ""}）が無いため、戻す項目に含めていません（${why}。kintone のファイルのキーは、アプリを更新すると古いキーで取得できなくなります）。`];
   }
   var sameApp = (bundle, appId, guestId) => String(bundle.appId || "") === appId && String(bundle.guestId || "") === guestId;
   function prepareSourceRestore(request) {
@@ -12431,7 +12453,7 @@ ${P} .kus-ds-impact{margin-top:6px;font-size:13px;line-height:1.6;font-weight:60
         banner.className = `kus-ds-note kus-ds-note--${selectionFileNote?.tone === "warn" ? "warn" : "ok"}`;
         banner.textContent = selectionFileNote?.text || "";
       }
-      const restoreText = restoring() ? `${restoreLabel()}を反映元にしています。${RESTORE_NOTICE_BODY}` : "";
+      const restoreText = restoring() ? [`${restoreLabel()}を反映元にしています。${RESTORE_NOTICE_BODY}`, ...restoreSkippedNotes(jsonBundle || void 0, restore?.plan.declaredScopes)].join("") : "";
       for (const banner of restoreBanners) {
         banner.root.hidden = !restoreText;
         banner.body.textContent = restoreText;

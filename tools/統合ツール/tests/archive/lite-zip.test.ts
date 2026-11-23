@@ -253,9 +253,10 @@ describe('LiteZip with standard tools', () => {
     const script = [
       'import json, sys, zipfile',
       'z = zipfile.ZipFile(sys.argv[1])',
-      'print(json.dumps({"bad": z.testzip(), "names": z.namelist(), "head": z.read("設計書/アプリ_一覧.csv").decode("utf-8")[:5], "methods": sorted(set(i.compress_type for i in z.infolist()))}, ensure_ascii=False))'
+      // 出力は ASCII だけにする（-I は PYTHONIOENCODING を無視するため、日本語版 Windows の標準出力 cp932 に左右されないように）
+      'print(json.dumps({"bad": z.testzip(), "names": z.namelist(), "head": z.read("設計書/アプリ_一覧.csv").decode("utf-8")[:5], "methods": sorted(set(i.compress_type for i in z.infolist()))}, ensure_ascii=True))'
     ].join('\n');
-    const out = JSON.parse(execFileSync('python3', ['-I', '-c', script, file], { encoding: 'utf8', env: { ...process.env, PYTHONIOENCODING: 'utf-8' } }));
+    const out = JSON.parse(execFileSync('python3', ['-I', '-c', script, file], { encoding: 'utf8' }));
     expect(out.bad).toBeNull();
     expect(out.names).toEqual(['設計書/', '設計書/アプリ_一覧.csv', '設計書/バイナリ.bin', '空フォルダ/', 'manifest.json']);
     expect(out.head).toBe('あ,い\r\n');

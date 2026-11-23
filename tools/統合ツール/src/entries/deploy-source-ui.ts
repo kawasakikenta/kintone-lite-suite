@@ -87,6 +87,7 @@ import {
   prepareSourceRestore,
   prepareSourceRestoreFromFile,
   restoreSelectionFor,
+  restoreSkippedNotes,
   restoreSourceLabel,
   type SourceRestorePlan,
   type SourceRestoreRequest
@@ -1665,7 +1666,8 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
       banner.className = `kus-ds-note kus-ds-note--${selectionFileNote?.tone === 'warn' ? 'warn' : 'ok'}`;
       banner.textContent = selectionFileNote?.text || '';
     }
-    const restoreText = restoring() ? `${restoreLabel()}を反映元にしています。${RESTORE_NOTICE_BODY}` : '';
+    // 戻す項目に含めなかった項目（ファイル本体の無い JS/CSS 設定など）も、理由と一緒に示す。
+    const restoreText = restoring() ? [`${restoreLabel()}を反映元にしています。${RESTORE_NOTICE_BODY}`, ...restoreSkippedNotes(jsonBundle || undefined, restore?.plan.declaredScopes)].join('') : '';
     for (const banner of restoreBanners) { banner.root.hidden = !restoreText; banner.body.textContent = restoreText; }
     const staleText = fresh && extractionStale ? `書き込み前の確認で止めたため、まだ何も書き込んでいません（${staleReason || '反映先が更新されました'}）。「差分を抽出し直す」を押してください。選択と入力欄の修正は、抽出し直した後もできるだけ引き継ぎます。` : '';
     for (const banner of staleBanners) { banner.root.hidden = !staleText; banner.body.textContent = staleText; }

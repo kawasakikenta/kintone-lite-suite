@@ -15,6 +15,8 @@ import {
   validateDesignExportTargets
 } from '../tabs/design-standalone.js';
 import { pickAllSettingsBundles } from '../settingsBundleImport.js';
+import { readSettingsZip } from '../settingsZipImport.js';
+import { looksLikeZip } from '../archive/zip-read.js';
 import { extractAppNameFromBundle } from '../utils.js';
 import {
   createLitePanel,
@@ -76,10 +78,10 @@ export function mountDesignLitePanel() {
 
   // ---- 設定JSON読込（任意）：設定一括取得の出力（apps 配列）を取り込んで、API取得なしで設計書を作る ----
   const cardImport = makeCard({ title: '設定JSON読込（任意）', soft: true });
-  cardImport.body.appendChild(makeNote('「設定一括取得」で保存した JSON を読み込むと、そのアプリは kintone から取得せず、JSON の内容だけで設計書を作ります。読み込んだアプリは対象アプリ表に追加されます。', 'help'));
+  cardImport.body.appendChild(makeNote('「設定一括取得」で保存した JSON（「設定をZIPで保存」の ZIP も可）を読み込むと、そのアプリは kintone から取得せず、JSON の内容だけで設計書を作ります。読み込んだアプリは対象アプリ表に追加されます。', 'help'));
   const importFile = document.createElement('input');
   importFile.type = 'file';
-  importFile.accept = '.json,application/json';
+  importFile.accept = '.json,.zip,application/json,application/zip';
   importFile.className = 'kus-lp__file';
   const clearImportBtn = makeButton('読込解除', 'ghost');
   const importStatus = document.createElement('span');
@@ -145,17 +147,25 @@ export function mountDesignLitePanel() {
   importFile.addEventListener('change', () => liteRun(panel, '設定JSONを読み込み中…', async () => {
     const file = importFile.files?.[0];
     if (!file) return;
-    const text = await file.text();
+    const bytes = new Uint8Array(await file.arrayBuffer());
     let raw: any;
-    try { raw = JSON.parse(text); }
-    catch { throw new Error('設定JSONとして読み込めません。JSON形式のファイルか確認してください'); }
+    const zipWarnings: string[] = [];
+    if (looksLikeZip(bytes)) {
+      // 設定取得の「設定をZIPで保存」の ZIP: manifest.json にあるアプリごとの設定 JSON を読む
+      const zip = await readSettingsZip(bytes);
+      raw = zip.raw;
+      zipWarnings.push(...zip.warnings);
+    } else {
+      try { raw = JSON.parse(new TextDecoder('utf-8').decode(bytes)); }
+      catch { throw new Error('設定JSONとして読み込めません。JSON形式のファイル（または設定取得の ZIP）か確認してください'); }
+    }
     // AI向けMarkdownでは入力JSONの型・空値・未知キーを原文として扱うため、
     // 読み込み時に normalize して情報を失わない。
     importedBundles.clear();
     importedSlotBundles.clear();
     let added = 0;
     const loadedLabels: string[] = [];
-    const warnings: string[] = [];
+    const warnings: string[] = [...zipWarnings];
 
     if (raw && typeof raw === 'object' && raw.source && raw.target) {
       const srcBundles = pickAllSettingsBundles(raw, 'source', true, true);
