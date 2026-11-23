@@ -65,8 +65,9 @@ describe('quality inspection and CSV templates from API settings', () => {
     expect(template.csv).toBe('\uFEFFtitle,priority\r\n');
     expect(planCsvImport(parseCsvText(template.csv.replace(/^\uFEFF/, '') + '案件A,高'), props).issueCount).toBe(0);
     const guide = parseCsvText(template.guideCsv.replace(/^\uFEFF/, ''));
-    expect(guide[1]).toEqual(['title', '件名', 'SINGLE_LINE_TEXT', '必須', '', '"初期値"', '[]', '最小文字数: 1']);
-    expect(guide[2][6]).toBe('["高","低"]');
+    // 初期値・選択肢は JSON の書き方（"初期値"・["高","低"]）にせず、そのまま読める形で示す
+    expect(guide[1]).toEqual(['title', '件名', 'SINGLE_LINE_TEXT', '必須', '', '初期値', '', '最小文字数: 1']);
+    expect(guide[2][6]).toBe('高 / 低');
     expect(template.readme).toContain('初期値を使う項目は列を削除');
     expect(template.readme.split('\r\n')[0]).toBe('【使い方】');
     expect(template.readme).toContain('【同梱ファイル】');
@@ -88,9 +89,21 @@ describe('quality inspection and CSV templates from API settings', () => {
   it('includes types/default settings as explanatory values, never as sample records', () => {
     const template = buildCsvImportTemplate({ users: { type: 'USER_SELECT', defaultValue: [{ code: 'LOGINUSER()', type: 'FUNCTION' }] }, date: { type: 'DATE', defaultNowValue: true }, tags: { type: 'MULTI_SELECT', options: { 'a,b': { index: '0' } } } });
     expect(template.guideCsv).toContain('LOGINUSER()');
+    expect(template.guideCsv).not.toContain('{"code"');
     expect(template.guideCsv).toContain('現在の日付・日時');
     expect(template.guideCsv).toContain('カンマを含む選択肢');
     expect(parseCsvText(template.csv.replace(/^\uFEFF/, ''))).toHaveLength(1);
+  });
+  it('複数の値の初期値は import.csv と同じセル内カンマ区切りで示し、未設定は空欄にする', () => {
+    const template = buildCsvImportTemplate({
+      tags: { type: 'CHECK_BOX', defaultValue: ['A', 'B'], options: { A: { index: '1' }, B: { index: '0' } } },
+      memo: { type: 'SINGLE_LINE_TEXT', defaultValue: '' },
+      owners: { type: 'USER_SELECT', defaultValue: [{ type: 'USER', code: 'u1' }, { type: 'USER', code: 'u2' }] }
+    });
+    const guide = parseCsvText(template.guideCsv.replace(/^﻿/, ''));
+    expect(guide[1].slice(5, 7)).toEqual(['A,B', 'B / A']);
+    expect(guide[2][5]).toBe('');
+    expect(guide[3][5]).toBe('u1,u2');
   });
   it('packages all apps separately and records partial failures in the ZIP manifest', async () => {
     vi.mocked(apiGet).mockRejectedValueOnce(new Error('設定権限なし'));

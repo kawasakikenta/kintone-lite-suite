@@ -341,3 +341,63 @@ describe('runBatchDesignExportXlsxZip の preview / preselectedSheets オプシ�
     expect(manifest.successCount).toBe(1);
   });
 });
+
+describe('runBatchDesignExportXlsxZip の失敗の数え方', () => {
+  it('設定を 1 つも取得できなかったアプリ（存在しないアプリ）は、成功に数えず失敗として示す', async () => {
+    const { api } = installEnvironment(baseResponses());
+    const original = api.getMockImplementation()!;
+    api.mockImplementation(async (url: string, method: string, params: any) => {
+      if (String(params?.app ?? params?.id) === '999999') throw new Error('指定したアプリ（ID: 999999）が見つかりません。');
+      return original(url, method, params);
+    });
+    const downloads: Blob[] = [];
+    vi.stubGlobal('URL', { createObjectURL: (blob: Blob) => { downloads.push(blob); return 'blob:fake'; }, revokeObjectURL: () => {} });
+    const onFinish = vi.fn();
+    vi.useFakeTimers();
+    const promise = runBatchDesignExportXlsxZip({ apps: [{ appId: '5', guestId: '' }, { appId: '999999', guestId: '' }], preselectedSheets: ['summary', 'fields'], onFinish });
+    await vi.runAllTimersAsync();
+    expect(await promise).toBe(true);
+    vi.useRealTimers();
+    expect(onFinish).toHaveBeenCalledWith(expect.objectContaining({
+      total: 2, successCount: 1, failedCount: 1,
+      failedApps: [{ appId: '999999', error: expect.stringContaining('見つかりません') }]
+    }));
+    const entries = Object.fromEntries(readZip(Buffer.from(await downloads[0].arrayBuffer())).map((entry) => [entry.name, entry]));
+    const manifest = JSON.parse(entries['_manifest.json'].data.toString('utf8'));
+    expect(manifest).toMatchObject({ successCount: 1, failedCount: 1 });
+    expect(manifest.results.map((row: any) => [row.appId, row.ok])).toEqual([['5', true], ['999999', false]]);
+    expect(Object.keys(entries).filter((name) => name.includes('999999'))).toEqual([]);
+    expect(entries['_manifest.txt'].data.toString('utf8')).toContain('[NG] App 999999');
+  });
+});
+
+describe('項目一覧シートの種別', () => {
+  it('ルックアップは項目定義シートと同じく「ルックアップ(元の種類)」で示す', async () => {
+    installEnvironment(baseResponses({
+      '/app/form/fields.json': { properties: {
+        顧客: { code: '顧客', label: '顧客', type: 'SINGLE_LINE_TEXT', lookup: { relatedApp: { app: '9' }, relatedKeyField: '名前', fieldMappings: [], lookupPickerFields: [], filterCond: '', sort: '' } },
+        金額: { code: '金額', label: '金額', type: 'NUMBER' }
+      } }
+    }));
+    const result: any = await runAdvancedDesignExporter({ appId: '5', preselectedSheets: new Set(['fields']), returnWorkbook: true, suppressToast: true });
+    const index: any[][] = result.wb.Sheets['項目一覧'].__aoa;
+    expect(index.find((row) => row[4] === '顧客')?.[5]).toBe('ルックアップ(文字列(1行))');
+    expect(index.find((row) => row[4] === '金額')?.[5]).toBe('数値');
+    const detail: any[][] = result.wb.Sheets['項目定義'].__aoa;
+    expect(detail.flat()).toContain('ルックアップ(文字列(1行))');
+  });
+
+  it('小数点以下の表示桁数が空（指定なし）なら、書式に「小数点: 桁」を出さない', async () => {
+    installEnvironment(baseResponses({
+      '/app/form/fields.json': { properties: {
+        金額: { code: '金額', label: '金額', type: 'NUMBER', digit: true, displayScale: '', unit: '円', unitPosition: 'AFTER' },
+        率: { code: '率', label: '率', type: 'NUMBER', digit: false, displayScale: '2' }
+      } }
+    }));
+    const result: any = await runAdvancedDesignExporter({ appId: '5', preselectedSheets: new Set(['fields']), returnWorkbook: true, suppressToast: true });
+    const cells = (result.wb.Sheets['項目定義'].__aoa as any[][]).flat().filter((value) => typeof value === 'string');
+    expect(cells.some((value) => value.includes('小数点: 桁'))).toBe(false);
+    expect(cells.some((value) => value.includes('桁区切り: あり') && value.includes('単位: 円'))).toBe(true);
+    expect(cells.some((value) => value.includes('小数点: 2桁'))).toBe(true);
+  });
+});

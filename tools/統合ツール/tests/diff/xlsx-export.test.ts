@@ -3503,3 +3503,58 @@ describe('customer Excel permission entry evidence', () => {
     expect(customerFlat).not.toContain('reviewKey');
   });
 });
+
+describe('変更対象一覧の対象の変更と表示名', () => {
+  const state = (name: string, index: string) => ({ name, index, assignee: { type: 'ONE', entities: [] } });
+  const sourceBundle = { appId: '1', sections: {
+    processSettings: { enable: true, states: { A: state('A', '0'), B: state('B', '1') }, actions: [{ name: '進める', from: 'A', to: 'B', filterCond: '' }, { name: '戻す', from: 'B', to: 'A', filterCond: '' }] },
+    customizeSettings: { scope: 'ALL', desktop: { js: [{ type: 'URL', url: 'https://example.com/a.js' }, { type: 'URL', url: 'https://example.com/new.js' }], css: [] }, mobile: { js: [], css: [] } },
+    fieldSettings: { properties: { T: { code: 'T', type: 'SUBTABLE', label: '明細', fields: { item_name: { code: 'item_name', type: 'SINGLE_LINE_TEXT', label: '商品名' } } } } },
+    layoutSettings: { layout: [{ type: 'SUBTABLE', code: 'T', fields: [{ type: 'SINGLE_LINE_TEXT', code: 'item_name', size: { width: '200' } }] }] }
+  } };
+  const targetBundle = { appId: '2', sections: {
+    processSettings: { enable: true, states: { A: state('A', '0'), B: state('B', '1') }, actions: [{ name: '進める', from: 'A', to: 'B', filterCond: '' }, { name: '完了', from: 'B', to: 'A', filterCond: '' }] },
+    customizeSettings: { scope: 'ALL', desktop: { js: [{ type: 'URL', url: 'https://example.com/a.js' }], css: [{ type: 'URL', url: 'https://example.com/old.css' }] }, mobile: { js: [], css: [] } },
+    fieldSettings: { properties: { T: { code: 'T', type: 'SUBTABLE', label: '明細', fields: { item_name: { code: 'item_name', type: 'SINGLE_LINE_TEXT', label: '商品名' } } } } },
+    layoutSettings: { layout: [{ type: 'SUBTABLE', code: 'T', fields: [{ type: 'SINGLE_LINE_TEXT', code: 'item_name', size: { width: '300' } }] }] }
+  } };
+
+  it.each(['customer', 'internal'] as const)('追加・削除されたアクションと JS/CSS は「追加」「削除」、テーブル内のフィールドは表示名で示す（%s）', async (audience) => {
+    const scopes = ['processSettings', 'customizeSettings', 'fieldSettings', 'layoutSettings'];
+    const rows = enrichDiffRows(computeDiffRows(sourceBundle, targetBundle, scopes, '').rows, sourceBundle, targetBundle);
+    const blob = buildDiffXlsxBlobWithSafeDefault({ rows, sourceBundle, targetBundle, audience } as DiffXlsxContext);
+    const targets = await readWorksheetByName(blob, '変更対象一覧');
+    // 顧客向けは C 列が変更対象、内部向けは B 列が対象名（どちらも D 列が対象の変更）
+    const names = worksheetInlineTexts(targets, audience === 'customer' ? 'C' : 'B', 3);
+    const states = worksheetInlineTexts(targets, 'D', 3);
+    const stateOf = (name: string) => states[names.findIndex((value) => value.includes(name))];
+    expect(stateOf('アクション「戻す」')).toBe('削除');
+    expect(stateOf('アクション「完了」')).toBe('追加');
+    expect(stateOf('old.css')).toBe('追加');
+    expect(stateOf('new.js')).toBe('削除');
+    expect(names).toContain('フィールド「商品名」（コード: item_name）');
+    expect(names).not.toContain('フィールド「item_name」');
+  });
+});
+
+describe('顧客向け Excel の項目名の重なり', () => {
+  it('選択肢そのものの行は「選択肢「名前」」だけにし、一覧の ID は一覧名に含めない', async () => {
+    const sourceBundle = { appId: '1', sections: {
+      fieldSettings: { properties: { dd: { code: 'dd', type: 'DROP_DOWN', label: '区分', options: { A: { label: 'A', index: '0' }, VIP: { label: 'VIP', index: '1' } } } } },
+      viewSettings: { views: { 今月のカレンダー: { id: '10', type: 'CALENDAR', name: '今月のカレンダー', index: '0', date: '作成日時', title: 'レコード番号', filterCond: '', sort: '' } } }
+    } };
+    const targetBundle = { appId: '2', sections: {
+      fieldSettings: { properties: { dd: { code: 'dd', type: 'DROP_DOWN', label: '区分', options: { A: { label: 'A', index: '0' } } } } },
+      viewSettings: { views: { 今月のカレンダー: { id: '20', type: 'CALENDAR', name: '今月のカレンダー', index: '0', date: '作成日時', title: 'レコード番号', filterCond: 'x', sort: '' } } }
+    } };
+    const rows = enrichDiffRows(computeDiffRows(sourceBundle, targetBundle, ['fieldSettings', 'viewSettings'], '').rows, sourceBundle, targetBundle);
+    const blob = buildDiffXlsxBlobWithSafeDefault({ rows, sourceBundle, targetBundle, audience: 'customer' } as DiffXlsxContext);
+    const changes = await readWorksheetByName(blob, '変更一覧');
+    const texts = [...changes.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((match) => decodeXmlText(match[1]));
+    expect(texts).toContain('選択肢「VIP」');
+    expect(texts.filter((text) => text.includes('選択肢「VIP」：'))).toEqual([]);
+    expect(texts.filter((text) => text.includes('今月のカレンダー.id'))).toEqual([]);
+    const targets = await readWorksheetByName(blob, '変更対象一覧');
+    expect(worksheetInlineTexts(targets, 'C', 3).filter((name) => name.startsWith('一覧「'))).toEqual(['一覧「今月のカレンダー」']);
+  });
+});

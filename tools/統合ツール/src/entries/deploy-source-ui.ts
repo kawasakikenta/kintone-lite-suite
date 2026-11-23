@@ -107,7 +107,7 @@ import {
   parseLookupMapText,
   shouldWarnMissingFieldSettings
 } from '../reflect/liteSetup.js';
-import { REFLECT_SECTION_KEYS, reflectSectionLabel } from '../reflect/sections.js';
+import { REFLECT_SECTION_KEYS, orderReflectWrites, reflectSectionLabel } from '../reflect/sections.js';
 import { createReflectAppLookupCache, formatReflectAppName, isLookupableReflectApp, REFLECT_APP_LOOKUP_FAILURE, type ReflectAppLookupOk } from '../reflect/appLookup.js';
 import { pickAllSettingsBundles } from '../settingsBundleImport.js';
 import { buildAppFilenameLabel, buildExportFilename, downloadText, extractAppNameFromBundle } from '../utils.js';
@@ -1483,7 +1483,9 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
     currentRunGoal = goal;
     clearConfirmation();
     running = true;
-    progress = createApplyProgressView(applyHost, createApplyProgressRows(run.map((section) => section.sectionKey), (key) => run.find((section) => section.sectionKey === key)?.label || key));
+    // 並びは実際の書き込み順（プロセス管理を有効・無効にする向きで変わる）。
+    const writeOrder = orderReflectWrites(run.map((section) => section.plan), current.preview.processFieldCodes || []).map((plan) => plan.sectionKey);
+    progress = createApplyProgressView(applyHost, createApplyProgressRows(run.map((section) => section.sectionKey), (key) => run.find((section) => section.sectionKey === key)?.label || key, writeOrder));
     deployProgress?.dispose();
     deployProgress = goal === 'production' ? createProgressView(deployHost, 'deploy', [{ appId: target.appId, guestId: target.guestId, name: target.name, status: 'waiting' as DeployAppStatus }]) : null;
     if (!deployProgress) deployHost.replaceChildren();

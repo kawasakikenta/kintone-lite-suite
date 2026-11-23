@@ -54,7 +54,7 @@ import {
 } from '../reflect/rolloutPrecheck.js';
 import { appendLookupMapCandidates, describeLookupCandidate, hasLookupCandidates, type LookupMapCandidates } from '../reflect/lookupCandidates.js';
 import { appendReflectChanges, renderReflectRoute, renderReflectSummaryTable, renderApplySectionResults, createApplyProgressView, type ApplyProgressView } from './reflectPlanView.js';
-import { REFLECT_SECTION_KEYS, reflectSectionLabel } from '../reflect/sections.js';
+import { REFLECT_SECTION_KEYS, orderReflectWrites, reflectSectionLabel } from '../reflect/sections.js';
 import {
   RESTORE_MODE_NOTICE,
   TARGET_PENDING_REASON,
@@ -3009,7 +3009,9 @@ export function mountReflectLitePanel() {
       const plannedSnapshot = { identities: reportIdentities(previewState.preview!.identities), entries: previewResult.entries.filter((entry) => plan.effectiveScopes.includes(entry.sectionKey)) };
       const wasRestoreMode = !!restoreMode;
       // 反映の進捗は、実行予定の全項目を「待機中」で並べ、エンジンの通知に合わせて更新する。
-      const progressRows = createApplyProgressRows(plan.effectiveScopes, (key) => previewResult!.entries.find((entry) => entry.sectionKey === key)?.label || reflectSectionLabel(key));
+      // 並びは実際の書き込み順（プロセス管理を有効・無効にする向きで変わる）。
+      const writeOrder = orderReflectWrites(previewResult.entries.filter((entry) => plan.effectiveScopes.includes(entry.sectionKey)), previewResult.processFieldCodes || []).map((entry) => entry.sectionKey);
+      const progressRows = createApplyProgressRows(plan.effectiveScopes, (key) => previewResult!.entries.find((entry) => entry.sectionKey === key)?.label || reflectSectionLabel(key), writeOrder);
       const applyOptions = {
         ...currentOptions(plan.effectiveScopes), reviewBaseline: previewResult.baseline, doDeploy: false, doBackup: true, stopOnError: true,
         onSectionUpdate: (update: ReflectSectionUpdate) => {

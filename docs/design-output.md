@@ -52,7 +52,7 @@ JSON Pointerは原文の位置を示します。キーに含まれる `~` は `~
 
 設定JSONを読み込んだ場合は、JSON内のアプリ・ゲスト・取得環境を出力元として扱い、実アプリへの取得は行いません。JSONにない管理者メモ・レコード件数などは未取得です。複数アプリのExcel ZIPも「プレビュー環境から取得」に従い、ZIPの名前（`_プレビュー`）と `_manifest.json`（`preview`・`environment`）・`_manifest.txt` に取得環境を残します。読み込んだJSONがあるアプリではその内容を使います。
 
-複数アプリのMarkdownは「全対象をMarkdown ZIPで保存」「全対象をAI向けMarkdown ZIPで保存」「全対象をMarkdownとAI向けのZIPで保存」から出力できます。「プレビュー環境から取得」の選択に従い、ZIPには各アプリのファイルと、結果をまとめた `overview.md`・`_manifest.json` が入ります。両方を出すときは、通常のMarkdownとAI向けMarkdownを別々に取得するため、kintoneから取得するアプリは取得が2回になります。
+複数アプリのMarkdownは「全対象をMarkdown ZIPで保存」「全対象をAI向けMarkdown ZIPで保存」「全対象をMarkdownとAI向けのZIPで保存」から出力できます。「プレビュー環境から取得」の選択に従い、ZIPには各アプリのファイルと、結果をまとめた `overview.md`・`_manifest.json` が入ります。両方を出すときは、通常のMarkdownとAI向けMarkdownを別々に取得するため、kintoneから取得するアプリは取得が2回になります。複数アプリのZIP（Excel・Markdown）では、設定を1つも取得できなかったアプリ（存在しないアプリID、閲覧できないアプリなど）は設計書をZIPに入れず、失敗として件数と理由（例: 「指定したアプリが見つかりません」）を `_manifest` と `overview.md` に残します。一部の設定だけ取得できなかったアプリは、これまでどおり「一部未取得」として設計書を入れます。
 
 ## Markdown 設計書の件数と表
 
