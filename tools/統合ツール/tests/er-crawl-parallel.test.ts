@@ -125,7 +125,9 @@ describe('ER crawl reads several apps at once', () => {
     expect(stats.peak).toBe(4);
   });
 
-  it('returns exactly what a one-at-a-time crawl returns, whatever order the apps finish in', async () => {
+  // 40 アプリの取得を 16 通りの条件で、実時間の遅延を挟んで回す。タイマーの分解能が粗い環境（Windows など）では
+  // 既定の 5 秒を超えるため、このテストだけ上限を延ばす（途中で打ち切ると取得が裏で続き、後のテストのモックを使ってしまう）。
+  it('returns exactly what a one-at-a-time crawl returns, whatever order the apps finish in', { timeout: 60_000 }, async () => {
     const graph = randomGraph(40, 11);
     const seeds = ['4', '7', '12'];
     const baseline: Record<string, unknown> = {};
