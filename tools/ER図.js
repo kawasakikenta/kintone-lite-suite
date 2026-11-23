@@ -1577,6 +1577,12 @@
     body.appendChild(status);
     body.appendChild(result);
     function setStatus(msg, tone = "neutral") {
+      const currentText = status.querySelector(":scope > .kus-lp__status-text");
+      if (currentText && status.dataset.tone === tone) {
+        currentText.textContent = msg || "";
+        currentText.scrollTop = 0;
+        return;
+      }
       status.dataset.tone = tone;
       status.className = "kus-lp__status" + (tone !== "neutral" ? ` kus-lp__status--${tone}` : "");
       const icon = tone === "ok" ? "✓" : tone === "err" ? "⚠" : tone === "warn" ? "!" : tone === "info" ? "i" : tone === "busy" ? "" : "·";
@@ -2105,11 +2111,12 @@
       pressedOnBackdrop = false;
     });
     dialog.addEventListener("close", () => {
-      if (opener?.isConnected) {
-        try {
-          opener.focus({ preventScroll: true });
-        } catch {
-        }
+      const active2 = document.activeElement;
+      const movedElsewhere = !!active2 && active2 !== document.body && active2 !== opener && !dialog.contains(active2);
+      if (movedElsewhere || !opener?.isConnected) return;
+      try {
+        opener.focus({ preventScroll: true });
+      } catch {
       }
     });
     return { dialog, body, open, close };

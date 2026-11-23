@@ -251,7 +251,24 @@ async function main() {
     assert.equal(await page.locator('.kus-lp__status').getAttribute('data-tone'), 'err');
     assert.match(await page.locator('.kus-lp__result').innerText(), /対象アプリ: 42/);
     assert.equal(await page.locator('#shared-test').getAttribute('aria-busy'), 'false');
-    results.push('部分成功の警告保持・エラー詳細・処理中状態の復帰・ステータス読み上げ');
+    // 処理中の進捗のように、色が同じまま文言だけが変わるときは、スピナーを作り直さない（作り直すと毎回最初から回り直し、描画も増える）。
+    // 色が変わるときは、アイコン・色・文言を入れ替える。
+    const statusWrites = await page.evaluate(() => {
+      const { status, setStatus } = window.panel;
+      const snapshot = () => ({ tone: status.dataset.tone, className: status.className, icon: status.querySelector('.kus-lp__status-icon').className, text: status.querySelector('.kus-lp__status-text').textContent, children: status.childElementCount });
+      setStatus('確認中…（1/1000 アプリ）', 'busy');
+      const spinner = status.querySelector('.kus-lp__status-icon');
+      setStatus('確認中…（2/1000 アプリ）', 'busy');
+      const progress = { ...snapshot(), sameSpinner: status.querySelector('.kus-lp__status-icon') === spinner };
+      setStatus('完了しました', 'ok');
+      const done = { ...snapshot(), mark: status.querySelector('.kus-lp__status-icon').textContent, sameSpinner: status.querySelector('.kus-lp__status-icon') === spinner };
+      setStatus('', 'neutral');
+      return { progress, done, cleared: snapshot() };
+    });
+    assert.deepEqual(statusWrites.progress, { tone: 'busy', className: 'kus-lp__status kus-lp__status--busy', icon: 'kus-lp__status-icon kus-lp__status-busy', text: '確認中…（2/1000 アプリ）', children: 2, sameSpinner: true });
+    assert.deepEqual(statusWrites.done, { tone: 'ok', className: 'kus-lp__status kus-lp__status--ok', icon: 'kus-lp__status-icon', text: '完了しました', children: 2, mark: '✓', sameSpinner: false });
+    assert.deepEqual(statusWrites.cleared, { tone: 'neutral', className: 'kus-lp__status', icon: 'kus-lp__status-icon', text: '', children: 2 });
+    results.push('部分成功の警告保持・エラー詳細・処理中状態の復帰・ステータス読み上げ・同じ色の書き換えでスピナーを作り直さない');
 
     // 対象アプリ表は「×」などの操作列を含めて横にはみ出さない（行が複数あっても同じ）
     await page.evaluate(() => window.table.setApps([{ appId: '303', guestId: '7' }, { appId: '1234567890', guestId: '12345' }]));
@@ -442,6 +459,21 @@ async function main() {
     await page.keyboard.press('Escape');
     assert.equal(await advancedDialog.evaluate(dialog => dialog.open), false, 'Esc はポップアップだけを閉じる');
     assert.equal(await popupPanel.count(), 1, 'パネルは閉じない');
+    // 閉じたら、開いたボタンへフォーカスを戻す。dialog の close イベントは閉じた直後ではなく次の描画のときに届くので、
+    // それまでに別の入力欄へ移っていたら、フォーカスを奪わない（奪うと、続けて打ったキーが開いたボタンへ届く）。
+    await page.getByRole('button', { name: '詳細設定…' }).click();
+    const focusAfterClose = await page.evaluate(async () => {
+      const dialog = document.querySelector('#popup-test-advanced');
+      const focused = () => document.activeElement?.getAttribute('aria-label') || (document.activeElement?.textContent || '').trim();
+      const closed = new Promise(resolve => dialog.addEventListener('close', resolve, { once: true }));
+      dialog.querySelector('.kus-lp__dialog-foot button').click();
+      const atClose = focused();
+      document.querySelector('input[aria-label="ポップアップ用アプリID"]').focus();
+      await closed;
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return { open: dialog.open, atClose, afterCloseEvent: focused() };
+    });
+    assert.deepEqual(focusAfterClose, { open: false, atClose: '詳細設定…', afterCloseEvent: 'ポップアップ用アプリID' }, '閉じた時点で開いたボタンへ戻し、その後に移った入力欄からは close イベントでフォーカスを奪わない');
     await page.getByRole('button', { name: '詳細設定…' }).click();
     await advancedDialog.getByRole('combobox', { name: '形式' }).selectOption('b');
     await advancedDialog.getByRole('button', { name: '詳細設定を閉じる' }).click();
@@ -466,7 +498,7 @@ async function main() {
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.evaluate(() => window.popupPanel.close());
     assert.equal(await popupPanel.count(), 0);
-    results.push('ポップアップ: 詳細設定・ほかの操作・「?」ヘルプ・Esc の扱い・確認画面への反映・320/768px');
+    results.push('ポップアップ: 詳細設定・ほかの操作・「?」ヘルプ・Esc の扱い・閉じた後のフォーカス・確認画面への反映・320/768px');
 
     await page.locator('#launcher').focus();
     await page.evaluate(() => {

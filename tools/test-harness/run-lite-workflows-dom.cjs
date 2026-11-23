@@ -70,7 +70,8 @@ function fixtures() {
         counts: { enabled: args[0].apps.length, disabled: 0, failed: 0, notRun: 0 }, stoppedAt: -1, zipName: 'sample.zip', zipEntries: []
       };
       if (name === 'runApplyJsConfigStandalone') args[2]('<p>サンプル: JS/CSS反映が完了</p>');
-      if (name === 'runSettingsExportStandalone') return { summaryHtml: '<p>対象1アプリの設定取得が完了しました。</p>' };
+      // retryApps: 取り直す対象（結果画面の「取得できなかったアプリだけを対象に残す」）。既定は全アプリ取得できた
+      if (name === 'runSettingsExportStandalone') return { summaryHtml: '<p>対象1アプリの設定取得が完了しました。</p>', retryApps: this.retryApps || [] };
       if (name === 'runRenderProcessFlowStandalone') return { states: { new: {}, done: {} }, actions: [{ name: '完了' }] };
       if (name === 'runBulkRenameFieldStandalone') return { properties: { renamed: { type: 'SINGLE_LINE_TEXT' } }, renamePairs: [{ from: 'memo', to: 'renamed' }] };
       if (name === 'runLoadStatusActionsStandalone') return { actions: [{ name: '完了にする', from: '新規', to: '完了' }] };
@@ -409,7 +410,34 @@ async function main() {
           assert.match(await stage(2).innerText(), /2 件の反映先への反映が完了/);
         }
         if (id === 'settings-export') {
+          // 全アプリ取得できたときは、取り直しの操作を出さない
+          const retry = button('取得できなかったアプリだけを対象に残す');
+          assert.equal(await retry.isVisible(), false, '設定一括取得: 全アプリ取得できたら取り直しの操作を出さない');
+          // 一部のアプリを取得できなかったら、そのアプリだけを対象アプリ表に残して最初の段階へ戻れる（ゲストスペースと表の名前を残す）
           await button('対象・条件を変更').click();
+          const tableApp = page.locator('.kus-lp__apptable input[aria-label="アプリID"]:visible');
+          await tableApp.first().fill('202, 303, 404');
+          await tableApp.first().dispatchEvent('change');
+          assert.deepEqual(await tableApp.evaluateAll(inputs => inputs.map(input => input.value)), ['202', '303', '404']);
+          await page.locator('.kus-lp__apptable input[aria-label="ゲストスペースID"]:visible').nth(1).fill('5');
+          await page.evaluate(() => { window.__workflowFixture.retryApps = [{ appId: '303', guestId: '5', appName: '', reason: 'failed' }, { appId: '404', guestId: '', appName: '', reason: 'notRun' }]; });
+          await button('内容を確認する').click();
+          await button(defaultAction).click(); await idle();
+          assert.equal(await stage(2).isVisible(), true);
+          assert.equal(await retry.isVisible(), true, '設定一括取得: 取得できなかったアプリがあれば取り直しの操作を結果画面に出す');
+          await retry.click();
+          assert.equal(await stage(0).isVisible(), true, '設定一括取得: 取り直しの操作で最初の段階へ戻る');
+          assert.deepEqual(await tableApp.evaluateAll(inputs => inputs.map(input => input.value)), ['303', '404'], '設定一括取得: 取得できなかったアプリだけを表に残す');
+          assert.deepEqual(await page.locator('.kus-lp__apptable input[aria-label="ゲストスペースID"]:visible').evaluateAll(inputs => inputs.map(input => input.value)), ['5', ''], '設定一括取得: ゲストスペースIDを残す');
+          assert.match(await page.locator('.kus-lp__status-text').first().innerText(), /取得に失敗した 1 アプリと中止で未実行の 1 アプリを対象アプリ表に残しました/);
+          await page.evaluate(() => { window.__workflowFixture.retryApps = []; });
+          await button('内容を確認する').click();
+          await button(defaultAction).click(); await idle();
+          assert.equal(await retry.isVisible(), false, '設定一括取得: 取り直して全アプリ取得できたら操作を消す');
+          await button('対象・条件を変更').click();
+          await tableApp.first().fill('202');
+          await page.locator('.kus-lp__apptable input[aria-label="ゲストスペースID"]:visible').first().fill('');
+          await tableApp.nth(1).fill('');
           assert.equal(await page.getByRole('button', { name: '全解除', exact: true }).isVisible(), false, '設定一括取得: 個別選択は表面に出さない');
           await openAdvanced(); await button('全解除').click(); await closeAdvanced();
           assert.equal(await button('内容を確認する').isDisabled(), true, '設定0件では実行しない');
