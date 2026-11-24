@@ -977,8 +977,13 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
   // 既存 components.ts の setStatus() を lite から流用できるように
   setComponentUi({ status, result, busyText: document.createElement('span') });
 
-  // 開いた直後に最初の入力欄へフォーカスし、キーボードだけで操作を始められるようにする
+  // 開いた直後に最初の入力欄へフォーカスし、キーボードだけで操作を始められるようにする。
+  // フォーカスは次の描画で移すので、それまでに利用者がパネルの外（kintone 側の入力欄など）へ移っていたら奪わない
+  // （奪うと、続けて打ったキーや Esc がこのパネルへ届く）。パネルの中での移動（手順のタブなど）はこれまでどおり。
+  const focusAtOpen = document.activeElement;
   requestAnimationFrame(() => {
+    const active = document.activeElement;
+    if (active && active !== document.body && active !== focusAtOpen && !root.contains(active)) return;
     const first = body.querySelector<HTMLElement>(
       'input:not([type=hidden]):not([disabled]),select:not([disabled]),textarea:not([disabled])'
     );

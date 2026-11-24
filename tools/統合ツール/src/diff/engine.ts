@@ -2,7 +2,7 @@
 
 import { SECTION_DEFS, META_KEYS, DIFF_NORMALIZATION_PRESETS, DEFAULT_IGNORE_KEYS, DiffNormalizationPreset } from '../constants.js';
 import { state, ui } from '../state.js';
-import { deepClone, stableStringify } from '../utils.js';
+import { deepClone, setOwnValue, stableStringify } from '../utils.js';
 import type { DiffRow, DiffFetchIssue } from './types.js';
 import { isPluginConfigOmittedMarker } from '../pluginConfigMarker.js';
 
@@ -273,6 +273,8 @@ function compileWildcardRegex(token) {
 
 export function parseIgnoreRules(text) {
   const keySet = new Set(DEFAULT_IGNORE_KEYS);
+  // 利用者が入力したキー名だけ。プラグイン設定のような利用者データの中では、既定のメタ情報キーを使わずこちらで判定する。
+  const userKeySet = new Set<string>();
   const pathSet = new Set<string>();
   const exactPathSet = new Set<string>();
   const keyPatterns: RegExp[] = [];
@@ -301,9 +303,12 @@ export function parseIgnoreRules(text) {
         return;
       }
       if (isPath) pathSet.add(cleaned);
-      else keySet.add(cleaned);
+      else {
+        keySet.add(cleaned);
+        userKeySet.add(cleaned);
+      }
     });
-  return { keySet, pathSet, exactPathSet, keyPatterns, pathPatterns };
+  return { keySet, userKeySet, pathSet, exactPathSet, keyPatterns, pathPatterns };
 }
 
 function matchAnyPattern(patterns, value) {
@@ -336,6 +341,14 @@ function isEntityIdentifierChildPath(path) {
   return !!normalizedPath && ENTITY_IDENTIFIER_PATH_PATTERNS.some((pattern) => pattern.test(normalizedPath));
 }
 
+// プラグイン設定（config）の中身はプラグインが決めるキーと値で、API の応答メタ情報ではない。
+// revision / creator などと同名のキーも設定値として比べる。
+const USER_DATA_PATH_PATTERN = /^pluginsettings\.plugins\[\d+\]\.config(?:\.|\[)/;
+
+function isUserDataPath(path) {
+  return USER_DATA_PATH_PATTERN.test(normalizeIgnoreToken(path));
+}
+
 function getComparisonPathLeafKey(path) {
   const text = String(path || '');
   const quoted = text.match(/\[("(?:[^"\\]|\\.)*")\](?:\[\d+\])*$/);
@@ -358,12 +371,18 @@ export function isIgnoredPath(ignoreRules, path, comparisonPath = path) {
   if (isEntityIdentifierChildPath(comparisonPath)) return false;
   const leaf = normalizeIgnoreToken(getComparisonPathLeafKey(comparisonPath));
   if (!leaf) return false;
-  if (ignoreRules.keySet.has(leaf)) return true;
+  // 利用者データの中では、既定のメタ情報キーを除き、利用者が入力したキー名だけを適用する。
+  const keySet = isUserDataPath(comparisonPath) ? (ignoreRules.userKeySet || ignoreRules.keySet) : ignoreRules.keySet;
+  if (keySet.has(leaf)) return true;
   return matchAnyPattern(ignoreRules.keyPatterns, leaf);
 }
 
+function isMetaKeyProperty(key, comparisonPath) {
+  return META_KEYS.has(key) && !isEntityIdentifierChildPath(comparisonPath) && !isUserDataPath(comparisonPath);
+}
+
 function isIgnoredObjectProperty(ignoreRules, key, path, comparisonPath = path) {
-  if (!isEntityIdentifierChildPath(comparisonPath) && META_KEYS.has(key)) return true;
+  if (isMetaKeyProperty(key, comparisonPath)) return true;
   return isIgnoredPath(ignoreRules, path, comparisonPath);
 }
 
@@ -428,12 +447,15 @@ export function pushDiffRow(out, row, ignoreRules, comparisonPath = row?.path) {
     return true;
   }
   const diffCount = Number(out?.__diffCount || 0);
-  if (diffCount >= ARRAY_DIFF_LIMIT) {
+  if (diffCount >= ARRAY_DIFF_LIMIT || out?.__diffLimitReached === true) {
+    markDiffLimitReached(out);
     markDroppedDiffRow(out, row, 'diff');
     return false;
   }
   if (out) out.__diffCount = diffCount + 1;
   out.push(row);
+  // 上限に届いた時点で記録する。後で移動の統合により件数が減っても、列挙を打ち切った事実は残る。
+  if (diffCount + 1 >= ARRAY_DIFF_LIMIT) markDiffLimitReached(out);
   return true;
 }
 
@@ -471,7 +493,7 @@ export function normalizeForCompare(v, ignoreRules, path = '', comparisonPath = 
       const childPath = path ? `${path}.${k}` : k;
       const childComparisonPath = appendNormalizationPath(comparisonPath, k);
       if (isIgnoredObjectProperty(ignoreRules, k, childPath, childComparisonPath)) return;
-      o[k] = normalizeForCompare(v[k], ignoreRules, childPath, childComparisonPath);
+      setOwnValue(o, k, normalizeForCompare(v[k], ignoreRules, childPath, childComparisonPath));
     });
     return o;
   }
@@ -565,7 +587,7 @@ export function collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules, compa
   }));
 
   for (const sig of ordered) {
-    if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
+    if (hasReachedDiffLimit(out)) return true;
     const left = mapA.get(sig);
     const right = mapB.get(sig);
     if (!left && right) {
@@ -629,7 +651,7 @@ export function collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules, compa
       if (out[oi].arrayKeyValue === undefined) out[oi].arrayKeyValue = keyVal;
       tagParentArrayKey(out[oi], key, keyVal);
     }
-    if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
+    if (hasReachedDiffLimit(out)) return true;
   }
   return true;
 }
@@ -797,7 +819,7 @@ export function collectActionMappingDiffs(a, b, path, out, ignoreRules, comparis
   ].sort((x, y) => x.order - y.order);
 
   for (const step of ordered) {
-    if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
+    if (hasReachedDiffLimit(out)) return true;
     if (step.kind === 'removed') {
       pushDiffRow(out, {
         type: 'removed',
@@ -977,7 +999,7 @@ export function collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules, co
   }));
 
   for (const sig of ordered) {
-    if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
+    if (hasReachedDiffLimit(out)) return true;
     const left = mapA.get(sig);
     const right = mapB.get(sig);
     if (!left && right) {
@@ -1041,7 +1063,7 @@ export function collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules, co
       if (out[oi].arrayKeyValue === undefined) out[oi].arrayKeyValue = keyVal;
       tagParentArrayKey(out[oi], rule.arrayKey, keyVal);
     }
-    if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
+    if (hasReachedDiffLimit(out)) return true;
   }
   return true;
 }
@@ -1061,7 +1083,7 @@ export function collectArrayDiffsByPureReorder(a, b, path, out, ignoreRules, com
 
   const used = new Array(a.length).fill(false);
   for (let j = 0; j < b.length; j++) {
-    if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
+    if (hasReachedDiffLimit(out)) return true;
     let from = -1;
     for (let i = 0; i < a.length; i++) {
       if (!used[i] && sigA[i] === sigB[j]) { from = i; break; }
@@ -1155,14 +1177,14 @@ export function collectArrayDiffsByLcs(a, b, path, out, ignoreRules, comparisonP
   if (!n && !m) return true;
   if (!n) {
     for (let j = 0; j < m; j++) {
-      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
+      if (hasReachedDiffLimit(out)) return true;
       pushDiffRow(out, { type: 'added', path: `${path}[${j}]`, left: undefined, right: b[j] }, ignoreRules, `${comparisonPath}[${j}]`);
     }
     return true;
   }
   if (!m) {
     for (let i = 0; i < n; i++) {
-      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
+      if (hasReachedDiffLimit(out)) return true;
       pushDiffRow(out, { type: 'removed', path: `${path}[${i}]`, left: a[i], right: undefined }, ignoreRules, `${comparisonPath}[${i}]`);
     }
     return true;
@@ -1185,7 +1207,7 @@ export function collectArrayDiffsByLcs(a, b, path, out, ignoreRules, comparisonP
   let i = 0;
   let j = 0;
   while (i < n || j < m) {
-    if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) {
+    if (hasReachedDiffLimit(out)) {
       // 移動ペアの統合で件数が上限未満に戻っても、列挙を打ち切った事実は残す。
       markDiffLimitReached(out);
       break;
@@ -1256,7 +1278,7 @@ export function collectArrayDiffs(a, b, path, out, ignoreRules, comparisonPath =
   }
   const max = Math.max(a.length, b.length);
   for (let i = 0; i < max; i++) {
-    if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return;
+    if (hasReachedDiffLimit(out)) return;
     const p = `${path}[${i}]`;
     const itemComparisonPath = `${comparisonPath}[${i}]`;
     if (i >= a.length) pushDiffRow(out, { type: 'added', path: p, left: undefined, right: b[i] }, ignoreRules, itemComparisonPath);
@@ -1266,7 +1288,7 @@ export function collectArrayDiffs(a, b, path, out, ignoreRules, comparisonPath =
 }
 
 export function collectDeepDiffs(a, b, path, out, ignoreRules, comparisonPath = path) {
-  if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return;
+  if (hasReachedDiffLimit(out)) return;
   if (isIgnoredPath(ignoreRules, path, comparisonPath)) return;
 
   if (a === b) {
@@ -1307,7 +1329,7 @@ export function collectDeepDiffs(a, b, path, out, ignoreRules, comparisonPath = 
       if (!Object.prototype.hasOwnProperty.call(b, k)) pushDiffRow(out, { type: 'removed', path: p, left: a[k], right: undefined, ...(isEmptyLikeValue(a[k]) ? { emptyOnly: true } : {}) }, ignoreRules, childComparisonPath);
       else if (!Object.prototype.hasOwnProperty.call(a, k)) pushDiffRow(out, { type: 'added', path: p, left: undefined, right: b[k], ...(isEmptyLikeValue(b[k]) ? { emptyOnly: true } : {}) }, ignoreRules, childComparisonPath);
       else collectDeepDiffs(a[k], b[k], p, out, ignoreRules, childComparisonPath);
-      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return;
+      if (hasReachedDiffLimit(out)) return;
     }
     return;
   }
@@ -1364,7 +1386,7 @@ export function preprocessActionSettingsForDiff(section) {
   }
   if (isPlainObject(actions)) {
     const out = {};
-    Object.keys(actions).forEach((key) => { out[key] = sortAction(actions[key]); });
+    Object.keys(actions).forEach((key) => { setOwnValue(out, key, sortAction(actions[key])); });
     return { ...(section as any), actions: out };
   }
   return section;
@@ -1385,8 +1407,11 @@ export function preprocessCustomizePairForDiff(src, tgt) {
   const sClone = src && typeof src === 'object' ? deepClone(src) : src;
   const tClone = tgt && typeof tgt === 'object' ? deepClone(tgt) : tgt;
 
+  // 取得状況の記録（_partial、本文取得の集計 _bodyFetchStats）は設定そのものではないため、比較対象にしない。
   const cleanupRootMetadata = (bundle) => {
-    if (bundle && typeof bundle === 'object' && '_partial' in bundle) delete bundle._partial;
+    if (!bundle || typeof bundle !== 'object') return;
+    if ('_partial' in bundle) delete bundle._partial;
+    if ('_bodyFetchStats' in bundle) delete bundle._bodyFetchStats;
   };
   cleanupRootMetadata(sClone);
   cleanupRootMetadata(tClone);
@@ -1458,11 +1483,12 @@ export function preprocessCustomizePairForDiff(src, tgt) {
 export function preprocessPluginSettingsForDiff(value) {
   if (!value || typeof value !== 'object') return value;
   const cloned = deepClone(value);
-  // 旧形式の設定取得JSONでは補助取得の集計値がセクション直下に保存されていた。
-  // これらはプラグイン設定そのものではないため、差分対象へ混ぜない。
+  // 設定JSONによっては、補助取得の集計値（fetched / skipped / failed、_configFetchStats）がセクション直下にある。
+  // これらはプラグイン設定そのものではないため、差分対象へ混ぜない（取得漏れの判定は getPluginFetchStatsError）。
   delete cloned.fetched;
   delete cloned.skipped;
   delete cloned.failed;
+  delete cloned._configFetchStats;
   if (!Array.isArray(cloned.plugins)) return cloned;
   cloned.plugins.forEach((p) => {
     if (!p || typeof p !== 'object') return;
@@ -1499,12 +1525,19 @@ function stripPluginConfigForDiff(value) {
   return cloned;
 }
 
-function getLegacyPluginSettingsFetchError(value): string {
+/**
+ * セクション直下の取得集計値（fetched / skipped / failed、または _configFetchStats）から、
+ * 取得できなかったプラグイン設定があるかを判定する。1 件でもあれば、そのセクションは比較できない。
+ */
+function getPluginFetchStatsError(value): string {
   if (!value || typeof value !== 'object') return '';
-  const failed = Number(value.failed);
-  const skipped = Number(value.skipped);
-  const failedCount = Number.isFinite(failed) && failed > 0 ? Math.trunc(failed) : 0;
-  const skippedCount = Number.isFinite(skipped) && skipped > 0 ? Math.trunc(skipped) : 0;
+  const countOf = (raw) => {
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0;
+  };
+  const stats = value._configFetchStats && typeof value._configFetchStats === 'object' ? value._configFetchStats : {};
+  const failedCount = Math.max(countOf(value.failed), countOf(stats.failed));
+  const skippedCount = Math.max(countOf(value.skipped), countOf(stats.skipped));
   if (failedCount <= 0 && skippedCount <= 0) return '';
   if (skippedCount <= 0) {
     return `プラグイン設定の取得に失敗したため、このセクションは比較できません（${failedCount}件）`;
@@ -1533,7 +1566,7 @@ function stripStateBodyForRenameMatch(value) {
       const o = {};
       Object.keys(v).sort().forEach((k) => {
         if (drop.has(k)) return;
-        o[k] = walk(v[k]);
+        setOwnValue(o, k, walk(v[k]));
       });
       return o;
     }
@@ -1585,7 +1618,7 @@ export function applyProcessStateRenamesToSource(sourceProcess, renameMap: Map<s
       if (obj && typeof obj === 'object' && obj.name === k && renameMap.has(k)) {
         obj.name = newKey;
       }
-      newStates[newKey] = obj;
+      setOwnValue(newStates, newKey, obj);
     });
     cloned.states = newStates;
   }
@@ -1669,7 +1702,7 @@ function relativizeNamedIndexesForSection(sectionKey: string, source: any, targe
   if (!unchanged.length) return untouched;
   const rewrite = (map: any, ranks: Map<string, number>) => {
     const out = { ...map };
-    for (const name of unchanged) out[name] = { ...map[name], index: String(ranks.get(name)) };
+    for (const name of unchanged) setOwnValue(out, name, { ...map[name], index: String(ranks.get(name)) });
     return out;
   };
   return {
@@ -1719,6 +1752,18 @@ function restoreActualValuesInSameRows(rows: any[], start: number, sec: string, 
   }
 }
 
+const NULL_SECTION_ERROR = '設定JSONのこのセクションの値が null のため、比較できません';
+
+/**
+ * セクションを比較できない理由。取得失敗（_fetchError）、プラグイン設定の取得漏れ、値が null のセクションが該当する。
+ * null は「設定が存在しない」とは限らないため、追加・削除として扱わず比較不能にする。
+ */
+function sectionComparisonError(sectionKey: string, value: any): string {
+  if (value === null) return NULL_SECTION_ERROR;
+  if (value?._fetchError) return String(value._fetchError);
+  return sectionKey === 'pluginSettings' ? getPluginFetchStatsError(value) : '';
+}
+
 export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeysText, options: any = {}) {
   const ignoreRules = parseIgnoreRules(ignoreKeysText);
   const presetState = options.normalizationPresetState || ({} as any);
@@ -1744,12 +1789,8 @@ export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeys
     const s = sourceBundle.sections[sec];
     const t = targetBundle.sections[sec];
 
-    const sourceError = s?._fetchError
-      ? String(s._fetchError)
-      : (sec === 'pluginSettings' ? getLegacyPluginSettingsFetchError(s) : '');
-    const targetError = t?._fetchError
-      ? String(t._fetchError)
-      : (sec === 'pluginSettings' ? getLegacyPluginSettingsFetchError(t) : '');
+    const sourceError = sectionComparisonError(sec, s);
+    const targetError = sectionComparisonError(sec, t);
     if (sourceError || targetError) {
       const side = sourceError && targetError ? 'both' : (sourceError ? 'source' : 'target');
       fetchIssues.push({
@@ -2101,10 +2142,10 @@ export function normalizeSectionValueForCompare(value, config, path = '') {
       // 名前付きマップ直下のキーはフィールドコードやビュー名などの識別子であり、設定プロパティ名ではない。
       // 「order」「index」「revision」等の名前を持つ実体を、正規化だけで差分から消さない。
       const isEntityIdentifier = isEntityIdentifierChildPath(childPath);
-      if (!isEntityIdentifier && META_KEYS.has(key)) return;
+      if (isMetaKeyProperty(key, childPath)) return;
       if (!isEntityIdentifier && config?.ignoreKeys?.has(normalizeIgnoreToken(key))) return;
       if (config?.ignoreAppReferencePaths && isAppReferenceIdPath(childPath)) return;
-      out[key] = normalizeSectionValueForCompare(value[key], config, childPath);
+      setOwnValue(out, key, normalizeSectionValueForCompare(value[key], config, childPath));
     });
     return out;
   }

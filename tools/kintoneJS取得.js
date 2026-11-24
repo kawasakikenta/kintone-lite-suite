@@ -614,13 +614,20 @@
   function deepClone(v) {
     return v == null ? v : JSON.parse(JSON.stringify(v));
   }
+  function setOwnValue(target, key, value) {
+    if (key === "__proto__") {
+      Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
+    } else {
+      target[key] = value;
+    }
+  }
   function normalize(v) {
     if (Array.isArray(v)) return v.map(normalize);
     if (v && typeof v === "object") {
       const o = {};
       Object.keys(v).sort().forEach((k) => {
         if (META_KEYS.has(k)) return;
-        o[k] = normalize(v[k]);
+        setOwnValue(o, k, normalize(v[k]));
       });
       return o;
     }
@@ -2083,7 +2090,10 @@ ${base}`
     root2.addEventListener("kus-lite-dispose", dispose, { once: true });
     setRootElement(root2);
     setComponentUi({ status, result, busyText: document.createElement("span") });
+    const focusAtOpen = document.activeElement;
     requestAnimationFrame(() => {
+      const active2 = document.activeElement;
+      if (active2 && active2 !== document.body && active2 !== focusAtOpen && !root2.contains(active2)) return;
       const first = body.querySelector(
         "input:not([type=hidden]):not([disabled]),select:not([disabled]),textarea:not([disabled])"
       );
