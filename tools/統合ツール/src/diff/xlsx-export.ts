@@ -1425,7 +1425,7 @@ function buildSummarySheet(
     pushWarning('⚠ 取得失敗', `${fetchIssues.length} 件。該当セクションは比較できていません。`);
   }
   if (sensitiveSections.length) {
-    pushWarning('🔒 取扱注意', `${sensitiveSections.join('・')} の差分値が含まれます。共有先と保管場所を確認してください。`);
+    pushWarning(SENSITIVE_VALUE_NOTICE_LABEL, sensitiveValueNotice(sensitiveSections));
   }
   if (redactedSensitiveSections.length) {
     pushWarning('🔒 機密値省略', `${redactedSensitiveSections.join('・')} の同一行は、機密値を重複収録しないため値を省略しています。`);
@@ -4612,6 +4612,23 @@ function summarizeCustomerRows(rows: DiffXlsxRow[]) {
   return counts;
 }
 
+/** プラグインの設定値や JS/CSS の内容など、認証情報を含み得る差分値を収録したことを示す注記（社内版・提出版で共通）。 */
+const SENSITIVE_VALUE_NOTICE_LABEL = '🔒 取扱注意';
+
+function sensitiveValueNotice(labels: string[]): string {
+  return `${labels.join('・')} の差分値が含まれます。共有先と保管場所を確認してください。`;
+}
+
+function customerItemHasSensitiveValue(item: CustomerDiffItem): boolean {
+  return SENSITIVE_DIFF_SECTION_KEYS.has(item.sectionKey);
+}
+
+/** プラグインの設定値・JS/CSS など取扱注意の差分値を含む機能別シートの名前（シートの並び順）。 */
+function customerSensitiveSheetLabels(items: CustomerDiffItem[]): string[] {
+  const keys = new Set(items.filter(customerItemHasSensitiveValue).map((item) => customerApiDefinitionForItem(item).key));
+  return CUSTOMER_API_SHEET_DEFS.filter((definition) => keys.has(definition.key)).map((definition) => definition.label);
+}
+
 function customerApiDefinitionForItem(item: CustomerDiffItem): CustomerApiSheetDef {
   const path = String(item.row.path || '');
   if (item.sectionKey === 'pluginSettings'
@@ -4751,6 +4768,11 @@ function buildCustomerSummarySheet(
   const scopeTitleRow = 5;
   const scopeRow = 6;
   const comparedAtRow = 7;
+  const sensitiveLabels = customerSensitiveSheetLabels(items);
+  const sensitiveNoteRow = sensitiveLabels.length ? rows.length : -1;
+  if (sensitiveNoteRow >= 0) {
+    rows.push([SENSITIVE_VALUE_NOTICE_LABEL, sensitiveValueNotice(sensitiveLabels), '', '', '', '']);
+  }
   const fullAppNameRow = sourceName !== sourceFullName || targetName !== targetFullName ? rows.length : -1;
   if (fullAppNameRow >= 0) {
     rows.push(['アプリ名（全文）', `比較元：${sourceFullName}\n比較先：${targetFullName}`, '', '', '', '']);
@@ -4824,6 +4846,10 @@ function buildCustomerSummarySheet(
   cellStyles[scopeRow][1] = 'info';
   cellStyles[comparedAtRow][0] = 'summaryLabel';
   cellStyles[comparedAtRow][1] = 'info';
+  if (sensitiveNoteRow >= 0) {
+    cellStyles[sensitiveNoteRow][0] = 'summaryLabel';
+    cellStyles[sensitiveNoteRow][1] = 'warning';
+  }
   if (fullAppNameRow >= 0) {
     cellStyles[fullAppNameRow][0] = 'summaryLabel';
     cellStyles[fullAppNameRow][1] = 'info';
@@ -4885,6 +4911,7 @@ function buildCustomerSummarySheet(
       if (index === scopeRow || index === comparedAtRow) {
         return readableDiffRowHeight([{ value: row[1], width: 72 }], 58);
       }
+      if (index === sensitiveNoteRow) return readableDiffRowHeight([{ value: row[1], width: 72 }], 58);
       if (index === fullAppNameRow) return readableCustomerRowHeight([
         { value: row[1], width: 92 }
       ], 395);
@@ -4907,6 +4934,7 @@ function buildCustomerSummarySheet(
       `A${scopeTitleRow + 1}:F${scopeTitleRow + 1}`,
       `B${scopeRow + 1}:F${scopeRow + 1}`,
       `B${comparedAtRow + 1}:F${comparedAtRow + 1}`,
+      ...(sensitiveNoteRow >= 0 ? [`B${sensitiveNoteRow + 1}:F${sensitiveNoteRow + 1}`] : []),
       ...(fullAppNameRow >= 0 ? [`B${fullAppNameRow + 1}:F${fullAppNameRow + 1}`] : []),
       ...(redundantNoteRow >= 0 ? [`B${redundantNoteRow + 1}:F${redundantNoteRow + 1}`] : []),
       ...(incompleteNoteRow >= 0 ? [`B${incompleteNoteRow + 1}:F${incompleteNoteRow + 1}`] : []),
@@ -5096,9 +5124,14 @@ function buildCustomerGenericApiDiffSheet(ctx: DiffXlsxContext, group: CustomerA
   const redundantNote = items.every((item) => item.redundant)
     ? CUSTOMER_REDUNDANT_SECTION_NOTE[String(definition.sectionKey || definition.key)] || ''
     : '';
-  const title = redundantNote
-    ? `${customerFeatureSheetTitle(ctx, definition)}\n※ 参考・再掲：${redundantNote}変更一覧と件数には含めていません。`
-    : customerFeatureSheetTitle(ctx, definition);
+  const sensitiveNote = items.some(customerItemHasSensitiveValue)
+    ? `${SENSITIVE_VALUE_NOTICE_LABEL}：${sensitiveValueNotice([definition.label])}`
+    : '';
+  const title = [
+    customerFeatureSheetTitle(ctx, definition),
+    redundantNote ? `※ 参考・再掲：${redundantNote}変更一覧と件数には含めていません。` : '',
+    sensitiveNote
+  ].filter(Boolean).join('\n');
   const headers = ['No.', '変更区分', '設定対象', '差分プロパティ', '変更前', '変更後'];
   const rows: (string | number | null)[][] = [
     [title, '', '', '', '', ''],
@@ -5108,7 +5141,7 @@ function buildCustomerGenericApiDiffSheet(ctx: DiffXlsxContext, group: CustomerA
   const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [['subtitle'], []];
   const rowHeights: number[] = [readableHeaderRowHeight([
     { value: title, width: 124 }
-  ], redundantNote ? 60 : 42), 44];
+  ], redundantNote || sensitiveNote ? 60 : 42), 44];
   const changeStyles: Record<CustomerDiffItem['changeType'], XlsxCellStyle> = {
     '追加': 'changeAdded',
     '削除': 'changeRemoved',
