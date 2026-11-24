@@ -509,12 +509,16 @@ export class LitePanelBusyError extends Error {
 
 // ===== Panel factory =====
 
+/** 実行中に再起動されたパネルへ、折りたたみを解除するよう伝えるイベント。 */
+const EXPAND_EVENT = 'kus-lite-expand';
+
 export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
   ensureThemeStyles();
   const old = document.getElementById(opts.id);
   // 実行中に同じツールを再起動しても、見えなくなった旧パネルの書き込みが続かないよう、実行中のパネルを維持する
   if (old instanceof HTMLElement && old.getAttribute('aria-busy') === 'true') {
-    old.classList.remove('kus-lp--collapsed');
+    // 折りたたみボタンの表示もそろえるため、パネル自身の setCollapsed(false) で展開する
+    old.dispatchEvent(new Event(EXPAND_EVENT));
     const statusText = old.querySelector<HTMLElement>('.kus-lp__status-text');
     const hint = '実行中のため再起動しません。終わるのを待つか、「中止」を押してください。';
     if (statusText && !statusText.textContent?.includes(hint)) statusText.textContent = `${hint} ${statusText.textContent || ''}`.trim();
@@ -841,6 +845,7 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
     if (!collapsed) clampIntoViewport();
   }
   toggleBtn.addEventListener('click', () => setCollapsed(!root.classList.contains('kus-lp--collapsed')));
+  root.addEventListener(EXPAND_EVENT, () => setCollapsed(false));
 
   // ===== ヒーローをつかんで移動 =====
   let customPlaced = false;

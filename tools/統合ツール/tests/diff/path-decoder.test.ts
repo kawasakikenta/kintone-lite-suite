@@ -331,3 +331,25 @@ describe('path-decoder.decodeRow', () => {
     expect(process!.propLabel).toBe('プロセス管理の有効化');
   });
 });
+
+describe('decodeRow names and dictionary keys', () => {
+  it('reads a view name containing "." as one name when the row carries entityPathTail', () => {
+    const decoded = decodeRow({
+      sectionKey: 'viewSettings', path: 'viewSettings.views.営業.一覧.filterCond', type: 'changed',
+      left: 'a = 1', right: 'a = 2', entityPathTail: '.filterCond'
+    });
+    expect(decoded!.whereChips.map((chip) => chip.label)).toContain('営業.一覧');
+    expect(decoded!.propLabel).toBe('絞込条件');
+  });
+
+  it('does not read Object.prototype members from the label dictionaries', () => {
+    expect(labelOfProp('constructor')).toBe('constructor');
+    expect(labelOfProp('toString')).toBe('toString');
+    expect(labelOfValue('accessibility', 'constructor')).toBeNull();
+    const decoded = decodeRow({
+      sectionKey: 'pluginSettings', path: 'pluginSettings.plugins[0].config.constructor', type: 'changed', left: 'a', right: 'b'
+    });
+    expect(decoded!.propLabel).toBe('constructor');
+    expect(decoded!.beforeText).toBe('a');
+  });
+});

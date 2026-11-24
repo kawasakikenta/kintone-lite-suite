@@ -15,9 +15,10 @@
 
 import {
   labelOfProp, iconOfProp, labelOfValue, labelOfSection, labelOfBool, formatEntityText,
-  VALUE_LABELS, PROP_LABELS, stateRenameName
+  VALUE_LABELS, PROP_LABELS, ownLookup, stateRenameName
 } from './label-dict.js';
 import { describePeriodicReport, describeReminderOffset } from '../kintone-enums.js';
+import { tokenizeRowPath } from './enrich.js';
 
 export interface WhereChip {
   icon?: string;
@@ -53,22 +54,6 @@ export function isSemanticSection(sectionKey: string | null | undefined): boolea
   return !!sectionKey && SEMANTIC_SECTIONS.has(sectionKey);
 }
 
-// ---------------------------------------------------------------------------
-// path のトークン化: 'appAcl.rights[3].recordEditable'
-//                    → ['appAcl', 'rights', 3, 'recordEditable']
-// ---------------------------------------------------------------------------
-function tokenize(path: string | null | undefined): Array<string | number> {
-  if (!path) return [];
-  const out: Array<string | number> = [];
-  const re = /([^[.\]]+)|\[(\d+)\]/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(String(path))) !== null) {
-    if (m[1] != null) out.push(m[1]);
-    else out.push(Number(m[2]));
-  }
-  return out;
-}
-
 function isIndex(token: any): token is number {
   return typeof token === 'number';
 }
@@ -81,7 +66,7 @@ const SECTION_PROP_LABEL_OVERRIDES: Record<string, Record<string, string>> = {
 };
 
 function propLabelIn(sectionKey: string, key: string): string {
-  return SECTION_PROP_LABEL_OVERRIDES[sectionKey]?.[key] || labelOfProp(key);
+  return ownLookup(ownLookup(SECTION_PROP_LABEL_OVERRIDES, sectionKey), key) || labelOfProp(key);
 }
 
 // ---------------------------------------------------------------------------
@@ -117,14 +102,14 @@ const SCOPED_ENUM_SECTIONS: Record<string, string[]> = {
 
 function scopedEnumLabel(sectionKey: string, propKey: string, value: string): string | null {
   if (propKey === 'type') {
-    const scope = TYPE_SCOPE_BY_SECTION[sectionKey];
+    const scope = ownLookup(TYPE_SCOPE_BY_SECTION, sectionKey);
     if (scope) {
       const scoped = labelOfValue(scope, value);
       if (scoped) return scoped;
     }
     return labelOfValue('view.type', value) || labelOfValue('chart.type', value);
   }
-  const sections = SCOPED_ENUM_SECTIONS[propKey];
+  const sections = ownLookup(SCOPED_ENUM_SECTIONS, propKey);
   if (sections && (!sections.length || sections.includes(sectionKey))) {
     return labelOfValue(propKey, value);
   }
@@ -282,8 +267,10 @@ interface ParsedContext {
   kind?: string;
 }
 
-function parsePath(sectionKey: string, path: string): ParsedContext {
-  const tokens = tokenize(path);
+// path のトークン化: 'appAcl.rights[3].recordEditable' → ['appAcl', 'rights', 3, 'recordEditable']。
+// 一覧などの名前は「.」を含んでも 1 つのトークンにする（enrich が付けた entityPathTail を使う）。
+function parsePath(sectionKey: string, row: any): ParsedContext {
+  const tokens = tokenizeRowPath(row);
   // tokens[0] === sectionKey usually
   if (!tokens.length) return {};
   const ctx: ParsedContext = {};
@@ -302,7 +289,7 @@ function parsePath(sectionKey: string, path: string): ParsedContext {
     processSettings: 'states', // processSettings.states.<name> も対象だが actions は配列
     categories: 'categories'
   };
-  const mapBucket = namedMaps[sectionKey];
+  const mapBucket = ownLookup(namedMaps, sectionKey);
   if (mapBucket) {
     for (let i = 1; i < tokens.length; i++) {
       if (tokens[i] === mapBucket && typeof tokens[i + 1] === 'string') {
@@ -342,7 +329,7 @@ function extractEntityFromPayload(payload: any): any | null {
   if (!payload || typeof payload !== 'object') return null;
   if (payload.entity && typeof payload.entity === 'object') return payload.entity;
   if (payload.type && (payload.code !== undefined || payload.login !== undefined || payload.id !== undefined)) {
-    const entityTypes = Object.keys(VALUE_LABELS['entity.type'] || {});
+    const entityTypes = Object.keys(ownLookup(VALUE_LABELS, 'entity.type') || {});
     if (entityTypes.includes(String(payload.type))) return payload;
   }
   return null;
@@ -371,7 +358,7 @@ function buildWhereChips(row: any, ctx: ParsedContext): WhereChip[] {
       category: '🗂',
       layoutRow: '🧱'
     };
-    chips.push({ icon: iconMap[ek] || '·', label: String(row.entityLabel) });
+    chips.push({ icon: ownLookup(iconMap, ek) || '·', label: String(row.entityLabel) });
     if (row.entityCode && row.entityCode !== row.entityLabel) {
       chips.push({ label: String(row.entityCode), muted: true });
     }
@@ -411,7 +398,7 @@ function buildWhereChips(row: any, ctx: ParsedContext): WhereChip[] {
   // 6) icon.type / titleField.selectionMode 等、辞書に載っている親プロパティを
   //    文脈として補う（辞書に無い親キーは生のまま出さない）
   if (!chips.length && ctx.parentKey && ctx.parentKey !== ctx.leafKey
-    && ctx.parentKey !== ctx.arrayBucketKey && PROP_LABELS[ctx.parentKey]) {
+    && ctx.parentKey !== ctx.arrayBucketKey && ownLookup(PROP_LABELS, ctx.parentKey)) {
     chips.push({ label: labelOfProp(ctx.parentKey), muted: true });
   }
 
@@ -426,7 +413,7 @@ export function decodeRow(row: any): DecodedRow | null {
   if (!row || !row.sectionKey || !isSemanticSection(row.sectionKey)) return null;
 
   const sect = labelOfSection(row.sectionKey);
-  const ctx = parsePath(row.sectionKey, String(row.path || ''));
+  const ctx = parsePath(row.sectionKey, row);
 
   const whereChips = buildWhereChips(row, ctx);
 

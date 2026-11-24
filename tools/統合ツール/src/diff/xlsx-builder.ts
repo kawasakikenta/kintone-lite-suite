@@ -101,11 +101,20 @@ function truncateUtf16WithoutSplittingPair(text: string, maxLength: number): str
   return text.slice(0, end);
 }
 
-function sanitizeSheetName(name: string, index: number, used: Set<string>): string {
-  const rawName = String(name || `Sheet${index + 1}`);
-  let n = transformXmlCharacters(rawName, () => '_').replace(/[\\\/\?\*\[\]:]/g, '_');
+/**
+ * Excel のシート名として使える形（重複の解消前）にする。
+ * 使えない文字（\ / ? * [ ] : と XML 1.0 に書けない文字）を _ にし、31 文字に収め、
+ * 先頭・末尾の単引用符（Excel が拒否する）を _ にする。ブック内の案内文で実際のタブ名を示すためにも使う。
+ */
+export function excelSheetNameBase(name: unknown): string {
+  let n = transformXmlCharacters(String(name ?? ''), () => '_').replace(/[\\\/\?\*\[\]:]/g, '_');
   n = n.replace(/^'+|'+$/g, '_');
-  if (n.length > 31) n = truncateUtf16WithoutSplittingPair(n, 31);
+  if (n.length > 31) n = truncateUtf16WithoutSplittingPair(n, 31).replace(/'+$/, '_');
+  return n;
+}
+
+function sanitizeSheetName(name: string, index: number, used: Set<string>): string {
+  let n = excelSheetNameBase(name || `Sheet${index + 1}`);
   if (!n) n = `Sheet${index + 1}`;
   let candidate = n;
   let i = 2;
@@ -238,7 +247,7 @@ export interface XlsxSheet {
   autoFilter?: boolean;
   /** 表見出し行（1始まり）。見出しスタイルと AutoFilter の起点になる。既定: 1。 */
   headerRow?: number;
-  /** 各列の幅 (文字数換算)。未指定なら内容から自動推定。 */
+  /** 各列の幅 (文字数換算)。指定値はそのまま使う（Excel の上限 255 まで）。未指定なら内容から推定する（最大 60）。 */
   colWidths?: number[];
   /** 行ごとの表示用途。headerRow の見出しスタイルを優先する。 */
   rowStyles?: XlsxRowStyle[];
@@ -270,6 +279,7 @@ export interface XlsxSheet {
 
 const MIN_COL_W = 10;
 const MAX_COL_W = 60;
+const EXCEL_MAX_COLUMN_WIDTH = 255;
 const EXCEL_MAX_ROWS = 1048576;
 const EXCEL_MAX_COLUMNS = 16384;
 const EXCEL_CELL_TEXT_LIMIT = 32767;
@@ -540,8 +550,12 @@ function buildSheetXml(sheet: XlsxSheet, internalHyperlinks: ResolvedInternalHyp
   const rows = sheet.rows || [];
   const maxCols = rows.reduce((n, r) => Math.max(n, r ? r.length : 0), 0);
   const headerRow = normalizedPositiveInt(sheet.headerRow, 1, Math.max(1, rows.length));
+  // 指定された列幅は呼び出し側が行の高さの見積もりにも使っているため、そのまま書く。推定値は estimateColWidth が 60 までに収める。
   const widths = sheet.colWidths && sheet.colWidths.length
-    ? sheet.colWidths
+    ? sheet.colWidths.map((w) => {
+      const width = Number(w);
+      return Number.isFinite(width) && width > 0 ? Math.min(EXCEL_MAX_COLUMN_WIDTH, width) : MIN_COL_W;
+    })
     : Array.from({ length: maxCols }, (_, i) => estimateColWidth(rows, i));
   const hyperlinkRefs = new Set(internalHyperlinks.map((link) => link.ref));
   const materializeEmptyCellsFromRow = sheet.materializeEmptyCellsFromRow == null
@@ -585,8 +599,7 @@ function buildSheetXml(sheet: XlsxSheet, internalHyperlinks: ResolvedInternalHyp
   if (widths.length) {
     out.push('<cols>');
     widths.forEach((w, i) => {
-      const cw = Math.max(MIN_COL_W, Math.min(MAX_COL_W, Number(w) || MIN_COL_W));
-      out.push(`<col min="${i + 1}" max="${i + 1}" width="${cw}" customWidth="1"/>`);
+      out.push(`<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`);
     });
     out.push('</cols>');
   }

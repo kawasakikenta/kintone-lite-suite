@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildXlsxBlob,
+  excelSheetNameBase,
   makeExcelCellTextVisible,
   type XlsxSheet
 } from '../../src/diff/xlsx-builder';
@@ -838,5 +839,43 @@ describe('diff/xlsx-builder', () => {
     const hashes = [...xml.matchAll(/識別:(SHA256-[0-9A-F]{16})/g)].map((match) => match[1]);
     expect(hashes).toHaveLength(2);
     expect(hashes[0]).not.toBe(hashes[1]);
+  });
+});
+
+describe('xlsx-builder: シート名と指定した列幅', () => {
+  it('does not leave a trailing apostrophe after truncating a sheet name to 31 characters', async () => {
+    const sheets: XlsxSheet[] = [
+      { name: `${'a'.repeat(30)}'b`, rows: [['x']] },
+      { name: `${'c'.repeat(29)}''dd`, rows: [['x']] }
+    ];
+    const workbook = extractEntry(await blobToBuffer(buildXlsxBlob(sheets)), 'xl/workbook.xml');
+    const sheetNames = [...workbook.matchAll(/<sheet name="([^"]+)"/g)].map((match) => match[1]);
+    expect(sheetNames).toEqual([`${'a'.repeat(30)}_`, `${'c'.repeat(29)}_`]);
+    for (const name of sheetNames) expect(name).not.toMatch(/&apos;$/);
+  });
+
+  it('exposes the same sheet-name sanitizing for labels that name a tab', () => {
+    expect(excelSheetNameBase('JS/CSS設定')).toBe('JS_CSS設定');
+    expect(excelSheetNameBase("'Edge'")).toBe('_Edge_');
+    expect(excelSheetNameBase(`${'a'.repeat(30)}'b`)).toBe(`${'a'.repeat(30)}_`);
+    expect(excelSheetNameBase('フィールド技術明細')).toBe('フィールド技術明細');
+  });
+
+  it('writes explicit column widths as given and caps only estimated widths at 60', async () => {
+    const explicit = extractEntry(await blobToBuffer(buildXlsxBlob([{
+      name: 'S',
+      rows: [['No.', '本文', '長い列']],
+      colWidths: [7, 96, 300]
+    }])), 'xl/worksheets/sheet1.xml');
+    expect(explicit).toContain('<col min="1" max="1" width="7" customWidth="1"/>');
+    expect(explicit).toContain('<col min="2" max="2" width="96" customWidth="1"/>');
+    expect(explicit).toContain('<col min="3" max="3" width="255" customWidth="1"/>');
+
+    const estimated = extractEntry(await blobToBuffer(buildXlsxBlob([{
+      name: 'S',
+      rows: [['a', 'x'.repeat(200)]]
+    }])), 'xl/worksheets/sheet1.xml');
+    expect(estimated).toContain('<col min="1" max="1" width="12" customWidth="1"/>');
+    expect(estimated).toContain('<col min="2" max="2" width="60" customWidth="1"/>');
   });
 });

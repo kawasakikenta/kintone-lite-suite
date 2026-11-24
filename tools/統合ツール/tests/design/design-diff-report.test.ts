@@ -101,3 +101,13 @@ describe('design diff report', () => {
     expect(d).toContain('  ## グラフ設定');
   });
 });
+
+describe('設計書差分レポート: アプリ名の表記', () => {
+  it('アプリ名の HTML タグは文字として書き、タグとして解釈させない', () => {
+    const md = buildDesignDiffReport({ diff: '+ x', generatedAt: 'now',
+      source: { appId: '1', appName: '<img src=x onerror=alert(1)>', guestId: '', environment: '本番（運用中）' },
+      target: { appId: '2', appName: '', guestId: '', environment: '本番（運用中）' } });
+    expect(md).toContain('| 比較元（追加・更新後の姿） | App 1 &lt;img src=x onerror=alert(1)> · 本番（運用中） |');
+    expect(md).not.toContain('<img');
+  });
+});

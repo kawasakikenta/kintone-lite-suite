@@ -306,3 +306,14 @@ describe('lite design export', () => {
     expect(Object.keys(zipFiles).filter((name) => name.includes('999999'))).toEqual([]);
   });
 });
+
+describe('設計書 Markdown 一括出力: overview.md の表記', () => {
+  it('overview.md のアプリ名の HTML タグ・| ・改行で表を崩さず、タグとして解釈させない', async () => {
+    await runBatchDesignExportMdZipStandalone({
+      apps: [{ appId: '400', bundle: bundle('400', { ...emptySections(), appSettings: { name: '<b>太字</b>|名前\n2行目' } }) }],
+      format: 'md'
+    }, vi.fn());
+    expect(zipFiles['overview.md']).toContain('| 400 | &lt;b>太字&lt;/b>\\|名前 2行目 |');
+    expect(zipFiles['overview.md']).not.toContain('<b>');
+  });
+});

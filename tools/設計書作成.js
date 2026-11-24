@@ -13374,7 +13374,7 @@ ${body}`;
     if (!item) return out;
     if (item.type === "ROW") {
       const codes = (item.fields || []).map((f) => {
-        if (f.type === "LABEL") return `[ラベル]${mdLine(stripHtmlToText(f.label || ""))}`;
+        if (f.type === "LABEL") return `[ラベル]${mdLine(stripHtmlToText(f.label || "")).replace(/^([([])/, "\\$1")}`;
         if (f.type === "SPACER") return `[スペース${f.elementId ? `:${f.elementId}` : ""}]`;
         if (f.type === "HR") return "[罫線]";
         const width = f.size?.width;
@@ -13837,18 +13837,19 @@ ${body}`;
     for (const def of SECTION_DEFS) {
       if (!Object.prototype.hasOwnProperty.call(sections, def.key)) continue;
       const sec = sections[def.key];
+      if (sec == null) continue;
       const snapshotSection = snapshotByKey.get(def.key);
       lines.push(`## ${def.label}`);
       lines.push("");
       if (sec._fetchError) {
-        lines.push(`> ⚠ 取得できませんでした: ${String(sec._fetchError).replace(/\s*\r?\n\s*/g, " ")}`);
+        lines.push(`> ⚠ 取得できませんでした: ${mdLine(String(sec._fetchError))}`);
         lines.push("");
         if (!mdSectionHasData(sec)) continue;
       }
       const renderer = MD_SECTION_RENDERERS[def.key];
       let rendered = "";
       if (snapshotSection?.status === "fetch-error" && !sec._fetchError) {
-        lines.push(`（取得失敗: ${snapshotSection.detail}）`);
+        lines.push(`（取得失敗: ${mdLine(snapshotSection.detail)}）`);
         if (!includeRawJson) lines.push("", "（原文JSONは rawJson:false のため省略されています）");
       } else if (snapshotSection?.status === "partial") {
         lines.push(`（部分取得: ${snapshotSection.detail}）`);
@@ -14352,11 +14353,12 @@ ${body}`;
       this.name = "LitePanelBusyError";
     }
   };
+  var EXPAND_EVENT = "kus-lite-expand";
   function createLitePanel(opts) {
     ensureThemeStyles();
     const old = document.getElementById(opts.id);
     if (old instanceof HTMLElement && old.getAttribute("aria-busy") === "true") {
-      old.classList.remove("kus-lp--collapsed");
+      old.dispatchEvent(new Event(EXPAND_EVENT));
       const statusText = old.querySelector(".kus-lp__status-text");
       const hint = "実行中のため再起動しません。終わるのを待つか、「中止」を押してください。";
       if (statusText && !statusText.textContent?.includes(hint)) statusText.textContent = `${hint} ${statusText.textContent || ""}`.trim();
@@ -14647,6 +14649,7 @@ ${body}`;
       if (!collapsed) clampIntoViewport();
     }
     toggleBtn.addEventListener("click", () => setCollapsed(!root2.classList.contains("kus-lp--collapsed")));
+    root2.addEventListener(EXPAND_EVENT, () => setCollapsed(false));
     let customPlaced = false;
     function clampIntoViewport() {
       if (!customPlaced || !root2.isConnected) return;
@@ -18648,7 +18651,7 @@ ${fence}`;
         sAoa.push(["観点", "確認内容"]);
         headerInfoRows.push(sAoa.length - 1);
         sAoa.push(["参照関係", `ルックアップ ${attrCounts.lookup}件 / 関連レコード ${attrCounts.reference}件 / 計算式 ${attrCounts.calc}件`]);
-        sAoa.push(["権限", `アプリ ${appAclCount}件 / レコード ${recordAclCount}件 / フィールド ${fieldAclCount}件`]);
+        sAoa.push(["権限", `アプリ ${displayCount(appAclCount)}件 / レコード ${displayCount(recordAclCount)}件 / フィールド ${displayCount(fieldAclCount)}件`]);
         sAoa.push(["カスタマイズ", `JS/CSS ${displayCount(customizeCount)}件 / プラグイン ${displayCount(pluginCount)}件`]);
         sAoa.push(["プロセス", status == null || status.enable == null ? `未取得/不明: ステータス ${displayCount(processStateCount)}件 / アクション ${displayCount(processActionCount)}件` : status.enable ? `有効: ステータス ${displayCount(processStateCount)}件 / アクション ${displayCount(processActionCount)}件` : "無効"]);
         sAoa.push([]);
@@ -20148,7 +20151,7 @@ ${lines.join("\n")}`), { partialSuccess: true });
     return candidate;
   }
   function escapeOverviewCell(value) {
-    return String(value ?? "").replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/[\r\n]+/g, " ").trim();
+    return String(value ?? "").replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/</g, "&lt;").replace(/\s*[\r\n]+\s*/g, " ").trim();
   }
   function firstErrorLine(error) {
     const raw = error instanceof Error ? error.message : String(error ?? "不明なエラー");
@@ -20643,8 +20646,8 @@ ${detail}`);
     };
   }
   function designDiffSideLabel(side) {
-    const name = side.appName ? ` ${side.appName.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\s*\r?\n\s*/g, " ")}` : "";
-    return `App ${side.appId || "?"}${name}${side.guestId ? `（ゲスト ${side.guestId}）` : ""} · ${side.environment}`;
+    const name = side.appName ? ` ${escapeOverviewCell(side.appName)}` : "";
+    return `App ${escapeOverviewCell(side.appId) || "?"}${name}${side.guestId ? `（ゲスト ${escapeOverviewCell(side.guestId)}）` : ""} · ${side.environment}`;
   }
   function readableTimestamp(date) {
     const two = (value) => String(value).padStart(2, "0");

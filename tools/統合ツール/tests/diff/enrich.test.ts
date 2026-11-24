@@ -400,3 +400,59 @@ describe('buildDiffReasonSummary: property names', () => {
     expect(summary('customizeSettings', 'customizeSettings.desktop.js[0].file.size')).toContain('/ ファイルサイズ 変更');
   });
 });
+
+describe('diff/enrich names and dictionary keys', () => {
+  const views = (cond: string) => ({ views: { '営業.一覧': { name: '営業.一覧', type: 'LIST', index: '0', filterCond: cond, id: '1' } } });
+
+  it('keeps a view name that contains "." as one name', () => {
+    const src = makeBundle({ viewSettings: views('a = 1') });
+    const tgt = makeBundle({ viewSettings: views('a = 2') });
+    const rows = enrichDiffRows(computeDiffRows(src, tgt, ['viewSettings'], '').rows, src, tgt)
+      .filter((row: any) => row.type !== 'same');
+    expect(rows.map((row: any) => [row.entityLabel, row.entityPropLabel, row.reasonSummary])).toEqual([
+      ['営業.一覧', '絞り込み条件', 'ビュー「営業.一覧」 / 絞り込み条件 変更']
+    ]);
+  });
+
+  it('reports an added view whose name contains "." as the view itself', () => {
+    const src = makeBundle({ viewSettings: { views: {} } });
+    const tgt = makeBundle({ viewSettings: views('a = 1') });
+    const rows = enrichDiffRows(computeDiffRows(src, tgt, ['viewSettings'], '').rows, src, tgt);
+    expect(rows.map((row: any) => [row.type, row.entityLabel, row.entityPropLabel, row.reasonSummary])).toEqual([
+      ['added', '営業.一覧', '', 'ビュー追加：営業.一覧']
+    ]);
+  });
+
+  it('does not read Object.prototype members as labels', () => {
+    const row = { _id: 'd0', sectionKey: 'viewSettings', path: 'viewSettings.views.constructor', type: 'added', right: { name: 'constructor', type: 'LIST' } };
+    const [enriched] = enrichDiffRows([row], makeBundle({}), makeBundle({}));
+    expect(enriched.reasonSummary).toBe('ビュー追加：constructor');
+    expect(String(extractEntityContext({ sectionKey: 'pluginSettings', path: 'pluginSettings.plugins[0].config.toString', type: 'changed' }).propLabel)).toBe('');
+    expect(buildDiffReasonSummary({ sectionKey: 'fieldSettings', path: 'fieldSettings.properties.f.constructor', type: 'changed' })).toBe('フィールド設定変更');
+  });
+
+  it('labels a choice whose name contains "."', () => {
+    expect(buildDiffReasonSummary({ sectionKey: 'fieldSettings', path: 'fieldSettings.properties.f.options.Ver.1.index', type: 'changed' }))
+      .toBe('選択肢「Ver.1」 / 並び順 変更');
+    expect(buildDiffReasonSummary({ sectionKey: 'fieldSettings', path: 'fieldSettings.properties.f.options.Ver.1', type: 'added' }))
+      .toBe('選択肢「Ver.1」 追加');
+  });
+
+  it('looks up a field label for a code named like an Object.prototype member', () => {
+    const src = makeBundle({ fieldSettings: { properties: {} } });
+    const row = { _id: 'd0', sectionKey: 'fieldAcl', path: 'fieldAcl.rights[0].entities[0].accessibility', type: 'changed', left: 'READ', right: 'WRITE', arrayKey: 'entity', arrayKeyValue: { type: 'USER', code: 'u1' }, parentArrayKey: 'code', parentArrayKeyValue: 'constructor' };
+    const [enriched] = enrichDiffRows([row], src, src);
+    expect(enriched.entityLabel).toBe('constructor › u1 (USER)');
+  });
+});
+
+describe('diff/enrich choice names with brackets', () => {
+  it('keeps "[" and "]" in a choice name instead of reading them as an array index', () => {
+    expect(buildDiffReasonSummary({ sectionKey: 'fieldSettings', path: 'fieldSettings.properties.f.options.B[2].index', type: 'changed' }))
+      .toBe('選択肢「B[2]」 / 並び順 変更');
+    expect(buildDiffReasonSummary({ sectionKey: 'fieldSettings', path: 'fieldSettings.properties.f.options.[A]受付', type: 'added' }))
+      .toBe('選択肢「[A]受付」 追加');
+    expect(buildDiffReasonSummary({ sectionKey: 'fieldSettings', path: 'fieldSettings.properties.T.fields.s.options.優先度[高].index', type: 'changed' }))
+      .toBe('選択肢「優先度[高]」 / 並び順 変更');
+  });
+});

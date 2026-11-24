@@ -16,7 +16,7 @@ import {
   SENSITIVE_DIFF_SECTION_KEYS,
   SENSITIVE_SAME_VALUE_REDACTION
 } from './export-safety.js';
-import { extractFieldPathInfo, fieldSettingIdentity } from './enrich.js';
+import { extractFieldPathInfo, fieldSettingIdentity, splitNamedEntityPath } from './enrich.js';
 import { FIELD_SETTING_LABELS } from './label-dict.js';
 import { decodeRow } from './path-decoder.js';
 import { expandSubtableRowsForDisplay, hasIncompleteActualDiffTruncation } from './engine.js';
@@ -50,6 +50,7 @@ import {
 } from '../kintone-enums.js';
 import {
   buildXlsxBlob,
+  excelSheetNameBase,
   makeExcelCellTextVisible,
   type XlsxCellStyle,
   type XlsxRowStyle,
@@ -82,6 +83,8 @@ export interface DiffXlsxRow {
   entityLabel?: string;
   entityCode?: string;
   entityPropLabel?: string;
+  /** 名前付きの設定（一覧・グラフ・ステータス・カテゴリ・アプリアクション）の path のうち、名前の後ろの部分。enrichDiffRows が付ける。 */
+  entityPathTail?: string;
   arrayKey?: string;
   arrayKeyValue?: unknown;
   _displayOnly?: boolean;
@@ -226,6 +229,31 @@ function sectionLabelOf(key: string): string {
 
 function sectionKeyOfRow(row: DiffXlsxRow): string {
   return String(row.sectionKey || row.section || '(その他)');
+}
+
+interface NamedEntityPath {
+  /** 名前までの path（例: `viewSettings.views.営業.一覧`）。 */
+  root: string;
+  name: string;
+  /** 名前の後ろの部分（例: `.filterCond`）。名前そのものの行は空文字。 */
+  tail: string;
+}
+
+/**
+ * 名前付きの設定の行を、enrichDiffRows が付けた entityPathTail で名前と後ろの部分に分ける。
+ * path は名前の中の「.」をエスケープしないため、path だけを区切ると「営業.一覧」のような名前が割れる。
+ * entityPathTail がない行や名前付きの設定ではない行は null（呼び出し側の既存の判定を使う）。
+ */
+function namedEntityPathOfRow(row: DiffXlsxRow): NamedEntityPath | null {
+  const tail = row.entityPathTail;
+  if (typeof tail !== 'string') return null;
+  const path = String(row.path || '');
+  const firstTokenSplit = splitNamedEntityPath(sectionKeyOfRow(row), path, null);
+  if (!firstTokenSplit || !path.endsWith(tail)) return null;
+  const prefixLength = path.length - firstTokenSplit.name.length - firstTokenSplit.tail.length;
+  const root = path.slice(0, path.length - tail.length);
+  if (root.length <= prefixLength) return null;
+  return { root, name: root.slice(prefixLength), tail };
 }
 
 function normalizationLabel(state: Record<string, boolean> | undefined): string {
@@ -794,8 +822,7 @@ function humanizeDecodedListText(value: string): string {
 }
 
 function technicalSheetNameForRow(row: DiffXlsxRow): string {
-  const key = String(row.sectionKey || row.section || '');
-  return key === 'fieldSettings' ? 'フィールド技術明細' : sectionLabelOf(key);
+  return sectionSheetName(sectionKeyOfRow(row));
 }
 
 function decodedListValue(row: DiffXlsxRow, side: 'source' | 'target'): string {
@@ -1168,8 +1195,9 @@ interface DiffXlsxSheetGuide {
   targetCell: string;
 }
 
+/** セクションの技術明細シート名。案内文とリンクが実際のタブ名を指すよう、Excel のシート名に使える形にする。 */
 function sectionSheetName(key: string): string {
-  return key === 'fieldSettings' ? 'フィールド技術明細' : sectionLabelOf(key);
+  return key === 'fieldSettings' ? 'フィールド技術明細' : excelSheetNameBase(sectionLabelOf(key)) || '(未分類)';
 }
 
 function buildSheetGuides(
@@ -1198,11 +1226,12 @@ function buildSheetGuides(
       targetCell: 'A3'
     });
   }
+  const hasCoarseTargets = summarizeRows(ctx.rows || []).actual > 0;
   guides.push({
     name: '変更対象一覧',
     purpose: '変更された業務対象を、フィールドや一覧などの対象単位で大づかみに確認できます。',
     useWhen: '詳細を読む前に、どのフィールド・一覧・設定対象が変わったかを絞り込むときに使います。',
-    targetCell: summarizeRows(ctx.rows || []).actual ? 'B4' : 'A4'
+    targetCell: `${hasCoarseTargets ? 'B' : 'A'}${coarseTargetSheetDataStartRow(hasCoarseTargets, customerIncomplete(ctx))}`
   });
   if (fieldCount) {
     guides.push(
@@ -1678,6 +1707,13 @@ function resolveCoarseViewIdentity(
   }
   if (exactName) return { viewName: exactName, property: null, isRoot: true };
 
+  // 設定に名前がないときは、enrichDiffRows が決めた名前の区切り（entityPathTail）を使う。
+  // 名前そのものの行は、下の判定で一覧定義かどうかを見て決める。
+  const named = namedEntityPathOfRow(row);
+  if (named?.tail && !hasDefinitionPayload) {
+    return { viewName: customerPlainText(named.name), property: named.tail.replace(/^\./, ''), isRoot: false };
+  }
+
   const fallbackLeaf = /^(.*)\.(id|fields(?:\[\d+\])?|filterCond|sort|type|name|pagination|paginationStyle|pager|builtinType|device|date|title|html|index)$/.exec(remainder);
   if (hasDefinitionPayload || !fallbackLeaf) {
     return { viewName: customerPlainText(remainder), property: null, isRoot: true };
@@ -1703,6 +1739,9 @@ interface CoarseStableIdentity {
 }
 
 function coarseGenericEntityRootPath(row: DiffXlsxRow, sectionKey: string): string | null {
+  // 名前付きの設定は、名前に「.」があっても割れないよう entityPathTail で名前までを決める。
+  const named = namedEntityPathOfRow(row);
+  if (named) return named.root;
   const path = String(row.path || '');
   const entityCode = String(row.entityCode || '').trim();
   const keyedPrefixes: Record<string, string> = {
@@ -1977,6 +2016,14 @@ function buildCoarseTargets(
   });
 }
 
+/**
+ * 社内版「変更対象一覧」の先頭データ行（1始まり）。案内行・区分行・見出し行の後に始まり、
+ * 対象があり比較が不完全なときは見出しの前に注意行が1行入る。概要シートのリンク先もこの行にそろえる。
+ */
+function coarseTargetSheetDataStartRow(hasTargets: boolean, incomplete: boolean): number {
+  return hasTargets && incomplete ? 5 : 4;
+}
+
 function buildCoarseTargetSheet(
   ctx: DiffXlsxContext,
   fieldModel: DiffXlsxFieldModel,
@@ -2017,7 +2064,7 @@ function buildCoarseTargetSheet(
   rowStyles.push('normal');
   cellStyles.push([]);
   rowHeights.push(32);
-  const dataStartRow = headerRowNumber + 1;
+  const dataStartRow = coarseTargetSheetDataStartRow(hasTargets, incomplete);
 
   for (const target of targets) {
     rows.push([
@@ -2955,26 +3002,33 @@ function customerRichText(value: unknown, maxLength?: number): string {
   return customerPlainText(withoutMarkup, maxLength);
 }
 
-function customerGenericSettingLabel(sectionKey: string, path: string, decodedLabel: string): string {
-  const leaf = path.match(/(?:^|[.\]])([^.[\]]+)$/)?.[1] || '';
+/**
+ * 設定項目名。entityTail は名前付きの設定の名前の後ろの部分（名前そのものの行は空文字）。
+ * 渡されたときは名前より後ろだけを見るので、名前に「.」があっても名前の一部を設定項目と取り違えない。
+ */
+function customerGenericSettingLabel(sectionKey: string, path: string, decodedLabel: string, entityTail: string | null = null): string {
+  const subject = entityTail ?? path;
+  const leaf = entityTail === '' ? '' : subject.match(/(?:^|[.\]])([^.[\]]+)$/)?.[1] || '';
   if (sectionKey === 'customizeSettings' && (leaf === '_body' || leaf === 'body')) {
     return 'ファイル内容';
   }
   if (sectionKey === 'pluginSettings' && (leaf === 'config' || leaf === '_config')) {
     return 'プラグイン設定内容';
   }
-  const actionAppRef = /\.((?:destApp|targetApp|sourceApp)\.(?:app|appId)|destAppId|targetAppId|sourceAppId)$/.exec(path);
+  const actionAppRef = /\.((?:destApp|targetApp|sourceApp)\.(?:app|appId)|destAppId|targetAppId|sourceAppId)$/.exec(subject);
   if (sectionKey === 'actionSettings' && actionAppRef) {
     return actionAppRef[1].startsWith('sourceApp')
       ? 'コピー元のアプリ（アプリID）'
       : 'レコードを追加するアプリ（アプリID）';
   }
-  if (sectionKey === 'actionSettings' && /\.actions(?:\[[^\]]+\]|\.[^.]+)\.index$/.test(path)) {
+  if (sectionKey === 'actionSettings' && (entityTail != null
+    ? entityTail === '.index'
+    : /\.actions(?:\[[^\]]+\]|\.[^.]+)\.index$/.test(path))) {
     return 'アプリアクションの並び順';
   }
-  if (sectionKey === 'actionSettings' && /\.mappings(?:\[\d+\])?(?:\.|$)/.test(path)) {
-    const mappingIndex = Number(path.match(/\.mappings\[(\d+)\]/)?.[1]);
-    const mappingProperty = path.match(/\.(srcField|destField|srcType|destType)$/)?.[1] || '';
+  if (sectionKey === 'actionSettings' && /\.mappings(?:\[\d+\])?(?:\.|$)/.test(subject)) {
+    const mappingIndex = Number(subject.match(/\.mappings\[(\d+)\]/)?.[1]);
+    const mappingProperty = subject.match(/\.(srcField|destField|srcType|destType)$/)?.[1] || '';
     const mappingLabels: Record<string, string> = {
       srcField: 'コピー元フィールド',
       destField: 'コピー先フィールド',
@@ -2995,7 +3049,9 @@ function customerGenericSettingLabel(sectionKey: string, path: string, decodedLa
   if (sectionKey === 'processSettings' && leaf === 'enable') {
     return 'プロセス管理を有効にする';
   }
-  if (sectionKey === 'processSettings' && /\.states\.[^.[\]]+\.assignee\.entities(?:\[\d+\])?$/.test(path)) {
+  if (sectionKey === 'processSettings' && (entityTail != null
+    ? /^\.assignee\.entities(?:\[\d+\])?$/.test(entityTail)
+    : /\.states\.[^.[\]]+\.assignee\.entities(?:\[\d+\])?$/.test(path))) {
     return '作業者';
   }
   if ((sectionKey === 'perRecordNotifications' || sectionKey === 'reminderNotifications') && leaf === 'title') {
@@ -3196,6 +3252,8 @@ function isActionMappingPayload(value: unknown): value is Record<string, unknown
  */
 /** アプリアクション自体（アクション直下）の行か。配下の行（関連付けなど）には entityKind も付くため、path で見分ける。 */
 function isAppActionRootRow(row: DiffXlsxRow): boolean {
+  const named = sectionKeyOfRow(row) === 'actionSettings' ? namedEntityPathOfRow(row) : null;
+  if (named) return named.tail === '';
   const path = String(row.path || '');
   if (/^actionSettings\.actions(?:\[[^\]]+\]|\.[^.]+)$/.test(path)) return true;
   const entityCode = String((row as any).entityCode || '');
@@ -3269,15 +3327,17 @@ function customerActionItemParts(
     /^actionSettings\.actions\.(.+?)(?=\.(?:mappings|destApp|targetApp|sourceApp|destAppId|targetAppId|sourceAppId|filterCond|name|index)(?:\.|\[|$)|$)/
       .exec(path)?.[1] || ''
   );
-  const actionName = actionNames(preferredBundle)[0]
+  const named = namedEntityPathOfRow(row);
+  const actionName = named?.name
+    || actionNames(preferredBundle)[0]
     || actionNames(fallbackBundle)[0]
     || (entityKind === 'appAction' ? entityLabel : '')
     || keyedActionName
     || pathActionName
     || '名称不明';
 
-  let settingItem = customerGenericSettingLabel('actionSettings', path, '');
-  if (/\.mappings\[\d+\](?:\.|$)/.test(path)) {
+  let settingItem = customerGenericSettingLabel('actionSettings', path, '', named?.tail ?? null);
+  if (/\.mappings\[\d+\](?:\.|$)/.test(named?.tail ?? path)) {
     // 関連付けは並び順に意味がなく「N件目」では特定できないため、どの関連付けかを示す。
     const identity = customerActionMappingIdentity(row, actionName, preferredBundle, fallbackBundle);
     if (identity) {
@@ -3285,7 +3345,7 @@ function customerActionItemParts(
     }
   }
   const actionPrefix = actionName === '名称不明' ? '' : `actionSettings.actions.${actionName}`;
-  if (actionPrefix && path === actionPrefix) {
+  if (named ? named.tail === '' : !!actionPrefix && path === actionPrefix) {
     settingItem = row.type === 'added'
       ? 'アクションを追加'
       : row.type === 'removed'
@@ -3599,7 +3659,7 @@ function customerItemParts(
           : customerPlainText(decoded.propLabel);
       return {
         target: customerGenericTargetLabel(row, sectionKey, targets),
-        settingItem: customerGenericSettingLabel(sectionKey, path, decodedSetting)
+        settingItem: customerGenericSettingLabel(sectionKey, path, decodedSetting, namedEntityPathOfRow(row)?.tail ?? null)
       };
     }
   } catch {
@@ -5632,7 +5692,7 @@ function buildCustomerGuideSections(
         },
         {
           label: '差分プロパティ',
-          text: 'その対象の「どの設定項目」が変わったかです。たとえば「必須項目」「絞り込み条件」「表示するフィールドの並び順」などが入ります。フィールドや一覧そのものの追加・削除は「フィールド自体」「テーブル自体」と表示されます。'
+          text: 'その対象の「どの設定項目」が変わったかです。たとえば「必須項目」「絞り込み条件」「表示するフィールドの並び順」などが入ります。フィールドやテーブルそのものの追加・削除は「フィールド自体」「テーブル自体」、一覧そのものの追加・削除は「一覧を追加」「一覧を削除」と表示されます。'
         },
         {
           label: '変更前／変更後',
@@ -5665,7 +5725,7 @@ function buildCustomerGuideSections(
     {
       title: '値の表記',
       entries: [
-        { label: '存在しません', text: 'その側のアプリに対象そのもの（フィールドや一覧など）がないことを表します。背景色は付きません。' },
+        { label: '存在しません', text: 'その側のアプリに対象そのもの（フィールドや一覧など）がないことを表します。背景は淡い灰色です。' },
         { label: '（未設定）（値なし）（空文字）', text: '対象はあるものの値が入っていない状態です。設定画面で空欄になっているものと、値が空文字で保存されているものを区別しています。' },
         { label: 'N番目', text: '並び順の変更は、比較元・比較先での位置を1始まりの「N番目」で示します。' },
         { label: 'はい／いいえ', text: 'オン・オフの設定は「はい」「いいえ」で表示します。' },

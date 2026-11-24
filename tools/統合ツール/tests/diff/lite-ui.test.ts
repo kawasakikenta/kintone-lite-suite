@@ -713,7 +713,6 @@ describe('diff lite result presentation', () => {
   });
 });
 
-
 describe('diff lite JSON selection lifecycle', () => {
   function deferred<T>() {
     let resolve!: (value: T) => void;
@@ -1130,5 +1129,32 @@ describe('diff lite row list mode and line-by-line values', () => {
       render(row, { rowMode: 'detail', lineDiff: false });
       expect(calls).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('diff lite: 1対多の比較先と比較元が同じ接続先', () => {
+  const scopes = ['viewSettings'];
+  const sourceAppId = '1';
+
+  it('rejects a target that is the same endpoint as the source', () => {
+    const targets = [
+      { appId: '10', guestId: '', rowNumber: 1 },
+      { appId: '1', guestId: '', rowNumber: 2 }
+    ];
+    const msg = validateLiteDiffStart({ sourceAppId, scopes, targets });
+    expect(msg).toContain('2 行目');
+    expect(msg).toContain('比較元と同じ接続先');
+    // 環境（プレビュー）を明示した比較先と、targetPreview で揃えた比較先の両方を止める。
+    expect(validateLiteDiffStart({ sourceAppId, sourcePreview: true, scopes, targets: [{ appId: '1', preview: true, rowNumber: 1 }] }))
+      .toContain('比較元と同じ接続先');
+    expect(validateLiteDiffStart({ sourceAppId, sourcePreview: true, targetPreview: true, scopes, targets: [{ appId: '1', rowNumber: 1 }] }))
+      .toContain('比較元と同じ接続先');
+  });
+
+  it('allows the source app as a target when the guest space or environment differs, or the source is imported JSON', () => {
+    expect(validateLiteDiffStart({ sourceAppId, scopes, targets: [{ appId: '1', guestId: '5', rowNumber: 1 }] })).toBe('');
+    expect(validateLiteDiffStart({ sourceAppId, scopes, targetPreview: true, targets: [{ appId: '1', rowNumber: 1 }] })).toBe('');
+    expect(validateLiteDiffStart({ sourceAppId, sourcePreview: true, scopes, targets: [{ appId: '1', preview: false, rowNumber: 1 }] })).toBe('');
+    expect(validateLiteDiffStart({ sourceAppId, hasImportedSource: true, scopes, targets: [{ appId: '1', rowNumber: 1 }] })).toBe('');
   });
 });

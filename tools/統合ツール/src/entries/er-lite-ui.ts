@@ -82,7 +82,7 @@ export function mountErLitePanel() {
   presetRow.className = 'kus-lp__btn-row';
   type ErPresetCfg = { label: string; desc: string; layout: string; density: string; depth: string; subtable: boolean; reverse: boolean; focusSpace?: boolean };
   const ER_PRESETS: Record<string, ErPresetCfg> = {
-    current:      { label: '現在のみ',         desc: '起点アプリだけを表示します',                                         layout: 'dagre',        density: 'standard', depth: '1', subtable: true,  reverse: false },
+    current:      { label: '直接の関連 (深さ1)', desc: '起点アプリと、起点に直接つながるアプリを表示します',                 layout: 'dagre',        density: 'standard', depth: '1', subtable: true,  reverse: false },
     neighborhood: { label: '周辺 (深さ2)',     desc: '起点から2段先までのアプリを表示します',                               layout: 'dagre',        density: 'standard', depth: '2', subtable: true,  reverse: false },
     reverse:      { label: '逆引きあり',       desc: '起点を参照しているアプリも含めて、2段先まで表示します',               layout: 'dagre',        density: 'standard', depth: '2', subtable: true,  reverse: true  },
     full:         { label: 'すべて辿る',       desc: 'つながるアプリを最後まで表示します（アプリが多いと時間がかかります）', layout: 'cose',         density: 'standard', depth: '0', subtable: true,  reverse: true  },

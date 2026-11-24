@@ -1458,11 +1458,12 @@
       this.name = "LitePanelBusyError";
     }
   };
+  var EXPAND_EVENT = "kus-lite-expand";
   function createLitePanel(opts) {
     ensureThemeStyles();
     const old = document.getElementById(opts.id);
     if (old instanceof HTMLElement && old.getAttribute("aria-busy") === "true") {
-      old.classList.remove("kus-lp--collapsed");
+      old.dispatchEvent(new Event(EXPAND_EVENT));
       const statusText = old.querySelector(".kus-lp__status-text");
       const hint = "実行中のため再起動しません。終わるのを待つか、「中止」を押してください。";
       if (statusText && !statusText.textContent?.includes(hint)) statusText.textContent = `${hint} ${statusText.textContent || ""}`.trim();
@@ -1753,6 +1754,7 @@
       if (!collapsed) clampIntoViewport();
     }
     toggleBtn.addEventListener("click", () => setCollapsed(!root2.classList.contains("kus-lp--collapsed")));
+    root2.addEventListener(EXPAND_EVENT, () => setCollapsed(false));
     let customPlaced = false;
     function clampIntoViewport() {
       if (!customPlaced || !root2.isConnected) return;
@@ -5799,9 +5801,11 @@ function registerManualApp(app){
   APPS.push(app);
   appMap.set(app.id, app);
 }
+// 取得したアプリは allFields だけを持つ（fields は HTML へ埋め込まない）。手動追加のアプリは両方を持つ
 function applyManualFieldData(app, field){
-  app.fields.push(field);
-  if(Array.isArray(app.allFields)) app.allFields.push(field);
+  if(!Array.isArray(app.allFields)) app.allFields = [];
+  app.allFields.push(field);
+  if(Array.isArray(app.fields)) app.fields.push(field);
   if(typeof app.totalFieldCount === "number") app.totalFieldCount += 1;
   if(field.required) app.requiredCount = (app.requiredCount||0)+1;
 }
@@ -6798,8 +6802,11 @@ function addCustomField(){
     isLookup:kind==="lookup",isRef:kind==="ref",isCustom:true};
   applyManualFieldData(app,field);
   pushUndo("項目追加",()=>{
-    const fi=app.fields.indexOf(field); if(fi>=0) app.fields.splice(fi,1);
-    const ai=(app.allFields||[]).indexOf(field); if(ai>=0) app.allFields.splice(ai,1);
+    [app.fields,app.allFields].forEach(list=>{
+      if(!Array.isArray(list)) return;
+      const index=list.indexOf(field);
+      if(index>=0) list.splice(index,1);
+    });
     if(typeof app.totalFieldCount==="number") app.totalFieldCount=Math.max(0,app.totalFieldCount-1);
     if(field.required) app.requiredCount=Math.max(0,(app.requiredCount||0)-1);
     afterFieldVisibilityChange(app);
@@ -9681,7 +9688,7 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
     const presetRow = document.createElement("div");
     presetRow.className = "kus-lp__btn-row";
     const ER_PRESETS = {
-      current: { label: "現在のみ", desc: "起点アプリだけを表示します", layout: "dagre", density: "standard", depth: "1", subtable: true, reverse: false },
+      current: { label: "直接の関連 (深さ1)", desc: "起点アプリと、起点に直接つながるアプリを表示します", layout: "dagre", density: "standard", depth: "1", subtable: true, reverse: false },
       neighborhood: { label: "周辺 (深さ2)", desc: "起点から2段先までのアプリを表示します", layout: "dagre", density: "standard", depth: "2", subtable: true, reverse: false },
       reverse: { label: "逆引きあり", desc: "起点を参照しているアプリも含めて、2段先まで表示します", layout: "dagre", density: "standard", depth: "2", subtable: true, reverse: true },
       full: { label: "すべて辿る", desc: "つながるアプリを最後まで表示します（アプリが多いと時間がかかります）", layout: "cose", density: "standard", depth: "0", subtable: true, reverse: true },

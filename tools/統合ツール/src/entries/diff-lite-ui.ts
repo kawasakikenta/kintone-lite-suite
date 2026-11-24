@@ -96,8 +96,11 @@ export function validateLiteDiffStart(options: {
   ignoreKeys?: string;
   hasImportedSource?: boolean;
   hasImportedTarget?: boolean;
-  /** 1対多比較の全比較先。指定時は全件を検証し、単一比較の targetAppId チェックは行わない。 */
-  targets?: Array<{ appId?: string; guestId?: string; rowNumber?: number }>;
+  /**
+   * 1対多比較の全比較先。指定時は全件を検証し、単一比較の targetAppId チェックは行わない。
+   * preview を省略した比較先は targetPreview の環境として扱う。
+   */
+  targets?: Array<{ appId?: string; guestId?: string; preview?: boolean; rowNumber?: number }>;
 }): string {
   if (!options.scopes?.length) return '比較セクションを 1 つ以上選択してください';
   const sourceAppId = String(options.sourceAppId || '').trim();
@@ -121,6 +124,17 @@ export function validateLiteDiffStart(options: {
       }
       if (guestId && !/^[1-9]\d*$/.test(guestId)) {
         return `比較先 ${rowNum} 行目: ゲストIDは正の整数で入力してください`;
+      }
+      // 比較元と同じアプリ・ゲストID・環境を比べても、常に「一致」になるだけなので止める。
+      const targetPreview = t.preview ?? options.targetPreview;
+      if (
+        !options.hasImportedSource
+        && sourceAppId
+        && appId === sourceAppId
+        && guestId === sourceGuestId
+        && Boolean(options.sourcePreview) === Boolean(targetPreview)
+      ) {
+        return `比較先 ${rowNum} 行目は比較元と同じ接続先（同じアプリID・ゲストID・環境）です`;
       }
     }
     // 重複チェック（App ID + ゲスト ID が同じ比較先）
@@ -2660,7 +2674,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       throw error;
     }
     if (generation !== pairFolderLoadGeneration[side]) return;
-    const parsed = parseDiffBatchFolderImport(entries);
+    const parsed = parseDiffBatchFolderImport(entries, { side });
     if (parsed.issues.length) {
       const shown = parsed.issues.slice(0, 3).map((issue) => issue.message).join(' / ');
       throw new Error(`${side === 'source' ? '比較元' : '比較先'}フォルダを取り込めません: ${shown}${parsed.issues.length > 3 ? `（ほか ${parsed.issues.length - 3}件）` : ''}`);
@@ -4701,6 +4715,8 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       scopes: base.scopes,
       ignoreKeys: base.ignoreKeys,
       hasImportedSource: !!importedSourceBundle,
+      sourcePreview: base.source.preview,
+      targetPreview: base.target.preview,
       targets
     });
     if (commonValidation) {

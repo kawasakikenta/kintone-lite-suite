@@ -424,11 +424,16 @@ function uniqueMdZipEntryName(used: Set<string>, baseName: string): string {
   return candidate;
 }
 
+/**
+ * Markdown の表のセルに入れる 1 行の文字列。アプリ名などの kintone の値が表を崩したり、
+ * HTML のタグとして解釈されたりしないよう、`\`・`|`・`<` を逃がし、改行を空白にする（設計書 Markdown と同じ扱い）。
+ */
 function escapeOverviewCell(value: unknown): string {
   return String(value ?? '')
     .replace(/\\/g, '\\\\')
     .replace(/\|/g, '\\|')
-    .replace(/[\r\n]+/g, ' ')
+    .replace(/</g, '&lt;')
+    .replace(/\s*[\r\n]+\s*/g, ' ')
     .trim();
 }
 
@@ -1007,9 +1012,9 @@ function describeDesignDiffSide(bundle: any, side: { appId: string; guestId?: st
 }
 
 function designDiffSideLabel(side: DesignDiffSide): string {
-  // アプリ名は Markdown 表のセル内に入るため、区切りの | や改行で表が崩れないようにする
-  const name = side.appName ? ` ${side.appName.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\s*\r?\n\s*/g, ' ')}` : '';
-  return `App ${side.appId || '?'}${name}${side.guestId ? `（ゲスト ${side.guestId}）` : ''} · ${side.environment}`;
+  // アプリ名は Markdown 表のセル内に入るため、区切りの | や改行で表が崩れず、< がタグにならないようにする
+  const name = side.appName ? ` ${escapeOverviewCell(side.appName)}` : '';
+  return `App ${escapeOverviewCell(side.appId) || '?'}${name}${side.guestId ? `（ゲスト ${escapeOverviewCell(side.guestId)}）` : ''} · ${side.environment}`;
 }
 
 /** レポートに書く生成日時（ファイル名用の 20261109_220200 ではなく、読める形）。 */

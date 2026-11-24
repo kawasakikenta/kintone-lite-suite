@@ -401,3 +401,17 @@ describe('項目一覧シートの種別', () => {
     expect(cells.some((value) => value.includes('小数点: 2桁'))).toBe(true);
   });
 });
+
+describe('設計書 Excel: 取得できなかった件数', () => {
+  it('権限を取得できなかったとき、サマリーのレビュー観点に「null件」と書かず未取得と書く', async () => {
+    installEnvironment(baseResponses({ '/app/acl.json': new Error('403'), '/record/acl.json': new Error('403'), '/field/acl.json': new Error('403') }));
+    vi.useFakeTimers();
+    const promise = runAdvancedDesignExporter({ appId: '5', preselectedSheets: new Set(['summary']), returnWorkbook: true, suppressToast: true });
+    await vi.runAllTimersAsync();
+    const result: any = await promise;
+    vi.useRealTimers();
+    const summary: any[][] = result.wb.Sheets['サマリー'].__aoa;
+    expect(summary.find((row) => row[0] === '権限')?.[1]).toBe('アプリ 未取得件 / レコード 未取得件 / フィールド 未取得件');
+    expect(summary.flat().join('\n')).not.toContain('null件');
+  });
+});
