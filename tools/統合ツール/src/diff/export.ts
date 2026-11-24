@@ -1588,7 +1588,7 @@ function mdRenderLayoutItem(item, depth = 0, fields: any = {}) {
   if (!item) return out;
   if (item.type === 'ROW') {
     const codes = (item.fields || []).map((f) => {
-      if (f.type === 'LABEL') return `[ラベル]${mdLine(stripHtmlToText(f.label || ''))}`;
+      if (f.type === 'LABEL') return `[ラベル]${mdLine(stripHtmlToText(f.label || '')).replace(/^([([])/, '\\$1')}`;
       if (f.type === 'SPACER') return `[スペース${f.elementId ? `:${f.elementId}` : ''}]`;
       if (f.type === 'HR') return '[罫線]';
       const width = f.size?.width;
@@ -2103,12 +2103,14 @@ export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions =
   for (const def of SECTION_DEFS) {
     if (!Object.prototype.hasOwnProperty.call(sections, def.key)) continue;
     const sec = sections[def.key];
+    // 値が null のセクションは目次・出力セクションの表と同じく出力しない
+    if (sec == null) continue;
     const snapshotSection = snapshotByKey.get(def.key);
     lines.push(`## ${def.label}`);
     lines.push('');
     if (sec._fetchError) {
       // 取得に失敗したセクションを「0件」や「データなし」と読み違えないよう、失敗を明示する
-      lines.push(`> ⚠ 取得できませんでした: ${String(sec._fetchError).replace(/\s*\r?\n\s*/g, ' ')}`);
+      lines.push(`> ⚠ 取得できませんでした: ${mdLine(String(sec._fetchError))}`);
       lines.push('');
       // 付随情報（JS/CSS本文・プラグイン設定など）だけ失敗した場合は、取得できた本体を捨てずに続けて出す
       if (!mdSectionHasData(sec)) continue;
@@ -2117,7 +2119,7 @@ export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions =
     let rendered = '';
     // 上の警告を出したうえで本体が残っているセクション（付随情報だけ失敗）は、取得できた本体を通常どおり整形する。
     if (snapshotSection?.status === 'fetch-error' && !sec._fetchError) {
-      lines.push(`（取得失敗: ${snapshotSection.detail}）`);
+      lines.push(`（取得失敗: ${mdLine(snapshotSection.detail)}）`);
       if (!includeRawJson) lines.push('', '（原文JSONは rawJson:false のため省略されています）');
     } else if (snapshotSection?.status === 'partial') {
       lines.push(`（部分取得: ${snapshotSection.detail}）`);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  bundleToMarkdown,
   buildDiffExportPayload,
   buildDiffHtml,
   buildDiffHtmlHumanOverview,
@@ -2252,5 +2253,37 @@ describe('diff/html export with a dotted entity name', () => {
     expect(fns.matchesIgnoreRules(rules(['一覧', '営業.一覧']), entityRow)).toBe(false);
     // entityPathTail の無い行は path をそのまま区切る
     expect(fns.rowPathTokens({ sectionKey: 'appSettings', path: 'appSettings.icon.type' })).toEqual(['appSettings', 'icon', 'type']);
+  });
+});
+
+describe('bundleToMarkdown (design document)', () => {
+  it('keeps a LABEL text that starts with a bracket from becoming a link', () => {
+    const md = bundleToMarkdown({
+      appId: '1',
+      sections: {
+        layoutSettings: { layout: [{ type: 'ROW', fields: [
+          { type: 'LABEL', label: '(https://example.com/x)注意' },
+          { type: 'LABEL', label: '[参考]説明' }
+        ] }] }
+      }
+    });
+
+    expect(md).toContain('[ラベル]\\(https://example.com/x)注意');
+    expect(md).toContain('[ラベル]\\[参考]説明');
+    expect(md).not.toContain('[ラベル](https://example.com/x)');
+  });
+
+  it('writes a fetch error as one escaped line', () => {
+    const md = bundleToMarkdown({ appId: '1', sections: { pluginSettings: { _fetchError: 'HTTP 500\n<b>bad</b> *x*' } } });
+
+    expect(md).toContain('> ⚠ 取得できませんでした: HTTP 500 &lt;b>bad&lt;/b> \\*x\\*');
+    expect(md).not.toContain('<b>bad</b>');
+  });
+
+  it('skips a section whose value is null instead of throwing', () => {
+    const md = bundleToMarkdown({ appId: '1', sections: { viewSettings: null, appSettings: { name: 'アプリ' } } });
+
+    expect(md).toContain('## アプリ設定');
+    expect(md).not.toContain('## ビュー設定');
   });
 });

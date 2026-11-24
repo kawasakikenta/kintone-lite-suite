@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { runInNewContext } from 'node:vm';
 import { buildHTML } from '../src/tabs/er.js';
+import { buildErAppModel } from '../src/tabs/er-model.js';
 
 function viewerScript(): string {
   const html = buildHTML([{ id: 1, name: '物件', ok: true, status: 'complete', allFields: [], relations: [] }], {
@@ -197,5 +198,34 @@ describe('ER viewer navigation to unresolved targets', () => {
     expect(calls.appDetail).toEqual(['1']);
     context.focusApp(99);
     expect(calls.animated).toEqual(['a1']);
+  });
+});
+
+describe('ER viewer manual fields', () => {
+  const fetched = buildErAppModel({
+    appId: 3,
+    fieldsResponse: { properties: { title: { code: 'title', label: '件名', type: 'SINGLE_LINE_TEXT' } } },
+    appInfoResponse: { name: '案件' },
+    actionsResponse: { actions: {} }
+  });
+  const html = buildHTML([fetched], { startAppIds: ['3'], layoutName: 'dagre', fieldDensity: 'standard', source: {} });
+  const script = html.match(/<script id="er-main" type="text\/plain">([\s\S]*?)<\/script>/)![1];
+  const embeddedApp = () => JSON.parse(script.match(/^const APPS = (.*);$/m)![1])[0];
+
+  it('adds a field to an app read from kintone, which the HTML embeds with allFields only', () => {
+    const app = embeddedApp();
+    expect(app).not.toHaveProperty('fields');
+    const context: any = { app };
+    runInNewContext(`${extractFunction(script, 'applyManualFieldData')}; applyManualFieldData(app, { code: 'manual_1', label: '承認', required: true });`, context);
+    expect(context.app.allFields.map((f: any) => f.code)).toEqual(['title', 'manual_1']);
+    expect(context.app.totalFieldCount).toBe(2);
+    expect(context.app.requiredCount).toBe(1);
+  });
+
+  it('keeps both field lists of a manually added app in step', () => {
+    const context: any = { app: { id: -1, fields: [], allFields: [] } };
+    runInNewContext(`${extractFunction(script, 'applyManualFieldData')}; applyManualFieldData(app, { code: 'manual_2', label: 'メモ' });`, context);
+    expect(context.app.fields.map((f: any) => f.code)).toEqual(['manual_2']);
+    expect(context.app.allFields.map((f: any) => f.code)).toEqual(['manual_2']);
   });
 });

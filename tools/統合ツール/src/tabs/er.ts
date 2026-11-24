@@ -1619,9 +1619,11 @@ function registerManualApp(app){
   APPS.push(app);
   appMap.set(app.id, app);
 }
+// 取得したアプリは allFields だけを持つ（fields は HTML へ埋め込まない）。手動追加のアプリは両方を持つ
 function applyManualFieldData(app, field){
-  app.fields.push(field);
-  if(Array.isArray(app.allFields)) app.allFields.push(field);
+  if(!Array.isArray(app.allFields)) app.allFields = [];
+  app.allFields.push(field);
+  if(Array.isArray(app.fields)) app.fields.push(field);
   if(typeof app.totalFieldCount === "number") app.totalFieldCount += 1;
   if(field.required) app.requiredCount = (app.requiredCount||0)+1;
 }
@@ -2618,8 +2620,11 @@ function addCustomField(){
     isLookup:kind==="lookup",isRef:kind==="ref",isCustom:true};
   applyManualFieldData(app,field);
   pushUndo("項目追加",()=>{
-    const fi=app.fields.indexOf(field); if(fi>=0) app.fields.splice(fi,1);
-    const ai=(app.allFields||[]).indexOf(field); if(ai>=0) app.allFields.splice(ai,1);
+    [app.fields,app.allFields].forEach(list=>{
+      if(!Array.isArray(list)) return;
+      const index=list.indexOf(field);
+      if(index>=0) list.splice(index,1);
+    });
     if(typeof app.totalFieldCount==="number") app.totalFieldCount=Math.max(0,app.totalFieldCount-1);
     if(field.required) app.requiredCount=Math.max(0,(app.requiredCount||0)-1);
     afterFieldVisibilityChange(app);

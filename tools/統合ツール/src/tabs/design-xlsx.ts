@@ -1733,7 +1733,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       sAoa.push(['レビュー観点']); sectionRows.push(sAoa.length - 1);
       sAoa.push(['観点', '確認内容']); headerInfoRows.push(sAoa.length - 1);
       sAoa.push(['参照関係', `ルックアップ ${attrCounts.lookup}件 / 関連レコード ${attrCounts.reference}件 / 計算式 ${attrCounts.calc}件`]);
-      sAoa.push(['権限', `アプリ ${appAclCount}件 / レコード ${recordAclCount}件 / フィールド ${fieldAclCount}件`]);
+      sAoa.push(['権限', `アプリ ${displayCount(appAclCount)}件 / レコード ${displayCount(recordAclCount)}件 / フィールド ${displayCount(fieldAclCount)}件`]);
       sAoa.push(['カスタマイズ', `JS/CSS ${displayCount(customizeCount)}件 / プラグイン ${displayCount(pluginCount)}件`]);
       sAoa.push(['プロセス', status == null || status.enable == null
         ? `未取得/不明: ステータス ${displayCount(processStateCount)}件 / アクション ${displayCount(processActionCount)}件`
