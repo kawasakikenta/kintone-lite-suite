@@ -445,3 +445,14 @@ describe('diff/enrich names and dictionary keys', () => {
     expect(enriched.entityLabel).toBe('constructor › u1 (USER)');
   });
 });
+
+describe('diff/enrich choice names with brackets', () => {
+  it('keeps "[" and "]" in a choice name instead of reading them as an array index', () => {
+    expect(buildDiffReasonSummary({ sectionKey: 'fieldSettings', path: 'fieldSettings.properties.f.options.B[2].index', type: 'changed' }))
+      .toBe('選択肢「B[2]」 / 並び順 変更');
+    expect(buildDiffReasonSummary({ sectionKey: 'fieldSettings', path: 'fieldSettings.properties.f.options.[A]受付', type: 'added' }))
+      .toBe('選択肢「[A]受付」 追加');
+    expect(buildDiffReasonSummary({ sectionKey: 'fieldSettings', path: 'fieldSettings.properties.T.fields.s.options.優先度[高].index', type: 'changed' }))
+      .toBe('選択肢「優先度[高]」 / 並び順 変更');
+  });
+});
