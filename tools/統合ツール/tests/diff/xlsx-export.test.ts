@@ -3712,3 +3712,38 @@ describe('diff Excel: 選択肢名の [ ]', () => {
     ]);
   });
 });
+
+describe('diff Excel: 提出版の取扱注意', () => {
+  const appNameRow: DiffXlsxContext['rows'][number] = {
+    sectionKey: 'appSettings', type: 'changed', path: 'appSettings.name', left: '旧名称', right: '新名称'
+  };
+
+  it('adds a 取扱注意 notice to the customer workbook when plugin settings or JS/CSS values are included, without hiding them', async () => {
+    const ctx: DiffXlsxContext = {
+      scopes: ['appSettings', 'pluginSettings', 'customizeSettings'],
+      rows: [
+        appNameRow,
+        { sectionKey: 'pluginSettings', type: 'changed', path: 'pluginSettings.plugins[0].config.apiToken', left: 'TOKEN_OLD_123', right: 'TOKEN_NEW_456' },
+        { sectionKey: 'customizeSettings', type: 'changed', path: 'customizeSettings.desktop.js[0]._bodyText', left: 'console.log(1) // OLD_BODY', right: 'console.log(2) // NEW_BODY' }
+      ]
+    };
+    const sheets = buildDiffXlsxSheetsWithSafeDefault(ctx);
+    const summary = sheets.find((sheet) => sheet.name === '比較概要')!;
+    const noticeIndex = summary.rows.findIndex((row) => row[0] === '🔒 取扱注意');
+    expect(noticeIndex).toBeGreaterThan(0);
+    expect(summary.rows[noticeIndex][1]).toBe('10 プラグイン個別設定・12 カスタマイズ本文 の差分値が含まれます。共有先と保管場所を確認してください。');
+    expect(summary.cellStyles?.[noticeIndex]?.[1]).toBe('warning');
+    expect(summary.merges).toContain(`B${noticeIndex + 1}:F${noticeIndex + 1}`);
+    expect(String(sheets.find((sheet) => sheet.name === '10_プラグイン個別設定')!.rows[0][0]))
+      .toContain('🔒 取扱注意：10 プラグイン個別設定 の差分値が含まれます。');
+    expect(String(sheets.find((sheet) => sheet.name === '12_カスタマイズ本文')!.rows[0][0]))
+      .toContain('🔒 取扱注意：12 カスタマイズ本文 の差分値が含まれます。');
+    expect(String(sheets.find((sheet) => sheet.name === '01_アプリ一般設定')!.rows[0][0])).not.toContain('取扱注意');
+
+    const allText = await readAllEntryText(buildDiffXlsxBlobWithSafeDefault(ctx));
+    for (const value of ['TOKEN_OLD_123', 'TOKEN_NEW_456', 'OLD_BODY', 'NEW_BODY']) expect(allText).toContain(value);
+
+    const plain = buildDiffXlsxSheetsWithSafeDefault({ scopes: ['appSettings'], rows: [appNameRow] });
+    expect(JSON.stringify(plain.map((sheet) => sheet.rows))).not.toContain('取扱注意');
+  });
+});

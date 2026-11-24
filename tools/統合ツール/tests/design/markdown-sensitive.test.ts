@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { SECTION_DEFS } from '../../src/constants';
+import { CUSTOMIZE_BODY_SENSITIVE_NOTE, PLUGIN_CONFIG_INCLUDED_NOTE, SECTION_DEFS } from '../../src/constants';
 import { fetchBundle } from '../../src/api';
 import { copyTextToClipboard, downloadBlob, downloadText } from '../../src/utils';
-import { runBatchDesignExportMdZipStandalone, runDesignCopyMdStandalone, runDesignExportStandalone } from '../../src/tabs/design-standalone';
+import { DESIGN_JSON_SENSITIVE_NOTICE, designJsonSensitiveNotice, runBatchDesignExportMdZipStandalone, runDesignCopyMdStandalone, runDesignExportStandalone } from '../../src/tabs/design-standalone';
 
 const zipFiles: Record<string, string> = {};
 vi.mock('../../src/api', async (importOriginal) => ({ ...await importOriginal<typeof import('../../src/api')>(), fetchBundle: vi.fn() }));
@@ -80,5 +80,34 @@ describe('設計書は、使わない補助情報を kintone から取得しな�
     const status = vi.fn();
     await runDesignExportStandalone('md', { appId: '1' }, status);
     expect(status).toHaveBeenLastCalledWith(expect.not.stringContaining('取得失敗'), false);
+  });
+});
+
+describe('設計書 JSON の取扱注意', () => {
+  it('設計書 JSON は設定の写しとして値をそのまま含め、確認画面と完了メッセージで取扱注意を伝える（ファイルの形は変えない）', async () => {
+    const status = vi.fn();
+    await runDesignExportStandalone('json', { appId: '1', importedBundle: bundle() }, status);
+    expect(savedText()).toContain('sk-live-SECRET');
+    expect(savedText()).toContain('tok_live_SECRET');
+    expect(JSON.parse(savedText())).not.toHaveProperty('notice');
+    expect(status).toHaveBeenLastCalledWith(expect.stringContaining(`。取扱注意: ${PLUGIN_CONFIG_INCLUDED_NOTE}。${CUSTOMIZE_BODY_SENSITIVE_NOTE}。共有する前に内容を確認してください`), false);
+    expect(DESIGN_JSON_SENSITIVE_NOTICE).toBe(`${PLUGIN_CONFIG_INCLUDED_NOTE}。${CUSTOMIZE_BODY_SENSITIVE_NOTE}。共有する前に内容を確認してください`);
+  });
+
+  it('設定値・本文が入っていない設計書 JSON には取扱注意を付けない', async () => {
+    const plain: any = bundle();
+    delete plain.sections.pluginSettings.plugins[0]._config;
+    delete plain.sections.customizeSettings.desktop.js[0]._bodyText;
+    delete plain.sections.customizeSettings.desktop.js[0]._bodyHash;
+    const status = vi.fn();
+    await runDesignExportStandalone('json', { appId: '1', importedBundle: plain }, status);
+    expect(status).toHaveBeenLastCalledWith(expect.not.stringContaining('取扱注意'), false);
+  });
+
+  it('プラグインの設定値だけが入っていれば、その注意だけを書く', () => {
+    const pluginOnly: any = bundle();
+    delete pluginOnly.sections.customizeSettings.desktop.js[0]._bodyText;
+    delete pluginOnly.sections.customizeSettings.desktop.js[0]._bodyHash;
+    expect(designJsonSensitiveNotice(pluginOnly)).toBe(`取扱注意: ${PLUGIN_CONFIG_INCLUDED_NOTE}。共有する前に内容を確認してください`);
   });
 });

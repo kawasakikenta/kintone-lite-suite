@@ -11404,6 +11404,8 @@
   // src/constants.ts
   var TOOL_ID = "kintone-unified-suite-v2";
   var TOOL_VERSION = "2.5.0";
+  var PLUGIN_CONFIG_INCLUDED_NOTE = "プラグインの設定値を含みます（API キーなどの機微な値を含む場合があります）";
+  var CUSTOMIZE_BODY_SENSITIVE_NOTE = "JS/CSSファイルの本文を含みます（API トークンなどが書かれている場合があります）";
   function resolveDefaultAppId() {
     try {
       if (typeof kintone !== "undefined" && kintone?.app?.getId) {
@@ -19996,11 +19998,18 @@ ${detail}`);
   function designBundleExportMarkdown(kind, bundle) {
     return kind === "ai-md" ? buildDesignAiMarkdown(bundle) : designMarkdownOf(bundle);
   }
+  var DESIGN_JSON_SENSITIVE_NOTICE = `${PLUGIN_CONFIG_INCLUDED_NOTE}。${CUSTOMIZE_BODY_SENSITIVE_NOTE}。共有する前に内容を確認してください`;
+  function designJsonSensitiveNotice(bundle) {
+    const { pluginConfigs, customizeBodies } = stripSensitiveSupplements(bundle);
+    const notes = [pluginConfigs ? PLUGIN_CONFIG_INCLUDED_NOTE : "", customizeBodies ? CUSTOMIZE_BODY_SENSITIVE_NOTE : ""].filter(Boolean);
+    return notes.length ? `取扱注意: ${notes.join("。")}。共有する前に内容を確認してください` : "";
+  }
   async function runDesignExportStandalone(kind, source, setStatus) {
     if (kind !== "md" && kind !== "json" && kind !== "ai-md") throw new Error("設計書の出力形式は md、json または ai-md を指定してください");
     const bundle = await resolveDesignBundle(source, "source", setStatus, "", kind === "ai-md", kind === "json");
     state.lastSourceBundle = bundle;
     const appLabel = appLabelFromBundle(bundle);
+    const sensitiveNotice = kind === "json" ? designJsonSensitiveNotice(bundle) : "";
     if (kind === "json") {
       downloadText(buildExportFilename("設計書", "json", { appLabel }), JSON.stringify(bundle, null, 2), "application/json");
     } else {
@@ -20009,7 +20018,7 @@ ${detail}`);
     }
     const note = failedSectionNote(failedSectionLabels(bundle));
     const completionNote = designBundleCompletionNote(bundle);
-    setStatus(`${kind === "ai-md" ? "AI向けMarkdown" : "設計書"}出力完了（App ${bundle.appId}）${note ? `。${note}` : ""}${completionNote}${kind === "ai-md" ? designBundleSourceNote(bundle) : ""}`, !!note || !!completionNote);
+    setStatus(`${kind === "ai-md" ? "AI向けMarkdown" : "設計書"}出力完了（App ${bundle.appId}）${note ? `。${note}` : ""}${completionNote}${kind === "ai-md" ? designBundleSourceNote(bundle) : ""}${sensitiveNotice ? `。${sensitiveNotice}` : ""}`, !!note || !!completionNote);
   }
   async function runDesignCopyMdStandalone(source, setStatus) {
     const bundle = await resolveDesignBundle(source, "source", setStatus, "", false, false);
@@ -21545,7 +21554,7 @@ ${detail}`);
         { id: "ai-md", label: "AI向けMarkdownを保存", description: "1行目のアプリの設定を、AIに渡す用のMarkdownファイルで保存します。", button: bAiMd, validate: firstTargetRequired, summary: () => singleSummary("AI向けMarkdown（AIへの受け渡し）") },
         { id: "md", label: "Markdown設計書を保存", description: "1行目のアプリの設計書をMarkdownファイルで保存します。", button: bMd, validate: firstTargetRequired, summary: () => singleSummary("Markdown") },
         { id: "ai-copy", label: "AI向けMarkdownをコピー", description: "1行目のアプリの設定を、AIに渡す用のMarkdownとしてコピーします。", button: bAiCopy, validate: firstTargetRequired, summary: () => singleSummary("AI向けMarkdown（クリップボード）") },
-        { id: "json", label: "設計書JSONを保存", description: "1行目のアプリの設定をJSONファイルで保存します。", button: bJson, validate: firstTargetRequired, summary: () => singleSummary("JSON") },
+        { id: "json", label: "設計書JSONを保存", description: "1行目のアプリの設定をJSONファイルで保存します。", button: bJson, validate: firstTargetRequired, summary: () => [...singleSummary("JSON"), ["取扱注意", DESIGN_JSON_SENSITIVE_NOTICE]] },
         { id: "copy", label: "Markdownをコピー", description: "1行目のアプリの設計書をMarkdownとしてクリップボードにコピーします。", button: bCopy, validate: firstTargetRequired, summary: () => singleSummary("クリップボード") },
         { id: "diff", label: "2アプリの設計差分を保存", description: "対象アプリ表の1行目（比較元）と2行目（比較先）の設計差分をMarkdownファイルで保存します。", button: bDiff, validate: () => {
           const rows = diffTargetRows();

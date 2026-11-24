@@ -1,6 +1,6 @@
 'use strict';
 
-import { SECTION_DEFS } from '../constants.js';
+import { CUSTOMIZE_BODY_SENSITIVE_NOTE, PLUGIN_CONFIG_INCLUDED_NOTE, SECTION_DEFS } from '../constants.js';
 import { esc, downloadText, downloadBlob, selectedScopeKeys, buildExportFilename, buildAppFilenameLabel, extractAppNameFromBundle } from '../utils.js';
 import { fetchBundle, buildApiPrefix, apiGet, fetchAppsInSpace } from '../api.js';
 import { PLUGIN_CONFIG_OMITTED_KIND, markPluginConfigOmitted } from '../pluginConfigMarker.js';
@@ -58,10 +58,9 @@ function omittedPluginConfigCount(bundle: any): number {
   return partial?.kind === PLUGIN_CONFIG_OMITTED_KIND ? Number(partial.omittedPlugins || 0) : 0;
 }
 
-/** 設定値を含める・含めないの表示（結果表・INDEX.md・確認画面で同じ言い回しにする）。 */
-export const PLUGIN_CONFIG_INCLUDED_NOTE = 'プラグインの設定値を含みます（API キーなどの機微な値を含む場合があります）';
+/** 設定値を含める・含めないの表示（結果表・INDEX.md・確認画面で同じ言い回しにする）。含める側の文言は設計書と共有する。 */
+export { PLUGIN_CONFIG_INCLUDED_NOTE, CUSTOMIZE_BODY_SENSITIVE_NOTE };
 export const PLUGIN_CONFIG_OMITTED_NOTE = 'プラグインの設定値は含めていません（プラグインの一覧だけを保存）';
-export const CUSTOMIZE_BODY_SENSITIVE_NOTE = 'JS/CSSファイルの本文を含みます（API トークンなどが書かれている場合があります）';
 
 /** ZIP 内のアプリごとの名前（設定JSONとJS/CSSフォルダで共通）。 */
 function zipEntryBaseName(bundle: any, guestId: string, preview: boolean): string {

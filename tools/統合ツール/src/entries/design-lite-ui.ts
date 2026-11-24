@@ -4,6 +4,7 @@ import { installLiteWorkflow, connectionSummary, summarizeList } from './liteWor
 
 import { DEFAULT_APP_ID, DEFAULT_GUEST_ID } from '../constants.js';
 import {
+  DESIGN_JSON_SENSITIVE_NOTICE,
   runDesignCopyAiMdStandalone,
   runDesignCopyMdStandalone,
   runDesignDiffMdStandalone,
@@ -389,7 +390,7 @@ export function mountDesignLitePanel() {
       { id: 'ai-md', label: 'AI向けMarkdownを保存', description: '1行目のアプリの設定を、AIに渡す用のMarkdownファイルで保存します。', button: bAiMd, validate: firstTargetRequired, summary: () => singleSummary('AI向けMarkdown（AIへの受け渡し）') },
       { id: 'md', label: 'Markdown設計書を保存', description: '1行目のアプリの設計書をMarkdownファイルで保存します。', button: bMd, validate: firstTargetRequired, summary: () => singleSummary('Markdown') },
       { id: 'ai-copy', label: 'AI向けMarkdownをコピー', description: '1行目のアプリの設定を、AIに渡す用のMarkdownとしてコピーします。', button: bAiCopy, validate: firstTargetRequired, summary: () => singleSummary('AI向けMarkdown（クリップボード）') },
-      { id: 'json', label: '設計書JSONを保存', description: '1行目のアプリの設定をJSONファイルで保存します。', button: bJson, validate: firstTargetRequired, summary: () => singleSummary('JSON') },
+      { id: 'json', label: '設計書JSONを保存', description: '1行目のアプリの設定をJSONファイルで保存します。', button: bJson, validate: firstTargetRequired, summary: () => [...singleSummary('JSON'), ['取扱注意', DESIGN_JSON_SENSITIVE_NOTICE]] },
       { id: 'copy', label: 'Markdownをコピー', description: '1行目のアプリの設計書をMarkdownとしてクリップボードにコピーします。', button: bCopy, validate: firstTargetRequired, summary: () => singleSummary('クリップボード') },
       { id: 'diff', label: '2アプリの設計差分を保存', description: '対象アプリ表の1行目（比較元）と2行目（比較先）の設計差分をMarkdownファイルで保存します。', button: bDiff, validate: () => {
         const rows = diffTargetRows();

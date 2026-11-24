@@ -409,3 +409,27 @@ describe('diff Markdown 一括: インデックスと個別ファイル名', () 
     expect(result.indexMarkdown).toMatch(/\| `001_差分_App_One[^`|]*_AI\.md` \|/);
   });
 });
+
+describe('diff Markdown: 機微な値の取扱注意', () => {
+  it('writes a 取扱注意 notice before the format section when plugin settings or JS/CSS values are recorded, without hiding them', () => {
+    const { markdown } = buildDiffMarkdownExport(baseContext({
+      rows: [
+        { sectionKey: 'pluginSettings', type: 'changed', path: 'pluginSettings.plugins[0].config.apiToken', left: 'TOKEN_OLD_123', right: 'TOKEN_NEW_456' },
+        { sectionKey: 'customizeSettings', type: 'changed', path: 'customizeSettings.desktop.js[0]._bodyText', left: 'OLD_BODY', right: 'NEW_BODY' }
+      ]
+    }));
+    expect(markdown).toContain('> 🔒 取扱注意: このファイルには プラグイン(※)・JS/CSS設定 の差分値（JS/CSS本文やプラグイン設定値を含む場合があります）が収録されています。共有先と保管場所を確認してください。');
+    expect(markdown.indexOf('🔒 取扱注意')).toBeLessThan(markdown.indexOf('## 出力形式'));
+    for (const value of ['TOKEN_OLD_123', 'TOKEN_NEW_456', 'OLD_BODY', 'NEW_BODY']) expect(markdown).toContain(value);
+  });
+
+  it('omits the handling notice when no plugin or JS/CSS value is recorded', () => {
+    const sameOnly = buildDiffMarkdownExport(baseContext({
+      rows: [
+        { sectionKey: 'pluginSettings', type: 'same', path: 'pluginSettings.plugins.one.config', left: { token: 'x' }, right: { token: 'x' } },
+        { sectionKey: 'appSettings', type: 'changed', path: 'appSettings.name', left: '旧', right: '新' }
+      ]
+    }));
+    expect(sameOnly.markdown).not.toContain('🔒 取扱注意');
+  });
+});
