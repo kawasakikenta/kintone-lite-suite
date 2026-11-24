@@ -166,6 +166,9 @@ export function extractFieldPathInfo(path) {
   const isSubField = tokens[2] === 'fields' && typeof tokens[3] === 'string';
   const subFieldCode = (isSubField ? tokens[3] : '') as string;
   const tailTokens = tokens.slice(isSubField ? 4 : 2);
+  const rootPath = isSubField
+    ? `fieldSettings.properties.${rootCode}.fields.${subFieldCode}`
+    : `fieldSettings.properties.${rootCode}`;
   return {
     rootCode,
     subFieldCode,
@@ -175,9 +178,9 @@ export function extractFieldPathInfo(path) {
     leafKey: tailTokens.length ? String(tailTokens[tailTokens.length - 1]) : '',
     isFieldRoot: !isSubField && tailTokens.length === 0,
     isSubFieldRoot: isSubField && tailTokens.length === 0,
-    rootPath: isSubField
-      ? `fieldSettings.properties.${rootCode}.fields.${subFieldCode}`
-      : `fieldSettings.properties.${rootCode}`
+    rootPath,
+    // フィールドより後ろの path をそのまま持つ（選択肢名の「[」「]」をトークンに分けずに読むため）
+    tailPath: String(path).startsWith(`${rootPath}.`) ? String(path).slice(rootPath.length + 1) : ''
   };
 }
 
@@ -195,7 +198,21 @@ export function fieldSettingIdentity(info: any): { settingKey: string; settingLa
   if (!tokens.length) return { settingKey: '(field)', settingLabel: 'フィールド全体' };
   const settingKey = tokens.map((token: string | number) => String(token)).join('.');
   if (tokens[0] === 'options') {
-    // 選択肢名は「.」を含みうるため、末尾の選択肢の項目（label / index）より前をすべて選択肢名とする。
+    // 選択肢名は「.」「[」「]」を含みうる。トークンに分けると「B[2]」が「B.2」になるため、path の文字列から
+    // 末尾の選択肢の項目（label / index）より前をすべて選択肢名として取り出す。
+    const tailPath = typeof info.tailPath === 'string' ? info.tailPath : '';
+    if (tailPath === 'options' || tailPath.startsWith('options.')) {
+      const rest = tailPath.slice('options.'.length);
+      const property = /^(.+)\.(label|index)$/.exec(rest);
+      const option = property ? property[1] : rest;
+      const suffix = property ? fieldSettingTokenLabel(property[2]) : '';
+      return {
+        settingKey: rest ? `options.${rest}` : 'options',
+        settingLabel: option
+          ? `選択肢「${option}」${suffix ? ` / ${suffix}` : ''}`
+          : '選択肢と並び順'
+      };
+    }
     const optionTokens = tokens.slice(1);
     const last = optionTokens[optionTokens.length - 1];
     const hasProperty = optionTokens.length > 1 && typeof last === 'string' && OPTION_PROPERTY_KEYS.has(last);

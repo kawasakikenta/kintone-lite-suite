@@ -3692,3 +3692,23 @@ describe('diff Excel: シート名・概要のリンク先・見方の説明', (
     expect(guide).toContain('<col min="2" max="2" width="96" customWidth="1"/>');
   });
 });
+
+describe('diff Excel: 選択肢名の [ ]', () => {
+  it('keeps "[" and "]" in a choice name in the customer setting labels', () => {
+    const bundle = (options: Record<string, unknown>) => ({
+      appId: '1',
+      meta: { appName: 'A' },
+      sections: { fieldSettings: { properties: { status: { type: 'DROP_DOWN', code: 'status', label: '状態', options } } } }
+    });
+    const sourceBundle = bundle({ '[A]受付': { label: '[A]受付', index: '0' }, 'B[2]': { label: 'B[2]', index: '1' } });
+    const targetBundle = bundle({ '[A]受付': { label: '[A]受付', index: '1' }, 'B[2]': { label: 'B[2]', index: '0' }, '優先度[高]': { label: '優先度[高]', index: '2' } });
+    const rows = enrichDiffRows(computeDiffRows(sourceBundle, targetBundle, ['fieldSettings'], '').rows, sourceBundle, targetBundle);
+    const list = buildDiffXlsxSheetsWithSafeDefault({ sourceBundle, targetBundle, rows, scopes: ['fieldSettings'] })
+      .find((sheet) => sheet.name === '変更一覧')!;
+    expect(list.rows.slice(1).map((row) => row[4]).sort()).toEqual([
+      '選択肢「B[2]」：並び順',
+      '選択肢「[A]受付」：並び順',
+      '選択肢「優先度[高]」'
+    ]);
+  });
+});
