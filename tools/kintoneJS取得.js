@@ -614,13 +614,20 @@
   function deepClone(v) {
     return v == null ? v : JSON.parse(JSON.stringify(v));
   }
+  function setOwnValue(target, key, value) {
+    if (key === "__proto__") {
+      Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
+    } else {
+      target[key] = value;
+    }
+  }
   function normalize(v) {
     if (Array.isArray(v)) return v.map(normalize);
     if (v && typeof v === "object") {
       const o = {};
       Object.keys(v).sort().forEach((k) => {
         if (META_KEYS.has(k)) return;
-        o[k] = normalize(v[k]);
+        setOwnValue(o, k, normalize(v[k]));
       });
       return o;
     }
