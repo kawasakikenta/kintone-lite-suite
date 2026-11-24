@@ -2402,9 +2402,14 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
     enabled: "有効状態",
     index: "並び順"
   };
+  function ownLookup(dict2, key) {
+    if (!dict2 || key == null) return void 0;
+    const name = String(key);
+    return Object.prototype.hasOwnProperty.call(dict2, name) ? dict2[name] : void 0;
+  }
   function labelOfProp(key) {
     if (!key) return "";
-    return PROP_LABELS[key]?.label || FIELD_SETTING_LABELS[key] || String(key);
+    return ownLookup(PROP_LABELS, key)?.label || ownLookup(FIELD_SETTING_LABELS, key) || String(key);
   }
   var PERMISSION_KEYS = /* @__PURE__ */ new Set([
     "appEditable",

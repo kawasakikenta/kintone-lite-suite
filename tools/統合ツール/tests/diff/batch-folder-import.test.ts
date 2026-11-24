@@ -522,3 +522,19 @@ describe('diff batch folder automatic matching', () => {
     ]);
   });
 });
+
+describe('diff batch folder: 比較元と比較先の両方を持つJSON', () => {
+  it('source と target の両方を持つJSONは、読む側の指定がなければ読み込まず、指定があればその側だけを読む', () => {
+    const pair = { source: bundle('10', { appName: '比較元' }), target: bundle('20', { appName: '比較先' }) };
+
+    const unspecified = parseDiffBatchFolderImport([file('pair.json', pair)]);
+    expect(unspecified.bundles).toEqual([]);
+    expect(unspecified.issues).toEqual([
+      expect.objectContaining({ code: 'invalid-bundle', fileName: 'pair.json', message: expect.stringContaining('比較元と比較先の両方を含むJSON') })
+    ]);
+
+    const target = parseDiffBatchFolderImport([file('pair.json', pair)], { side: 'target' });
+    expect(target.issues).toEqual([]);
+    expect(target.bundles.map((item) => [item.appId, item.appName])).toEqual([['20', '比較先']]);
+  });
+});

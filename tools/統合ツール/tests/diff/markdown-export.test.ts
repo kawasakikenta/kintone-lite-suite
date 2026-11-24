@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildDiffMarkdownBatchExport, buildDiffMarkdownExport } from '../../src/diff/markdown-export';
+import { computeDiffRows } from '../../src/diff/engine';
+import { enrichDiffRows } from '../../src/diff/enrich';
 
 function baseContext(overrides: Record<string, unknown> = {}) {
   return {
@@ -356,3 +358,54 @@ describe('diff/markdown export', () => {
   });
 });
 
+describe('diff Markdown: 名前に「.」を含む一覧', () => {
+  it('keeps a view name that contains a dot whole', () => {
+    const view = (filterCond: string) => ({ '営業.一覧': { name: '営業.一覧', type: 'LIST', index: '0', filterCond, fields: [] } });
+    const source = { appId: '1', sections: { viewSettings: { views: view('a = "1"') } } };
+    const target = { appId: '2', sections: { viewSettings: { views: view('a = "2"') } } };
+    const rows = enrichDiffRows(computeDiffRows(source, target, ['viewSettings'], '').rows, source, target);
+    const { markdown } = buildDiffMarkdownExport({ rows, sourceBundle: source, targetBundle: target, scopes: ['viewSettings'] });
+    const title = markdown.split('\n').find((line) => line.startsWith('- 設定項目（日本語）: '));
+
+    expect(title?.replace('- 設定項目（日本語）: ', '').split(' / ')[0]).toBe('営業.一覧');
+  });
+});
+
+describe('diff Markdown 一括: インデックスと個別ファイル名', () => {
+  it('keeps failed batch items in the index so the row count matches totalPairs', () => {
+    const failing = baseContext({
+      rows: [{
+        sectionKey: 'appSettings', type: 'changed', path: 'appSettings.name',
+        get left(): unknown { throw new Error('値を読み取れません'); },
+        right: '新'
+      }]
+    });
+    const result = buildDiffMarkdownBatchExport([
+      { label: '成功', context: baseContext() },
+      { label: '失敗', context: failing }
+    ], { generatedAt: '2026-09-26T02:05:06.000Z' });
+
+    expect(result.failures).toEqual([{ index: 1, label: '失敗', error: '値を読み取れません' }]);
+    expect(result.entries).toHaveLength(2);
+    expect(result.indexMarkdown).toContain('- totalPairs: 2');
+    expect(result.indexMarkdown).toContain('- failedPairs: 1');
+    const tableRows = result.indexMarkdown.split('\n').filter((line) => /^\| \d+ \|/.test(line));
+    expect(tableRows).toHaveLength(2);
+    expect(tableRows[1]).toContain('`export-failed`');
+    expect(tableRows[1]).toContain('生成失敗: 値を読み取れません');
+    expect(tableRows[1]).toContain('（未作成）');
+  });
+
+  it('keeps a backtick in an app name out of the individual file name', () => {
+    const result = buildDiffMarkdownBatchExport([{
+      label: 'a',
+      context: baseContext({
+        sourceBundle: { appId: '1', meta: { appName: 'App`One' }, sections: {} },
+        targetBundle: { appId: '2', meta: { appName: 'Two' }, sections: {} }
+      })
+    }], { generatedAt: '2026-09-26T02:05:06.000Z' });
+
+    expect(result.entries[1]).not.toContain('`');
+    expect(result.indexMarkdown).toMatch(/\| `001_差分_App_One[^`|]*_AI\.md` \|/);
+  });
+});

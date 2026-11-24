@@ -6,8 +6,8 @@ import {
   DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS
 } from '../constants.js';
 import { state } from '../state.js';
-import { stableStringify } from '../utils.js';
-import { FIELD_SETTING_LABELS, labelOfProp, stateRenameName } from './label-dict.js';
+import { setOwnValue, stableStringify } from '../utils.js';
+import { FIELD_SETTING_LABELS, labelOfProp, ownLookup, stateRenameName } from './label-dict.js';
 
 // utils.js と同一ロジック。IIFE バンドルで utils からの import が欠落した場合でも動作するようローカル定義する。
 function relativePathFromRow(path, secKey) {
@@ -32,6 +32,83 @@ function tokenizePath(path): Array<string | number> {
 function getPathLeafKey(path) {
   const m = String(path || '').match(/([^[.\]]+)(?:\[\d+\])?$/);
   return m ? m[1] : '';
+}
+
+// ---------------------------------------------------------------------------
+// 名前をキーにした設定（一覧・グラフ・ステータス・カテゴリ・アプリアクション）の path
+// ---------------------------------------------------------------------------
+// 行の path は名前の中の「.」をエスケープしないため、`viewSettings.views.営業.一覧.filterCond` の
+// どこまでが一覧の名前かを path だけでは決められない。enrichDiffRows が両側の設定にある名前から
+// 名前の後ろの部分（entityPathTail）を行に付け、ラベル付けはそれを使って名前を 1 つのトークンとして扱う。
+const NAMED_ENTITY_BUCKETS: Record<string, string> = {
+  viewSettings: 'views',
+  reportSettings: 'reports',
+  processSettings: 'states',
+  categories: 'categories',
+  actionSettings: 'actions'
+};
+
+function namedEntityPrefix(sectionKey: string): string {
+  const bucket = ownLookup(NAMED_ENTITY_BUCKETS, sectionKey);
+  return bucket ? `${sectionKey}.${bucket}.` : '';
+}
+
+/**
+ * 名前付きの設定を指す path を、名前と、名前の後ろの部分（`.filterCond` など。名前そのものなら空文字）に分ける。
+ * names に一致する名前のうち最長のものを使い、どれにも一致しなければ最初の「.」までを名前とする。
+ */
+export function splitNamedEntityPath(sectionKey: string, path: string, names?: Iterable<string> | null): { name: string; tail: string } | null {
+  const prefix = namedEntityPrefix(sectionKey);
+  const text = String(path || '');
+  if (!prefix || !text.startsWith(prefix)) return null;
+  const rest = text.slice(prefix.length);
+  let best = '';
+  for (const name of names || []) {
+    if (!name || name.length <= best.length || !rest.startsWith(name)) continue;
+    const next = rest.charAt(name.length);
+    if (next === '' || next === '.' || next === '[') best = name;
+  }
+  if (!best) {
+    const first = /^[^.[\]]+/.exec(rest);
+    if (!first) return null;
+    best = first[0];
+  }
+  return { name: best, tail: rest.slice(best.length) };
+}
+
+function namedEntitySplitOfRow(row: any): { name: string; tail: string } | null {
+  const sectionKey = String(row?.sectionKey || '');
+  const path = String(row?.path || '');
+  const prefix = namedEntityPrefix(sectionKey);
+  if (!prefix || !path.startsWith(prefix)) return null;
+  const tail = row?.entityPathTail;
+  if (typeof tail === 'string' && path.endsWith(tail) && path.length - tail.length > prefix.length) {
+    return { name: path.slice(prefix.length, path.length - tail.length), tail };
+  }
+  return splitNamedEntityPath(sectionKey, path, null);
+}
+
+/** 行の path をトークンに分ける。名前付きの設定の名前は、「.」を含んでも 1 つのトークンにする。 */
+export function tokenizeRowPath(row: any): Array<string | number> {
+  const split = namedEntitySplitOfRow(row);
+  if (!split) return tokenizePath(String(row?.path || ''));
+  const prefix = namedEntityPrefix(String(row?.sectionKey || ''));
+  return [...tokenizePath(prefix.slice(0, -1)), split.name, ...tokenizePath(split.tail)];
+}
+
+/** 名前付きの設定ごとに、両側の設定にある名前を集める。 */
+function collectNamedEntityNames(sourceBundle: any, targetBundle: any): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  Object.keys(NAMED_ENTITY_BUCKETS).forEach((sectionKey) => {
+    const bucket = NAMED_ENTITY_BUCKETS[sectionKey];
+    const names = new Set<string>();
+    [sourceBundle, targetBundle].forEach((bundle) => {
+      const map = bundle?.sections?.[sectionKey]?.[bucket];
+      if (map && typeof map === 'object' && !Array.isArray(map)) Object.keys(map).forEach((name) => names.add(name));
+    });
+    out.set(sectionKey, names);
+  });
+  return out;
 }
 
 export function summarizeSeverity(rows) {
@@ -75,7 +152,7 @@ export function normalizeFieldDefForRename(value, options: any = {}) {
     if (META_KEYS.has(key)) return;
     if (['code', 'id', 'appid', 'index', 'no', 'order'].includes(key)) return;
     if (options.dropPresentation && ['label', 'name'].includes(key)) return;
-    out[key] = normalizeFieldDefForRename(value[key], options);
+    setOwnValue(out, key, normalizeFieldDefForRename(value[key], options));
   });
   return out;
 }
@@ -106,8 +183,11 @@ export function extractFieldPathInfo(path) {
 
 function fieldSettingTokenLabel(token: string | number): string {
   if (typeof token === 'number') return `${token + 1}件目`;
-  return FIELD_SETTING_LABELS[token] || labelOfProp(token);
+  return ownLookup(FIELD_SETTING_LABELS, token) || labelOfProp(token);
 }
+
+/** 選択肢の設定項目（kintone の選択肢が持つのは label と index だけ）。 */
+const OPTION_PROPERTY_KEYS: ReadonlySet<string> = new Set(['label', 'index']);
 
 /** フィールド配下の path を、設定項目のキーと kintone の項目名にする。 */
 export function fieldSettingIdentity(info: any): { settingKey: string; settingLabel: string } {
@@ -115,8 +195,12 @@ export function fieldSettingIdentity(info: any): { settingKey: string; settingLa
   if (!tokens.length) return { settingKey: '(field)', settingLabel: 'フィールド全体' };
   const settingKey = tokens.map((token: string | number) => String(token)).join('.');
   if (tokens[0] === 'options') {
-    const option = tokens.length > 1 ? String(tokens[1]) : '';
-    const suffix = tokens.length > 2 ? fieldSettingTokenLabel(tokens[2]) : '';
+    // 選択肢名は「.」を含みうるため、末尾の選択肢の項目（label / index）より前をすべて選択肢名とする。
+    const optionTokens = tokens.slice(1);
+    const last = optionTokens[optionTokens.length - 1];
+    const hasProperty = optionTokens.length > 1 && typeof last === 'string' && OPTION_PROPERTY_KEYS.has(last);
+    const option = (hasProperty ? optionTokens.slice(0, -1) : optionTokens).map((token: string | number) => String(token)).join('.');
+    const suffix = hasProperty ? fieldSettingTokenLabel(last) : '';
     return {
       settingKey,
       settingLabel: option
@@ -308,11 +392,12 @@ export function detectFieldRenameCandidates(rows) {
   return out;
 }
 
-export function collectFieldDefinitions(properties: any, out: any = {}) {
+/** フィールドコード → 定義（テーブル内のフィールドを含む）。constructor などのコードでも引けるよう、プロトタイプを持たない入れ物に集める。 */
+export function collectFieldDefinitions(properties: any, out: any = Object.create(null)) {
   if (!properties || typeof properties !== 'object') return out;
   Object.entries(properties).forEach(([code, field]: [string, any]) => {
     if (!field || typeof field !== 'object') return;
-    out[code] = field;
+    setOwnValue(out, code, field);
     if (field.type === 'SUBTABLE' && field.fields && typeof field.fields === 'object') {
       collectFieldDefinitions(field.fields, out);
     }
@@ -574,7 +659,7 @@ export function buildStatusImpactIndex(sourceBundle: any, targetBundle: any = nu
 
 function extractStateNameFromRow(row: any): string {
   if (String(row?.sectionKey || '') !== 'processSettings') return '';
-  const tokens = tokenizePath(String(row?.path || ''));
+  const tokens = tokenizeRowPath(row);
   if (tokens[1] === 'states' && typeof tokens[2] === 'string') return tokens[2];
   return '';
 }
@@ -661,7 +746,7 @@ function isEntityRootRow(row): boolean {
   if (!row || row.sectionKey === 'fieldSettings') return false;
   if (row._displayOnly) return false;
   if (!row.entityKind || !RENAMABLE_ENTITY_KINDS.has(row.entityKind)) return false;
-  const tokens = tokenizePath(String(row.path || ''));
+  const tokens = tokenizeRowPath(row);
   const sectionKey = String(row.sectionKey || '');
   if ((sectionKey === 'viewSettings' || sectionKey === 'reportSettings' || sectionKey === 'categories') && tokens.length === 3) return true;
   if (sectionKey === 'processSettings' && tokens[1] === 'states' && tokens.length === 3) return true;
@@ -694,7 +779,7 @@ function normalizeEntityBodyForRename(value, sectionKey, dropPresentation = fals
       const out = {};
       Object.keys(v).sort().forEach((k) => {
         if (dropKeys.has(k)) return;
-        out[k] = walk(v[k]);
+        setOwnValue(out, k, walk(v[k]));
       });
       return out;
     }
@@ -927,9 +1012,7 @@ const ENTITY_KIND_LABELS: Record<string, string> = {
 
 
 function getSectionPropLabel(sectionKey: string, leaf: string): string {
-  const map = SECTION_PROP_LABELS[sectionKey];
-  if (!map) return '';
-  return map[leaf] || '';
+  return ownLookup(ownLookup(SECTION_PROP_LABELS, sectionKey), leaf) || '';
 }
 
 function describeAclEntity(entity: any): string {
@@ -950,8 +1033,9 @@ export interface DiffEntityContext {
 export function extractEntityContext(row: any, fieldLabelOf?: FieldLabelResolver): DiffEntityContext {
   const sectionKey = String(row?.sectionKey || '');
   const path = String(row?.path || '');
-  const tokens = tokenizePath(path);
-  const leaf = getPathLeafKey(path);
+  const tokens = tokenizeRowPath(row);
+  // 名前付きの設定そのものを指す行（path の末尾が名前）では、名前をプロパティ名として読まない。
+  const leaf = namedEntitySplitOfRow(row)?.tail === '' ? '' : getPathLeafKey(path);
   const propLabel = getSectionPropLabel(sectionKey, leaf);
   const empty: DiffEntityContext = { entityKind: '', entityLabel: '', entityCode: '', propLabel };
   if (sectionKey === 'fieldSettings') return empty;
@@ -1189,8 +1273,8 @@ export function buildDiffReasonSummary(row) {
     if (String(row.path || '').includes('.lookup.')) return 'ルックアップ設定変更';
     const isOption = fieldInfo.tailTokens[0] === 'options';
     // 末尾が配列の添字（初期値の 2 件目など）のときも、途中の項目名で設定項目を特定する。
-    const knownSetting = !!FIELD_SETTING_LABELS[fieldInfo.leafKey]
-      || fieldInfo.tailTokens.some((token: string | number) => typeof token === 'string' && !!FIELD_SETTING_LABELS[token]);
+    const knownSetting = !!ownLookup(FIELD_SETTING_LABELS, fieldInfo.leafKey)
+      || fieldInfo.tailTokens.some((token: string | number) => typeof token === 'string' && !!ownLookup(FIELD_SETTING_LABELS, token));
     if (isOption || knownSetting) {
       const action = row.type === 'added' ? '追加' : (row.type === 'removed' ? '削除' : '変更');
       return `${fieldSettingIdentity(fieldInfo).settingLabel} ${action}`;
@@ -1202,13 +1286,13 @@ export function buildDiffReasonSummary(row) {
   const entity = (row && (row.entityLabel || row.entityKind))
     ? { entityKind: String(row.entityKind || ''), entityLabel: String(row.entityLabel || ''), propLabel: String(row.entityPropLabel || '') }
     : extractEntityContext(row);
-  const kindLabel = entity.entityKind ? (ENTITY_KIND_LABELS[entity.entityKind] || '') : '';
+  const kindLabel = entity.entityKind ? (ownLookup(ENTITY_KIND_LABELS, entity.entityKind) || '') : '';
   const propLabel = entity.propLabel || '';
 
   // エンティティ自体の追加/削除（path 末端がエンティティ）
   const isEntityRoot = !!entity.entityKind && (!propLabel)
     && (() => {
-      const tokens = tokenizePath(String(row.path || ''));
+      const tokens = tokenizeRowPath(row);
       // entity の所在位置に応じて末端深さを判定
       if (sectionKey === 'viewSettings' || sectionKey === 'reportSettings' || sectionKey === 'categories') {
         return tokens.length === 3; // section.<bucket>.<name>
@@ -1275,10 +1359,14 @@ function layoutFieldCaption(row, sourceBundle, targetBundle, fieldLabelOf: Field
 
 export function enrichDiffRows(rows, sourceBundle, targetBundle) {
   const fieldLabelOf = buildFieldLabelResolver(sourceBundle, targetBundle);
+  const namedEntityNames = collectNamedEntityNames(sourceBundle, targetBundle);
   // 先にエンティティ文脈を一度走らせてから rename 検出する
   // （非フィールドの rename 検出は entityKind/entityLabel/entityCode 必須）
-  const seeded = (rows || []).map((row) => {
-    if (!row || row.sectionKey === 'fieldSettings') return row;
+  const seeded = (rows || []).map((sourceRow) => {
+    if (!sourceRow || sourceRow.sectionKey === 'fieldSettings') return sourceRow;
+    // 名前付きの設定の行には、両側の設定にある名前で決めた「名前の後ろの部分」を付ける（名前に「.」があっても区切りを誤らない）。
+    const split = splitNamedEntityPath(String(sourceRow.sectionKey || ''), String(sourceRow.path || ''), namedEntityNames.get(String(sourceRow.sectionKey || '')));
+    const row = split && !sourceRow._stateRenameNotice ? { ...sourceRow, entityPathTail: split.tail } : sourceRow;
     const ctx = extractEntityContext(row, fieldLabelOf);
     if (!ctx.entityKind) return row;
     const layoutField = row.sectionKey === 'layoutSettings'

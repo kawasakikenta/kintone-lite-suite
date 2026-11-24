@@ -2047,7 +2047,6 @@ describe('diff/html export audit regressions', () => {
   });
 });
 
-
 describe('generated HTML field reflect requests', () => {
   it('adds a new child to an existing table with POST and leaves unchanged children out', () => {
     const existing = reflectTextField('existing');
@@ -2188,5 +2187,70 @@ describe('generated HTML row titles', () => {
       { removed: { code: 'removed', type: 'SINGLE_LINE_TEXT', label: '削除した項目' } }
     );
     expect(titles.sort()).toEqual(['削除した項目', '追加した項目']);
+  });
+});
+
+describe('diff/html export with a dotted entity name', () => {
+  // 比較設定込み（社内用）の HTML を作る。
+  const buildComparedHtml = (sourceBundle: any, targetBundle: any, rows: any, scopes: any, ignoreKeys: any, options: any = {}): string =>
+    buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKeys, { exportContentMode: 'withCompared', ...options });
+
+  const view = (filterCond: string) => ({ '営業.一覧': { name: '営業.一覧', type: 'LIST', index: '0', filterCond, fields: [] } });
+  const source = { appId: '1', sections: { viewSettings: { views: view('a = "1"') } }, meta: {} };
+  const target = { appId: '2', sections: { viewSettings: { views: view('a = "2"') } }, meta: {} };
+
+  function inlineFunctions(html: string, names: string[]): Record<string, (...args: any[]) => any> {
+    const script = extractInlineScript(html);
+    const body = names.map((name) => {
+      const start = script.indexOf(`  function ${name}(`);
+      if (start < 0) throw new Error(`${name} was not found in generated HTML`);
+      const end = script.indexOf('\n  function ', start + 1);
+      return script.slice(start, end < 0 ? undefined : end);
+    }).join('\n');
+    return new Function(`${body}\nreturn { ${names.join(', ')} };`)();
+  }
+
+  it('keeps the view name whole in row titles, the overview, and the embedded rows', () => {
+    const comparison = computeDiffRows(source, target, ['viewSettings'], '');
+    const rows = enrichDiffRows(comparison.rows, source, target);
+    const html = buildComparedHtml(source, target, rows, ['viewSettings'], '', { truncation: comparison.truncation });
+    const reportRows = extractInlineJsonConst(html, 'REPORT_ROWS');
+    const reportMeta = extractInlineJsonConst(html, 'REPORT_META');
+
+    expect(reportRows).toHaveLength(1);
+    expect(reportRows[0].entityPathTail).toBe('.filterCond');
+    expect(reportRows[0]._reportDisplayTitle.split(' / ')[0]).toBe('営業.一覧');
+    expect(reportMeta.humanOverview.sections[0].examples[0].label.split(' / ')[0]).toBe('営業.一覧');
+  });
+
+  it('marks a view expanded from a section-wide addition as the entity itself', () => {
+    const rows = enrichDiffRows([{
+      _id: 'views-added', sectionKey: 'viewSettings', section: 'ビュー設定', type: 'added',
+      path: 'viewSettings', left: undefined, right: target.sections.viewSettings
+    }], { appId: '1', sections: { viewSettings: {} } }, target);
+    const html = buildComparedHtml({ appId: '1', sections: { viewSettings: {} } }, target, rows, ['viewSettings'], '', { truncation: null });
+    const child = extractInlineJsonConst(html, 'REPORT_ROWS').find((row: any) => row.path === 'viewSettings.views.営業.一覧');
+
+    expect(child.entityPathTail).toBe('');
+    expect(child._reportDisplayTitle.split(' / ')).not.toContain('一覧');
+  });
+
+  it('tokenizes the name as one token in the report filters', () => {
+    const html = buildComparedHtml(source, target, [], ['viewSettings'], '', { truncation: null });
+    const fns = inlineFunctions(html, [
+      'normIgnoreToken', 'trimIgnoreToken', 'tokenizePath', 'namedEntitySplitOfRow', 'rowPathTokens', 'matchesIgnoreRules', 'pathPropTokens'
+    ]);
+    const propertyRow = { sectionKey: 'viewSettings', path: 'viewSettings.views.営業.一覧.filterCond', entityPathTail: '.filterCond' };
+    const entityRow = { sectionKey: 'viewSettings', path: 'viewSettings.views.営業.一覧', entityPathTail: '' };
+    const rules = (keys: string[]) => ({ keySet: keys, pathSet: [], exactPathSet: [], keyPatterns: [], pathPatterns: [] });
+
+    expect(fns.rowPathTokens(propertyRow)).toEqual(['viewSettings', 'views', '営業.一覧', 'filterCond']);
+    expect(fns.pathPropTokens(propertyRow)).toEqual(['viewSettings', 'views', 'filterCond']);
+    expect(fns.matchesIgnoreRules(rules(['filtercond']), propertyRow)).toBe(true);
+    // 名前の一部（「一覧」）や名前そのものはキー名の無視ルールに当たらない
+    expect(fns.matchesIgnoreRules(rules(['一覧']), propertyRow)).toBe(false);
+    expect(fns.matchesIgnoreRules(rules(['一覧', '営業.一覧']), entityRow)).toBe(false);
+    // entityPathTail の無い行は path をそのまま区切る
+    expect(fns.rowPathTokens({ sectionKey: 'appSettings', path: 'appSettings.icon.type' })).toEqual(['appSettings', 'icon', 'type']);
   });
 });

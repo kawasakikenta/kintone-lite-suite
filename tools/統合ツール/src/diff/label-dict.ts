@@ -355,21 +355,29 @@ export const SECTION_LABELS: Record<string, PropMeta> = {
 // 公開ヘルパ
 // ---------------------------------------------------------------------------
 
+/**
+ * 辞書を自身のプロパティだけで引く。設定から来たキー（constructor / toString / __proto__ など）で
+ * Object.prototype の値を拾わない。
+ */
+export function ownLookup<T>(dict: Record<string, T> | null | undefined, key: unknown): T | undefined {
+  if (!dict || key == null) return undefined;
+  const name = String(key);
+  return Object.prototype.hasOwnProperty.call(dict, name) ? dict[name] : undefined;
+}
+
 export function labelOfProp(key: string | null | undefined): string {
   if (!key) return '';
-  return PROP_LABELS[key]?.label || FIELD_SETTING_LABELS[key] || String(key);
+  return ownLookup(PROP_LABELS, key)?.label || ownLookup(FIELD_SETTING_LABELS, key) || String(key);
 }
 
 export function iconOfProp(key: string | null | undefined): string {
   if (!key) return '';
-  return PROP_LABELS[key]?.icon || '';
+  return ownLookup(PROP_LABELS, key)?.icon || '';
 }
 
 export function labelOfValue(scope: string, value: any): string | null {
   if (value == null) return null;
-  const dict = VALUE_LABELS[scope];
-  if (!dict) return null;
-  return dict[String(value)] || null;
+  return ownLookup(ownLookup(VALUE_LABELS, scope), value) || null;
 }
 
 /** ステータス改名の通知行（left/right は { name }）から、利用者に見せる名前を取り出す。 */
@@ -380,7 +388,7 @@ export function stateRenameName(side: any, fallback?: unknown): string {
 
 export function labelOfSection(sectionKey: string | null | undefined): PropMeta {
   if (!sectionKey) return { label: '-', icon: '' };
-  return SECTION_LABELS[sectionKey] || { label: String(sectionKey), icon: '' };
+  return ownLookup(SECTION_LABELS, sectionKey) || { label: String(sectionKey), icon: '' };
 }
 
 const PERMISSION_KEYS = new Set([
@@ -426,7 +434,7 @@ export function formatEntityText(entity: any, options: { compact?: boolean } = {
       } as Record<string, string>)[code.trim().toUpperCase()]
     : '';
   if (functionLabel && !name) return functionLabel;
-  const typed = VALUE_LABELS['entity.type']?.[type] || (type ? `· ${type}` : '·');
+  const typed = ownLookup(VALUE_LABELS['entity.type'], type) || (type ? `· ${type}` : '·');
   const display = name || code || '(未設定)';
   if (options.compact) return `${typed} ${display}`;
   if (name && code && name !== code) return `${typed} ${name} (${code})`;

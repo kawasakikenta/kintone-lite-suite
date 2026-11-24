@@ -120,18 +120,29 @@ interface RawBundleCandidate {
   value: any;
   /** apps/bundles配列やwrapper内で、バンドルとして明示された候補。 */
   explicit: boolean;
+  /** 比較元（source）と比較先（target）の両方を持つ JSON で、どちらを読むか決められないもの。 */
+  ambiguousPair?: boolean;
 }
 
-function rawBundleCandidates(raw: any, explicit = false): RawBundleCandidate[] {
+export interface ParseDiffBatchFolderImportOptions {
+  /**
+   * 読み込むフォルダが比較元か比較先か。source と target の両方を持つ JSON は、指定した側だけを読む。
+   * 指定がなければ、そのような JSON は読み込まずに issue として返す。
+   */
+  side?: 'source' | 'target';
+}
+
+function rawBundleCandidates(raw: any, explicit = false, side?: 'source' | 'target'): RawBundleCandidate[] {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     return explicit ? [{ value: raw, explicit: true }] : [];
   }
   if (Object.prototype.hasOwnProperty.call(raw, 'source') && Object.prototype.hasOwnProperty.call(raw, 'target')) {
-    return rawBundleCandidates(raw.source, true);
+    if (!side) return [{ value: raw, explicit: true, ambiguousPair: true }];
+    return rawBundleCandidates(raw[side], true, side);
   }
-  if (Object.prototype.hasOwnProperty.call(raw, 'bundle')) return rawBundleCandidates(raw.bundle, true);
-  if (Array.isArray(raw.apps)) return raw.apps.flatMap((candidate: any) => rawBundleCandidates(candidate, true));
-  if (Array.isArray(raw.bundles)) return raw.bundles.flatMap((candidate: any) => rawBundleCandidates(candidate, true));
+  if (Object.prototype.hasOwnProperty.call(raw, 'bundle')) return rawBundleCandidates(raw.bundle, true, side);
+  if (Array.isArray(raw.apps)) return raw.apps.flatMap((candidate: any) => rawBundleCandidates(candidate, true, side));
+  if (Array.isArray(raw.bundles)) return raw.bundles.flatMap((candidate: any) => rawBundleCandidates(candidate, true, side));
   return [{ value: raw, explicit }];
 }
 
@@ -287,12 +298,15 @@ export function autoMatchDiffBatchFolderBundles(
  * - manifest.json はメタデータのためバンドルとして数えない
  * - 単体バンドルと apps/bundles 配列の両方を pickAllSettingsBundles で読む
  * - 同じ app / guest / preview の重複は、後勝ちにせず issue として返す
+ * - source と target の両方を持つ JSON は options.side の側だけを読み、side がなければ issue として返す
  *
  * issues が 1 件でもある場合は、UI 側で比較開始を止めて利用者に修正を促す想定。
  */
 export function parseDiffBatchFolderImport(
-  files: readonly DiffBatchFolderImportFile[]
+  files: readonly DiffBatchFolderImportFile[],
+  options: ParseDiffBatchFolderImportOptions = {}
 ): DiffBatchFolderImportResult {
+  const side = options.side === 'source' || options.side === 'target' ? options.side : undefined;
   const bundles: DiffBatchFolderImportedBundle[] = [];
   const issues: DiffBatchFolderImportIssue[] = [];
   const endpoints = new Map<string, DiffBatchFolderImportedBundle>();
@@ -358,10 +372,20 @@ export function parseDiffBatchFolderImport(
     }
 
     const picked: Array<{ bundle: Bundle; appName: string }> = [];
-    const candidates = rawBundleCandidates(raw);
+    const candidates = rawBundleCandidates(raw, false, side);
     const issueCountBeforeCandidates = issues.length;
     for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
       const candidateEntry = candidates[candidateIndex];
+      if (candidateEntry.ambiguousPair) {
+        issues.push({
+          code: 'invalid-bundle',
+          fileName,
+          relativePath,
+          bundleIndex: candidateIndex + 1,
+          message: `${bundlePosition(fileName || relativePath, candidateIndex + 1, candidates.length)}: 比較元と比較先の両方を含むJSONは、どちらの設定として読むか決められないため読み込めません`
+        });
+        continue;
+      }
       const candidate = candidateEntry.value;
       const candidateIssue = rawBundleIssue(candidate);
       if (candidateIssue) {
