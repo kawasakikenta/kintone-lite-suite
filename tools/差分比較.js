@@ -613,13 +613,20 @@
   function deepClone(v) {
     return v == null ? v : JSON.parse(JSON.stringify(v));
   }
+  function setOwnValue(target, key, value) {
+    if (key === "__proto__") {
+      Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
+    } else {
+      target[key] = value;
+    }
+  }
   function normalize(v) {
     if (Array.isArray(v)) return v.map(normalize);
     if (v && typeof v === "object") {
       const o = {};
       Object.keys(v).sort().forEach((k) => {
         if (META_KEYS.has(k)) return;
-        o[k] = normalize(v[k]);
+        setOwnValue(o, k, normalize(v[k]));
       });
       return o;
     }
@@ -1738,6 +1745,7 @@
   }
   function parseIgnoreRules(text2) {
     const keySet = new Set(DEFAULT_IGNORE_KEYS);
+    const userKeySet = /* @__PURE__ */ new Set();
     const pathSet = /* @__PURE__ */ new Set();
     const exactPathSet = /* @__PURE__ */ new Set();
     const keyPatterns = [];
@@ -1761,9 +1769,12 @@
         return;
       }
       if (isPath) pathSet.add(cleaned);
-      else keySet.add(cleaned);
+      else {
+        keySet.add(cleaned);
+        userKeySet.add(cleaned);
+      }
     });
-    return { keySet, pathSet, exactPathSet, keyPatterns, pathPatterns };
+    return { keySet, userKeySet, pathSet, exactPathSet, keyPatterns, pathPatterns };
   }
   function matchAnyPattern(patterns, value) {
     if (!Array.isArray(patterns) || !patterns.length || !value) return false;
@@ -1789,6 +1800,10 @@
     const normalizedPath = normalizeIgnoreToken(path);
     return !!normalizedPath && ENTITY_IDENTIFIER_PATH_PATTERNS.some((pattern) => pattern.test(normalizedPath));
   }
+  var USER_DATA_PATH_PATTERN = /^pluginsettings\.plugins\[\d+\]\.config(?:\.|\[)/;
+  function isUserDataPath(path) {
+    return USER_DATA_PATH_PATTERN.test(normalizeIgnoreToken(path));
+  }
   function getComparisonPathLeafKey(path) {
     const text2 = String(path || "");
     const quoted = text2.match(/\[("(?:[^"\\]|\\.)*")\](?:\[\d+\])*$/);
@@ -1812,11 +1827,15 @@
     if (isEntityIdentifierChildPath(comparisonPath)) return false;
     const leaf = normalizeIgnoreToken(getComparisonPathLeafKey(comparisonPath));
     if (!leaf) return false;
-    if (ignoreRules.keySet.has(leaf)) return true;
+    const keySet = isUserDataPath(comparisonPath) ? ignoreRules.userKeySet || ignoreRules.keySet : ignoreRules.keySet;
+    if (keySet.has(leaf)) return true;
     return matchAnyPattern(ignoreRules.keyPatterns, leaf);
   }
+  function isMetaKeyProperty(key, comparisonPath) {
+    return META_KEYS.has(key) && !isEntityIdentifierChildPath(comparisonPath) && !isUserDataPath(comparisonPath);
+  }
   function isIgnoredObjectProperty(ignoreRules, key, path, comparisonPath = path) {
-    if (!isEntityIdentifierChildPath(comparisonPath) && META_KEYS.has(key)) return true;
+    if (isMetaKeyProperty(key, comparisonPath)) return true;
     return isIgnoredPath(ignoreRules, path, comparisonPath);
   }
   function markDroppedDiffRow(out, row, kind) {
@@ -1863,12 +1882,14 @@
       return true;
     }
     const diffCount = Number(out?.__diffCount || 0);
-    if (diffCount >= ARRAY_DIFF_LIMIT) {
+    if (diffCount >= ARRAY_DIFF_LIMIT || out?.__diffLimitReached === true) {
+      markDiffLimitReached(out);
       markDroppedDiffRow(out, row, "diff");
       return false;
     }
     if (out) out.__diffCount = diffCount + 1;
     out.push(row);
+    if (diffCount + 1 >= ARRAY_DIFF_LIMIT) markDiffLimitReached(out);
     return true;
   }
   function getCollectedDiffCount(rows) {
@@ -1899,7 +1920,7 @@
         const childPath = path ? `${path}.${k}` : k;
         const childComparisonPath = appendNormalizationPath(comparisonPath, k);
         if (isIgnoredObjectProperty(ignoreRules, k, childPath, childComparisonPath)) return;
-        o[k] = normalizeForCompare(v[k], ignoreRules, childPath, childComparisonPath);
+        setOwnValue(o, k, normalizeForCompare(v[k], ignoreRules, childPath, childComparisonPath));
       });
       return o;
     }
@@ -1978,7 +1999,7 @@
       return left && right ? [{ sig, leftIdx: left.idx, rightIdx: right.idx }] : [];
     }));
     for (const sig of ordered) {
-      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
+      if (hasReachedDiffLimit(out)) return true;
       const left = mapA.get(sig);
       const right = mapB.get(sig);
       if (!left && right) {
@@ -2041,7 +2062,7 @@
         if (out[oi].arrayKeyValue === void 0) out[oi].arrayKeyValue = keyVal;
         tagParentArrayKey(out[oi], key, keyVal);
       }
-      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
+      if (hasReachedDiffLimit(out)) return true;
     }
     return true;
   }
@@ -2162,7 +2183,7 @@
       ...rightEntries.map((entry) => ({ kind: "added", order: entry.idx, entry }))
     ].sort((x, y) => x.order - y.order);
     for (const step of ordered) {
-      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
+      if (hasReachedDiffLimit(out)) return true;
       if (step.kind === "removed") {
         pushDiffRow(out, {
           type: "removed",
@@ -2328,7 +2349,7 @@
       return left && right ? [{ sig, leftIdx: left.idx, rightIdx: right.idx }] : [];
     }));
     for (const sig of ordered) {
-      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
+      if (hasReachedDiffLimit(out)) return true;
       const left = mapA.get(sig);
       const right = mapB.get(sig);
       if (!left && right) {
@@ -2391,7 +2412,7 @@
         if (out[oi].arrayKeyValue === void 0) out[oi].arrayKeyValue = keyVal;
         tagParentArrayKey(out[oi], rule.arrayKey, keyVal);
       }
-      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
+      if (hasReachedDiffLimit(out)) return true;
     }
     return true;
   }
@@ -2402,7 +2423,7 @@
     if ([...sigA].sort().join("\0") !== [...sigB].sort().join("\0")) return false;
     const used = new Array(a.length).fill(false);
     for (let j = 0; j < b.length; j++) {
-      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
+      if (hasReachedDiffLimit(out)) return true;
       let from = -1;
       for (let i = 0; i < a.length; i++) {
         if (!used[i] && sigA[i] === sigB[j]) {
@@ -2488,14 +2509,14 @@
     if (!n && !m) return true;
     if (!n) {
       for (let j2 = 0; j2 < m; j2++) {
-        if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
+        if (hasReachedDiffLimit(out)) return true;
         pushDiffRow(out, { type: "added", path: `${path}[${j2}]`, left: void 0, right: b[j2] }, ignoreRules, `${comparisonPath}[${j2}]`);
       }
       return true;
     }
     if (!m) {
       for (let i2 = 0; i2 < n; i2++) {
-        if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
+        if (hasReachedDiffLimit(out)) return true;
         pushDiffRow(out, { type: "removed", path: `${path}[${i2}]`, left: a[i2], right: void 0 }, ignoreRules, `${comparisonPath}[${i2}]`);
       }
       return true;
@@ -2513,7 +2534,7 @@
     let i = 0;
     let j = 0;
     while (i < n || j < m) {
-      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) {
+      if (hasReachedDiffLimit(out)) {
         markDiffLimitReached(out);
         break;
       }
@@ -2571,7 +2592,7 @@
     }
     const max = Math.max(a.length, b.length);
     for (let i = 0; i < max; i++) {
-      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return;
+      if (hasReachedDiffLimit(out)) return;
       const p = `${path}[${i}]`;
       const itemComparisonPath = `${comparisonPath}[${i}]`;
       if (i >= a.length) pushDiffRow(out, { type: "added", path: p, left: void 0, right: b[i] }, ignoreRules, itemComparisonPath);
@@ -2580,7 +2601,7 @@
     }
   }
   function collectDeepDiffs(a, b, path, out, ignoreRules, comparisonPath = path) {
-    if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return;
+    if (hasReachedDiffLimit(out)) return;
     if (isIgnoredPath(ignoreRules, path, comparisonPath)) return;
     if (a === b) {
       pushSameDiffRow(out, { path, left: a, right: b, severity: "low" }, ignoreRules, comparisonPath);
@@ -2617,7 +2638,7 @@
         if (!Object.prototype.hasOwnProperty.call(b, k)) pushDiffRow(out, { type: "removed", path: p, left: a[k], right: void 0, ...isEmptyLikeValue(a[k]) ? { emptyOnly: true } : {} }, ignoreRules, childComparisonPath);
         else if (!Object.prototype.hasOwnProperty.call(a, k)) pushDiffRow(out, { type: "added", path: p, left: void 0, right: b[k], ...isEmptyLikeValue(b[k]) ? { emptyOnly: true } : {} }, ignoreRules, childComparisonPath);
         else collectDeepDiffs(a[k], b[k], p, out, ignoreRules, childComparisonPath);
-        if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return;
+        if (hasReachedDiffLimit(out)) return;
       }
       return;
     }
@@ -2658,7 +2679,7 @@
     if (isPlainObject(actions)) {
       const out = {};
       Object.keys(actions).forEach((key) => {
-        out[key] = sortAction(actions[key]);
+        setOwnValue(out, key, sortAction(actions[key]));
       });
       return { ...section, actions: out };
     }
@@ -2668,7 +2689,9 @@
     const sClone = src && typeof src === "object" ? deepClone(src) : src;
     const tClone = tgt && typeof tgt === "object" ? deepClone(tgt) : tgt;
     const cleanupRootMetadata = (bundle) => {
-      if (bundle && typeof bundle === "object" && "_partial" in bundle) delete bundle._partial;
+      if (!bundle || typeof bundle !== "object") return;
+      if ("_partial" in bundle) delete bundle._partial;
+      if ("_bodyFetchStats" in bundle) delete bundle._bodyFetchStats;
     };
     cleanupRootMetadata(sClone);
     cleanupRootMetadata(tClone);
@@ -2727,6 +2750,7 @@
     delete cloned.fetched;
     delete cloned.skipped;
     delete cloned.failed;
+    delete cloned._configFetchStats;
     if (!Array.isArray(cloned.plugins)) return cloned;
     cloned.plugins.forEach((p) => {
       if (!p || typeof p !== "object") return;
@@ -2751,12 +2775,15 @@
     }
     return cloned;
   }
-  function getLegacyPluginSettingsFetchError(value) {
+  function getPluginFetchStatsError(value) {
     if (!value || typeof value !== "object") return "";
-    const failed = Number(value.failed);
-    const skipped = Number(value.skipped);
-    const failedCount = Number.isFinite(failed) && failed > 0 ? Math.trunc(failed) : 0;
-    const skippedCount = Number.isFinite(skipped) && skipped > 0 ? Math.trunc(skipped) : 0;
+    const countOf = (raw) => {
+      const n = Number(raw);
+      return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0;
+    };
+    const stats = value._configFetchStats && typeof value._configFetchStats === "object" ? value._configFetchStats : {};
+    const failedCount = Math.max(countOf(value.failed), countOf(stats.failed));
+    const skippedCount = Math.max(countOf(value.skipped), countOf(stats.skipped));
     if (failedCount <= 0 && skippedCount <= 0) return "";
     if (skippedCount <= 0) {
       return `プラグイン設定の取得に失敗したため、このセクションは比較できません（${failedCount}件）`;
@@ -2774,7 +2801,7 @@
         const o = {};
         Object.keys(v).sort().forEach((k) => {
           if (drop.has(k)) return;
-          o[k] = walk(v[k]);
+          setOwnValue(o, k, walk(v[k]));
         });
         return o;
       }
@@ -2820,7 +2847,7 @@
         if (obj && typeof obj === "object" && obj.name === k && renameMap.has(k)) {
           obj.name = newKey;
         }
-        newStates[newKey] = obj;
+        setOwnValue(newStates, newKey, obj);
       });
       cloned.states = newStates;
     }
@@ -2890,7 +2917,7 @@
     if (!unchanged.length) return untouched;
     const rewrite = (map, ranks) => {
       const out = { ...map };
-      for (const name of unchanged) out[name] = { ...map[name], index: String(ranks.get(name)) };
+      for (const name of unchanged) setOwnValue(out, name, { ...map[name], index: String(ranks.get(name)) });
       return out;
     };
     return {
@@ -2931,6 +2958,12 @@
       }
     }
   }
+  var NULL_SECTION_ERROR = "設定JSONのこのセクションの値が null のため、比較できません";
+  function sectionComparisonError(sectionKey, value) {
+    if (value === null) return NULL_SECTION_ERROR;
+    if (value?._fetchError) return String(value._fetchError);
+    return sectionKey === "pluginSettings" ? getPluginFetchStatsError(value) : "";
+  }
   function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeysText, options = {}) {
     const ignoreRules = parseIgnoreRules(ignoreKeysText);
     const presetState = options.normalizationPresetState || {};
@@ -2951,8 +2984,8 @@
       const limitHitBefore = hasReachedDiffLimit(rows);
       const s = sourceBundle.sections[sec];
       const t = targetBundle.sections[sec];
-      const sourceError = s?._fetchError ? String(s._fetchError) : sec === "pluginSettings" ? getLegacyPluginSettingsFetchError(s) : "";
-      const targetError = t?._fetchError ? String(t._fetchError) : sec === "pluginSettings" ? getLegacyPluginSettingsFetchError(t) : "";
+      const sourceError = sectionComparisonError(sec, s);
+      const targetError = sectionComparisonError(sec, t);
       if (sourceError || targetError) {
         const side = sourceError && targetError ? "both" : sourceError ? "source" : "target";
         fetchIssues.push({
@@ -3221,10 +3254,10 @@
       Object.keys(value).sort().forEach((key) => {
         const childPath = appendNormalizationPath(path, key);
         const isEntityIdentifier = isEntityIdentifierChildPath(childPath);
-        if (!isEntityIdentifier && META_KEYS.has(key)) return;
+        if (isMetaKeyProperty(key, childPath)) return;
         if (!isEntityIdentifier && config?.ignoreKeys?.has(normalizeIgnoreToken(key))) return;
         if (config?.ignoreAppReferencePaths && isAppReferenceIdPath(childPath)) return;
-        out[key] = normalizeSectionValueForCompare(value[key], config, childPath);
+        setOwnValue(out, key, normalizeSectionValueForCompare(value[key], config, childPath));
       });
       return out;
     }
@@ -13532,7 +13565,10 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     root2.addEventListener("kus-lite-dispose", dispose, { once: true });
     setRootElement(root2);
     setComponentUi({ status, result, busyText: document.createElement("span") });
+    const focusAtOpen = document.activeElement;
     requestAnimationFrame(() => {
+      const active2 = document.activeElement;
+      if (active2 && active2 !== document.body && active2 !== focusAtOpen && !root2.contains(active2)) return;
       const first = body.querySelector(
         "input:not([type=hidden]):not([disabled]),select:not([disabled]),textarea:not([disabled])"
       );

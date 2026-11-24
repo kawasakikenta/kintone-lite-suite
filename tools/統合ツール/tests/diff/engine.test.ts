@@ -7,6 +7,7 @@ import {
   detectProcessStateRenames, hasIncompleteActualDiffTruncation, summarizeRows,
   encodeExactIgnorePathRule, decodeExactIgnorePathRule, isAppReferenceIdPath
 } from '../../src/diff/engine';
+import { stableStringify } from '../../src/utils';
 
 function makeBundle(sections: Record<string, any>) {
   return { sections };
@@ -1351,5 +1352,102 @@ describe('diff/engine', () => {
       const result = computeDiffRows(src, tgt, ['fieldSettings'], '');
       expect(result.matchingNotices.items).toHaveLength(0);
     });
+  });
+});
+
+describe('diff/engine regressions', () => {
+  const realRows = (result: any) => result.rows.filter((row: any) => row.type !== 'same' && !row._displayOnly);
+
+  it('keeps the diff limit recorded when merging moved pairs brings the count back under the limit', () => {
+    // 配列の最後の組の中で上限に達し、その後の移動の統合で件数が 1,000 未満に戻るケース。
+    const bigA = { big: Array.from({ length: 1001 }, (_, i) => i) };
+    const bigB = { big: Array.from({ length: 1001 }, (_, i) => i + 5000) };
+    const src = makeBundle({ appSettings: { list: ['z', 'z', 'x', 'x', bigA] } });
+    const tgt = makeBundle({ appSettings: { list: ['z', 'x', 'x', 'z', bigB] } });
+    const result = computeDiffRows(src, tgt, ['appSettings'], '');
+    expect(realRows(result).length).toBeLessThan(1000);
+    expect(hasIncompleteActualDiffTruncation(result.truncation)).toBe(true);
+    expect(result.truncation.sections).toEqual([
+      expect.objectContaining({ sectionKey: 'appSettings', scanStatus: 'partial' })
+    ]);
+  });
+
+  it('compares plugin config keys that share a name with API metadata keys', () => {
+    const plugin = (value: string) => ({ plugins: [{ id: 'p1', name: 'P', enabled: true, _config: { creator: value, revision: value, createdAt: value, other: 'same' } }] });
+    const result = computeDiffRows(makeBundle({ pluginSettings: plugin('a') }), makeBundle({ pluginSettings: plugin('b') }), ['pluginSettings'], '');
+    expect(realRows(result).map((row: any) => row.path).sort()).toEqual([
+      'pluginSettings.plugins[0].config.createdAt',
+      'pluginSettings.plugins[0].config.creator',
+      'pluginSettings.plugins[0].config.revision'
+    ]);
+    // 利用者が入力したキー名の無視は、プラグイン設定の中にも効く。
+    const ignored = computeDiffRows(makeBundle({ pluginSettings: plugin('a') }), makeBundle({ pluginSettings: plugin('b') }), ['pluginSettings'], 'creator');
+    expect(realRows(ignored).map((row: any) => row.path).sort()).toEqual([
+      'pluginSettings.plugins[0].config.createdAt',
+      'pluginSettings.plugins[0].config.revision'
+    ]);
+  });
+
+  it('compares a field whose code is __proto__ instead of dropping it from the signature', () => {
+    const src = JSON.parse('{"properties":{"__proto__":{"type":"SINGLE_LINE_TEXT","code":"__proto__","label":"A","required":false}}}');
+    const tgt = JSON.parse('{"properties":{"__proto__":{"type":"SINGLE_LINE_TEXT","code":"__proto__","label":"B","required":true}}}');
+    const result = computeDiffRows(makeBundle({ fieldSettings: src }), makeBundle({ fieldSettings: tgt }), ['fieldSettings'], '', { includeSame: true });
+    expect(realRows(result).map((row: any) => row.path).sort()).toEqual([
+      'fieldSettings.properties.__proto__.label',
+      'fieldSettings.properties.__proto__.required'
+    ]);
+    expect(({} as any).label).toBeUndefined();
+  });
+
+  it('compares plugin config values stored under a __proto__ key', () => {
+    const plugin = (value: string) => JSON.parse(`{"plugins":[{"id":"p1","name":"P","enabled":true,"_config":{"__proto__":"${value}"}}]}`);
+    const result = computeDiffRows(makeBundle({ pluginSettings: plugin('A') }), makeBundle({ pluginSettings: plugin('B') }), ['pluginSettings'], '');
+    expect(realRows(result).map((row: any) => [row.path, row.left, row.right])).toEqual([
+      ['pluginSettings.plugins[0].config.__proto__', 'A', 'B']
+    ]);
+  });
+
+  it('keeps a __proto__ key in stableStringify output', () => {
+    expect(stableStringify(JSON.parse('{"__proto__":{"a":1},"b":2}'))).toBe('{"__proto__":{"a":1},"b":2}');
+    expect(stableStringify(JSON.parse('{"__proto__":{"a":1}}'))).not.toBe(stableStringify(JSON.parse('{"__proto__":{"a":2}}')));
+  });
+
+  it('does not report fetch counters (_configFetchStats / _bodyFetchStats) as settings differences', () => {
+    const plugins = [{ id: 'p1', name: 'P', enabled: true, _config: { a: '1' } }];
+    const pluginResult = computeDiffRows(
+      makeBundle({ pluginSettings: { plugins, _configFetchStats: { fetched: 1, failed: 0, skipped: 0 } } }),
+      makeBundle({ pluginSettings: { plugins } }),
+      ['pluginSettings'], ''
+    );
+    expect(realRows(pluginResult)).toEqual([]);
+    expect(pluginResult.fetchIssues).toEqual([]);
+    const customize = { desktop: { js: [], css: [] }, mobile: { js: [], css: [] }, scope: 'ALL' };
+    const customizeResult = computeDiffRows(
+      makeBundle({ customizeSettings: { ...customize, _bodyFetchStats: { fetched: 0, failed: 0, skipped: 0 } } }),
+      makeBundle({ customizeSettings: customize }),
+      ['customizeSettings'], ''
+    );
+    expect(realRows(customizeResult)).toEqual([]);
+  });
+
+  it('treats failed plugin configs recorded in _configFetchStats as an incomplete comparison', () => {
+    const plugins = [{ id: 'p1', name: 'P', enabled: true }];
+    const result = computeDiffRows(
+      makeBundle({ pluginSettings: { plugins, _configFetchStats: { fetched: 0, failed: 1, skipped: 0 } } }),
+      makeBundle({ pluginSettings: { plugins: [{ ...plugins[0], _config: { a: '1' } }] } }),
+      ['pluginSettings'], ''
+    );
+    expect(realRows(result)).toEqual([]);
+    expect(result.fetchIssues).toEqual([expect.objectContaining({ sectionKey: 'pluginSettings', side: 'source' })]);
+  });
+
+  it('treats a section whose value is null as not comparable instead of added or removed', () => {
+    const result = computeDiffRows(
+      makeBundle({ customizeSettings: null }),
+      makeBundle({ customizeSettings: { desktop: { js: [], css: [] }, mobile: { js: [], css: [] }, scope: 'ALL' } }),
+      ['customizeSettings'], ''
+    );
+    expect(realRows(result)).toEqual([]);
+    expect(result.fetchIssues).toEqual([expect.objectContaining({ sectionKey: 'customizeSettings', side: 'source' })]);
   });
 });

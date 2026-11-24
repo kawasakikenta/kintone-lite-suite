@@ -107,13 +107,25 @@ export function deepClone<T>(v: T): T {
   return v == null ? v : JSON.parse(JSON.stringify(v));
 }
 
+/**
+ * オブジェクトへ通常のプロパティとして値を入れる。
+ * JSON から読んだ `__proto__` というキーも、代入でプロトタイプを差し替えずに自身のプロパティとして残す。
+ */
+export function setOwnValue(target: Record<string, any>, key: string, value: unknown): void {
+  if (key === '__proto__') {
+    Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
+  } else {
+    target[key] = value;
+  }
+}
+
 export function normalize(v: any): any {
   if (Array.isArray(v)) return v.map(normalize);
   if (v && typeof v === 'object') {
     const o: Record<string, any> = {};
     Object.keys(v).sort().forEach((k) => {
       if (META_KEYS.has(k)) return;
-      o[k] = normalize(v[k]);
+      setOwnValue(o, k, normalize(v[k]));
     });
     return o;
   }

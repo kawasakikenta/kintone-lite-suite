@@ -500,6 +500,32 @@ async function main() {
     assert.equal(await popupPanel.count(), 0);
     results.push('ポップアップ: 詳細設定・ほかの操作・「?」ヘルプ・Esc の扱い・閉じた後のフォーカス・確認画面への反映・320/768px');
 
+    // 開いた直後の「最初の入力欄へフォーカス」は次の描画で行う。それまでに kintone 側へ移ったフォーカスは奪わない
+    // （奪うと、続けて押した Esc がそのパネルを閉じる。main の CI の「kintone側のEscでツールを閉じない」がときどき落ちた原因）。
+    const focusOnOpen = await page.evaluate(async () => {
+      const nextFrames = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const label = () => document.activeElement?.id || document.activeElement?.getAttribute('aria-label') || document.activeElement?.tagName;
+      document.querySelector('#launcher').focus();
+      const stay = Shared.createLitePanel({ id: 'focus-open-stay', title: '開いたまま', accent: 'settings' });
+      stay.body.append(Shared.makeInput({ ariaLabel: '開いたままの入力' }));
+      await nextFrames();
+      const untouched = label();
+      stay.close();
+      document.querySelector('#launcher').focus();
+      const moved = Shared.createLitePanel({ id: 'focus-open-moved', title: '開いた直後に移る', accent: 'settings' });
+      moved.body.append(Shared.makeInput({ ariaLabel: '開いた直後に移る入力' }));
+      const outside = document.createElement('input');
+      outside.setAttribute('aria-label', 'kintone側の入力');
+      document.body.append(outside);
+      outside.focus();
+      await nextFrames();
+      const afterMove = label();
+      moved.close();
+      outside.remove();
+      return { untouched, afterMove };
+    });
+    assert.deepEqual(focusOnOpen, { untouched: '開いたままの入力', afterMove: 'kintone側の入力' }, '開いた直後は最初の入力欄へ移し、その前に別の場所へ移っていたら奪わない');
+
     await page.locator('#launcher').focus();
     await page.evaluate(() => {
       window.firstPanel = Shared.createLitePanel({ id: 'escape-first', title: '一つ目', accent: 'settings' });
@@ -530,7 +556,7 @@ async function main() {
     await page.keyboard.press('Escape');
     assert.equal(await page.locator('.kus-lp').count(), 0);
     assert.equal(await page.evaluate(() => document.activeElement.id), 'launcher');
-    results.push('Esc: 操作中のパネルのみ閉じる・日本語変換と子操作を優先・kintone側操作を保持');
+    results.push('Esc: 操作中のパネルのみ閉じる・日本語変換と子操作を優先・kintone側操作を保持・開いた直後に移ったフォーカスを奪わない');
     assert.deepEqual(errors, []);
     results.push('320〜1440px・実行中の閉じる防止・フォーカス復帰・再起動の後始末');
   } finally {
