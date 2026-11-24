@@ -1980,7 +1980,8 @@ describe('diff/xlsx-export', () => {
     expect(summary).toContain('設定項目ごとの差分とレビュー入力は「差分一覧」へ進みます。');
     expect(summary).not.toContain('すべての差分');
     expect(summary).toContain('<hyperlink ref="A26" location="&apos;取得・未検証&apos;!A3"');
-    expect(summary).toContain('<hyperlink ref="A27" location="&apos;変更対象一覧&apos;!B4"');
+    // 取得失敗があるため変更対象一覧には注意行が入り、先頭データ行は 5 行目になる。
+    expect(summary).toContain('<hyperlink ref="A27" location="&apos;変更対象一覧&apos;!B5"');
     expect(summary).toContain('<hyperlink ref="A28" location="&apos;フィールド差分要約&apos;!C4"');
     expect(summary).toMatch(/<c r="B7"[^>]*><v>3<\/v>/);
     expect(summary).toContain('<mergeCell ref="A1:D1"/>');
@@ -3361,7 +3362,6 @@ describe('diff/xlsx-export', () => {
 
 });
 
-
 describe('customer Excel permission entry evidence', () => {
   const permissionEntry = {
     entity: { type: 'USER', code: 'alice' }, includeSubs: false,
@@ -3556,5 +3556,139 @@ describe('顧客向け Excel の項目名の重なり', () => {
     expect(texts.filter((text) => text.includes('今月のカレンダー.id'))).toEqual([]);
     const targets = await readWorksheetByName(blob, '変更対象一覧');
     expect(worksheetInlineTexts(targets, 'C', 3).filter((name) => name.startsWith('一覧「'))).toEqual(['一覧「今月のカレンダー」']);
+  });
+});
+
+describe('diff Excel: 名前に「.」を含む一覧・ステータス・アプリアクション・選択肢', () => {
+  it('keeps a view named 営業.一覧 as one name in the customer and internal workbooks', () => {
+    const bundle = (filterCond: string) => ({
+      appId: '1',
+      meta: { appName: '営業管理' },
+      sections: { viewSettings: { views: { '営業.一覧': { id: '10', name: '営業.一覧', type: 'LIST', index: '0', filterCond, fields: ['顧客名'] } } } }
+    });
+    const sourceBundle = bundle('status = "open"');
+    const targetBundle = bundle('status = "closed"');
+    const rows = enrichDiffRows(computeDiffRows(sourceBundle, targetBundle, ['viewSettings'], '').rows, sourceBundle, targetBundle)
+      .filter((row: any) => row.type !== 'same');
+    expect(rows.map((row: any) => [row.path, row.entityPathTail])).toEqual([['viewSettings.views.営業.一覧.filterCond', '.filterCond']]);
+
+    // 出力時に設定がない場合も、行の entityPathTail で名前を決める。
+    for (const bundles of [{ sourceBundle, targetBundle }, {}]) {
+      const customer = buildDiffXlsxSheetsWithSafeDefault({ ...bundles, rows, scopes: ['viewSettings'] });
+      const coarse = customer.find((sheet) => sheet.name === '変更対象一覧')!;
+      expect(coarse.rows[2].slice(1, 5)).toEqual(['一覧', '一覧「営業.一覧」', '設定変更', '絞り込み条件']);
+      const list = customer.find((sheet) => sheet.name === '変更一覧')!;
+      expect(list.rows[1].slice(3, 5)).toEqual(['一覧「営業.一覧」', '絞り込み条件']);
+      expect(customer.find((sheet) => sheet.name === '06_一覧設定')!.rows[2][2]).toBe('営業.一覧');
+
+      const internal = buildDiffXlsxSheetsWithSafeDefault({ ...bundles, audience: 'internal', rows, scopes: ['viewSettings'] });
+      expect(internal.find((sheet) => sheet.name === '変更対象一覧')!.rows[3].slice(0, 2)).toEqual(['一覧', '営業.一覧']);
+      expect(JSON.stringify([...customer, ...internal].map((sheet) => sheet.rows))).not.toContain('一覧「営業」');
+    }
+  });
+
+  it('labels settings after a dotted app action or status name instead of treating part of the name as the setting', () => {
+    const bundle = (index: string, users: string[]) => ({
+      appId: '1',
+      meta: { appName: 'A' },
+      sections: {
+        processSettings: {
+          enable: true,
+          states: { '受付.済': { name: '受付.済', index: '0', assignee: { type: 'ONE', entities: users.map((code) => ({ entity: { type: 'USER', code }, includeSubs: false })) } } },
+          actions: []
+        },
+        actionSettings: { actions: {
+          '転記.A': { id: '3', name: '転記.A', index, destApp: { app: '10' }, mappings: [], entities: [], filterCond: '' },
+          B: { id: '4', name: 'B', index: index === '0' ? '1' : '0', destApp: { app: '10' }, mappings: [], entities: [], filterCond: '' }
+        } }
+      }
+    });
+    const sourceBundle = bundle('0', ['alice']);
+    const targetBundle = bundle('1', ['alice', 'bob']);
+    const scopes = ['processSettings', 'actionSettings'];
+    const rows = enrichDiffRows(computeDiffRows(sourceBundle, targetBundle, scopes, '').rows, sourceBundle, targetBundle);
+    for (const bundles of [{ sourceBundle, targetBundle }, {}]) {
+      const list = buildDiffXlsxSheetsWithSafeDefault({ ...bundles, rows, scopes }).find((sheet) => sheet.name === '変更一覧')!;
+      expect(list.rows.slice(1).map((row) => row.slice(3, 5))).toEqual([
+        ['ステータス「受付.済」', '作業者'],
+        ['アプリアクション「B」', 'アプリアクションの並び順'],
+        ['アプリアクション「転記.A」', 'アプリアクションの並び順']
+      ]);
+    }
+  });
+
+  it('keeps a dotted choice name whole in the customer setting labels', () => {
+    const bundle = (options: Record<string, unknown>) => ({
+      appId: '1',
+      meta: { appName: 'A' },
+      sections: { fieldSettings: { properties: { status: { type: 'DROP_DOWN', code: 'status', label: '状態', options } } } }
+    });
+    const sourceBundle = bundle({ 'Ver.1': { label: 'Ver.1', index: '0' }, OPEN: { label: 'OPEN', index: '1' } });
+    const targetBundle = bundle({ 'Ver.1': { label: 'Ver.1', index: '1' }, OPEN: { label: 'OPEN', index: '0' }, 'Ver.2': { label: 'Ver.2', index: '2' } });
+    const rows = enrichDiffRows(computeDiffRows(sourceBundle, targetBundle, ['fieldSettings'], '').rows, sourceBundle, targetBundle);
+    const list = buildDiffXlsxSheetsWithSafeDefault({ sourceBundle, targetBundle, rows, scopes: ['fieldSettings'] })
+      .find((sheet) => sheet.name === '変更一覧')!;
+    expect(list.rows.slice(1).map((row) => row[4]).sort()).toEqual([
+      '選択肢「OPEN」：並び順',
+      '選択肢「Ver.1」：並び順',
+      '選択肢「Ver.2」'
+    ]);
+  });
+});
+
+describe('diff Excel: シート名・概要のリンク先・見方の説明', () => {
+  const appNameRow: DiffXlsxContext['rows'][number] = {
+    sectionKey: 'appSettings', type: 'changed', path: 'appSettings.name', left: '旧名称', right: '新名称'
+  };
+
+  it('links the internal overview to the first coarse target row, also when an incomplete-warning row is inserted', () => {
+    const cases: Array<{ fetchIssues: DiffXlsxContext['fetchIssues']; cell: string }> = [
+      { fetchIssues: [], cell: 'B4' },
+      { fetchIssues: [{ sectionKey: 'viewSettings', side: 'source', message: '権限不足' }], cell: 'B5' }
+    ];
+    for (const { fetchIssues, cell } of cases) {
+      const sheets = buildDiffXlsxSheetsWithSafeDefault({ audience: 'internal', scopes: ['appSettings'], rows: [appNameRow], fetchIssues });
+      const link = sheets.find((sheet) => sheet.name === '概要')!.internalHyperlinks!
+        .find((entry) => entry.targetSheet === '変更対象一覧');
+      expect(link?.targetCell).toBe(cell);
+      const coarse = sheets.find((sheet) => sheet.name === '変更対象一覧')!;
+      const rowIndex = Number(cell.slice(1)) - 1;
+      expect(coarse.rows[rowIndex - 1][1]).toBe('対象名');
+      expect(coarse.rows[rowIndex][4]).toBe(1);
+      expect(coarse.internalHyperlinks?.[0]?.ref).toBe(`G${rowIndex + 1}`);
+    }
+  });
+
+  it('names the real technical sheet tab when a section label contains a character Excel forbids', async () => {
+    const ctx: DiffXlsxContext = {
+      audience: 'internal',
+      scopes: ['customizeSettings'],
+      rows: [{
+        sectionKey: 'customizeSettings',
+        type: 'changed',
+        path: 'customizeSettings.desktop.js',
+        left: [{ type: 'URL', url: 'https://a.example/a.js' }],
+        right: [{ type: 'URL', url: 'https://a.example/b.js' }]
+      }]
+    };
+    const sheets = buildDiffXlsxSheetsWithSafeDefault(ctx);
+    expect(await readWorkbookSheetNames(buildDiffXlsxBlob(ctx))).toContain('JS_CSS設定');
+    expect(sheets.map((sheet) => sheet.name)).toContain('JS_CSS設定');
+    const summary = sheets.find((sheet) => sheet.name === '概要')!;
+    expect(summary.rows.some((row) => row[0] === 'JS_CSS設定')).toBe(true);
+    expect(summary.internalHyperlinks?.some((link) => link.targetSheet === 'JS_CSS設定')).toBe(true);
+    const list = sheets.find((sheet) => sheet.name === '差分一覧')!;
+    expect(String(list.rows[3][5])).toContain('詳細は「JS_CSS設定」シートで確認');
+    expect(JSON.stringify(sheets.map((sheet) => sheet.rows))).not.toContain('「JS/CSS設定」シート');
+  });
+
+  it('describes the absent-value color and whole-entity labels as the customer workbook shows them', async () => {
+    const blob = buildDiffXlsxBlobWithSafeDefault({ scopes: ['appSettings'], rows: [appNameRow] });
+    const guide = await readWorksheetByName(blob, 'このファイルの見方');
+    expect(guide).toContain('背景は淡い灰色です');
+    expect(guide).not.toContain('背景色は付きません');
+    expect(guide).toContain('「一覧を追加」「一覧を削除」');
+    // 行の高さは本文列の幅 96 で見積もっているため、その幅のまま書く。
+    expect(guide).toContain('<col min="2" max="2" width="96" customWidth="1"/>');
   });
 });

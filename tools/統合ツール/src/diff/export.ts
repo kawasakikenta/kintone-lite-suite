@@ -38,7 +38,7 @@ import {
   formatIgnoreRuleForDisplay,
   formatIgnoreRulesTextForDisplay
 } from './engine.js';
-import { summarizeSeverity, extractFieldPathInfo, getFieldRowPayload } from './enrich.js';
+import { summarizeSeverity, extractFieldPathInfo, getFieldRowPayload, splitNamedEntityPath } from './enrich.js';
 import { buildIgnoreKeySuggestions, getFilteredDiffRowsWithoutSectionFilter, getFavoriteDiffRows } from './filter.js';
 import { resolveBundleRevision } from '../api.js';
 import { getToolDocument } from '../ui/dialog.js';
@@ -2591,6 +2591,20 @@ export function buildDiffHtmlReviewFingerprint(context: Record<string, any>, rev
   return `report-v${DIFF_HTML_REVIEW_STATE_VERSION}-${hashDiffHtmlReviewText(material)}`;
 }
 
+/**
+ * 表示用に行を展開する（SUBTABLE の追加・削除はテーブル内フィールド単位、非フィールドのセクション全体の追加・削除はエンティティ単位）。
+ * エンティティ単位の行の path はエンティティそのものを指すので、名前付きの設定では名前の後ろの部分（entityPathTail）を
+ * 空文字にし、名前に「.」があっても区切らない。
+ */
+function expandDiffHtmlDisplayRows(rows: any[]): any[] {
+  return expandSubtableRowsForDisplay(expandEntityRowsForDisplay(rows)).map((row: any) => {
+    if (!row || !row._expandedFromEntity || typeof row.entityPathTail === 'string') return row;
+    return splitNamedEntityPath(String(row.sectionKey || ''), String(row.path || ''), null)
+      ? { ...row, entityPathTail: '' }
+      : row;
+  });
+}
+
 export function computeDiffHtmlReviewIdentity(
   sourceBundle: any,
   targetBundle: any,
@@ -2613,7 +2627,7 @@ export function computeDiffHtmlReviewIdentity(
   const rowReviewKeys = preparedInputRows.rows.map((row) => String(row?._reviewKey || ''));
 
   const baseRows = sanitizedInputRows.filter((row) => includesComparedContent || row?.type !== 'same');
-  const rawDisplayRows = expandSubtableRowsForDisplay(expandEntityRowsForDisplay(baseRows));
+  const rawDisplayRows = expandDiffHtmlDisplayRows(baseRows);
   const displayRows = rawDisplayRows;
   const exportSelection = selectDiffHtmlRowsForExport(displayRows);
   const preparedReviewRows = prepareDiffHtmlReviewRows(exportSelection.rows);
@@ -2731,7 +2745,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   };
   // 差分一覧の見通しを良くするため、SUBTABLE 追加/削除行をテーブル内フィールド単位に、
   // 非フィールドのセクション全体追加/削除をエンティティ単位に、それぞれ事前展開する。
-  const displayRows = expandSubtableRowsForDisplay(expandEntityRowsForDisplay(withSameSections));
+  const displayRows = expandDiffHtmlDisplayRows(withSameSections);
   const exportSelection = selectDiffHtmlRowsForExport(displayRows);
   const exportRows = exportSelection.rows;
   // レポート表示専用の短い日本語見出し。値は複製せず、辞書で変換した場所・項目名だけを
@@ -3683,35 +3697,54 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     return { keySet, pathSet, exactPathSet, keyPatterns, pathPatterns };
   }
 
-  function ignorePathLeafKey(path) {
-    const m = String(path || '').match(/([^[.\\]]+)(?:\\[\\d+\\])?$/);
-    return m ? m[1] : '';
+  // 名前付きの設定（一覧・グラフ・ステータスなど）の名前は「.」を含み得る。行に名前の後ろの部分（entityPathTail）が
+  // あれば、path を「セクション.種類」・名前・残りに分け、名前を 1 つのトークンとして扱う。
+  function namedEntitySplitOfRow(row) {
+    const tail = row ? row.entityPathTail : undefined;
+    if (typeof tail !== 'string') return null;
+    const path = String(row.path || '');
+    const sectionKey = String(row.sectionKey || '');
+    if (!sectionKey || !path.startsWith(sectionKey + '.') || !path.endsWith(tail)) return null;
+    const bucketEnd = path.indexOf('.', sectionKey.length + 1);
+    if (bucketEnd <= sectionKey.length + 1) return null;
+    const nameEnd = path.length - tail.length;
+    if (nameEnd <= bucketEnd + 1) return null;
+    return { prefix: path.slice(0, bucketEnd), name: path.slice(bucketEnd + 1, nameEnd), tail: tail };
   }
 
-  function matchesIgnoreRules(rules, path) {
+  function rowPathTokens(row) {
+    const split = namedEntitySplitOfRow(row);
+    if (!split) return tokenizePath(String((row && row.path) || ''));
+    return [...tokenizePath(split.prefix), split.name, ...tokenizePath(split.tail)];
+  }
+
+  function matchesIgnoreRules(rules, row) {
     if (!rules) return false;
+    const path = String((row && row.path) || '');
     const exactPath = trimIgnoreToken(path);
     if (exactPath && rules.exactPathSet.indexOf(exactPath) >= 0) return true;
     const normalizedPath = normIgnoreToken(path);
     if (!normalizedPath) return false;
     if (rules.pathSet.indexOf(normalizedPath) >= 0) return true;
     for (const re of rules.pathPatterns) { if (re.test(normalizedPath)) return true; }
-    const leaf = ignorePathLeafKey(normalizedPath);
+    // 名前付きの設定そのものを指す行の名前は識別子なので、キー名だけの無視ルールでは隠さない（比較時と同じ扱い）
+    const split = namedEntitySplitOfRow(row);
+    if (split && !split.tail) return false;
+    const leafToken = rowPathTokens(row).filter((token) => typeof token === 'string').pop();
+    const leaf = normIgnoreToken(leafToken || '');
     if (!leaf) return false;
     if (rules.keySet.indexOf(leaf) >= 0) return true;
     for (const re of rules.keyPatterns) { if (re.test(leaf)) return true; }
     return false;
   }
 
-  function pathPropTokens(path) {
-    const out = [];
-    const re = /([^[.\\]]+)/g;
-    let m;
-    const s = String(path || '');
-    while ((m = re.exec(s)) !== null) {
-      if (!/^\\d+$/.test(m[1])) out.push(m[1]);
-    }
-    return out;
+  // 設定のプロパティ名だけを返す。添字と名前付きの設定の名前（識別子）は含めない。
+  function pathPropTokens(row) {
+    const split = namedEntitySplitOfRow(row);
+    const tokens = split
+      ? [...tokenizePath(split.prefix), ...tokenizePath(split.tail)]
+      : tokenizePath(String((row && row.path) || ''));
+    return tokens.filter((token) => typeof token === 'string' && !/^\\d+$/.test(token));
   }
 
   function presetSuppressesRow(preset, row) {
@@ -3719,7 +3752,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     // 順序無視系プリセット: 純粋な移動行（内容同一・位置のみ変化）を除外
     if (preset.unorderedArrays && row.moved && row.type === 'changed') return true;
     if (preset.ignoreKeys.length) {
-      const tokens = pathPropTokens(row.path);
+      const tokens = pathPropTokens(row);
       for (const token of tokens) {
         if (preset.ignoreKeys.indexOf(normIgnoreToken(token)) >= 0) return true;
       }
@@ -3728,7 +3761,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   }
 
   function passesDetailFilters(row) {
-    if (extraIgnoreRules && matchesIgnoreRules(extraIgnoreRules, row.path)) return false;
+    if (extraIgnoreRules && matchesIgnoreRules(extraIgnoreRules, row)) return false;
     if (activePresetKeys.size) {
       for (const preset of NORMALIZATION_PRESETS) {
         if (preset.applied || !activePresetKeys.has(preset.key)) continue;

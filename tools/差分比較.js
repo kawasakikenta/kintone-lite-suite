@@ -3999,19 +3999,22 @@
     layoutSettings: { label: "レイアウト設定", icon: "🧩" },
     categories: { label: "カテゴリ設定", icon: "🗂" }
   };
+  function ownLookup(dict, key) {
+    if (!dict || key == null) return void 0;
+    const name = String(key);
+    return Object.prototype.hasOwnProperty.call(dict, name) ? dict[name] : void 0;
+  }
   function labelOfProp(key) {
     if (!key) return "";
-    return PROP_LABELS[key]?.label || FIELD_SETTING_LABELS[key] || String(key);
+    return ownLookup(PROP_LABELS, key)?.label || ownLookup(FIELD_SETTING_LABELS, key) || String(key);
   }
   function iconOfProp(key) {
     if (!key) return "";
-    return PROP_LABELS[key]?.icon || "";
+    return ownLookup(PROP_LABELS, key)?.icon || "";
   }
   function labelOfValue(scope, value) {
     if (value == null) return null;
-    const dict = VALUE_LABELS[scope];
-    if (!dict) return null;
-    return dict[String(value)] || null;
+    return ownLookup(ownLookup(VALUE_LABELS, scope), value) || null;
   }
   function stateRenameName(side, fallback) {
     const name = side && typeof side === "object" ? side.name : side;
@@ -4019,7 +4022,7 @@
   }
   function labelOfSection(sectionKey) {
     if (!sectionKey) return { label: "-", icon: "" };
-    return SECTION_LABELS[sectionKey] || { label: String(sectionKey), icon: "" };
+    return ownLookup(SECTION_LABELS, sectionKey) || { label: String(sectionKey), icon: "" };
   }
   var PERMISSION_KEYS = /* @__PURE__ */ new Set([
     "appEditable",
@@ -4059,7 +4062,7 @@
       "PRIMARY_ORGANIZATION()": "優先する組織"
     }[code.trim().toUpperCase()] : "";
     if (functionLabel && !name) return functionLabel;
-    const typed = VALUE_LABELS["entity.type"]?.[type] || (type ? `· ${type}` : "·");
+    const typed = ownLookup(VALUE_LABELS["entity.type"], type) || (type ? `· ${type}` : "·");
     const display = name || code || "(未設定)";
     if (options.compact) return `${typed} ${display}`;
     if (name && code && name !== code) return `${typed} ${name} (${code})`;
@@ -4089,6 +4092,65 @@
     const m = String(path || "").match(/([^[.\]]+)(?:\[\d+\])?$/);
     return m ? m[1] : "";
   }
+  var NAMED_ENTITY_BUCKETS = {
+    viewSettings: "views",
+    reportSettings: "reports",
+    processSettings: "states",
+    categories: "categories",
+    actionSettings: "actions"
+  };
+  function namedEntityPrefix(sectionKey) {
+    const bucket = ownLookup(NAMED_ENTITY_BUCKETS, sectionKey);
+    return bucket ? `${sectionKey}.${bucket}.` : "";
+  }
+  function splitNamedEntityPath(sectionKey, path, names) {
+    const prefix = namedEntityPrefix(sectionKey);
+    const text2 = String(path || "");
+    if (!prefix || !text2.startsWith(prefix)) return null;
+    const rest = text2.slice(prefix.length);
+    let best = "";
+    for (const name of names || []) {
+      if (!name || name.length <= best.length || !rest.startsWith(name)) continue;
+      const next = rest.charAt(name.length);
+      if (next === "" || next === "." || next === "[") best = name;
+    }
+    if (!best) {
+      const first = /^[^.[\]]+/.exec(rest);
+      if (!first) return null;
+      best = first[0];
+    }
+    return { name: best, tail: rest.slice(best.length) };
+  }
+  function namedEntitySplitOfRow(row) {
+    const sectionKey = String(row?.sectionKey || "");
+    const path = String(row?.path || "");
+    const prefix = namedEntityPrefix(sectionKey);
+    if (!prefix || !path.startsWith(prefix)) return null;
+    const tail = row?.entityPathTail;
+    if (typeof tail === "string" && path.endsWith(tail) && path.length - tail.length > prefix.length) {
+      return { name: path.slice(prefix.length, path.length - tail.length), tail };
+    }
+    return splitNamedEntityPath(sectionKey, path, null);
+  }
+  function tokenizeRowPath(row) {
+    const split = namedEntitySplitOfRow(row);
+    if (!split) return tokenizePath(String(row?.path || ""));
+    const prefix = namedEntityPrefix(String(row?.sectionKey || ""));
+    return [...tokenizePath(prefix.slice(0, -1)), split.name, ...tokenizePath(split.tail)];
+  }
+  function collectNamedEntityNames(sourceBundle, targetBundle) {
+    const out = /* @__PURE__ */ new Map();
+    Object.keys(NAMED_ENTITY_BUCKETS).forEach((sectionKey) => {
+      const bucket = NAMED_ENTITY_BUCKETS[sectionKey];
+      const names = /* @__PURE__ */ new Set();
+      [sourceBundle, targetBundle].forEach((bundle) => {
+        const map = bundle?.sections?.[sectionKey]?.[bucket];
+        if (map && typeof map === "object" && !Array.isArray(map)) Object.keys(map).forEach((name) => names.add(name));
+      });
+      out.set(sectionKey, names);
+    });
+    return out;
+  }
   function normalizeLooseText(value) {
     return String(value || "").trim().toLowerCase();
   }
@@ -4114,7 +4176,7 @@
       if (META_KEYS.has(key)) return;
       if (["code", "id", "appid", "index", "no", "order"].includes(key)) return;
       if (options.dropPresentation && ["label", "name"].includes(key)) return;
-      out[key] = normalizeFieldDefForRename(value[key], options);
+      setOwnValue(out, key, normalizeFieldDefForRename(value[key], options));
     });
     return out;
   }
@@ -4141,15 +4203,19 @@
   }
   function fieldSettingTokenLabel(token) {
     if (typeof token === "number") return `${token + 1}件目`;
-    return FIELD_SETTING_LABELS[token] || labelOfProp(token);
+    return ownLookup(FIELD_SETTING_LABELS, token) || labelOfProp(token);
   }
+  var OPTION_PROPERTY_KEYS = /* @__PURE__ */ new Set(["label", "index"]);
   function fieldSettingIdentity(info) {
     const tokens = Array.isArray(info.tailTokens) ? info.tailTokens : [];
     if (!tokens.length) return { settingKey: "(field)", settingLabel: "フィールド全体" };
     const settingKey = tokens.map((token) => String(token)).join(".");
     if (tokens[0] === "options") {
-      const option = tokens.length > 1 ? String(tokens[1]) : "";
-      const suffix = tokens.length > 2 ? fieldSettingTokenLabel(tokens[2]) : "";
+      const optionTokens = tokens.slice(1);
+      const last = optionTokens[optionTokens.length - 1];
+      const hasProperty = optionTokens.length > 1 && typeof last === "string" && OPTION_PROPERTY_KEYS.has(last);
+      const option = (hasProperty ? optionTokens.slice(0, -1) : optionTokens).map((token) => String(token)).join(".");
+      const suffix = hasProperty ? fieldSettingTokenLabel(last) : "";
       return {
         settingKey,
         settingLabel: option ? `選択肢「${option}」${suffix ? ` / ${suffix}` : ""}` : "選択肢と並び順"
@@ -4307,11 +4373,11 @@
     });
     return out;
   }
-  function collectFieldDefinitions(properties, out = {}) {
+  function collectFieldDefinitions(properties, out = /* @__PURE__ */ Object.create(null)) {
     if (!properties || typeof properties !== "object") return out;
     Object.entries(properties).forEach(([code, field]) => {
       if (!field || typeof field !== "object") return;
-      out[code] = field;
+      setOwnValue(out, code, field);
       if (field.type === "SUBTABLE" && field.fields && typeof field.fields === "object") {
         collectFieldDefinitions(field.fields, out);
       }
@@ -4552,7 +4618,7 @@
   }
   function extractStateNameFromRow(row) {
     if (String(row?.sectionKey || "") !== "processSettings") return "";
-    const tokens = tokenizePath(String(row?.path || ""));
+    const tokens = tokenizeRowPath(row);
     if (tokens[1] === "states" && typeof tokens[2] === "string") return tokens[2];
     return "";
   }
@@ -4630,7 +4696,7 @@
     if (!row || row.sectionKey === "fieldSettings") return false;
     if (row._displayOnly) return false;
     if (!row.entityKind || !RENAMABLE_ENTITY_KINDS.has(row.entityKind)) return false;
-    const tokens = tokenizePath(String(row.path || ""));
+    const tokens = tokenizeRowPath(row);
     const sectionKey = String(row.sectionKey || "");
     if ((sectionKey === "viewSettings" || sectionKey === "reportSettings" || sectionKey === "categories") && tokens.length === 3) return true;
     if (sectionKey === "processSettings" && tokens[1] === "states" && tokens.length === 3) return true;
@@ -4662,7 +4728,7 @@
         const out = {};
         Object.keys(v).sort().forEach((k) => {
           if (dropKeys.has(k)) return;
-          out[k] = walk(v[k]);
+          setOwnValue(out, k, walk(v[k]));
         });
         return out;
       }
@@ -4969,9 +5035,7 @@
     formField: "フォームのフィールド"
   };
   function getSectionPropLabel(sectionKey, leaf) {
-    const map = SECTION_PROP_LABELS[sectionKey];
-    if (!map) return "";
-    return map[leaf] || "";
+    return ownLookup(ownLookup(SECTION_PROP_LABELS, sectionKey), leaf) || "";
   }
   function describeAclEntity(entity) {
     if (!entity || typeof entity !== "object") return "";
@@ -4983,8 +5047,8 @@
   function extractEntityContext(row, fieldLabelOf) {
     const sectionKey = String(row?.sectionKey || "");
     const path = String(row?.path || "");
-    const tokens = tokenizePath(path);
-    const leaf = getPathLeafKey(path);
+    const tokens = tokenizeRowPath(row);
+    const leaf = namedEntitySplitOfRow(row)?.tail === "" ? "" : getPathLeafKey(path);
     const propLabel = getSectionPropLabel(sectionKey, leaf);
     const empty = { entityKind: "", entityLabel: "", entityCode: "", propLabel };
     if (sectionKey === "fieldSettings") return empty;
@@ -5186,7 +5250,7 @@
       if (fieldInfo.leafKey === "unique") return "重複禁止設定変更";
       if (String(row.path || "").includes(".lookup.")) return "ルックアップ設定変更";
       const isOption = fieldInfo.tailTokens[0] === "options";
-      const knownSetting = !!FIELD_SETTING_LABELS[fieldInfo.leafKey] || fieldInfo.tailTokens.some((token) => typeof token === "string" && !!FIELD_SETTING_LABELS[token]);
+      const knownSetting = !!ownLookup(FIELD_SETTING_LABELS, fieldInfo.leafKey) || fieldInfo.tailTokens.some((token) => typeof token === "string" && !!ownLookup(FIELD_SETTING_LABELS, token));
       if (isOption || knownSetting) {
         const action = row.type === "added" ? "追加" : row.type === "removed" ? "削除" : "変更";
         return `${fieldSettingIdentity(fieldInfo).settingLabel} ${action}`;
@@ -5194,10 +5258,10 @@
       return `${noun}設定変更`;
     }
     const entity = row && (row.entityLabel || row.entityKind) ? { entityKind: String(row.entityKind || ""), entityLabel: String(row.entityLabel || ""), propLabel: String(row.entityPropLabel || "") } : extractEntityContext(row);
-    const kindLabel = entity.entityKind ? ENTITY_KIND_LABELS[entity.entityKind] || "" : "";
+    const kindLabel = entity.entityKind ? ownLookup(ENTITY_KIND_LABELS, entity.entityKind) || "" : "";
     const propLabel = entity.propLabel || "";
     const isEntityRoot = !!entity.entityKind && !propLabel && (() => {
-      const tokens = tokenizePath(String(row.path || ""));
+      const tokens = tokenizeRowPath(row);
       if (sectionKey === "viewSettings" || sectionKey === "reportSettings" || sectionKey === "categories") {
         return tokens.length === 3;
       }
@@ -5255,8 +5319,11 @@
   }
   function enrichDiffRows(rows, sourceBundle, targetBundle) {
     const fieldLabelOf = buildFieldLabelResolver(sourceBundle, targetBundle);
-    const seeded = (rows || []).map((row) => {
-      if (!row || row.sectionKey === "fieldSettings") return row;
+    const namedEntityNames = collectNamedEntityNames(sourceBundle, targetBundle);
+    const seeded = (rows || []).map((sourceRow) => {
+      if (!sourceRow || sourceRow.sectionKey === "fieldSettings") return sourceRow;
+      const split = splitNamedEntityPath(String(sourceRow.sectionKey || ""), String(sourceRow.path || ""), namedEntityNames.get(String(sourceRow.sectionKey || "")));
+      const row = split && !sourceRow._stateRenameNotice ? { ...sourceRow, entityPathTail: split.tail } : sourceRow;
       const ctx = extractEntityContext(row, fieldLabelOf);
       if (!ctx.entityKind) return row;
       const layoutField = row.sectionKey === "layoutSettings" ? layoutFieldCaption(row, sourceBundle, targetBundle, fieldLabelOf) : "";
@@ -5526,17 +5593,6 @@
   function isSemanticSection(sectionKey) {
     return !!sectionKey && SEMANTIC_SECTIONS.has(sectionKey);
   }
-  function tokenize(path) {
-    if (!path) return [];
-    const out = [];
-    const re = /([^[.\]]+)|\[(\d+)\]/g;
-    let m;
-    while ((m = re.exec(String(path))) !== null) {
-      if (m[1] != null) out.push(m[1]);
-      else out.push(Number(m[2]));
-    }
-    return out;
-  }
   function isIndex(token) {
     return typeof token === "number";
   }
@@ -5545,7 +5601,7 @@
     categories: { enable: "カテゴリ管理の有効化" }
   };
   function propLabelIn(sectionKey, key) {
-    return SECTION_PROP_LABEL_OVERRIDES[sectionKey]?.[key] || labelOfProp(key);
+    return ownLookup(ownLookup(SECTION_PROP_LABEL_OVERRIDES, sectionKey), key) || labelOfProp(key);
   }
   var TYPE_SCOPE_BY_SECTION = {
     processSettings: "assignee.type",
@@ -5571,14 +5627,14 @@
   };
   function scopedEnumLabel(sectionKey, propKey, value) {
     if (propKey === "type") {
-      const scope = TYPE_SCOPE_BY_SECTION[sectionKey];
+      const scope = ownLookup(TYPE_SCOPE_BY_SECTION, sectionKey);
       if (scope) {
         const scoped = labelOfValue(scope, value);
         if (scoped) return scoped;
       }
       return labelOfValue("view.type", value) || labelOfValue("chart.type", value);
     }
-    const sections = SCOPED_ENUM_SECTIONS[propKey];
+    const sections = ownLookup(SCOPED_ENUM_SECTIONS, propKey);
     if (sections && (!sections.length || sections.includes(sectionKey))) {
       return labelOfValue(propKey, value);
     }
@@ -5719,8 +5775,8 @@
       return String(v);
     }
   }
-  function parsePath(sectionKey, path) {
-    const tokens = tokenize(path);
+  function parsePath(sectionKey, row) {
+    const tokens = tokenizeRowPath(row);
     if (!tokens.length) return {};
     const ctx = {};
     if (sectionKey === "customizeSettings" && tokens.length >= 2) {
@@ -5734,7 +5790,7 @@
       // processSettings.states.<name> も対象だが actions は配列
       categories: "categories"
     };
-    const mapBucket = namedMaps[sectionKey];
+    const mapBucket = ownLookup(namedMaps, sectionKey);
     if (mapBucket) {
       for (let i = 1; i < tokens.length; i++) {
         if (tokens[i] === mapBucket && typeof tokens[i + 1] === "string") {
@@ -5769,7 +5825,7 @@
     if (!payload || typeof payload !== "object") return null;
     if (payload.entity && typeof payload.entity === "object") return payload.entity;
     if (payload.type && (payload.code !== void 0 || payload.login !== void 0 || payload.id !== void 0)) {
-      const entityTypes = Object.keys(VALUE_LABELS["entity.type"] || {});
+      const entityTypes = Object.keys(ownLookup(VALUE_LABELS, "entity.type") || {});
       if (entityTypes.includes(String(payload.type))) return payload;
     }
     return null;
@@ -5795,7 +5851,7 @@
         category: "🗂",
         layoutRow: "🧱"
       };
-      chips.push({ icon: iconMap[ek] || "·", label: String(row.entityLabel) });
+      chips.push({ icon: ownLookup(iconMap, ek) || "·", label: String(row.entityLabel) });
       if (row.entityCode && row.entityCode !== row.entityLabel) {
         chips.push({ label: String(row.entityCode), muted: true });
       }
@@ -5819,7 +5875,7 @@
     if (!chips.length && ctx.arrayBucketKey && typeof ctx.arrayIndex === "number") {
       chips.push({ label: `${labelOfProp(ctx.arrayBucketKey)} #${ctx.arrayIndex + 1}`, muted: true });
     }
-    if (!chips.length && ctx.parentKey && ctx.parentKey !== ctx.leafKey && ctx.parentKey !== ctx.arrayBucketKey && PROP_LABELS[ctx.parentKey]) {
+    if (!chips.length && ctx.parentKey && ctx.parentKey !== ctx.leafKey && ctx.parentKey !== ctx.arrayBucketKey && ownLookup(PROP_LABELS, ctx.parentKey)) {
       chips.push({ label: labelOfProp(ctx.parentKey), muted: true });
     }
     return chips;
@@ -5827,7 +5883,7 @@
   function decodeRow(row) {
     if (!row || !row.sectionKey || !isSemanticSection(row.sectionKey)) return null;
     const sect = labelOfSection(row.sectionKey);
-    const ctx = parsePath(row.sectionKey, String(row.path || ""));
+    const ctx = parsePath(row.sectionKey, row);
     const whereChips = buildWhereChips(row, ctx);
     const isStateRename = row._stateRenameNotice === true;
     const leaf = !isStateRename && ctx.leafKey && ctx.leafKey !== row.sectionKey && ctx.leafKey !== ctx.arrayBucketKey ? ctx.leafKey : "";
@@ -6531,6 +6587,12 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     });
     return `report-v${DIFF_HTML_REVIEW_STATE_VERSION}-${hashDiffHtmlReviewText(material)}`;
   }
+  function expandDiffHtmlDisplayRows(rows) {
+    return expandSubtableRowsForDisplay(expandEntityRowsForDisplay(rows)).map((row) => {
+      if (!row || !row._expandedFromEntity || typeof row.entityPathTail === "string") return row;
+      return splitNamedEntityPath(String(row.sectionKey || ""), String(row.path || ""), null) ? { ...row, entityPathTail: "" } : row;
+    });
+  }
   function computeDiffHtmlReviewIdentity(sourceBundle, targetBundle, rows, scopes = [], options = {}) {
     const exportContentMode = options.exportContentMode === "diffOnly" ? "diffOnly" : "withCompared";
     const includesComparedContent = shouldIncludeComparedContent(exportContentMode);
@@ -6544,7 +6606,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const preparedInputRows = prepareDiffHtmlReviewRows(sanitizedInputRows);
     const rowReviewKeys = preparedInputRows.rows.map((row) => String(row?._reviewKey || ""));
     const baseRows = sanitizedInputRows.filter((row) => includesComparedContent || row?.type !== "same");
-    const rawDisplayRows = expandSubtableRowsForDisplay(expandEntityRowsForDisplay(baseRows));
+    const rawDisplayRows = expandDiffHtmlDisplayRows(baseRows);
     const displayRows = rawDisplayRows;
     const exportSelection = selectDiffHtmlRowsForExport(displayRows);
     const preparedReviewRows = prepareDiffHtmlReviewRows(exportSelection.rows);
@@ -6651,7 +6713,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       jsCss: "JS/CSS",
       layoutRow: "レイアウト行"
     };
-    const displayRows = expandSubtableRowsForDisplay(expandEntityRowsForDisplay(withSameSections));
+    const displayRows = expandDiffHtmlDisplayRows(withSameSections);
     const exportSelection = selectDiffHtmlRowsForExport(displayRows);
     const exportRows = exportSelection.rows;
     const baseReportRows = exportRows.map((row) => {
@@ -7503,35 +7565,54 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     return { keySet, pathSet, exactPathSet, keyPatterns, pathPatterns };
   }
 
-  function ignorePathLeafKey(path) {
-    const m = String(path || '').match(/([^[.\\]]+)(?:\\[\\d+\\])?$/);
-    return m ? m[1] : '';
+  // 名前付きの設定（一覧・グラフ・ステータスなど）の名前は「.」を含み得る。行に名前の後ろの部分（entityPathTail）が
+  // あれば、path を「セクション.種類」・名前・残りに分け、名前を 1 つのトークンとして扱う。
+  function namedEntitySplitOfRow(row) {
+    const tail = row ? row.entityPathTail : undefined;
+    if (typeof tail !== 'string') return null;
+    const path = String(row.path || '');
+    const sectionKey = String(row.sectionKey || '');
+    if (!sectionKey || !path.startsWith(sectionKey + '.') || !path.endsWith(tail)) return null;
+    const bucketEnd = path.indexOf('.', sectionKey.length + 1);
+    if (bucketEnd <= sectionKey.length + 1) return null;
+    const nameEnd = path.length - tail.length;
+    if (nameEnd <= bucketEnd + 1) return null;
+    return { prefix: path.slice(0, bucketEnd), name: path.slice(bucketEnd + 1, nameEnd), tail: tail };
   }
 
-  function matchesIgnoreRules(rules, path) {
+  function rowPathTokens(row) {
+    const split = namedEntitySplitOfRow(row);
+    if (!split) return tokenizePath(String((row && row.path) || ''));
+    return [...tokenizePath(split.prefix), split.name, ...tokenizePath(split.tail)];
+  }
+
+  function matchesIgnoreRules(rules, row) {
     if (!rules) return false;
+    const path = String((row && row.path) || '');
     const exactPath = trimIgnoreToken(path);
     if (exactPath && rules.exactPathSet.indexOf(exactPath) >= 0) return true;
     const normalizedPath = normIgnoreToken(path);
     if (!normalizedPath) return false;
     if (rules.pathSet.indexOf(normalizedPath) >= 0) return true;
     for (const re of rules.pathPatterns) { if (re.test(normalizedPath)) return true; }
-    const leaf = ignorePathLeafKey(normalizedPath);
+    // 名前付きの設定そのものを指す行の名前は識別子なので、キー名だけの無視ルールでは隠さない（比較時と同じ扱い）
+    const split = namedEntitySplitOfRow(row);
+    if (split && !split.tail) return false;
+    const leafToken = rowPathTokens(row).filter((token) => typeof token === 'string').pop();
+    const leaf = normIgnoreToken(leafToken || '');
     if (!leaf) return false;
     if (rules.keySet.indexOf(leaf) >= 0) return true;
     for (const re of rules.keyPatterns) { if (re.test(leaf)) return true; }
     return false;
   }
 
-  function pathPropTokens(path) {
-    const out = [];
-    const re = /([^[.\\]]+)/g;
-    let m;
-    const s = String(path || '');
-    while ((m = re.exec(s)) !== null) {
-      if (!/^\\d+$/.test(m[1])) out.push(m[1]);
-    }
-    return out;
+  // 設定のプロパティ名だけを返す。添字と名前付きの設定の名前（識別子）は含めない。
+  function pathPropTokens(row) {
+    const split = namedEntitySplitOfRow(row);
+    const tokens = split
+      ? [...tokenizePath(split.prefix), ...tokenizePath(split.tail)]
+      : tokenizePath(String((row && row.path) || ''));
+    return tokens.filter((token) => typeof token === 'string' && !/^\\d+$/.test(token));
   }
 
   function presetSuppressesRow(preset, row) {
@@ -7539,7 +7620,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     // 順序無視系プリセット: 純粋な移動行（内容同一・位置のみ変化）を除外
     if (preset.unorderedArrays && row.moved && row.type === 'changed') return true;
     if (preset.ignoreKeys.length) {
-      const tokens = pathPropTokens(row.path);
+      const tokens = pathPropTokens(row);
       for (const token of tokens) {
         if (preset.ignoreKeys.indexOf(normIgnoreToken(token)) >= 0) return true;
       }
@@ -7548,7 +7629,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   }
 
   function passesDetailFilters(row) {
-    if (extraIgnoreRules && matchesIgnoreRules(extraIgnoreRules, row.path)) return false;
+    if (extraIgnoreRules && matchesIgnoreRules(extraIgnoreRules, row)) return false;
     if (activePresetKeys.size) {
       for (const preset of NORMALIZATION_PRESETS) {
         if (preset.applied || !activePresetKeys.has(preset.key)) continue;
@@ -14628,11 +14709,14 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     }
     return text2.slice(0, end);
   }
-  function sanitizeSheetName(name, index, used) {
-    const rawName = String(name || `Sheet${index + 1}`);
-    let n = transformXmlCharacters(rawName, () => "_").replace(/[\\\/\?\*\[\]:]/g, "_");
+  function excelSheetNameBase(name) {
+    let n = transformXmlCharacters(String(name ?? ""), () => "_").replace(/[\\\/\?\*\[\]:]/g, "_");
     n = n.replace(/^'+|'+$/g, "_");
-    if (n.length > 31) n = truncateUtf16WithoutSplittingPair(n, 31);
+    if (n.length > 31) n = truncateUtf16WithoutSplittingPair(n, 31).replace(/'+$/, "_");
+    return n;
+  }
+  function sanitizeSheetName(name, index, used) {
+    let n = excelSheetNameBase(name || `Sheet${index + 1}`);
     if (!n) n = `Sheet${index + 1}`;
     let candidate = n;
     let i = 2;
@@ -14645,6 +14729,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
   }
   var MIN_COL_W = 10;
   var MAX_COL_W = 60;
+  var EXCEL_MAX_COLUMN_WIDTH = 255;
   var EXCEL_MAX_ROWS = 1048576;
   var EXCEL_MAX_COLUMNS = 16384;
   var EXCEL_CELL_TEXT_LIMIT = 32767;
@@ -14868,7 +14953,10 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     const rows = sheet.rows || [];
     const maxCols = rows.reduce((n, r) => Math.max(n, r ? r.length : 0), 0);
     const headerRow = normalizedPositiveInt(sheet.headerRow, 1, Math.max(1, rows.length));
-    const widths = sheet.colWidths && sheet.colWidths.length ? sheet.colWidths : Array.from({ length: maxCols }, (_, i) => estimateColWidth(rows, i));
+    const widths = sheet.colWidths && sheet.colWidths.length ? sheet.colWidths.map((w) => {
+      const width = Number(w);
+      return Number.isFinite(width) && width > 0 ? Math.min(EXCEL_MAX_COLUMN_WIDTH, width) : MIN_COL_W;
+    }) : Array.from({ length: maxCols }, (_, i) => estimateColWidth(rows, i));
     const hyperlinkRefs = new Set(internalHyperlinks.map((link) => link.ref));
     const materializeEmptyCellsFromRow = sheet.materializeEmptyCellsFromRow == null ? null : normalizedPositiveInt(sheet.materializeEmptyCellsFromRow, 1, Math.max(1, rows.length));
     const outlines = rows.map((_, index) => normalizedOutline(sheet.rowOutlines?.[index]));
@@ -14898,8 +14986,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     if (widths.length) {
       out.push("<cols>");
       widths.forEach((w, i) => {
-        const cw = Math.max(MIN_COL_W, Math.min(MAX_COL_W, Number(w) || MIN_COL_W));
-        out.push(`<col min="${i + 1}" max="${i + 1}" width="${cw}" customWidth="1"/>`);
+        out.push(`<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`);
       });
       out.push("</cols>");
     }
@@ -15100,6 +15187,17 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
   }
   function sectionKeyOfRow(row) {
     return String(row.sectionKey || row.section || "(その他)");
+  }
+  function namedEntityPathOfRow(row) {
+    const tail = row.entityPathTail;
+    if (typeof tail !== "string") return null;
+    const path = String(row.path || "");
+    const firstTokenSplit = splitNamedEntityPath(sectionKeyOfRow(row), path, null);
+    if (!firstTokenSplit || !path.endsWith(tail)) return null;
+    const prefixLength = path.length - firstTokenSplit.name.length - firstTokenSplit.tail.length;
+    const root2 = path.slice(0, path.length - tail.length);
+    if (root2.length <= prefixLength) return null;
+    return { root: root2, name: root2.slice(prefixLength), tail };
   }
   function normalizationLabel(state3) {
     if (!state3 || !Object.keys(state3).length) return "未記録";
@@ -15570,8 +15668,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     return value.replace(/(種別:\s*)([A-Z][A-Z0-9_]*)\b/g, (_match, prefix, type) => `${prefix}${FIELD_TYPE_LABELS[type] || type}`);
   }
   function technicalSheetNameForRow(row) {
-    const key = String(row.sectionKey || row.section || "");
-    return key === "fieldSettings" ? "フィールド技術明細" : sectionLabelOf(key);
+    return sectionSheetName(sectionKeyOfRow(row));
   }
   function decodedListValue(row, side) {
     try {
@@ -15851,7 +15948,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     ].join(" / ");
   }
   function sectionSheetName(key) {
-    return key === "fieldSettings" ? "フィールド技術明細" : sectionLabelOf(key);
+    return key === "fieldSettings" ? "フィールド技術明細" : excelSheetNameBase(sectionLabelOf(key)) || "(未分類)";
   }
   function buildSheetGuides(ctx, grouped, fieldCount) {
     const hasIssues = !!((ctx.fetchIssues || []).length || (ctx.partialIssues || []).length || hasIncompleteActualDiffTruncation(ctx.truncation));
@@ -15869,11 +15966,12 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
         targetCell: "A3"
       });
     }
+    const hasCoarseTargets = summarizeRows2(ctx.rows || []).actual > 0;
     guides.push({
       name: "変更対象一覧",
       purpose: "変更された業務対象を、フィールドや一覧などの対象単位で大づかみに確認できます。",
       useWhen: "詳細を読む前に、どのフィールド・一覧・設定対象が変わったかを絞り込むときに使います。",
-      targetCell: summarizeRows2(ctx.rows || []).actual ? "B4" : "A4"
+      targetCell: `${hasCoarseTargets ? "B" : "A"}${coarseTargetSheetDataStartRow(hasCoarseTargets, customerIncomplete(ctx))}`
     });
     if (fieldCount) {
       guides.push(
@@ -16266,6 +16364,10 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
       return { viewName: leaf.name, property: leaf.property, isRoot: false };
     }
     if (exactName) return { viewName: exactName, property: null, isRoot: true };
+    const named = namedEntityPathOfRow(row);
+    if (named?.tail && !hasDefinitionPayload) {
+      return { viewName: customerPlainText(named.name), property: named.tail.replace(/^\./, ""), isRoot: false };
+    }
     const fallbackLeaf = /^(.*)\.(id|fields(?:\[\d+\])?|filterCond|sort|type|name|pagination|paginationStyle|pager|builtinType|device|date|title|html|index)$/.exec(remainder);
     if (hasDefinitionPayload || !fallbackLeaf) {
       return { viewName: customerPlainText(remainder), property: null, isRoot: true };
@@ -16280,6 +16382,8 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     return resolveCoarseViewIdentity(row, sourceBundle, targetBundle)?.viewName || null;
   }
   function coarseGenericEntityRootPath(row, sectionKey) {
+    const named = namedEntityPathOfRow(row);
+    if (named) return named.root;
     const path = String(row.path || "");
     const entityCode = String(row.entityCode || "").trim();
     const keyedPrefixes = {
@@ -16457,6 +16561,9 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
       return (SECTION_ORDER_BY_KEY.get(leftSection) ?? Number.MAX_SAFE_INTEGER) - (SECTION_ORDER_BY_KEY.get(rightSection) ?? Number.MAX_SAFE_INTEGER) || left.targetType.localeCompare(right.targetType, "ja") || left.targetName.localeCompare(right.targetName, "ja") || left.identifier.localeCompare(right.identifier, "ja");
     });
   }
+  function coarseTargetSheetDataStartRow(hasTargets, incomplete) {
+    return hasTargets && incomplete ? 5 : 4;
+  }
   function buildCoarseTargetSheet(ctx, fieldModel, differenceRefs) {
     const targets = buildCoarseTargets(ctx, fieldModel, differenceRefs);
     const hasTargets = targets.length > 0;
@@ -16498,7 +16605,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     rowStyles.push("normal");
     cellStyles.push([]);
     rowHeights.push(32);
-    const dataStartRow = headerRowNumber + 1;
+    const dataStartRow = coarseTargetSheetDataStartRow(hasTargets, incomplete);
     for (const target of targets) {
       rows.push([
         target.targetType,
@@ -17290,24 +17397,25 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     const withoutMarkup = customerPlainText(value).replace(/<br\s*\/?>/gi, "\n").replace(/<\/(?:div|p|li|tr|h[1-6])>/gi, "\n").replace(/<[^>]*>/g, "");
     return customerPlainText(withoutMarkup, maxLength);
   }
-  function customerGenericSettingLabel(sectionKey, path, decodedLabel) {
-    const leaf = path.match(/(?:^|[.\]])([^.[\]]+)$/)?.[1] || "";
+  function customerGenericSettingLabel(sectionKey, path, decodedLabel, entityTail = null) {
+    const subject = entityTail ?? path;
+    const leaf = entityTail === "" ? "" : subject.match(/(?:^|[.\]])([^.[\]]+)$/)?.[1] || "";
     if (sectionKey === "customizeSettings" && (leaf === "_body" || leaf === "body")) {
       return "ファイル内容";
     }
     if (sectionKey === "pluginSettings" && (leaf === "config" || leaf === "_config")) {
       return "プラグイン設定内容";
     }
-    const actionAppRef = /\.((?:destApp|targetApp|sourceApp)\.(?:app|appId)|destAppId|targetAppId|sourceAppId)$/.exec(path);
+    const actionAppRef = /\.((?:destApp|targetApp|sourceApp)\.(?:app|appId)|destAppId|targetAppId|sourceAppId)$/.exec(subject);
     if (sectionKey === "actionSettings" && actionAppRef) {
       return actionAppRef[1].startsWith("sourceApp") ? "コピー元のアプリ（アプリID）" : "レコードを追加するアプリ（アプリID）";
     }
-    if (sectionKey === "actionSettings" && /\.actions(?:\[[^\]]+\]|\.[^.]+)\.index$/.test(path)) {
+    if (sectionKey === "actionSettings" && (entityTail != null ? entityTail === ".index" : /\.actions(?:\[[^\]]+\]|\.[^.]+)\.index$/.test(path))) {
       return "アプリアクションの並び順";
     }
-    if (sectionKey === "actionSettings" && /\.mappings(?:\[\d+\])?(?:\.|$)/.test(path)) {
-      const mappingIndex = Number(path.match(/\.mappings\[(\d+)\]/)?.[1]);
-      const mappingProperty = path.match(/\.(srcField|destField|srcType|destType)$/)?.[1] || "";
+    if (sectionKey === "actionSettings" && /\.mappings(?:\[\d+\])?(?:\.|$)/.test(subject)) {
+      const mappingIndex = Number(subject.match(/\.mappings\[(\d+)\]/)?.[1]);
+      const mappingProperty = subject.match(/\.(srcField|destField|srcType|destType)$/)?.[1] || "";
       const mappingLabels = {
         srcField: "コピー元フィールド",
         destField: "コピー先フィールド",
@@ -17326,7 +17434,7 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     if (sectionKey === "processSettings" && leaf === "enable") {
       return "プロセス管理を有効にする";
     }
-    if (sectionKey === "processSettings" && /\.states\.[^.[\]]+\.assignee\.entities(?:\[\d+\])?$/.test(path)) {
+    if (sectionKey === "processSettings" && (entityTail != null ? /^\.assignee\.entities(?:\[\d+\])?$/.test(entityTail) : /\.states\.[^.[\]]+\.assignee\.entities(?:\[\d+\])?$/.test(path))) {
       return "作業者";
     }
     if ((sectionKey === "perRecordNotifications" || sectionKey === "reminderNotifications") && leaf === "title") {
@@ -17498,6 +17606,8 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     return !!value && typeof value === "object" && !Array.isArray(value) && ("srcField" in value || "srcType" in value || "destField" in value);
   }
   function isAppActionRootRow(row) {
+    const named = sectionKeyOfRow(row) === "actionSettings" ? namedEntityPathOfRow(row) : null;
+    if (named) return named.tail === "";
     const path = String(row.path || "");
     if (/^actionSettings\.actions(?:\[[^\]]+\]|\.[^.]+)$/.test(path)) return true;
     const entityCode = String(row.entityCode || "");
@@ -17551,16 +17661,17 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     const pathActionName = customerPlainText(
       /^actionSettings\.actions\.(.+?)(?=\.(?:mappings|destApp|targetApp|sourceApp|destAppId|targetAppId|sourceAppId|filterCond|name|index)(?:\.|\[|$)|$)/.exec(path)?.[1] || ""
     );
-    const actionName = actionNames(preferredBundle)[0] || actionNames(fallbackBundle)[0] || (entityKind === "appAction" ? entityLabel : "") || keyedActionName || pathActionName || "名称不明";
-    let settingItem = customerGenericSettingLabel("actionSettings", path, "");
-    if (/\.mappings\[\d+\](?:\.|$)/.test(path)) {
+    const named = namedEntityPathOfRow(row);
+    const actionName = named?.name || actionNames(preferredBundle)[0] || actionNames(fallbackBundle)[0] || (entityKind === "appAction" ? entityLabel : "") || keyedActionName || pathActionName || "名称不明";
+    let settingItem = customerGenericSettingLabel("actionSettings", path, "", named?.tail ?? null);
+    if (/\.mappings\[\d+\](?:\.|$)/.test(named?.tail ?? path)) {
       const identity = customerActionMappingIdentity(row, actionName, preferredBundle, fallbackBundle);
       if (identity) {
         settingItem = settingItem.replace(/^フィールドの関連付け（\d+件目）/, `フィールドの関連付け（${identity}）`);
       }
     }
     const actionPrefix = actionName === "名称不明" ? "" : `actionSettings.actions.${actionName}`;
-    if (actionPrefix && path === actionPrefix) {
+    if (named ? named.tail === "" : !!actionPrefix && path === actionPrefix) {
       settingItem = row.type === "added" ? "アクションを追加" : row.type === "removed" ? "アクションを削除" : "アクション全体";
     }
     return {
@@ -17773,7 +17884,7 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
         const decodedSetting = decoded.propLabel === "絞込条件" ? "絞り込み条件" : decoded.propLabel === "ソート" ? "並び順" : customerPlainText(decoded.propLabel);
         return {
           target: customerGenericTargetLabel(row, sectionKey, targets),
-          settingItem: customerGenericSettingLabel(sectionKey, path, decodedSetting)
+          settingItem: customerGenericSettingLabel(sectionKey, path, decodedSetting, namedEntityPathOfRow(row)?.tail ?? null)
         };
       }
     } catch {
@@ -19499,7 +19610,7 @@ ${item.target}` : item.target;
           },
           {
             label: "差分プロパティ",
-            text: "その対象の「どの設定項目」が変わったかです。たとえば「必須項目」「絞り込み条件」「表示するフィールドの並び順」などが入ります。フィールドや一覧そのものの追加・削除は「フィールド自体」「テーブル自体」と表示されます。"
+            text: "その対象の「どの設定項目」が変わったかです。たとえば「必須項目」「絞り込み条件」「表示するフィールドの並び順」などが入ります。フィールドやテーブルそのものの追加・削除は「フィールド自体」「テーブル自体」、一覧そのものの追加・削除は「一覧を追加」「一覧を削除」と表示されます。"
           },
           {
             label: "変更前／変更後",
@@ -19532,7 +19643,7 @@ ${item.target}` : item.target;
       {
         title: "値の表記",
         entries: [
-          { label: "存在しません", text: "その側のアプリに対象そのもの（フィールドや一覧など）がないことを表します。背景色は付きません。" },
+          { label: "存在しません", text: "その側のアプリに対象そのもの（フィールドや一覧など）がないことを表します。背景は淡い灰色です。" },
           { label: "（未設定）（値なし）（空文字）", text: "対象はあるものの値が入っていない状態です。設定画面で空欄になっているものと、値が空文字で保存されているものを区別しています。" },
           { label: "N番目", text: "並び順の変更は、比較元・比較先での位置を1始まりの「N番目」で示します。" },
           { label: "はい／いいえ", text: "オン・オフの設定は「はい」「いいえ」で表示します。" },
@@ -20532,7 +20643,9 @@ ${fence}`;
     if (decodedTitle) return decodedTitle;
     if (reason) return reason;
     if (label && label !== path) return label;
-    const leaf = path.match(/(?:^|[.])([^.[\]]+)$/)?.[1] || "";
+    const tokens = tokenizeRowPath(row);
+    const lastToken = tokens.length ? tokens[tokens.length - 1] : "";
+    const leaf = typeof lastToken === "string" ? lastToken : "";
     return leaf ? `${sectionLabel(sectionKey)} / ${labelOfProp(leaf)}` : sectionLabel(sectionKey);
   }
   function rowFacts(row) {
@@ -20822,7 +20935,7 @@ ${fence}`;
 ` };
   }
   function cleanMarkdownEntryToken(value, maxLength = 40) {
-    const cleaned = String(value ?? "").replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001F\u007F-\u009F]/g, " ").replace(/\s+/g, "_").replace(/_+/g, "_").replace(/^[._]+|[._]+$/g, "");
+    const cleaned = String(value ?? "").replace(/[\\/:*?"<>|`]/g, "_").replace(/[\u0000-\u001F\u007F-\u009F]/g, " ").replace(/\s+/g, "_").replace(/_+/g, "_").replace(/^[._]+|[._]+$/g, "");
     if (!cleaned) return "";
     const chars = Array.from(cleaned);
     return chars.length <= maxLength ? cleaned : chars.slice(0, maxLength).join("");
@@ -20863,7 +20976,13 @@ ${fence}`;
         }
       })();
       options.onProgress?.({ stage: "building", current: index + 1, total: items.length, label: item.label });
-      if (!exported) return;
+      if (!exported) {
+        const failure = failures[failures.length - 1];
+        indexRows.push(
+          `| ${index + 1} | ${markdownTableCell(item.label || `比較 ${index + 1}`)} | ${markdownTableCell(endpointName(ctx.sourceBundle, "比較元"))} | ${markdownTableCell(endpointName(ctx.targetBundle, "比較先"))} | \`export-failed\` | ${markdownTableCell(`生成失敗: ${failure?.error || "原因不明"}`)} | - | - | （未作成） |`
+        );
+        return;
+      }
       const pairStem = cleanMarkdownEntryToken(appPairLabel(ctx.sourceBundle, ctx.targetBundle), 64) || cleanMarkdownEntryToken(item.label, 48) || "差分";
       let entryName = `${seq}_差分_${pairStem}_AI.md`;
       let duplicateSeq = 2;
@@ -20897,6 +21016,7 @@ ${fence}`;
       `- formatVersion: ${markdownCode(MARKDOWN_FORMAT_VERSION)}`,
       `- generatedAt: ${markdownInline(generatedIso)}`,
       `- totalPairs: ${items.length}`,
+      `- failedPairs: ${failures.length}`,
       "",
       "## 比較結果一覧",
       "",
@@ -21618,16 +21738,17 @@ ${fence}`;
     if (!match || normalizeNumericIdentifier(match[2]) !== appId) return "";
     return String(match[1] || "").trim();
   }
-  function rawBundleCandidates(raw, explicit = false) {
+  function rawBundleCandidates(raw, explicit = false, side) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
       return explicit ? [{ value: raw, explicit: true }] : [];
     }
     if (Object.prototype.hasOwnProperty.call(raw, "source") && Object.prototype.hasOwnProperty.call(raw, "target")) {
-      return rawBundleCandidates(raw.source, true);
+      if (!side) return [{ value: raw, explicit: true, ambiguousPair: true }];
+      return rawBundleCandidates(raw[side], true, side);
     }
-    if (Object.prototype.hasOwnProperty.call(raw, "bundle")) return rawBundleCandidates(raw.bundle, true);
-    if (Array.isArray(raw.apps)) return raw.apps.flatMap((candidate) => rawBundleCandidates(candidate, true));
-    if (Array.isArray(raw.bundles)) return raw.bundles.flatMap((candidate) => rawBundleCandidates(candidate, true));
+    if (Object.prototype.hasOwnProperty.call(raw, "bundle")) return rawBundleCandidates(raw.bundle, true, side);
+    if (Array.isArray(raw.apps)) return raw.apps.flatMap((candidate) => rawBundleCandidates(candidate, true, side));
+    if (Array.isArray(raw.bundles)) return raw.bundles.flatMap((candidate) => rawBundleCandidates(candidate, true, side));
     return [{ value: raw, explicit }];
   }
   function rawBundleIssue(candidate) {
@@ -21743,7 +21864,8 @@ ${fence}`;
     });
     return rows;
   }
-  function parseDiffBatchFolderImport(files) {
+  function parseDiffBatchFolderImport(files, options = {}) {
+    const side = options.side === "source" || options.side === "target" ? options.side : void 0;
     const bundles = [];
     const issues = [];
     const endpoints = /* @__PURE__ */ new Map();
@@ -21800,10 +21922,20 @@ ${fence}`;
         continue;
       }
       const picked = [];
-      const candidates = rawBundleCandidates(raw);
+      const candidates = rawBundleCandidates(raw, false, side);
       const issueCountBeforeCandidates = issues.length;
       for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
         const candidateEntry = candidates[candidateIndex];
+        if (candidateEntry.ambiguousPair) {
+          issues.push({
+            code: "invalid-bundle",
+            fileName,
+            relativePath,
+            bundleIndex: candidateIndex + 1,
+            message: `${bundlePosition(fileName || relativePath, candidateIndex + 1, candidates.length)}: 比較元と比較先の両方を含むJSONは、どちらの設定として読むか決められないため読み込めません`
+          });
+          continue;
+        }
         const candidate = candidateEntry.value;
         const candidateIssue = rawBundleIssue(candidate);
         if (candidateIssue) {
@@ -21974,6 +22106,10 @@ ${fence}`;
         }
         if (guestId && !/^[1-9]\d*$/.test(guestId)) {
           return `比較先 ${rowNum} 行目: ゲストIDは正の整数で入力してください`;
+        }
+        const targetPreview = t.preview ?? options.targetPreview;
+        if (!options.hasImportedSource && sourceAppId && appId === sourceAppId && guestId === sourceGuestId && Boolean(options.sourcePreview) === Boolean(targetPreview)) {
+          return `比較先 ${rowNum} 行目は比較元と同じ接続先（同じアプリID・ゲストID・環境）です`;
         }
       }
       const seen = /* @__PURE__ */ new Map();
@@ -24122,7 +24258,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         throw error;
       }
       if (generation !== pairFolderLoadGeneration[side]) return;
-      const parsed = parseDiffBatchFolderImport(entries);
+      const parsed = parseDiffBatchFolderImport(entries, { side });
       if (parsed.issues.length) {
         const shown = parsed.issues.slice(0, 3).map((issue) => issue.message).join(" / ");
         throw new Error(`${side === "source" ? "比較元" : "比較先"}フォルダを取り込めません: ${shown}${parsed.issues.length > 3 ? `（ほか ${parsed.issues.length - 3}件）` : ""}`);
@@ -26065,6 +26201,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         scopes: base.scopes,
         ignoreKeys: base.ignoreKeys,
         hasImportedSource: !!importedSourceBundle,
+        sourcePreview: base.source.preview,
+        targetPreview: base.target.preview,
         targets
       });
       if (commonValidation) {

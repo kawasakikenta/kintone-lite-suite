@@ -10,7 +10,7 @@ import {
   getPreviewStateLabel
 } from '../utils.js';
 import { hasIncompleteActualDiffTruncation } from './engine.js';
-import { buildFieldLabelResolver, extractFieldPathInfo, fieldSettingIdentity, type FieldLabelResolver } from './enrich.js';
+import { buildFieldLabelResolver, extractFieldPathInfo, fieldSettingIdentity, tokenizeRowPath, type FieldLabelResolver } from './enrich.js';
 import { contentIdentifier, isSensitiveSameDiffRow } from './export-safety.js';
 import { decodeRow } from './path-decoder.js';
 import { labelOfProp } from './label-dict.js';
@@ -51,6 +51,8 @@ export interface DiffMarkdownRow {
   entityLabel?: string;
   entityCode?: string;
   entityPropLabel?: string;
+  /** 名前付きの設定の path で、名前の後ろの部分（enrichDiffRows が付ける）。 */
+  entityPathTail?: string;
   arrayKey?: string;
   arrayKeyValue?: unknown;
 }
@@ -415,7 +417,10 @@ function titleForRow(row: DiffMarkdownRow, fieldLabelOf: FieldLabelResolver): st
   if (decodedTitle) return decodedTitle;
   if (reason) return reason;
   if (label && label !== path) return label;
-  const leaf = path.match(/(?:^|[.])([^.[\]]+)$/)?.[1] || '';
+  // 名前付きの設定の名前は「.」を含み得るため、行の entityPathTail を使って名前を 1 つのトークンとして扱う
+  const tokens = tokenizeRowPath(row);
+  const lastToken = tokens.length ? tokens[tokens.length - 1] : '';
+  const leaf = typeof lastToken === 'string' ? lastToken : '';
   return leaf ? `${sectionLabel(sectionKey)} / ${labelOfProp(leaf)}` : sectionLabel(sectionKey);
 }
 
@@ -737,8 +742,9 @@ export function buildDiffMarkdownExport(ctx: DiffMarkdownContext = {}): DiffMark
 }
 
 function cleanMarkdownEntryToken(value: unknown, maxLength = 40): string {
+  // 「`」はインデックス表のコード表記を途中で閉じるため、ファイル名に使える記号でも置き換える
   const cleaned = String(value ?? '')
-    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/[\\/:*?"<>|`]/g, '_')
     .replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ')
     .replace(/\s+/g, '_')
     .replace(/_+/g, '_')
@@ -793,7 +799,14 @@ export function buildDiffMarkdownBatchExport(
       catch (e: any) { failures.push({ index, label: item.label, error: e?.message || String(e) }); return null; }
     })();
     options.onProgress?.({ stage: 'building', current: index + 1, total: items.length, label: item.label });
-    if (!exported) return;
+    if (!exported) {
+      // 生成に失敗した比較もインデックスに行を残し、件数（totalPairs）と一覧の行数をそろえる
+      const failure = failures[failures.length - 1];
+      indexRows.push(
+        `| ${index + 1} | ${markdownTableCell(item.label || `比較 ${index + 1}`)} | ${markdownTableCell(endpointName(ctx.sourceBundle, '比較元'))} | ${markdownTableCell(endpointName(ctx.targetBundle, '比較先'))} | \`export-failed\` | ${markdownTableCell(`生成失敗: ${failure?.error || '原因不明'}`)} | - | - | （未作成） |`
+      );
+      return;
+    }
     const pairStem = cleanMarkdownEntryToken(appPairLabel(ctx.sourceBundle, ctx.targetBundle), 64)
       || cleanMarkdownEntryToken(item.label, 48)
       || '差分';
@@ -831,6 +844,7 @@ export function buildDiffMarkdownBatchExport(
     `- formatVersion: ${markdownCode(MARKDOWN_FORMAT_VERSION)}`,
     `- generatedAt: ${markdownInline(generatedIso)}`,
     `- totalPairs: ${items.length}`,
+    `- failedPairs: ${failures.length}`,
     '',
     '## 比較結果一覧',
     '',
