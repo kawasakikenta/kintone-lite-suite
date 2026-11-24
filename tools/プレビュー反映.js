@@ -5745,7 +5745,10 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     root2.addEventListener("kus-lite-dispose", dispose, { once: true });
     setRootElement(root2);
     setComponentUi({ status, result, busyText: document.createElement("span") });
+    const focusAtOpen = document.activeElement;
     requestAnimationFrame(() => {
+      const active2 = document.activeElement;
+      if (active2 && active2 !== document.body && active2 !== focusAtOpen && !root2.contains(active2)) return;
       const first = body.querySelector(
         "input:not([type=hidden]):not([disabled]),select:not([disabled]),textarea:not([disabled])"
       );
