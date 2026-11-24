@@ -1,6 +1,6 @@
 'use strict';
 
-import { SECTION_DEFS } from '../constants.js';
+import { CUSTOMIZE_BODY_SENSITIVE_NOTE, PLUGIN_CONFIG_INCLUDED_NOTE, SECTION_DEFS } from '../constants.js';
 import { state } from '../state.js';
 import { downloadText, downloadBlob, buildExportFilename, appLabelFromBundle, copyTextToClipboard, extractAppNameFromBundle, sanitizeFilenamePart } from '../utils.js';
 import { fetchBundle } from '../api.js';
@@ -192,12 +192,27 @@ function designBundleExportMarkdown(kind: 'md' | 'ai-md', bundle: any): string {
  * @param {{ appId: string, guestId: string, preview: boolean }} source
  * @param {(msg: string, err?: boolean) => void} setStatus
  */
+/** 保存する前の確認画面に出す、設計書 JSON の取扱注意（どちらが入るかは取得するまで分からないため両方を書く）。 */
+export const DESIGN_JSON_SENSITIVE_NOTICE = `${PLUGIN_CONFIG_INCLUDED_NOTE}。${CUSTOMIZE_BODY_SENSITIVE_NOTE}。共有する前に内容を確認してください`;
+
+/**
+ * 保存する設計書 JSON に、プラグインの設定値・JS/CSSファイルの本文が入っていれば、その取扱注意を返す。入っていなければ空文字。
+ * 設計書 JSON は設定の写しなので値はそのまま残し、完了メッセージで知らせる（ファイルの内容は変えない）。
+ */
+export function designJsonSensitiveNotice(bundle: any): string {
+  const { pluginConfigs, customizeBodies } = stripSensitiveSupplements(bundle);
+  const notes = [pluginConfigs ? PLUGIN_CONFIG_INCLUDED_NOTE : '', customizeBodies ? CUSTOMIZE_BODY_SENSITIVE_NOTE : ''].filter(Boolean);
+  return notes.length ? `取扱注意: ${notes.join('。')}。共有する前に内容を確認してください` : '';
+}
+
 export async function runDesignExportStandalone(kind, source, setStatus) {
   if (kind !== 'md' && kind !== 'json' && kind !== 'ai-md') throw new Error('設計書の出力形式は md、json または ai-md を指定してください');
   const bundle = await resolveDesignBundle(source, 'source', setStatus, '', kind === 'ai-md', kind === 'json');
   state.lastSourceBundle = bundle;
 
   const appLabel = appLabelFromBundle(bundle);
+  // 設計書 JSON は設定の写し（プラグインの設定値・JS/CSS本文もそのまま）。入っていれば完了メッセージで取扱注意を知らせる
+  const sensitiveNotice = kind === 'json' ? designJsonSensitiveNotice(bundle) : '';
   if (kind === 'json') {
     downloadText(buildExportFilename('設計書', 'json', { appLabel }), JSON.stringify(bundle, null, 2), 'application/json');
   } else {
@@ -207,7 +222,7 @@ export async function runDesignExportStandalone(kind, source, setStatus) {
   // 取得失敗の警告は完了メッセージで上書きされないよう、エラー色のまま残す
   const note = failedSectionNote(failedSectionLabels(bundle));
   const completionNote = designBundleCompletionNote(bundle);
-  setStatus(`${kind === 'ai-md' ? 'AI向けMarkdown' : '設計書'}出力完了（App ${bundle.appId}）${note ? `。${note}` : ''}${completionNote}${kind === 'ai-md' ? designBundleSourceNote(bundle) : ''}`, !!note || !!completionNote);
+  setStatus(`${kind === 'ai-md' ? 'AI向けMarkdown' : '設計書'}出力完了（App ${bundle.appId}）${note ? `。${note}` : ''}${completionNote}${kind === 'ai-md' ? designBundleSourceNote(bundle) : ''}${sensitiveNotice ? `。${sensitiveNotice}` : ''}`, !!note || !!completionNote);
 }
 
 /**

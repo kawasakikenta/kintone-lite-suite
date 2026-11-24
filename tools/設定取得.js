@@ -264,6 +264,8 @@
 
   // src/constants.ts
   var TOOL_ID = "kintone-unified-suite-v2";
+  var PLUGIN_CONFIG_INCLUDED_NOTE = "プラグインの設定値を含みます（API キーなどの機微な値を含む場合があります）";
+  var CUSTOMIZE_BODY_SENSITIVE_NOTE = "JS/CSSファイルの本文を含みます（API トークンなどが書かれている場合があります）";
   function resolveDefaultAppId() {
     try {
       if (typeof kintone !== "undefined" && kintone?.app?.getId) {
@@ -3768,9 +3770,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const partial = bundle?.sections?.pluginSettings?._partial;
     return partial?.kind === PLUGIN_CONFIG_OMITTED_KIND ? Number(partial.omittedPlugins || 0) : 0;
   }
-  var PLUGIN_CONFIG_INCLUDED_NOTE = "プラグインの設定値を含みます（API キーなどの機微な値を含む場合があります）";
   var PLUGIN_CONFIG_OMITTED_NOTE = "プラグインの設定値は含めていません（プラグインの一覧だけを保存）";
-  var CUSTOMIZE_BODY_SENSITIVE_NOTE = "JS/CSSファイルの本文を含みます（API トークンなどが書かれている場合があります）";
   function zipEntryBaseName(bundle, guestId, preview) {
     const suffix = `${guestId ? `_ゲスト${guestId}` : ""}${preview ? "_プレビュー" : "_本番"}`;
     return `${buildAppFilenameLabel(bundle.appId, bundleAppName(bundle))}${suffix}`;

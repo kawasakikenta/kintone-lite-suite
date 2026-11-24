@@ -60,7 +60,7 @@ JSON Pointerは原文の位置を示します。キーに含まれる `~` は `~
 
 ## 機微な値
 
-設定JSON由来のプラグインの設定値（`plugins[]._config`）とJS/CSSファイルの本文（`_bodyText`・`_bodyHash`）は、Markdown・AI向けMarkdownの原文JSONに載せません（`src/design/sanitize.ts`。AI向けMarkdownには「除外した補助情報」の件数を書きます）。Markdownの設計書は、これらを kintone から取得しません。設計書JSONは設定の写しとして従来どおり含めます。設定取得で「プラグインの設定値を含めない」を選んだJSONは、そのまま読み込めます（プラグインの `_partial` は設計書では部分取得として数えません）。
+設定JSON由来のプラグインの設定値（`plugins[]._config`）とJS/CSSファイルの本文（`_bodyText`・`_bodyHash`）は、Markdown・AI向けMarkdownの原文JSONに載せません（`src/design/sanitize.ts`。AI向けMarkdownには「除外した補助情報」の件数を書きます）。Markdownの設計書は、これらを kintone から取得しません。設計書JSONは設定の写しとして従来どおり含めます。保存前の確認画面に「取扱注意」の行を出し、保存したファイルにプラグインの設定値やJS/CSS本文が入るときは、完了メッセージにも取扱注意を書きます（ファイルの内容は変えないため、ほかのツールでそのまま読み込めます）。設定取得で「プラグインの設定値を含めない」を選んだJSONは、そのまま読み込めます（プラグインの `_partial` は設計書では部分取得として数えません）。
 
 ## 差分レポート
 

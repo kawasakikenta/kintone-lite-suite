@@ -3,6 +3,10 @@
 export const TOOL_ID = 'kintone-unified-suite-v2';
 export const TOOL_VERSION = '2.5.0';
 
+/** 機微な値を含む出力の取扱注意（設定取得・設計書で同じ言い回しにする）。 */
+export const PLUGIN_CONFIG_INCLUDED_NOTE = 'プラグインの設定値を含みます（API キーなどの機微な値を含む場合があります）';
+export const CUSTOMIZE_BODY_SENSITIVE_NOTE = 'JS/CSSファイルの本文を含みます（API トークンなどが書かれている場合があります）';
+
 function resolveDefaultAppId(): string {
   try {
     if (typeof kintone !== 'undefined' && kintone?.app?.getId) {
