@@ -319,6 +319,20 @@ async function main() {
     const cancelStatus = page.locator('#cancel-test .kus-lp__status');
     assert.equal(await cancelButton.isHidden(), true, '待機中は中止ボタンを出さない');
     assert.equal(await cancelButton.getAttribute('aria-label'), '処理を中止');
+    // 実行中の再起動は、パネルを残して折りたたみを解く（折りたたみボタンの表示も展開にそろえる）
+    const busyRestart = await page.evaluate(() => {
+      window.cancelPanel.setBusy(true);
+      window.cancelPanel.setCollapsed(true);
+      try { Shared.createLitePanel({ id: 'cancel-test', title: '中止テスト', accent: 'settings' }); return 'created'; }
+      catch (error) { return error && error.panelBusy === true ? 'kept' : String(error); }
+    });
+    assert.equal(busyRestart, 'kept', '実行中は再起動せずにパネルを残す');
+    const busyToggle = page.locator('#cancel-test .kus-lp__toggle');
+    assert.equal(await page.locator('#cancel-test.kus-lp--collapsed').count(), 0, '実行中の再起動で折りたたみを解く');
+    assert.equal(await busyToggle.getAttribute('aria-expanded'), 'true', '折りたたみボタンの状態も展開にそろえる');
+    assert.equal(await busyToggle.innerText(), '－');
+    await page.evaluate(() => window.cancelPanel.setBusy(false));
+    assert.equal(await page.locator('#cancel-test').getAttribute('aria-busy'), 'false');
     await page.evaluate(() => {
       // 1 件目の取得のあと、書き込み中を模した待機（中断できない処理）を挟んでから 2 件目を取得する
       window.cancelRun = Shared.liteRun(window.cancelPanel, '取得中', async () => {

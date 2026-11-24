@@ -1955,11 +1955,12 @@
       this.name = "LitePanelBusyError";
     }
   };
+  var EXPAND_EVENT = "kus-lite-expand";
   function createLitePanel(opts) {
     ensureThemeStyles();
     const old = document.getElementById(opts.id);
     if (old instanceof HTMLElement && old.getAttribute("aria-busy") === "true") {
-      old.classList.remove("kus-lp--collapsed");
+      old.dispatchEvent(new Event(EXPAND_EVENT));
       const statusText = old.querySelector(".kus-lp__status-text");
       const hint = "実行中のため再起動しません。終わるのを待つか、「中止」を押してください。";
       if (statusText && !statusText.textContent?.includes(hint)) statusText.textContent = `${hint} ${statusText.textContent || ""}`.trim();
@@ -2250,6 +2251,7 @@
       if (!collapsed) clampIntoViewport();
     }
     toggleBtn.addEventListener("click", () => setCollapsed(!root2.classList.contains("kus-lp--collapsed")));
+    root2.addEventListener(EXPAND_EVENT, () => setCollapsed(false));
     let customPlaced = false;
     function clampIntoViewport() {
       if (!customPlaced || !root2.isConnected) return;
