@@ -180,3 +180,16 @@ describe('apply JS/CSS to many preview targets', () => {
     expect(res.counts.success).toBe(30);
   });
 });
+
+// kintone はアプリIDを数値として読むので「05」も App 5 を指しうる。別の反映先として残すと、同じアプリへ 2 回書き込む
+describe('apply JS/CSS to many preview targets: leading zeros', () => {
+  it('treats 05 and 5 as the same target and writes once', async () => {
+    // 本物の kintone と同じく、「05」「005」も App 5 として答える
+    revisions['05'] = revisions['5'];
+    revisions['005'] = revisions['5'];
+    const res = await runApplyJsConfigMultiStandalone({ targets: [...targets('5', '05', '005'), { appId: '6', guestId: '' }], jsonText: json }, vi.fn(), vi.fn());
+    expect(puts().map(c => c.body.app)).toEqual(['5', '6']);
+    expect(res.counts.success).toBe(2);
+    expect(vi.mocked(kusConfirm).mock.calls[0][0]).toContain('2件の反映先プレビュー');
+  });
+});

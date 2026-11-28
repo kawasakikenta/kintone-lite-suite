@@ -205,6 +205,14 @@ describe('field apply to many targets', () => {
     expect(report.results).toHaveLength(2);
     expect(apiPost).toHaveBeenCalledTimes(2);
   });
+
+  // kintone はアプリIDを数値として読むので「011」も App 11 を指しうる。別の反映先として残すと、同じアプリへ 2 回書き込む
+  it('treats 011 and 11 as the same target and writes once', async () => {
+    const report = await run({ targets: [{ appId: '11' }, { appId: '011' }, { appId: '0011' }] });
+    expect(report.results).toHaveLength(1);
+    expect(apiPost).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(apiPost).mock.calls[0][2]).toMatchObject({ app: '11' });
+  });
 });
 
 describe('field apply to many targets: input checks', () => {

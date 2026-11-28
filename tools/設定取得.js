@@ -590,6 +590,9 @@
   function normalizeIdInputText(value) {
     return String(value ?? "").replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 65248)).replace(/，/g, ",");
   }
+  function canonicalAppId(value) {
+    return /^\d+$/.test(value) ? value.replace(/^0+(?=\d)/, "") : value;
+  }
   function deepClone(v) {
     return v == null ? v : JSON.parse(JSON.stringify(v));
   }
@@ -4528,10 +4531,11 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       if (!/^\d+$/.test(id)) throw new Error(`アプリIDは半角数字で入力してください: ${id}`);
       const g = normalizeIdInputText(guestId || "").trim();
       if (g && !/^\d+$/.test(g)) throw new Error(`ゲストスペースIDは半角数字で入力してください: ${g}`);
-      const key = `${id}::${g}`;
+      const app = canonicalAppId(id);
+      const key = `${app}::${g}`;
       if (seen.has(key)) return;
       seen.add(key);
-      out.push({ appId: id, guestId: g });
+      out.push({ appId: app, guestId: g });
     };
     if (Array.isArray(opts.apps)) {
       for (const a of opts.apps) push(a?.appId, a?.guestId);

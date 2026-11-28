@@ -2,7 +2,7 @@
 
 import { CUSTOMIZE_BODY_SENSITIVE_NOTE, PLUGIN_CONFIG_INCLUDED_NOTE, SECTION_DEFS } from '../constants.js';
 import { state } from '../state.js';
-import { downloadText, downloadBlob, buildExportFilename, appLabelFromBundle, copyTextToClipboard, extractAppNameFromBundle, sanitizeFilenamePart, UNSAFE_FILENAME_CHARS } from '../utils.js';
+import { downloadText, downloadBlob, buildExportFilename, appLabelFromBundle, copyTextToClipboard, extractAppNameFromBundle, sanitizeFilenamePart, UNSAFE_FILENAME_CHARS, canonicalAppId } from '../utils.js';
 import { apiGet, buildApiPrefix, fetchBundle } from '../api.js';
 import { loadJSZipLite } from '../jszipLoader.js';
 import { pickSettingsBundle } from '../settingsBundleImport.js';
@@ -674,7 +674,8 @@ export async function runBatchDesignExportMdZipStandalone(
     const validationError = validateDesignExportTargets(source.apps);
     if (validationError) throw new Error(validationError);
     rawApps = source.apps.map((a) => ({
-      appId: String(a.appId || a.bundle?.appId || '').trim(),
+      // 「07」と「7」は同じアプリ（下で 1 件にまとめ、ファイル名も「7」にする）
+      appId: canonicalAppId(String(a.appId || a.bundle?.appId || '').trim()),
       guestId: String(a.guestId || '').trim(),
       bundle: a.bundle || null
     }));
@@ -686,7 +687,7 @@ export async function runBatchDesignExportMdZipStandalone(
       .filter(Boolean);
     const validationError = validateDesignExportTargets(appIds.map((appId) => ({ appId, guestId })));
     if (validationError) throw new Error(validationError);
-    rawApps = appIds.map((appId) => ({ appId, guestId, bundle: null }));
+    rawApps = appIds.map((appId) => ({ appId: canonicalAppId(appId), guestId, bundle: null }));
   }
 
   const seen = new Set<string>();

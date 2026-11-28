@@ -11983,6 +11983,9 @@ Apache License
   function normalizeIdInputText(value) {
     return String(value ?? "").replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 65248)).replace(/，/g, ",");
   }
+  function canonicalAppId(value) {
+    return /^\d+$/.test(value) ? value.replace(/^0+(?=\d)/, "") : value;
+  }
   function deepClone(v) {
     return v == null ? v : JSON.parse(JSON.stringify(v));
   }
@@ -21090,7 +21093,7 @@ ${foot}
     const seen = /* @__PURE__ */ new Set();
     const targets = [];
     for (const t of rawTargets) {
-      const id = String(t?.appId ?? "").trim();
+      const id = canonicalAppId(String(t?.appId ?? "").trim());
       const guestId = String(t?.guestId || "").trim();
       const key = `${id}::${guestId}`;
       if (!id || !/^\d+$/.test(id) || seen.has(key)) continue;
@@ -21744,7 +21747,8 @@ ${lines.join("\n")}`), { partialSuccess: true });
       const validationError = validateDesignExportTargets(source.apps);
       if (validationError) throw new Error(validationError);
       rawApps = source.apps.map((a) => ({
-        appId: String(a.appId || a.bundle?.appId || "").trim(),
+        // 「07」と「7」は同じアプリ（下で 1 件にまとめ、ファイル名も「7」にする）
+        appId: canonicalAppId(String(a.appId || a.bundle?.appId || "").trim()),
         guestId: String(a.guestId || "").trim(),
         bundle: a.bundle || null
       }));
@@ -21753,7 +21757,7 @@ ${lines.join("\n")}`), { partialSuccess: true });
       const appIds = String(source?.appIdsText || "").split(/[\s,、，]+/).map((s) => s.trim()).filter(Boolean);
       const validationError = validateDesignExportTargets(appIds.map((appId) => ({ appId, guestId })));
       if (validationError) throw new Error(validationError);
-      rawApps = appIds.map((appId) => ({ appId, guestId, bundle: null }));
+      rawApps = appIds.map((appId) => ({ appId: canonicalAppId(appId), guestId, bundle: null }));
     }
     const seen = /* @__PURE__ */ new Set();
     const targets = [];

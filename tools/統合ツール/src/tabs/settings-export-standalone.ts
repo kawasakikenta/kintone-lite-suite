@@ -1,7 +1,7 @@
 'use strict';
 
 import { CUSTOMIZE_BODY_SENSITIVE_NOTE, PLUGIN_CONFIG_INCLUDED_NOTE, SECTION_DEFS } from '../constants.js';
-import { esc, downloadText, downloadBlob, selectedScopeKeys, buildExportFilename, buildAppFilenameLabel, extractAppNameFromBundle, normalizeIdInputText } from '../utils.js';
+import { esc, downloadText, downloadBlob, selectedScopeKeys, buildExportFilename, buildAppFilenameLabel, extractAppNameFromBundle, normalizeIdInputText, canonicalAppId } from '../utils.js';
 import { fetchBundle, buildApiPrefix, apiGet, fetchAppsInSpace } from '../api.js';
 import { PLUGIN_CONFIG_OMITTED_KIND, markPluginConfigOmitted } from '../pluginConfigMarker.js';
 import { extractAppIdFromInput, extractGuestIdFromInput } from '../handlers/diffFocus.js';
@@ -484,10 +484,12 @@ function resolveExportTargets(opts: any): Array<{ appId: string; guestId: string
     if (!/^\d+$/.test(id)) throw new Error(`アプリIDは半角数字で入力してください: ${id}`);
     const g = normalizeIdInputText(guestId || '').trim();
     if (g && !/^\d+$/.test(g)) throw new Error(`ゲストスペースIDは半角数字で入力してください: ${g}`);
-    const key = `${id}::${g}`;
+    // 「07」と「7」は同じアプリ。同じアプリを 2 回取得せず、ファイル名・manifest も「7」にそろえる
+    const app = canonicalAppId(id);
+    const key = `${app}::${g}`;
     if (seen.has(key)) return;
     seen.add(key);
-    out.push({ appId: id, guestId: g });
+    out.push({ appId: app, guestId: g });
   };
   if (Array.isArray(opts.apps)) {
     for (const a of opts.apps) push(a?.appId, a?.guestId);

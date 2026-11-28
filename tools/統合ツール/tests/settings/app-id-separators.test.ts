@@ -6,7 +6,7 @@ import { parseRecordAppIds } from '../../src/tabs/record-standalone';
 import { runBatchDesignExportMdZipStandalone } from '../../src/tabs/design-standalone';
 import { extractAppIdFromInput, extractGuestIdFromInput } from '../../src/handlers/diffFocus';
 import { needsAppReferenceParse, parseAppReference } from '../../src/reflect/appReference';
-import { normalizeIdInputText } from '../../src/utils';
+import { canonicalAppId, normalizeIdInputText } from '../../src/utils';
 import { buildErCrawlOptions, validateErOptions } from '../../src/tabs/er-standalone';
 import { parseLookupMapText } from '../../src/reflect/liteSetup';
 import { parseRolloutQueue } from '../../src/reflect/rolloutQueue';
@@ -105,5 +105,38 @@ describe('アプリIDの全角数字（lite だけのツール）', () => {
   it('レコード系: 対象アプリIDの全角数字を受け付け、数字でない文字は止める', () => {
     expect(parseRecordAppIds('１０１，１０２　１０３')).toEqual(['101', '102', '103']);
     expect(() => parseRecordAppIds('１０１，Ａ')).toThrow(/アプリIDは正の数値で入力してください: Ａ/);
+  });
+});
+
+// kintone はアプリIDを数値として読むので「07」も App 7 を指しうる。ER図の起点（buildErCrawlOptions）とレコード系（parseRecordAppIds）は
+// もとから「7」にそろえていた。設定取得・設計書の一括出力も同じにそろえる（同じアプリを 2 回取得しない・ファイル名や manifest に「07」を残さない）。
+describe('アプリIDの先頭の 0', () => {
+  const bundleFor = async ({ appId }: any) => ({ appId, guestId: '', preview: false, fetchedAt: '', meta: { sectionRevisions: {} }, sections: { appSettings: { name: `App ${appId}` } } }) as any;
+
+  it('数字だけのアプリIDから先頭の 0 を外す。0 そのものと数字でない値は変えない', () => {
+    expect(canonicalAppId('007')).toBe('7');
+    expect(canonicalAppId('100')).toBe('100');
+    expect(canonicalAppId('0')).toBe('0');
+    expect(canonicalAppId('00')).toBe('0');
+    expect(canonicalAppId('07a')).toBe('07a');
+    expect(canonicalAppId('')).toBe('');
+  });
+
+  it('設定取得: 「7, 07」は App 7 を 1 回だけ取得する（入力欄・アプリごとの表とも）', async () => {
+    vi.mocked(fetchBundle).mockImplementation(bundleFor);
+    await runSettingsExportStandalone('json', { appIdsText: '7, 07 ０７', scopeRoot: {} }, vi.fn());
+    expect(vi.mocked(fetchBundle).mock.calls.map(([params]: any) => params.appId)).toEqual(['7']);
+    vi.mocked(fetchBundle).mockClear();
+    await runSettingsExportStandalone('json', { apps: [{ appId: '012', guestId: '' }, { appId: '12', guestId: '' }, { appId: '12', guestId: '3' }], scopeRoot: {} }, vi.fn());
+    expect(vi.mocked(fetchBundle).mock.calls.map(([params]: any) => [params.appId, params.guestId])).toEqual([['12', ''], ['12', '3']]);
+  });
+
+  it('設計書 Markdown の ZIP: 「7」と「07」は App 7 を 1 回だけ取得する（アプリごとの表・旧来の文字列とも）', async () => {
+    vi.mocked(fetchBundle).mockImplementation(bundleFor);
+    await runBatchDesignExportMdZipStandalone({ apps: [{ appId: '7' }, { appId: '07' }], format: 'md' }, vi.fn());
+    expect(vi.mocked(fetchBundle).mock.calls.map(([params]: any) => params.appId)).toEqual(['7']);
+    vi.mocked(fetchBundle).mockClear();
+    await runBatchDesignExportMdZipStandalone({ appIdsText: '7，07', format: 'md' }, vi.fn());
+    expect(vi.mocked(fetchBundle).mock.calls.map(([params]: any) => params.appId)).toEqual(['7']);
   });
 });
