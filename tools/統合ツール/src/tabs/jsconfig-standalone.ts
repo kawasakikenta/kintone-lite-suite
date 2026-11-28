@@ -1,7 +1,7 @@
 'use strict';
 
 import { buildCustomizeSettingsPutPayload } from '../constants.js';
-import { normalize, nowStamp, downloadText, downloadBlob, esc, kusConfirm, buildExportFilename, summarizeList, deepClone } from '../utils.js';
+import { normalize, nowStamp, downloadText, downloadBlob, esc, kusConfirm, buildExportFilename, summarizeList, deepClone, canonicalAppId } from '../utils.js';
 import { FILE_DOWNLOAD_TIMEOUT_MS, apiGet, buildApiPrefix, decorateRevisionConflict, isRetriableApiError, pickRevision, uploadKintoneFile } from '../api.js';
 import { isSettingsWriteUnconfirmed, writeSettingsWithRevision } from '../settingsWrite.js';
 import { customizeSlotKey, downloadCustomizeFile, resolveCustomizeFiles, type CustomizeFileDownloader } from '../reflect/customizeFiles.js';
@@ -726,10 +726,12 @@ export async function runApplyJsConfigMultiStandalone(
     const guestId = String(raw?.guestId || '').trim();
     if (!appId && !guestId) continue;
     assertNumericAppAndGuestId(appId, guestId, `反映先アプリID（${appId || '未入力'}）`);
-    const key = `${appId}::${guestId}`;
+    // 「07」と「7」は同じアプリ。1 件にまとめ、同じアプリへ 2 回書き込まない
+    const app = canonicalAppId(appId);
+    const key = `${app}::${guestId}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    targets.push({ appId, guestId, appName: String(raw?.appName || '') });
+    targets.push({ appId: app, guestId, appName: String(raw?.appName || '') });
   }
   if (!targets.length) throw new Error('まとめて反映する反映先を1件以上指定してください');
   const plan = parseJsConfigApplyText(p.jsonText);
