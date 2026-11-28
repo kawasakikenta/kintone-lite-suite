@@ -182,7 +182,7 @@ export function mountErLitePanel() {
   details.body.appendChild(makeNote('起点IDはカンマ区切りで複数指定でき、追加起点も同じ図にまとめて描画します。スペースIDを入れて「スペース内アプリを読込」を押すと、起点にするアプリを選べます。', 'help'));
 
   function parseAppIds(value: string): string[] {
-    return String(value || '').split(/[\s,，]+/).map((v) => v.trim()).filter(Boolean);
+    return String(value || '').split(/[\s,、，]+/).map((v) => v.trim()).filter(Boolean);
   }
   panel.body.insertBefore(details.card, panel.status);
 
