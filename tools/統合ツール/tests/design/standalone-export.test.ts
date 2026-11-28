@@ -259,8 +259,11 @@ describe('lite design export', () => {
     expect(zipFiles['overview.md']).toContain('インポートアプリ');
     expect(zipFiles['overview.md']).toContain('ライブアプリ_200');
     expect(zipFiles['overview.md']).toContain('403 Forbidden');
+    // 生成日時は読める形（端末の時刻）で書き、UTC の ISO 形式は括弧で添える（manifest は ISO のまま）
+    expect(zipFiles['overview.md']).toMatch(/^- 生成日時: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}（\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z）$/m);
 
     const manifest = JSON.parse(zipFiles['_manifest.json']);
+    expect(manifest.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
     expect(manifest.schemaVersion).toBe(1);
     expect(manifest.format).toBe('both');
     expect(manifest.preview).toBe(true);
