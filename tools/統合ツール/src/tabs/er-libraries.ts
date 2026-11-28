@@ -9,6 +9,7 @@ import cytoscapeDagreSource from 'cytoscape-dagre/cytoscape-dagre.js?raw';
 import dagreLicense from 'dagre/LICENSE?raw';
 import graphlibLicense from 'graphlib/LICENSE?raw';
 import lodashLicense from 'lodash/LICENSE?raw';
+import heapLicense from 'heap/LICENSE?raw';
 import cytoscapeDagreLicense from 'cytoscape-dagre/LICENSE?raw';
 
 export interface ErBundledLibrary {
@@ -28,6 +29,20 @@ export interface ErBundledLibrary {
 function toBlockComment(text: string): string {
   return `/*!\n${String(text).trim().replace(/\*\//g, '* /')}\n*/\n`;
 }
+
+/**
+ * cytoscape.min.js は heap と lodash の一部（debounce・get・set・toPath）を同梱しているが、
+ * 先頭の著作権コメントは cytoscape 自身のものだけなので、両パッケージの LICENSE の全文を前置する。
+ */
+const cytoscapeNotice = toBlockComment([
+  'cytoscape 3.28.1 - https://github.com/cytoscape/cytoscape.js (its MIT License follows this comment)',
+  'This bundle includes heap and parts of lodash (debounce, get, set, toPath), which are distributed under the MIT License.',
+  '',
+  '--- heap ---',
+  heapLicense,
+  '--- lodash ---',
+  lodashLicense
+].join('\n'));
 
 /** 配布ファイル自体が著作権コメントを持たない（または依存ライブラリの表記が落ちている）ものにだけ、LICENSE の全文を前置する。 */
 const dagreNotice = toBlockComment([
@@ -50,8 +65,8 @@ const cytoscapeDagreNotice = toBlockComment([
 
 /** 読み込む順。cytoscape-dagre は cytoscape と dagre の後に評価される必要がある。 */
 export const ER_BUNDLED_LIBRARIES: readonly ErBundledLibrary[] = Object.freeze([
-  // cytoscape.min.js は先頭に MIT の著作権コメントを持つため、そのまま使う。
-  { id: 'er-lib-cytoscape', name: 'cytoscape', version: '3.28.1', globalName: 'cytoscape', source: cytoscapeSource, license: 'MIT' },
+  // cytoscape.min.js の先頭には cytoscape 自身の MIT の著作権コメントがある。同梱している heap・lodash の notice を前置する。
+  { id: 'er-lib-cytoscape', name: 'cytoscape', version: '3.28.1', globalName: 'cytoscape', source: cytoscapeNotice + cytoscapeSource, license: 'MIT' },
   { id: 'er-lib-dagre', name: 'dagre', version: '0.8.5', globalName: 'dagre', source: dagreNotice + dagreSource, license: 'MIT' },
   { id: 'er-lib-cytoscape-dagre', name: 'cytoscape-dagre', version: '2.5.0', globalName: 'cytoscapeDagre', source: cytoscapeDagreNotice + cytoscapeDagreSource, license: 'MIT' }
 ]);

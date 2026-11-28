@@ -277,6 +277,37 @@ describe('ER diagram HTML', () => {
       expect(html).toContain('Permission is hereby granted, free of charge');
     });
 
+    it('carries the full LICENSE of every package that cytoscape.min.js bundles', () => {
+      const root = join(__dirname, '..');
+      // cytoscape.min.js は src から node_modules のパッケージを取り込んで作られる。取り込み先が増えたらここで気付けるようにする
+      const srcDir = join(root, 'node_modules', 'cytoscape', 'src');
+      const bundled = new Set<string>();
+      for (const file of readdirSync(srcDir, { recursive: true }).map(String).filter((name) => name.endsWith('.js'))) {
+        // import 文と、export { default } from 'heap' のような再エクスポート
+        for (const match of readFileSync(join(srcDir, file), 'utf8').matchAll(/\bfrom\s*['"]([^./'"][^'"]*)['"]/g)) {
+          bundled.add(match[1].split('/')[0]);
+        }
+      }
+      expect([...bundled].sort()).toEqual(['heap', 'lodash']);
+
+      const cytoscapeScript = html.match(/<script id="er-lib-cytoscape">([\s\S]*?)<\/script>/)![1].replace(/\r\n?/g, '\n');
+      for (const name of bundled) {
+        const license = readFileSync(join(root, 'node_modules', name, 'LICENSE'), 'utf8').replace(/\r\n?/g, '\n').trim();
+        expect(cytoscapeScript, name).toContain(`--- ${name} ---\n${license.replace(/\*\//g, '* /')}`);
+      }
+      // cytoscape 自身の著作権表記は、配布ファイルの先頭コメントとして残る
+      expect(cytoscapeScript).toContain('Copyright (c) 2016-2023, The Cytoscape Consortium.');
+    });
+
+    it('carries the full LICENSE of dagre and of graphlib and lodash that dagre.min.js bundles, and of cytoscape-dagre', () => {
+      const root = join(__dirname, '..');
+      const licenseOf = (name: string) => readFileSync(join(root, 'node_modules', name, 'LICENSE'), 'utf8').replace(/\r\n?/g, '\n').trim().replace(/\*\//g, '* /');
+      const scriptOf = (id: string) => html.match(new RegExp(`<script id="${id}">([\\s\\S]*?)</script>`))![1].replace(/\r\n?/g, '\n');
+      const dagreScript = scriptOf('er-lib-dagre');
+      for (const name of ['dagre', 'graphlib', 'lodash']) expect(dagreScript, name).toContain(`--- ${name} ---\n${licenseOf(name)}`);
+      expect(scriptOf('er-lib-cytoscape-dagre')).toContain(licenseOf('cytoscape-dagre'));
+    });
+
     it('registers cytoscape, dagre and the dagre layout when the inline scripts run without a network', () => {
       const context: any = { console };
       context.window = context;

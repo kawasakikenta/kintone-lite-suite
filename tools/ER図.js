@@ -3592,8 +3592,11 @@ module.exports = __WEBPACK_EXTERNAL_MODULE__4__;
   // raw-text:node_modules/lodash/LICENSE
   var LICENSE_default3 = 'Copyright OpenJS Foundation and other contributors <https://openjsf.org/>\n\nBased on Underscore.js, copyright Jeremy Ashkenas,\nDocumentCloud and Investigative Reporters & Editors <http://underscorejs.org/>\n\nThis software consists of voluntary contributions made by many\nindividuals. For exact contribution history, see the revision history\navailable at https://github.com/lodash/lodash\n\nThe following license applies to all parts of this software except as\ndocumented below:\n\n====\n\nPermission is hereby granted, free of charge, to any person obtaining\na copy of this software and associated documentation files (the\n"Software"), to deal in the Software without restriction, including\nwithout limitation the rights to use, copy, modify, merge, publish,\ndistribute, sublicense, and/or sell copies of the Software, and to\npermit persons to whom the Software is furnished to do so, subject to\nthe following conditions:\n\nThe above copyright notice and this permission notice shall be\nincluded in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,\nEXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF\nMERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND\nNONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE\nLIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION\nOF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION\nWITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n\n====\n\nCopyright and related rights for sample code are waived via CC0. Sample\ncode is defined as all source code displayed within the prose of the\ndocumentation.\n\nCC0: http://creativecommons.org/publicdomain/zero/1.0/\n\n====\n\nFiles located in the node_modules and vendor directories are externally\nmaintained libraries used by this software which have their own\nlicenses; we recommend you read them, as their terms may differ from the\nterms above.\n';
 
+  // raw-text:node_modules/heap/LICENSE
+  var LICENSE_default4 = 'The MIT License\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the "Software"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\nTHE SOFTWARE.\n';
+
   // raw-text:node_modules/cytoscape-dagre/LICENSE
-  var LICENSE_default4 = "\n\nCopyright (c) 2016-2018, 2020, 2022, The Cytoscape Consortium.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of\nthis software and associated documentation files (the “Software”), to deal in\nthe Software without restriction, including without limitation the rights to\nuse, copy, modify, merge, publish, distribute, sublicense, and/or sell copies\nof the Software, and to permit persons to whom the Software is furnished to do\nso, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.";
+  var LICENSE_default5 = "\n\nCopyright (c) 2016-2018, 2020, 2022, The Cytoscape Consortium.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of\nthis software and associated documentation files (the “Software”), to deal in\nthe Software without restriction, including without limitation the rights to\nuse, copy, modify, merge, publish, distribute, sublicense, and/or sell copies\nof the Software, and to permit persons to whom the Software is furnished to do\nso, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.";
 
   // src/tabs/er-libraries.ts
   function toBlockComment(text) {
@@ -3602,6 +3605,15 @@ ${String(text).trim().replace(/\*\//g, "* /")}
 */
 `;
   }
+  var cytoscapeNotice = toBlockComment([
+    "cytoscape 3.28.1 - https://github.com/cytoscape/cytoscape.js (its MIT License follows this comment)",
+    "This bundle includes heap and parts of lodash (debounce, get, set, toPath), which are distributed under the MIT License.",
+    "",
+    "--- heap ---",
+    LICENSE_default4,
+    "--- lodash ---",
+    LICENSE_default3
+  ].join("\n"));
   var dagreNotice = toBlockComment([
     "dagre 0.8.5 (dagre.min.js) - https://github.com/dagrejs/dagre",
     "This file also bundles graphlib and lodash, which are distributed under the MIT License.",
@@ -3616,11 +3628,11 @@ ${String(text).trim().replace(/\*\//g, "* /")}
   var cytoscapeDagreNotice = toBlockComment([
     "cytoscape-dagre 2.5.0 - https://github.com/cytoscape/cytoscape.js-dagre",
     "",
-    LICENSE_default4
+    LICENSE_default5
   ].join("\n"));
   var ER_BUNDLED_LIBRARIES = Object.freeze([
-    // cytoscape.min.js は先頭に MIT の著作権コメントを持つため、そのまま使う。
-    { id: "er-lib-cytoscape", name: "cytoscape", version: "3.28.1", globalName: "cytoscape", source: cytoscape_min_default, license: "MIT" },
+    // cytoscape.min.js の先頭には cytoscape 自身の MIT の著作権コメントがある。同梱している heap・lodash の notice を前置する。
+    { id: "er-lib-cytoscape", name: "cytoscape", version: "3.28.1", globalName: "cytoscape", source: cytoscapeNotice + cytoscape_min_default, license: "MIT" },
     { id: "er-lib-dagre", name: "dagre", version: "0.8.5", globalName: "dagre", source: dagreNotice + dagre_min_default, license: "MIT" },
     { id: "er-lib-cytoscape-dagre", name: "cytoscape-dagre", version: "2.5.0", globalName: "cytoscapeDagre", source: cytoscapeDagreNotice + cytoscape_dagre_default, license: "MIT" }
   ]);

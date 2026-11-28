@@ -21,6 +21,16 @@ kintone の設定比較、プレビュー反映、設計書・ER図出力、レ�
 
 正規ソースは `tools/統合ツール/src/` にあります。配布用 bundle と `tools/単機能スクリプト棚卸し.md` はビルド生成物なので、直接編集しないでください。
 
+## 同梱しているライブラリ
+
+| 配布物 | ライブラリ | ライセンス |
+| --- | --- | --- |
+| `設計書作成.js` | xlsx-js-style 1.2.0（SheetJS Community Edition 0.18.5 + セル書式） | Apache-2.0 |
+| `ER図.js`（生成する HTML に埋め込み） | Cytoscape.js 3.28.1（heap・lodash の一部を含む）、dagre 0.8.5（graphlib 2.1.8・lodash の一部を含む）、cytoscape-dagre 2.5.0 | MIT |
+| ほかの 10 本 | なし（ZIP の作成も自前の実装） | — |
+
+`設計書作成.js` は、同梱した xlsx-js-style の LICENSE（Apache License 2.0）の全文を先頭に入れています。ER図が生成する HTML には、Cytoscape.js 自身の著作権表記と、heap・lodash・dagre・graphlib・cytoscape-dagre の LICENSE の全文が入ります。プロセス図の描画ライブラリ（Mermaid 10.6.1、MIT）は同梱せず、使うときに固定版を CDN から読み込みます（内容を SRI で検証）。
+
 ## セットアップと検証
 
 Node.js 20 以上、npm 10 以上を使用します。
