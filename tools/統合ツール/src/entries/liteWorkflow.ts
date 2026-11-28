@@ -242,8 +242,9 @@ export function installLiteWorkflow(panel: LitePanelHandle, options: {
     label.append(radio, copy);
     if (hasMore && index >= primaryCount) {
       moreChoices.appendChild(label);
-      // ポップアップで選んだら閉じて表面へ戻る
+      // ポップアップで選んだら閉じて表面へ戻る。選んである操作をもう一度押したとき（change は起きない）も閉じる
       radio.addEventListener('change', () => { refreshMore(); moreDialog?.close(); });
+      radio.addEventListener('click', () => { if (radio.checked) moreDialog?.close(); });
     } else {
       choices.appendChild(label);
       if (hasMore) radio.addEventListener('change', refreshMore);

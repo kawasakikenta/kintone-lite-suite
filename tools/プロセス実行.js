@@ -2822,6 +2822,9 @@
           refreshMore();
           moreDialog?.close();
         });
+        radio.addEventListener("click", () => {
+          if (radio.checked) moreDialog?.close();
+        });
       } else {
         choices.appendChild(label);
         if (hasMore) radio.addEventListener("change", refreshMore);
