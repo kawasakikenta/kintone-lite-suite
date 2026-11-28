@@ -1,7 +1,7 @@
 // ER図ビューアー: 以前に保存した編集済みHTML（以前の版・今の版）から、編集を今の図へ取り込む（「編集 → 編集済みHTMLから取り込む」）。
 // 取り込む編集: 手動で追加したアプリ・項目・関連線、アプリの名前と枠の色、項目と関連線の編集、メモ、位置（今の版は表示範囲も）、
 // 図からの削除、固定、隠した項目。表示設定（配置・カードの項目・線の種類の表示・線のまとめなど）は今の図のままにする。
-// 読み込んだファイルのスクリプトは実行しない。編集の状態の script 要素（id が er-edit-state）の中の文字列から JSON だけを取り出し、
+// 読み込んだファイルのスクリプトは実行しない。編集の状態の script 要素（id が er-edit-state。今の版は JSON、以前の版は代入のスクリプト）の中の文字列から JSON だけを取り出し、
 // 形と値を確かめて、知っている項目だけを使う。今の図に無いアプリ・項目・線の編集は「対象外」として件数を示す。
 // 関連線は「アプリID と、そのアプリの関連の順番」で名前が付いているため、ファイルに入っている元の図のデータ（const APPS）と
 // 今の図の元のデータを、関連の種類・項目・参照先で突き合わせて対応させる（設定の変更で関連の順番が変わっても対応できる）。
@@ -13,8 +13,11 @@ const ER_IMPORT_TEXT_MAX=2000;
 const ER_IMPORT_NAME_MAX=200;
 const ER_IMPORT_KINDS=["LOOKUP","REF","ACTION"];
 // この画面のスクリプト自身の文字列と取り違えないよう、目印は分けて書いてつなぐ
-const ER_IMPORT_STATE_TAG="<script id=\"er-"+"edit-state\">";
-const ER_IMPORT_STATE_PREFIX="window.__ER_EDIT_"+"STATE__=";
+// 編集の状態の置き方は 2 通り。今の版は実行しない JSON（type="application/json"）、以前の版は状態を window の変数へ代入するスクリプト
+const ER_IMPORT_STATE_FORMS=[
+  {tag:"<script id=\"er-"+"edit-state\" type=\"application/json\">",prefix:""},
+  {tag:"<script id=\"er-"+"edit-state\">",prefix:"window.__ER_EDIT_"+"STATE__="}
+];
 const ER_IMPORT_MAIN_TAG="<script id=\"er-"+"main\" type=\"text/plain\">";
 const ER_IMPORT_APPS_PREFIX="const APPS = ";
 const ER_IMPORT_SCRIPT_END="</"+"script>";
@@ -22,15 +25,21 @@ const ER_IMPORT_SCRIPT_END="</"+"script>";
 // ─── ファイルの読み取り（文字列だけを扱う。DOM にもスクリプトにもしない） ───
 function readEditedHtmlText(text){
   const source=String(text==null?"":text);
-  const at=source.indexOf(ER_IMPORT_STATE_TAG);
   // 編集の状態は図の本体（er-main）の前に置かれる。本体の中の文字列に同じ並びがあっても、それは使わない
   const mainAt=source.indexOf(ER_IMPORT_MAIN_TAG);
-  if(at<0||(mainAt>=0&&at>mainAt)) return {error:"編集済みHTMLではありません（編集の内容が見つかりません）。図の画面の「出力 → 編集済みHTMLを保存」で保存したファイルを選んでください"};
+  const found=ER_IMPORT_STATE_FORMS
+    .map(form=>({form,at:source.indexOf(form.tag)}))
+    .filter(item=>item.at>=0&&(mainAt<0||item.at<mainAt))
+    .sort((a,b)=>a.at-b.at)[0];
+  if(!found) return {error:"編集済みHTMLではありません（編集の内容が見つかりません）。図の画面の「出力 → 編集済みHTMLを保存」で保存したファイルを選んでください"};
+  const at=found.at, form=found.form;
   const end=source.indexOf(ER_IMPORT_SCRIPT_END,at);
-  let body=source.slice(at+ER_IMPORT_STATE_TAG.length,end<0?source.length:end).trim();
-  if(body.indexOf(ER_IMPORT_STATE_PREFIX)!==0) return {error:"編集の内容を読み取れません（ファイルの形が違います）"};
-  body=body.slice(ER_IMPORT_STATE_PREFIX.length).trim();
-  if(body.charAt(body.length-1)===";") body=body.slice(0,-1);
+  let body=source.slice(at+form.tag.length,end<0?source.length:end).trim();
+  if(form.prefix){
+    if(body.indexOf(form.prefix)!==0) return {error:"編集の内容を読み取れません（ファイルの形が違います）"};
+    body=body.slice(form.prefix.length).trim();
+    if(body.charAt(body.length-1)===";") body=body.slice(0,-1);
+  }
   let state;
   try{ state=JSON.parse(body); }catch(_){ return {error:"編集の内容を読み取れません（ファイルが壊れている可能性があります）"}; }
   if(!state||typeof state!=="object"||Array.isArray(state)) return {error:"編集の内容を読み取れません（ファイルの形が違います）"};

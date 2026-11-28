@@ -339,6 +339,11 @@ describe('ER diagram HTML', () => {
       expect(viewer).not.toContain('data-er-fallback-lib');
       expect(viewer).toContain('const clone=document.documentElement.cloneNode(true);');
       expect(viewer).toContain('clone.querySelector("#er-runtime")');
+      // 編集の状態は実行しない JSON として置き、開き直したときに JSON として読む（CSP で許可するスクリプトは保存しても変わらない）
+      expect(viewer).toContain('stateScript.setAttribute("type","application/json");');
+      expect(viewer).toContain('stateScript.textContent=stateJson;');
+      expect(viewer).toContain('const ER_EDIT_STATE = readEmbeddedEditState();');
+      expect(viewer).not.toContain('window.__ER_EDIT_STATE__');
     });
   });
 

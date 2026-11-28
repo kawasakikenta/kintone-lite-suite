@@ -284,16 +284,27 @@ async function openViewer(browser, file, { width = 1440, height = 900, hash = ''
   return { context, page, errors, blocked };
 }
 
-// 生成した HTML に、編集済みHTMLと同じ形で編集状態（window.__ER_EDIT_STATE__）を差し込んだ複製を作る。
-// 以前の版で保存した編集状態（er-edit-state-v1.json）を、新しい版の図で開き直すときに使う
-function withEditState(htmlFile, state, outFile) {
+// 生成した HTML に、編集済みHTMLと同じ形で編集状態を差し込んだ複製を作る。
+// 以前の版で保存した編集状態（er-edit-state-v1.json）を、新しい版の図で開き直すときに使う。
+// 今の版は実行しない JSON（type="application/json"）として置く。legacy: true は以前の版の置き方（window.__ER_EDIT_STATE__ への代入の
+// スクリプト）で、「編集済みHTMLから取り込む」の読み込み元にだけ使う（今の版の CSP では、この置き方のスクリプトは動かない）。
+function withEditState(htmlFile, state, outFile, { legacy = false } = {}) {
   const html = fs.readFileSync(htmlFile, 'utf8');
   const json = JSON.stringify(state).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026');
   const marker = '<script id="er-main" type="text/plain">';
   assert.ok(html.includes(marker), '図の本体スクリプトが見つかりません');
-  fs.writeFileSync(outFile, html.replace(marker, () => `<script id="er-edit-state">window.__ER_EDIT_STATE__=${json};</script>${marker}`), 'utf8');
+  const block = legacy
+    ? `<script id="er-edit-state">window.__ER_EDIT_STATE__=${json};</script>`
+    : `<script id="er-edit-state" type="application/json">${json}</script>`;
+  fs.writeFileSync(outFile, html.replace(marker, () => `${block}${marker}`), 'utf8');
   return outFile;
 }
+/** 保存した編集済みHTMLの編集状態（実行しない JSON）。 */
+const savedEditStateJson = (html) => {
+  const match = html.match(/<script id="er-edit-state" type="application\/json">([\s\S]*?)<\/script>/);
+  assert.ok(match, '編集の状態が実行しない JSON として保存されていません');
+  return match[1];
+};
 
 // WCAG のコントラスト比（文字色と、透明でない一番近い背景色）
 const measureContrast = (page, selectors) => page.evaluate((list) => {
@@ -985,7 +996,8 @@ async function main() {
           assert.deepEqual(after.scope, before.scope, '表示範囲が戻りません');
           assert.deepEqual(after.pos, before.pos, '位置が戻りません');
           assert.match(html, /"stateVersion":2/);
-          assert.ok(!/"theme":/.test(html.match(/window\.__ER_EDIT_STATE__=(.*?);<\/script>/)[1]), '配色を保存しています');
+          assert.ok(!/"theme":/.test(savedEditStateJson(html)), '配色を保存しています');
+          assert.ok(!html.includes('window.__ER_EDIT_STATE__='), '編集の状態を実行するスクリプトとして保存しています');
           assert.ok(!/<html[^>]*data-theme=/.test(html), '開いたときの配色を HTML に残しています');
           assert.equal(after.tables, 0, '表のビューの中身を保存しています');
           assert.equal(after.theme, 'light');
@@ -996,7 +1008,10 @@ async function main() {
     console.log('編集済みHTMLから編集を取り込む');
     if (shouldRun('import')) {
       const legacyState = JSON.parse(fs.readFileSync(path.join(__dirname, 'er-edit-state-v1.json'), 'utf8'));
-      const v1File = withEditState(generated.business.file, legacyState, path.join(OUT, 'import-source-v1.html'));
+      // 以前の版の編集済みHTML（編集の状態を代入するスクリプトで持つ）。取り込みの読み込み元にする
+      const v1File = withEditState(generated.business.file, legacyState, path.join(OUT, 'import-source-v1.html'), { legacy: true });
+      // 同じ編集を今の版の置き方で持つ図。開いて保存し直し、今の版の編集済みHTMLを作る
+      const v1Open = withEditState(generated.business.file, legacyState, path.join(OUT, 'import-source-v1-open.html'));
       const importState = (page) => page.evaluate(() => {
         const app113 = findApp(113);
         const custom = APPS.find((a) => a.isCustom && a.name === '外部会計システム');
@@ -1045,7 +1060,7 @@ async function main() {
       const v2File = path.join(OUT, 'import-source-v2.html');
       let v2Saved = null;
       {
-        const viewer = await openViewer(browser, v1File);
+        const viewer = await openViewer(browser, v1Open);
         await viewer.page.evaluate(() => showAroundApp(101));
         await settleLayout(viewer.page);
         v2Saved = await viewer.page.evaluate(() => ({ scope: JSON.parse(JSON.stringify(viewScope)), pos101: cy.getElementById('a101').position() }));
@@ -1101,7 +1116,8 @@ async function main() {
       // このリポジトリの以前の版（er-edit-state-v1-lite.json。9691a4a の tools/ER図.js で保存）の編集済みHTMLも、同じように取り込める
       await check('import: lite-suite の以前の版で保存した編集済みHTMLの編集も、新しく作った図へ取り込む', async () => {
         const liteState = JSON.parse(fs.readFileSync(path.join(__dirname, 'er-edit-state-v1-lite.json'), 'utf8'));
-        const liteFile = withEditState(generated.business.file, liteState, path.join(OUT, 'import-source-v1-lite.html'));
+        // 以前の版は編集の状態を window.__ER_EDIT_STATE__ への代入のスクリプトとして保存していた。その置き方のまま読み込み元にする
+        const liteFile = withEditState(generated.business.file, liteState, path.join(OUT, 'import-source-v1-lite.html'), { legacy: true });
         const viewer = await openViewer(browser, generated.business.file);
         const { page } = viewer;
         const result = await importFile(page, liteFile);

@@ -948,7 +948,8 @@ async function inspectEditedHtmlSave(browser, variant, htmlFile, outDir) {
     externalScript: hasExternalScript(saved),
     cspScriptHosts: cspScriptHosts(saved),
     libraryScripts: [...saved.matchAll(/<script id="(er-lib-[a-z-]+)">/g)].map((match) => match[1]),
-    keepsEditState: saved.includes('__ER_EDIT_STATE__'),
+    // 作業ツリー版は実行しない JSON（type="application/json"）、以前の版は代入のスクリプトで持つ
+    keepsEditState: saved.includes('<script id="er-edit-state" type="application/json">') || saved.includes('__ER_EDIT_STATE__'),
     restored
   };
 }
