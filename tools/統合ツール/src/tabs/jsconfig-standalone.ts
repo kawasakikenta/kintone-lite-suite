@@ -2,7 +2,7 @@
 
 import { buildCustomizeSettingsPutPayload } from '../constants.js';
 import { normalize, nowStamp, downloadText, downloadBlob, esc, kusConfirm, buildExportFilename, summarizeList, deepClone } from '../utils.js';
-import { FILE_DOWNLOAD_TIMEOUT_MS, apiGet, apiPut, buildApiPrefix, decorateRevisionConflict, pickRevision, uploadKintoneFile } from '../api.js';
+import { FILE_DOWNLOAD_TIMEOUT_MS, apiGet, apiPut, buildApiPrefix, decorateRevisionConflict, isRetriableApiError, pickRevision, uploadKintoneFile } from '../api.js';
 import { customizeSlotKey, downloadCustomizeFile, resolveCustomizeFiles, type CustomizeFileDownloader } from '../reflect/customizeFiles.js';
 import { loadJSZipLite } from '../jszipLoader.js';
 import { RunCancelledError, createRequestSignal, isRunCancelledError, sleepUnlessCancelled, throwIfCancelled } from '../runControl.js';
@@ -17,7 +17,10 @@ export function formatFileSize(bytes: any): string {
   return `${(n / 1024 / 1024).toFixed(2)} MB`;
 }
 
-/** ファイル取得結果。403 は権限、それ以外は HTTP/通信エラーとして理由を残す。 */
+/**
+ * ファイル取得結果。403 は権限、それ以外は HTTP/通信エラーとして理由を残す。
+ * 時間を置けば成功し得る失敗（通信エラー・応答待ちの超過・429・5xx など。apiGet と同じ基準）だけ 1 回再試行し、404・400 などは再試行しない。
+ */
 async function downloadFileBlobForJsConfig(prefix: string, fileKey: string): Promise<{ ok: true; blob: Blob } | { ok: false; reason: string }> {
   if (!fileKey) return { ok: false, reason: 'fileKey がありません' };
   const url = prefix + '/file.json?fileKey=' + encodeURIComponent(fileKey);
@@ -34,6 +37,7 @@ async function downloadFileBlobForJsConfig(prefix: string, fileKey: string): Pro
       if (resp.status === 403) return { ok: false, reason: '閲覧権限なし (HTTP 403)' };
       if (resp.ok) return { ok: true, blob: await resp.blob() };
       lastReason = `HTTP ${resp.status}`;
+      if (!isRetriableApiError({ status: resp.status })) return { ok: false, reason: lastReason };
     } catch (e: any) {
       if (isRunCancelledError(e) || isRunCancelledError((request?.signal as any)?.reason)) throw e instanceof RunCancelledError ? e : new RunCancelledError();
       lastReason = request?.timedOut() ? `応答待ちが ${Math.round(FILE_DOWNLOAD_TIMEOUT_MS / 1000)} 秒を超えました（timeout）` : (e?.message || String(e));

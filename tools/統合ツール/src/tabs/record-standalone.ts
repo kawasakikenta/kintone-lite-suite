@@ -1,7 +1,7 @@
 'use strict';
 
 import { downloadBlob, kusConfirm, buildExportFilename, buildAppFilenameLabel, sanitizeFilenamePart } from '../utils.js';
-import { FILE_DOWNLOAD_TIMEOUT_MS, apiGet, apiPost, apiPut, buildApiPrefix, fetchBundle, fetchRecordsByQuery, isRevisionConflictError } from '../api.js';
+import { FILE_DOWNLOAD_TIMEOUT_MS, apiGet, apiPost, apiPut, buildApiPrefix, fetchBundle, fetchRecordsByQuery, isRetriableApiError, isRevisionConflictError } from '../api.js';
 import { loadJSZipLite } from '../jszipLoader.js';
 import { RunCancelledError, activeRun, createRequestSignal, isRunCancelledError, sleepUnlessCancelled, throwIfCancelled } from '../runControl.js';
 import { createCancelReport, describeInnerCancel, formatCancelledHeadline, isCancelStop } from './run-cancel-summary.js';
@@ -225,8 +225,8 @@ export type FileFetchResult =
   | { ok: false; reason: string };
 
 /**
- * /file.json からファイル本体を取得する。403（閲覧権限なし）は再試行せず、
- * それ以外の失敗は 1 回だけ再試行する。失敗理由は呼び出し側で集計して利用者に見せる。
+ * /file.json からファイル本体を取得する。時間を置けば成功し得る失敗（通信エラー・応答待ちの超過・429・5xx など。apiGet と同じ基準）だけ
+ * 1 回再試行し、403（閲覧権限なし）・404・400 など何度やっても同じ失敗は再試行しない。失敗理由は呼び出し側で集計して利用者に見せる。
  */
 async function downloadFileBlob(prefix: string, fileKey: string): Promise<FileFetchResult> {
   if (!fileKey) return { ok: false, reason: 'fileKey がありません' };
@@ -244,6 +244,7 @@ async function downloadFileBlob(prefix: string, fileKey: string): Promise<FileFe
       if (resp.status === 403) return { ok: false, reason: '閲覧権限なし (HTTP 403)' };
       if (!resp.ok) {
         lastReason = `HTTP ${resp.status}`;
+        if (!isRetriableApiError({ status: resp.status })) return { ok: false, reason: lastReason };
       } else {
         return { ok: true, blob: await resp.blob() };
       }

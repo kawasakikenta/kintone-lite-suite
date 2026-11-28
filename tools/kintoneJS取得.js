@@ -3718,6 +3718,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         if (resp.status === 403) return { ok: false, reason: "閲覧権限なし (HTTP 403)" };
         if (resp.ok) return { ok: true, blob: await resp.blob() };
         lastReason = `HTTP ${resp.status}`;
+        if (!isRetriableApiError({ status: resp.status })) return { ok: false, reason: lastReason };
       } catch (e) {
         if (isRunCancelledError(e) || isRunCancelledError(request?.signal?.reason)) throw e instanceof RunCancelledError ? e : new RunCancelledError();
         lastReason = request?.timedOut() ? `応答待ちが ${Math.round(FILE_DOWNLOAD_TIMEOUT_MS / 1e3)} 秒を超えました（timeout）` : e?.message || String(e);

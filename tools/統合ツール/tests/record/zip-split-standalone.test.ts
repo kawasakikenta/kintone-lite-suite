@@ -203,6 +203,27 @@ describe('attachment download: a ZIP that would exceed the limit is split before
   });
 });
 
+// 添付の取得で、時間を置いても変わらない失敗（404・400 など）は送り直さない。直る見込みのある失敗（5xx・429・通信エラー）だけ 1 回送り直す。
+// 消えた添付が多いアプリでは、1 件ごとに 0.5 秒待って同じ失敗をもう一度取りに行っていた（kintone-settings-tools の設計書作成で直した型と同じ）。
+describe('attachment download: retries only failures that can recover', () => {
+  const failing = (status: number) => ({ ok: false, status, blob: async () => new Blob([]) }) as any;
+  const fetched = (url: string) => ({ ok: true, status: 200, blob: async () => new Blob([url]) }) as any;
+  it.each([404, 400, 401])('does not fetch a file again after HTTP %i', async (code) => {
+    mockRecords([record(1, 1000)]);
+    vi.mocked(fetch).mockResolvedValue(failing(code));
+    await expect(runAttachmentDownloadStandalone(baseOptions, status)).rejects.toThrow('添付ファイルを1件も取得できませんでした（失敗 1件）');
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it.each([[503, failing(503)], [429, failing(429)], ['a network error', new TypeError('Failed to fetch')]])('fetches once more after %s', async (_label, failure) => {
+    mockRecords([record(1, 1000)]);
+    if (failure instanceof Error) vi.mocked(fetch).mockRejectedValueOnce(failure); else vi.mocked(fetch).mockResolvedValueOnce(failure);
+    vi.mocked(fetch).mockImplementation((async (url: string) => fetched(url)) as any);
+    const result = await runAttachmentDownloadStandalone(baseOptions, status);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(result.summary?.counts).toMatchObject({ ファイル: 1, 取得失敗: 0 });
+  });
+});
+
 describe('record backup: split into attachment ZIPs and a final ZIP with the records', () => {
   const backupOptions = { appId: '7', zipName: 'backup.zip', includeFiles: true, includeComments: false, includeAppSettings: false, zipLimits: limits };
 

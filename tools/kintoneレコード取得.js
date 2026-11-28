@@ -4386,6 +4386,7 @@ ZIP ${downloads.length}個のダウンロードを依頼しました。ブラウ
         if (resp.status === 403) return { ok: false, reason: "閲覧権限なし (HTTP 403)" };
         if (!resp.ok) {
           lastReason = `HTTP ${resp.status}`;
+          if (!isRetriableApiError({ status: resp.status })) return { ok: false, reason: lastReason };
         } else {
           return { ok: true, blob: await resp.blob() };
         }
