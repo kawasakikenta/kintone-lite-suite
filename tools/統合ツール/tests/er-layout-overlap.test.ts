@@ -39,21 +39,16 @@ function stubNode(id: string, x: number, y: number, options: { w?: number; h?: n
   return node;
 }
 
-/** 図の画面の関数だけを取り出して、スタブのノードに対して実行する。 */
+/** 図の画面の関数だけを取り出して、スタブのノードに対して実行する（nodeSpan から separateOverlappingNodes までと、その間の定数・関数）。 */
 function loadSeparate() {
-  const pick = (pattern: RegExp) => {
-    const match = script.match(pattern);
-    if (!match) throw new Error(`ER viewer code not found: ${pattern}`);
-    return match[0];
-  };
-  const source = [
-    pick(/function nodeSpan\(n\)\{[\s\S]*?\r?\n\}/),
-    pick(/const OVERLAP_GAP = \d+;/),
-    pick(/const OVERLAP_MAX_NODES = \d+;/),
-    pick(/function separateOverlappingNodes\(nodes, animate\)\{[\s\S]*?\r?\n\}/)
-  ].join('\n');
+  const start = script.indexOf('function nodeSpan(n){');
+  const end = script.indexOf('function placeNoLinkGrid(');
+  if (start < 0 || end < start) throw new Error('ER viewer code not found: nodeSpan .. placeNoLinkGrid');
+  const source = script.slice(start, end);
+  if (!source.includes('function separateOverlappingNodes(nodes, animate){')) throw new Error('ER viewer code not found: separateOverlappingNodes');
   const context = createContext({});
-  runInContext(`${source}\nglobalThis.api={separateOverlappingNodes,gap:OVERLAP_GAP,max:OVERLAP_MAX_NODES};`, context);
+  // 関数の中に置く（vm の大域の名前を引くと遅く、800 枚の検査が時間切れになる）
+  runInContext(`(() => {\nconst Math = globalThis.Math;\n${source}\nglobalThis.api={separateOverlappingNodes,gap:OVERLAP_GAP,max:OVERLAP_MAX_NODES};\n})();`, context);
   return (context as any).api as { separateOverlappingNodes: (nodes: unknown, animate: boolean) => boolean; gap: number; max: number };
 }
 
@@ -63,6 +58,8 @@ function overlapping(nodes: StubNode[], span = (n: StubNode) => ({ w: n.outerWid
   const pairs: string[] = [];
   for (let i = 0; i < nodes.length; i += 1) {
     for (let j = i + 1; j < nodes.length; j += 1) {
+      // 固定したアプリ同士は動かせないので数えない
+      if (nodes[i].locked() && nodes[j].locked()) continue;
       const a = span(nodes[i]);
       const b = span(nodes[j]);
       const w = (a.w + b.w) / 2 - Math.abs(nodes[i].pos.x - nodes[j].pos.x);
@@ -71,6 +68,20 @@ function overlapping(nodes: StubNode[], span = (n: StubNode) => ({ w: n.outerWid
     }
   }
   return pairs;
+}
+
+/**
+ * アプリが多い図で「自動（cose）」の配置が作る混み方。大きさの違うカードが、カードより狭い間隔で密集している（決まった乱数で作る）。
+ * 押し広げるだけでは決まった回数（120 回）で収まらず、重なりが残っていた。
+ */
+function crowdedCluster(count: number, options: { step?: [number, number]; locked?: (i: number) => boolean } = {}) {
+  let seed = 7;
+  const random = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  const [stepX, stepY] = options.step ?? [170, 120];
+  const cols = Math.ceil(Math.sqrt(count));
+  return Array.from({ length: count }, (_, i) => stubNode(`n${i}`, (i % cols) * stepX + random() * 60, Math.floor(i / cols) * stepY + random() * 60, {
+    w: 210 + Math.round(random() * 110), h: 54 + Math.round(random() * 250), lowW: 240, lowH: 128, locked: options.locked?.(i)
+  }));
 }
 
 describe('ER viewer: overlapping cards after a layout', () => {
@@ -109,6 +120,38 @@ describe('ER viewer: overlapping cards after a layout', () => {
     expect(overlapping(nodes).length).toBeGreaterThan(20);
     expect(separateOverlappingNodes(collection(nodes), false)).toBe(true);
     expect(overlapping(nodes)).toEqual([]);
+  });
+
+  // 間隔を含めた大きさ（詳細表示と概要表示の大きい方）で、カードが重なっている組
+  const spaced = (n: StubNode) => ({ w: Math.max(n.data('cardW') ?? 0, n.data('lowW') ?? 0, n.outerWidth()) + gap, h: Math.max(n.data('cardH') ?? 0, n.data('lowH') ?? 0, n.outerHeight()) + gap });
+
+  it('separates 200 crowded cards that pushing apart does not settle within the round limit', () => {
+    const nodes = crowdedCluster(200);
+    expect(overlapping(nodes, spaced).length).toBeGreaterThan(500);
+    expect(separateOverlappingNodes(collection(nodes), false)).toBe(true);
+    expect(overlapping(nodes, spaced)).toEqual([]);
+  });
+
+  it('settles the largest diagram it handles, even when every card was placed on the same spot', () => {
+    const nodes = crowdedCluster(max, { step: [0, 0] });
+    expect(separateOverlappingNodes(collection(nodes), false)).toBe(true);
+    expect(overlapping(nodes, spaced)).toEqual([]);
+  });
+
+  it('keeps locked cards where they are in a crowded layout, and moves the others clear of them', () => {
+    const nodes = crowdedCluster(200, { locked: (i) => i % 7 === 0 });
+    const pinned = nodes.filter((n) => n.locked()).map((n) => ({ id: n.id(), pos: { ...n.pos } }));
+    expect(separateOverlappingNodes(collection(nodes), false)).toBe(true);
+    expect(nodes.filter((n) => n.locked()).map((n) => ({ id: n.id(), pos: n.pos }))).toEqual(pinned);
+    expect(overlapping(nodes, spaced)).toEqual([]);
+  });
+
+  it('gives the same positions every time for the same layout (no randomness)', () => {
+    const first = crowdedCluster(200);
+    const second = crowdedCluster(200);
+    separateOverlappingNodes(collection(first), false);
+    separateOverlappingNodes(collection(second), false);
+    expect(second.map((n) => n.pos)).toEqual(first.map((n) => n.pos));
   });
 
   it('animates the move after a user-visible layout and sets positions directly otherwise', () => {

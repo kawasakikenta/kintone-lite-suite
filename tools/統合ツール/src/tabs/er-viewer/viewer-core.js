@@ -914,10 +914,47 @@ function nodeSpan(n){
     h: Math.max(Number(n.data("cardH")) || 0, Number(n.data("lowH")) || 0, n.outerHeight())
   };
 }
-// レイアウトが重ねて置いたアプリ（フォース・同心円・グリッドなど）を、重なりが無くなるまで少しずつ押し広げる。
-// 重なりのない配置は動かさない。動かしたら true を返す（呼び出し側で全体表示に合わせ直す）
+// レイアウトが重ねて置いたアプリ（フォース・同心円・グリッドなど）を、重なりが無くなるまで押し広げる。
+// 重なりのない配置は動かさない。固定したアプリは動かさない。動かしたら true を返す（呼び出し側で全体表示に合わせ直す）
 const OVERLAP_GAP = 28;
 const OVERLAP_MAX_NODES = 800;
+const OVERLAP_PUSH_ROUNDS = 120;
+// 2 つのカード（間隔を含めた大きさ）が重なっているか
+function overlapItems(a, b){
+  return (a.w + b.w) / 2 - Math.abs(b.x - a.x) > 0 && (a.h + b.h) / 2 - Math.abs(b.y - a.y) > 0;
+}
+// 押し広げても決まった回数で収まらなかったときの最後の手（アプリが多い図の「自動」で起きる）。
+// 重なっていないアプリと固定したアプリはそのまま置き、重なっているアプリを図の中心に近い順に 1 つずつ、
+// 置き終えたアプリに重ならないところまで、上下左右のうち動く距離が一番短い向きへずらす。これで必ず重なりが無くなる
+function settleRemainingOverlaps(items){
+  const pending = items.filter(a=>!a.fixed && items.some(b=>b !== a && overlapItems(a, b)));
+  if(!pending.length) return;
+  const pendingSet = new Set(pending);
+  const placed = items.filter(a=>!pendingSet.has(a));
+  const centerX = items.reduce((sum, a)=>sum + a.x, 0) / items.length;
+  const centerY = items.reduce((sum, a)=>sum + a.y, 0) / items.length;
+  pending.sort((a, b)=>Math.hypot(a.x - centerX, a.y - centerY) - Math.hypot(b.x - centerX, b.y - centerY));
+  pending.forEach(a=>{
+    let best = null;
+    [[1,0],[-1,0],[0,1],[0,-1]].forEach(([sx, sy])=>{
+      const probe = { x: a.x, y: a.y, w: a.w, h: a.h };
+      // その向きに、ぶつかったアプリの向こう側へ進む（進んだ先でまたぶつかったら、その向こうへ）。ほかの向きより遠くなったらやめる
+      for(;;){
+        const blockers = placed.filter(b=>overlapItems(probe, b));
+        if(!blockers.length) break;
+        blockers.forEach(b=>{
+          if(sx) probe.x = sx > 0 ? Math.max(probe.x, b.x + (a.w + b.w) / 2 + 1) : Math.min(probe.x, b.x - (a.w + b.w) / 2 - 1);
+          else probe.y = sy > 0 ? Math.max(probe.y, b.y + (a.h + b.h) / 2 + 1) : Math.min(probe.y, b.y - (a.h + b.h) / 2 - 1);
+        });
+        if(best && Math.abs(probe.x - a.x) + Math.abs(probe.y - a.y) >= best.distance) return;
+      }
+      const distance = Math.abs(probe.x - a.x) + Math.abs(probe.y - a.y);
+      if(!best || distance < best.distance) best = { x: probe.x, y: probe.y, distance };
+    });
+    a.x = best.x; a.y = best.y;
+    placed.push(a);
+  });
+}
 function separateOverlappingNodes(nodes, animate){
   const items = nodes.toArray().filter(n=>!n.hasClass("note-node")).map(n=>{
     const pos = n.position();
@@ -926,7 +963,8 @@ function separateOverlappingNodes(nodes, animate){
   });
   if(items.length < 2 || items.length > OVERLAP_MAX_NODES) return false;
   const start = items.map(item=>({x:item.x,y:item.y}));
-  for(let round = 0; round < 120; round++){
+  let settled = false;
+  for(let round = 0; round < OVERLAP_PUSH_ROUNDS && !settled; round++){
     let moved = false;
     for(let i = 0; i < items.length; i++){
       for(let j = i + 1; j < items.length; j++){
@@ -950,8 +988,9 @@ function separateOverlappingNodes(nodes, animate){
         moved = true;
       }
     }
-    if(!moved) break;
+    settled = !moved;
   }
+  if(!settled) settleRemainingOverlaps(items);
   let changed = false;
   items.forEach((item, i)=>{
     if(Math.abs(item.x - start[i].x) < 0.5 && Math.abs(item.y - start[i].y) < 0.5) return;
