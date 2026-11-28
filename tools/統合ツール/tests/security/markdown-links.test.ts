@@ -5,6 +5,9 @@ import { buildErMarkdownSpec } from '../../src/tabs/er-model';
 import { buildSettingsMarkdownIndex } from '../../src/tabs/settings-export-standalone';
 import { buildProcessBatchOverviewMarkdown, buildProcessSpecMarkdown, formatProcessSimulationHistory } from '../../src/tabs/process-standalone';
 import { buildJsConfigBatchIndexMarkdown } from '../../src/tabs/jsconfig-standalone';
+import { buildReflectReportMarkdown } from '../../src/reflect/planReport';
+import { buildReflectSectionPlan } from '../../src/reflect/standalonePlan';
+import { buildDeployPlanMarkdown } from '../../src/deploy/report';
 
 /**
  * kintone の設定の文字列（アプリ名・フィールド名・選択肢など。アプリの管理者なら誰でも書ける）や、読み込んだ設定JSONの文字列に
@@ -209,5 +212,28 @@ describe('lite にしかない Markdown の出力: kintone の文字列のリン
     // 設定された外部 URL はこれまでどおりそのまま一覧する
     expect(md).toContain('| URL | https://cdn.example.com/a.js |');
     expectNoLiveMarkup(md);
+  });
+
+  it('プレビュー反映・本番反映の計画（escapeReflectMarkdown で逃がしている。今の実装で問題なし）', () => {
+    const views = buildReflectSectionPlan('viewSettings', { views: { [HOSTILE]: { type: 'LIST', name: HOSTILE, index: '0', fields: [] } } }, { views: {} });
+    const reflect = buildReflectReportMarkdown({
+      generatedAt: '2026-11-28T00:00:00.000Z',
+      source: { appId: '1', name: HOSTILE, guestId: '' },
+      target: { appId: '2', name: `\\${IMAGE}`, guestId: '' },
+      sourceEnvironment: 'json', preserveTargetOnly: true, lookupMap: { [HOSTILE]: '3' }, entries: [views],
+      rolloutResults: [{ appId: '2', appName: HOSTILE, outcome: '失敗', detail: HOSTILE }]
+    });
+    const deploy = buildDeployPlanMarkdown({
+      generatedAt: '2026-11-28T00:00:00.000Z', mode: 'deploy', batchMode: 'sequential', stopOnError: true, selectedKeys: ['/1'],
+      apps: [{
+        appId: '1', guestId: '', name: HOSTILE, state: 'changes', productionRevision: '1', previewRevision: '2', warnings: [HOSTILE], inspectedAt: '2026-11-28T00:00:00.000Z',
+        sections: [{ sectionKey: 'viewSettings', label: '一覧', status: 'change', counts: { added: 1, changed: 0, removed: 0 }, items: [{ kind: '追加', name: HOSTILE, details: [HOSTILE] }] }],
+        removedFields: [{ code: 'c', label: HOSTILE, type: 'SINGLE_LINE_TEXT', possibleRename: HOSTILE }]
+      }]
+    });
+    for (const md of [reflect, deploy]) {
+      expect(md).toContain('ここを開く');
+      expectNoLiveMarkup(md);
+    }
   });
 });
