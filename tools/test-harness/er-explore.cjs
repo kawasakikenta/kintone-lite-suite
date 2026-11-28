@@ -14,6 +14,8 @@
 //   - 以前の版で保存した編集状態（er-edit-state-v1.json・このリポジトリの以前の版で保存した er-edit-state-v1-lite.json）を
 //     新しい版の図で開き直したときの復元と、保存し直し。
 //   - 設定取得の ZIP（合成 kintone の設定から作る）を読み込んで、kintone に問い合わせずに図を作る。
+//   - 「編集 → 編集済みHTMLから取り込む」: 以前の版・今の版の編集済みHTMLの編集を、新しく作った図へ取り込む（図に無いアプリは対象外、
+//     関連の並びが違う図でも対応させる、ファイルのスクリプトは実行しない、元に戻す）。
 //   - 出力（PNG・Mermaid・draw.io・PlantUML・SQL DDL・JSON・Markdown・CSV 3 種）の中身。
 //   - 320〜1440px のはみ出し（スマホ幅の表・メニュー・引き出し）、キーボード操作。
 //
@@ -989,6 +991,237 @@ async function main() {
           assert.equal(after.theme, 'light');
         });
       }
+    }
+
+    console.log('編集済みHTMLから編集を取り込む');
+    if (shouldRun('import')) {
+      const legacyState = JSON.parse(fs.readFileSync(path.join(__dirname, 'er-edit-state-v1.json'), 'utf8'));
+      const v1File = withEditState(generated.business.file, legacyState, path.join(OUT, 'import-source-v1.html'));
+      const importState = (page) => page.evaluate(() => {
+        const app113 = findApp(113);
+        const custom = APPS.find((a) => a.isCustom && a.name === '外部会計システム');
+        const a113 = cy.getElementById('a113');
+        return {
+          customApp: custom ? { name: custom.name, fields: allFieldsForApp(custom).map((f) => f.label), node: cy.getElementById('a' + custom.id).length === 1 } : null,
+          customField: allFieldsForApp(app113).filter((f) => f.label === '承認ステータス' && f.isCustom).length,
+          customRelation: app113.relations.filter((r) => r.isCustom && custom && r.toApp === custom.id && r.fromLabel === '会計連携' && r.kind === 'ACTION').length,
+          notes: cy.nodes('.note-node').map((n) => n.data('label')),
+          appName: findApp(101) && findApp(101).name,
+          appColor: cy.getElementById('a101').data('accent'),
+          fieldLabel: (allFieldsForApp(app113).find((f) => f.code === '案件名') || {}).label,
+          renamedRelation: app113.relations.filter((r) => r.fromLabel === '顧客参照（編集）').map((r) => r.fromPath || r.from),
+          hiddenField: hiddenFieldKeys.has('113::顧客'),
+          removedApp: cy.getElementById('a110').length ? cy.getElementById('a110').hasClass('app-manual-hidden') : null,
+          removedEdges: cy.edges('.rel-manual-hidden').filter((e) => manuallyRemovedEdgeIds.has(e.id())).map((e) => { const ref = relationForEdgeId(e.id()); return ref ? (ref.rel.fromPath || ref.rel.controlFieldPath || ref.rel.from) + '→' + ref.rel.toApp : e.id(); }),
+          pinned: a113.locked() && a113.hasClass('pinned-node'),
+          position: a113.position(),
+          pos101: cy.getElementById('a101').length ? cy.getElementById('a101').position() : null,
+          scope: JSON.parse(JSON.stringify(viewScope)),
+          actionShown: document.getElementById('rel-action-btn').classList.contains('active')
+        };
+      });
+      const importFile = async (page, file, viaMenu = false) => {
+        await page.evaluate(() => { const t = document.getElementById('toast'); t.classList.remove('show'); t.textContent = ''; });
+        if (viaMenu) {
+          // 利用者と同じく「編集」メニューの「編集済みHTMLから取り込む」から選ぶ
+          const chooser = page.waitForEvent('filechooser', { timeout: 10000 });
+          await page.locator('#edit-menu > .tb-menu-btn').click();
+          await page.getByRole('button', { name: '編集済みHTMLから取り込む', exact: true }).click();
+          await (await chooser).setFiles(file);
+        } else {
+          await page.setInputFiles('#edit-import-file', file);
+        }
+        await page.waitForFunction(() => document.getElementById('modal-overlay').classList.contains('open') || document.getElementById('toast').classList.contains('show'), null, { timeout: 15000 });
+        await page.waitForTimeout(300);
+        const result = await page.evaluate(() => ({
+          modal: document.getElementById('modal-overlay').classList.contains('open') ? document.getElementById('modal-content').textContent : '',
+          title: document.getElementById('modal-title').textContent,
+          toast: document.getElementById('toast').textContent
+        }));
+        if (result.modal) await page.evaluate(() => closeModal());
+        return result;
+      };
+      // 今の版で保存した編集済みHTML（表示範囲は「顧客マスタのまわり」）を作っておく
+      const v2File = path.join(OUT, 'import-source-v2.html');
+      let v2Saved = null;
+      {
+        const viewer = await openViewer(browser, v1File);
+        await viewer.page.evaluate(() => showAroundApp(101));
+        await settleLayout(viewer.page);
+        v2Saved = await viewer.page.evaluate(() => ({ scope: JSON.parse(JSON.stringify(viewScope)), pos101: cy.getElementById('a101').position() }));
+        const downloadPromise = viewer.page.waitForEvent('download', { timeout: 60000 });
+        await viewer.page.evaluate(() => window.exportEditedHtml());
+        await (await downloadPromise).saveAs(v2File);
+        await viewer.context.close();
+      }
+      const businessRelations = JSON.parse(generated.business.html.match(/const APPS = (.*);\n/)[1]).find((a) => a.id === 113).relations;
+      const relKey = (rel) => (rel.fromPath || rel.controlFieldPath || rel.from) + '→' + rel.toApp;
+
+      await check('import: 以前の版の編集済みHTMLの編集を、新しく作った図へ取り込む（メニューから選ぶ・元に戻す）', async () => {
+        const viewer = await openViewer(browser, generated.business.file);
+        const { page } = viewer;
+        const before = await importState(page);
+        const result = await importFile(page, v1File, true);
+        const after = await importState(page);
+        await page.screenshot({ path: path.join(OUT, 'import-v1.png'), animations: 'disabled' });
+        await page.evaluate(() => undoLast());
+        await settleLayout(page);
+        const undone = await importState(page);
+        const problems = [...viewer.errors, ...viewer.blocked];
+        await viewer.context.close();
+        assert.deepEqual(problems, []);
+        assert.equal(result.title, '編集済みHTMLから取り込みました');
+        assert.match(result.modal, /以前の版の編集済みHTML/);
+        assert.match(result.modal, /手動で追加したアプリ: 1 件/);
+        assert.match(result.modal, /表示範囲: 全体（以前の版は全体の図だけを保存しています）/);
+        assert.match(result.toast, /編集を取り込みました/);
+        assert.deepEqual({ ...after, scope: undefined, position: undefined, pos101: undefined, actionShown: undefined }, {
+          customApp: { name: '外部会計システム', fields: ['会計コード', '金額', 'メモ'], node: true },
+          customField: 1,
+          customRelation: 1,
+          notes: ['受注フローの中心'],
+          appName: '顧客マスタ（編集済み）',
+          appColor: '#f472b6',
+          fieldLabel: '案件名（編集）',
+          renamedRelation: [businessRelations[0].fromPath || businessRelations[0].from],
+          hiddenField: true,
+          removedApp: true,
+          removedEdges: [relKey(businessRelations[1])],
+          pinned: true,
+          scope: undefined, position: undefined, pos101: undefined, actionShown: undefined
+        });
+        assert.deepEqual(after.position, { x: 123.5, y: 456.25 });
+        assert.equal(after.scope.mode, 'all');
+        // 表示設定（線の種類の表示など）は取り込まない
+        assert.equal(after.actionShown, true);
+        // 元に戻すと、取り込む前に戻る
+        assert.deepEqual(undone, before);
+      });
+
+      // このリポジトリの以前の版（er-edit-state-v1-lite.json。9691a4a の tools/ER図.js で保存）の編集済みHTMLも、同じように取り込める
+      await check('import: lite-suite の以前の版で保存した編集済みHTMLの編集も、新しく作った図へ取り込む', async () => {
+        const liteState = JSON.parse(fs.readFileSync(path.join(__dirname, 'er-edit-state-v1-lite.json'), 'utf8'));
+        const liteFile = withEditState(generated.business.file, liteState, path.join(OUT, 'import-source-v1-lite.html'));
+        const viewer = await openViewer(browser, generated.business.file);
+        const { page } = viewer;
+        const result = await importFile(page, liteFile);
+        const after = await importState(page);
+        await page.screenshot({ path: path.join(OUT, 'import-v1-lite.png'), animations: 'disabled' });
+        const problems = [...viewer.errors, ...viewer.blocked];
+        await viewer.context.close();
+        assert.deepEqual(problems, []);
+        assert.equal(result.title, '編集済みHTMLから取り込みました');
+        assert.match(result.modal, /以前の版の編集済みHTML/);
+        assert.match(result.modal, /手動で追加したアプリ: 1 件/);
+        const { customApp, customField, customRelation, notes, appName, appColor, fieldLabel, hiddenField, removedApp, pinned, position } = after;
+        assert.deepEqual({ customApp, customField, customRelation, notes, appName, appColor, fieldLabel, hiddenField, removedApp, pinned, position }, {
+          customApp: { name: '外部会計システム', fields: ['会計コード', '金額', 'メモ'], node: true },
+          customField: 1,
+          customRelation: 1,
+          notes: ['受注フローの中心'],
+          appName: '顧客マスタ（編集済み）',
+          appColor: '#f472b6',
+          fieldLabel: '案件名（編集）',
+          hiddenField: true,
+          removedApp: true,
+          pinned: true,
+          position: { x: 123.5, y: 456.25 }
+        });
+        return `${(result.modal.match(/手動で追加したアプリ: \d+ 件/) || [''])[0]}`;
+      });
+
+      await check('import: 今の版の編集済みHTMLは、保存したときの表示範囲と位置で取り込み、同じファイルをもう一度取り込んでも重ねない', async () => {
+        const viewer = await openViewer(browser, generated.business.file);
+        const { page } = viewer;
+        const result = await importFile(page, v2File);
+        const after = await importState(page);
+        const again = await importFile(page, v2File);
+        const twice = await importState(page);
+        const problems = [...viewer.errors, ...viewer.blocked];
+        await viewer.context.close();
+        assert.deepEqual(problems, []);
+        assert.match(result.modal, /今の版の編集済みHTML/);
+        assert.match(result.modal, /表示範囲: 保存したときの範囲（顧客マスタ（編集済み） のまわり・深さ 1）/);
+        assert.deepEqual(after.scope, v2Saved.scope);
+        assert.equal(after.customField, 1);
+        assert.equal(after.customRelation, 1);
+        assert.equal(after.appName, '顧客マスタ（編集済み）');
+        assert.ok(Math.abs(after.pos101.x - v2Saved.pos101.x) < 0.02 && Math.abs(after.pos101.y - v2Saved.pos101.y) < 0.02, `位置が戻りません: ${JSON.stringify(after.pos101)} / ${JSON.stringify(v2Saved.pos101)}`);
+        // 2 回目は同じ内容が今の図にあるので重ねない（手動のアプリ・項目・線・メモが 1 つずつのまま）
+        assert.match(again.modal, /同じ内容が今の図にあったため取り込まなかった編集: \d+ 件/);
+        assert.deepEqual({ customField: twice.customField, customRelation: twice.customRelation, notes: twice.notes }, { customField: 1, customRelation: 1, notes: ['受注フローの中心'] });
+      });
+
+      await check('import: 図に無いアプリの編集は「対象外」として件数を示し、ある分だけ取り込む（深さ 1 の図）', async () => {
+        const viewer = await openViewer(browser, generated.depth1.file);
+        const { page } = viewer;
+        const present = await page.evaluate(() => APPS.map((a) => a.id));
+        const result = await importFile(page, v1File);
+        const after = await importState(page);
+        const problems = [...viewer.errors, ...viewer.blocked];
+        await viewer.context.close();
+        assert.deepEqual(problems, []);
+        assert.match(result.modal, /対象外: \d+ 件（今の図に無いアプリ・項目・関連線の編集）/);
+        assert.match(result.modal, /今の図に無いアプリ: App \d+/);
+        assert.match(result.toast, /対象外 \d+ 件/);
+        assert.equal(after.appName, present.includes(101) ? '顧客マスタ（編集済み）' : null);
+        assert.equal(after.customField, 1, '図にある案件管理の手動の項目は取り込む');
+      });
+
+      await check('import: 設定JSONから作った図（関連の並びが違う）でも、関連線の名前と削除を同じ関連へ対応させる', async () => {
+        const offlineRelations = JSON.parse(generated.offline.html.match(/const APPS = (.*);\n/)[1]).find((a) => a.id === 113).relations;
+        assert.notDeepEqual(offlineRelations.map(relKey), businessRelations.map(relKey), '並びが同じだと対応付けの検査になりません');
+        const viewer = await openViewer(browser, generated.offline.file);
+        const { page } = viewer;
+        await importFile(page, v1File);
+        const after = await importState(page);
+        const problems = [...viewer.errors, ...viewer.blocked];
+        await viewer.context.close();
+        assert.deepEqual(problems, []);
+        assert.deepEqual(after.renamedRelation, [businessRelations[0].fromPath || businessRelations[0].from]);
+        assert.deepEqual(after.removedEdges, [relKey(businessRelations[1])]);
+      });
+
+      await check('import: 編集済みでない HTML・壊れたファイルは取り込まず、ファイルの中のスクリプトを実行しない', async () => {
+        const hostileState = {
+          stateVersion: 2,
+          appOverrides: { 101: { name: '<img src=x onerror="window.__PWNED__=1">', color: 'red;background:url(https://evil.example/x)' } },
+          notes: [{ text: '<script>window.__PWNED__=2</script>', color: '#fef08a', x: 0, y: 0 }],
+          customApps: [{ id: -1, name: '"><svg onload="window.__PWNED__=3">', fields: [{ code: 'x', label: '<b onmouseover=alert(1)>x</b>', type: 'SINGLE_LINE_TEXT' }] }],
+          view: { positions: { a113: { x: 'NaN', y: 0 } }, scope: { mode: 'around', roots: ['javascript:alert(1)'], depth: 9 } }
+        };
+        // JSON の自身のキーとして __proto__ を持たせる（オブジェクトの書き方では入らないため、文字列で足す）
+        const hostileJson = JSON.stringify(hostileState).replace('"appOverrides":{', '"appOverrides":{"__proto__":{"polluted":1},').replace(/</g, '\\u003c');
+        const hostileFile = path.join(OUT, 'import-hostile.html');
+        const marker = '<script id="er-main" type="text/plain">';
+        fs.writeFileSync(hostileFile, fs.readFileSync(generated.business.file, 'utf8')
+          .replace(marker, () => `<script id="er-edit-state">window.__ER_EDIT_STATE__=${hostileJson};</script>${marker}`)
+          .replace('</body>', () => '<script>window.__PWNED__=4</script><img src="https://evil.example/pixel.png"></body>'), 'utf8');
+        const viewer = await openViewer(browser, generated.business.file);
+        const { page } = viewer;
+        const plain = await importFile(page, generated.business.file);
+        const result = await importFile(page, hostileFile);
+        const state = await page.evaluate(() => ({
+          pwned: window.__PWNED__,
+          polluted: ({}).polluted,
+          name101: findApp(101).name,
+          accent: cy.getElementById('a101').data('accent'),
+          injected: document.querySelectorAll('img[src="x"], svg[onload], [onerror], [onmouseover], [onload]').length,
+          listText: document.getElementById('app-list').textContent
+        }));
+        const problems = [...viewer.errors, ...viewer.blocked];
+        await viewer.context.close();
+        assert.match(plain.toast, /編集済みHTMLではありません/);
+        assert.equal(plain.modal, '');
+        assert.equal(state.pwned, undefined, 'ファイルの中のスクリプトが動きました');
+        assert.equal(state.polluted, undefined);
+        assert.equal(state.name101, '<img src=x onerror="window.__PWNED__=1">', '名前は文字として取り込む');
+        assert.equal(state.accent, '', '色の形でない値を使っています');
+        assert.equal(state.injected, 0, '取り込んだ名前が要素になっています');
+        assert.ok(state.listText.includes('<img src=x onerror="window.__PWNED__=1">'));
+        assert.match(result.modal, /形が正しくないため読まなかった値: \d+ 件/);
+        assert.deepEqual(problems, [], '取り込みで通信を試みたかエラーが出ました');
+      });
     }
 
     console.log('出力（全アプリを起点にした図 41 アプリ）');

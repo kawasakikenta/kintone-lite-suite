@@ -1161,6 +1161,7 @@ const commands=[
   {label:"ミニマップ",icon:"🗺",action:toggleMinimap},
   {label:"配色を切り替える（明るい / 暗い）",icon:"◐",action:toggleTheme},
   {label:"編集済みHTMLを保存",icon:"💾",action:exportEditedHtml},
+  {label:"編集済みHTMLから編集を取り込む",icon:"📥",action:openEditImport},
   {label:"PNG 画像を保存（白背景）",icon:"🖼",action:exportPNG},
   {label:"Mermaid を出力",icon:"🧜",action:showMermaid},
   {label:"draw.io XML を出力",icon:"📊",action:showDrawio},
