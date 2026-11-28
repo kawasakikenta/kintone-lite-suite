@@ -633,6 +633,9 @@
     if (err?.stack) wrapped.stack = err.stack;
     return wrapped;
   }
+  function withoutApiContextLines(message) {
+    return String(message ?? "").split("\n").filter((line) => !/^\s*\[API\]\s/.test(line)).join("\n").trim();
+  }
   function nowStamp() {
     const d = /* @__PURE__ */ new Date();
     const p = (n) => String(n).padStart(2, "0");
@@ -1059,7 +1062,7 @@
     if (!error) return false;
     const codes = [error?.code, error?.original?.code, error?.original?.error?.code].map((c) => String(c || "").toUpperCase()).filter(Boolean);
     if (codes.some((c) => REVISION_CONFLICT_CODES.has(c))) return true;
-    const text = String(error?.message || "");
+    const text = withoutApiContextLines(error?.message || "");
     return /GAIA_CO02|リビジョン.*(最新|一致|異な)|revision.*(latest|mismatch|conflict)/i.test(text);
   }
   function decorateRevisionConflict(error, subject) {
@@ -3304,7 +3307,6 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   var KINTONE_ERROR_CODE = /^[A-Z][A-Z0-9]*_[A-Z]{2}\d{2}$/;
   function isKintoneRejection(error) {
     for (let current = error, depth = 0; current && typeof current === "object" && depth < 5; current = current.original, depth++) {
-      if (current.id || current.errors && typeof current.errors === "object") return true;
       if (KINTONE_ERROR_CODE.test(String(current.code ?? ""))) return true;
     }
     return false;
