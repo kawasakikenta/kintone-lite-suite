@@ -265,7 +265,7 @@ function revisionMismatch(target: DeployAppInspection, current: RevisionPair): s
 
 /**
  * 依頼の失敗が「受け付けられなかった」と言い切れるか。通信の途絶や 5xx は、サーバーで確定したか分からない。
- * 送った後の失敗で kintone のエラー応答（id・code）が無いもの（中継装置の HTML など形の分からない失敗）も、届いたか分からないものとする。
+ * 送った後の失敗で kintone のエラー応答（kintone のエラーコード）が無いもの（中継装置の HTML・JSON など形の分からない失敗）も、届いたか分からないものとする。
  */
 function classifyRequestError(error: any): 'conflict' | 'unknown' | 'failed' {
   if (isRevisionConflictError(error)) return 'conflict';
