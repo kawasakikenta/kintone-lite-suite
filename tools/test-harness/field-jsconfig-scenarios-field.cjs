@@ -131,6 +131,10 @@ module.exports = function (scenario, c) {
     snap = await assertNoViolations('フィールド 参照先が無い（はい）', { allowedWrites: ['/202'] });
     assert.deepEqual(Object.keys(fieldsOf(snap, '202')).filter(code => ['total', 'customer_code'].includes(code)), [], 'kintone に拒否され何も追加されない');
     assert.equal(await statusTone(), 'err');
+    // kintone が受け付けなかったフィールドと設定を、キー（properties.total.expression）ではなく言葉でステータスに示す
+    const rejected = await statusText();
+    assert.match(rejected, /フィールド「total」の計算式: 計算式で使われているフィールド「(tax_rate|shipping)」が見つかりません。|フィールド「customer_code」のルックアップ設定・ほかのフィールドのコピー: コピー先フィールド「cust_(name|tel)」が見つかりません。/, rejected);
+    assert.doesNotMatch(rejected, /properties\.|\[API\]|payload=/, rejected);
     // 参照先も一緒に選べば、確認画面に警告は出ず、反映できる
     dialogs.length = 0;
     await pickFromSource('101', ['total', 'customer_code', 'tax_rate', 'shipping', 'cust_name', 'cust_tel']);
@@ -326,6 +330,70 @@ module.exports = function (scenario, c) {
     assert.doesNotMatch(text, /競合/);
     assert.equal(await statusTone(), 'warn');
     ok('応答が届かなかった追加は、競合と取り違えず「反映されたか分からない」と確かめ方を示す');
+  });
+
+  // kintone の入力エラー（CB_VA01）は、受け付けなかった項目ごとの文（errors）を返す。以前はステータスに「入力内容が正しくありません。」だけが出て、
+  // どのフィールドのどの設定かは、ログのキー（properties.priority.defaultValue など）を読むしかなかった。複数の反映先では 1 行目しか出なかった。
+  const INPUT_ERRORS = {
+    'properties.priority.defaultValue': { messages: ['初期値「至急」は選択肢にありません。'] },
+    'properties.priority.options.至急.index': { messages: ['indexが重複しています。'] },
+    'properties[tags].options': { messages: ['選択肢を1つ以上指定してください。'] },
+    'properties.items.fields.qty.maxValue': { messages: ['最大値は最小値以上にしてください。'] },
+    'properties.customer_code.lookup.relatedApp.app': { messages: ['参照するアプリには、このアプリ自身を指定できません。'] }
+  };
+  const INPUT_ERROR_LINES = [
+    'フィールド「priority」の初期値: 初期値「至急」は選択肢にありません。',
+    'フィールド「priority」の選択肢「至急」の並び順: indexが重複しています。',
+    'フィールド「tags」の選択肢: 選択肢を1つ以上指定してください。',
+    'テーブル「items」のフィールド「qty」の数値の制限（最大）: 最大値は最小値以上にしてください。',
+    'フィールド「customer_code」のルックアップ設定・参照するアプリID: 参照するアプリには、このアプリ自身を指定できません。'
+  ];
+  const resultLog = () => page.locator('.kus-lp__result').innerText();
+  scenario('フィールド追加: kintone の入力エラーは、どのフィールドの何が悪いかを画面に示す（先頭 3 件とほか N 件・ログに全件）', async () => {
+    const inputError = { code: 'CB_VA01', message: '入力内容が正しくありません。', errors: INPUT_ERRORS };
+    await reset('field', world({ failWrites: { '/202/app/form/fields.json': inputError } }));
+    await pickFromSource('101', ['priority', 'tags', 'items', 'customer_code']);
+    await fieldApply('202');
+    await fieldRun();
+    await assertNoViolations('フィールド 入力エラー', { allowedWrites: ['/202'] });
+    const status = await statusText();
+    assert.equal(await statusTone(), 'err');
+    assert.match(status, /^エラー: 入力内容が正しくありません。/, status);
+    for (const line of INPUT_ERROR_LINES.slice(0, 3)) assert.ok(status.includes(line), `ステータスに先頭 3 件: ${line}\n${status}`);
+    assert.match(status, /ほか 2 件/, status);
+    assert.ok(!status.includes(INPUT_ERROR_LINES[3]), '4 件目以降はステータスに出さない');
+    assert.doesNotMatch(status, /properties[.[]|\[API\]|payload=/, `キー・通信情報をステータスに出さない: ${status}`);
+    const log = await resultLog();
+    for (const line of INPUT_ERROR_LINES) assert.ok(log.includes(line), `ログには全件: ${line}\n${log}`);
+    assert.doesNotMatch(log, /properties\.priority\.defaultValue:/, 'ログもキーのままにしない');
+    await shot('field-input-error-1440');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await noOverflow('フィールド 入力エラー 390');
+    // 下の状態欄は 2 行の高さでスクロールする。実行結果の欄（状態の全文）の末尾を見せて撮る
+    await stage(2).locator('.kus-wf-notice').evaluate(element => element.scrollIntoView({ block: 'end' }));
+    await shot('field-input-error-390');
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    ok('入力エラーは、フィールドと設定の名前で先頭 3 件と「ほか 2 件」をステータスに、全件をログに示す');
+
+    // 複数の反映先: 失敗した反映先の行に先頭 3 件と「ほか N 件」、ログ（結果欄）の末尾に全件
+    await reset('field', world({ failWrites: { '/204/app/form/fields.json': inputError } }));
+    await pickFromSource('101', ['priority', 'tags']);
+    await fieldMulti(['202', '204']);
+    await fieldRunMulti();
+    await assertNoViolations('フィールド 複数の反映先の入力エラー', { allowedWrites: ['/202', '/204'] });
+    const result = await resultLog();
+    const row = result.split('\n').find(line => line.startsWith('[失敗]') && /App 204\b/.test(line)) || '';
+    for (const line of INPUT_ERROR_LINES.slice(0, 3)) assert.ok(row.includes(line), `失敗した反映先の行に先頭 3 件: ${line}\n${row}`);
+    assert.match(row, /ほか 2 件/, row);
+    for (const line of INPUT_ERROR_LINES) assert.ok(result.includes(line), `結果欄には全件: ${line}\n${result}`);
+    assert.doesNotMatch(result, /properties[.[]|\[API\]/, result);
+    const headline = await statusText();
+    assert.match(headline, /2 件中 1 件を反映しました[\s\S]*失敗 1 件[\s\S]*フィールド「priority」の初期値/, headline);
+    await shot('field-input-error-multi-1440');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await noOverflow('フィールド 複数の反映先の入力エラー 390');
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    ok('複数の反映先でも、失敗した反映先の行にフィールドと設定の名前を示し、結果欄に全件を残す');
   });
 
   scenario('フィールド追加: 複数の反映先で中止すると、残りは未実行になる', async () => {

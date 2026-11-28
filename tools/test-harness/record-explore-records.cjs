@@ -265,6 +265,10 @@ function register(scenario, ctx) {
     assert.match(log, /確定済み: 100件 \/ 失敗チャンク: 101～200件目 \/ 未処理: 150件（全250件）/);
     assert.match(log, /CSV 151行目・案件番号［code］: 値がほかのレコードと重複しています/, '拒否された行を CSV の行番号で示す');
     assert.match(await statusText(), /1アプリ中1アプリで失敗しました|エラー/);
+    const shown = await statusText();
+    assert.match(shown, /CSV 151行目・案件番号［code］: 値がほかのレコードと重複しています/, `拒否された行とフィールドをステータスにも示す: ${shown}`);
+    assert.doesNotMatch(log, /records\[\d+\]|^\d+件目・/m, `キー（records[49].code.value）と、塊の中の位置（50件目）をログに出さない: ${log}`);
+    assert.doesNotMatch(shown, /\[API\]|payload=/, shown);
     ok('250 件の取込で 2 回目の 100 件が拒否 → 確定済み 100・未処理 150 が実際（作成 100 件）と一致し、CSV の行番号で原因を示す');
     // 存在しないユーザー
     await button('対象・条件を変更').click();
@@ -364,6 +368,8 @@ function register(scenario, ctx) {
     assert.equal(dialogs.length, 1);
     assert.match(dialogs[0].message, /App 101 の 250件 にアクション「申請」を実行します[\s\S]*本番レコードのステータスが変わり、自動では元に戻せません/);
     assert.match(`${await statusText()}\n${await logText()}`, /次の作業者を指定してください/);
+    assert.match(await statusText(), /レコードID \d+・作業者: 次の作業者を指定してください。/, `どのレコードの何が拒否されたかをステータスに示す: ${await statusText()}`);
+    assert.match(await statusText(), /ほか \d+ 件/, '100 件の拒否は先頭 3 件とほか N 件');
     let now = await state();
     assert.equal(statusWrites(now).length, 1, '最初の 100 件が拒否されたら次は送らない');
     assert.equal((await recordsOf(101)).filter(r => r['ステータス'].value !== '未処理').length, 0);
@@ -568,6 +574,7 @@ function register(scenario, ctx) {
     const log = `${await statusText()}\n${await logText()}`;
     assert.match(log, /確定済み: 100件 \/ 失敗チャンク: 101～200件目 \/ 未処理: 150件（全250件）/);
     assert.match(log, /コピー元レコードID 150・案件番号［code］: 値がほかのレコードと重複しています/);
+    assert.match(await statusText(), /コピー元レコードID 150・案件番号［code］: 値がほかのレコードと重複しています/, `ステータスにも示す: ${await statusText()}`);
     assert.equal((await recordsOf(102)).length, 101);
     ok('コピー: 100 件ずつ追加し、拒否された塊の原因をコピー元のレコード ID で示し、確定済み・未処理が実際と一致');
   });

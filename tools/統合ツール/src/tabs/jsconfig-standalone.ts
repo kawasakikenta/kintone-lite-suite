@@ -9,6 +9,7 @@ import { loadJSZipLite } from '../jszipLoader.js';
 import { RunCancelledError, createRequestSignal, isRunCancelledError, sleepUnlessCancelled, throwIfCancelled } from '../runControl.js';
 import { uniqueZipEntryName } from './record-query.js';
 import { createCancelReport, formatCancelledHeadline, isCancelStop } from './run-cancel-summary.js';
+import { KINTONE_ERROR_SCREEN_LIMIT, kintoneErrorDetailsOf, summarizeKintoneErrorDetails } from '../kintoneErrorDetail.js';
 
 export function formatFileSize(bytes: any): string {
   const n = Number(bytes);
@@ -649,6 +650,8 @@ export interface JsConfigMultiTargetResult {
   removed?: number;
   /** FILE 形式のファイルの扱い（成功時。FILE を含む場合のみ） */
   files?: { uploaded: number; reused: number; kept: number };
+  /** kintone が受け付けなかった項目（入力エラーの errors。どの設定の何かを言葉にした全件）。message には先頭の数件だけ入る */
+  errorDetails?: string[];
 }
 
 export interface JsConfigMultiApplyResult {
@@ -681,20 +684,68 @@ function firstLine(message: unknown): string {
   return String((message as any)?.message ?? message ?? '不明なエラー').split('\n').map((l) => l.trim()).find(Boolean) || '不明なエラー';
 }
 
-export function renderJsConfigMultiResultHtml(res: JsConfigMultiApplyResult): string {
+/** 失敗の理由の 1 行。kintone が受け付けなかった項目（入力エラー）は、1 行目の後ろに先頭の数件と「ほか N 件」を添える（全件は errorDetails）。 */
+function failureReason(error: unknown): { message: string; errorDetails?: string[] } {
+  const details = kintoneErrorDetailsOf(error);
+  if (!details.length) return { message: firstLine(error) };
+  return { message: [firstLine(error), ...summarizeKintoneErrorDetails(details)].join(' / '), errorDetails: details };
+}
+
+/** 複数の反映先の結果の、反映先ごとの「内容」の欄（成功なら revision と件数、それ以外は理由）。 */
+export function describeJsConfigMultiDetail(r: JsConfigMultiTargetResult): string {
+  const fileNote = r.files && r.files.uploaded + r.files.reused + r.files.kept > 0 ? ` / ファイル: アップロード ${r.files.uploaded}件・再利用 ${r.files.reused}件・そのまま ${r.files.kept}件` : '';
+  return r.status === 'success'
+    ? `revision ${r.revision || '-'} / 外れた現在の設定 ${r.removed ?? 0}件${fileNote}`
+    : (r.precheck && r.status === 'failed' ? '事前確認で失敗（書き込みなし）: ' : '') + (r.message || '');
+}
+
+/**
+ * 複数の反映先の結果（見出し・反映先ごとの表・kintone が受け付けなかった項目の全件）。
+ * 理由の文は kintone が返したものを含むため、要素を組み立てて textContent で入れる（HTML の文字列にしない）。
+ */
+export function renderJsConfigMultiResult(res: JsConfigMultiApplyResult): HTMLElement {
   const color: Record<JsConfigMultiStatus, string> = { success: '#15803d', failed: '#b91c1c', conflict: '#b45309', unconfirmed: '#b45309', notExecuted: '#64748b' };
-  const rows = res.results.map((r) => {
-    const fileNote = r.files && r.files.uploaded + r.files.reused + r.files.kept > 0 ? ` / ファイル: アップロード ${r.files.uploaded}件・再利用 ${r.files.reused}件・そのまま ${r.files.kept}件` : '';
-    const detail = r.status === 'success'
-      ? `revision ${r.revision || '-'} / 外れた現在の設定 ${r.removed ?? 0}件${fileNote}`
-      : (r.precheck && r.status === 'failed' ? '事前確認で失敗（書き込みなし）: ' : '') + (r.message || '');
-    return `<tr><td style="padding:4px 6px;white-space:nowrap">${esc(multiTargetLabel(r))}</td>`
-      + `<td style="padding:4px 6px;white-space:nowrap;font-weight:700;color:${color[r.status]}">${esc(JS_CONFIG_MULTI_STATUS_LABEL[r.status])}</td>`
-      + `<td style="padding:4px 6px;word-break:break-all">${esc(detail)}</td></tr>`;
-  }).join('');
-  return `<div style="padding:8px 10px;font-size:12px;font-weight:700">${esc(res.headline)}</div>`
-    + (res.note ? `<div style="padding:0 10px 8px;font-size:11px;color:#64748b">${esc(res.note)}</div>` : '')
-    + `<table style="width:100%;font-size:11px;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 6px">反映先</th><th style="text-align:left;padding:4px 6px">結果</th><th style="text-align:left;padding:4px 6px">内容</th></tr></thead><tbody>${rows}</tbody></table>`;
+  const el = <K extends keyof HTMLElementTagNameMap>(tag: K, style: string, text?: string): HTMLElementTagNameMap[K] => {
+    const node = document.createElement(tag);
+    if (style) node.style.cssText = style;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  };
+  const root = el('div', '');
+  root.appendChild(el('div', 'padding:8px 10px;font-size:12px;font-weight:700', res.headline));
+  if (res.note) root.appendChild(el('div', 'padding:0 10px 8px;font-size:11px;color:#64748b', res.note));
+  const table = el('table', 'width:100%;font-size:11px;border-collapse:collapse');
+  const headRow = el('tr', '');
+  for (const label of ['反映先', '結果', '内容']) headRow.appendChild(el('th', 'text-align:left;padding:4px 6px', label));
+  const thead = el('thead', '');
+  thead.appendChild(headRow);
+  const tbody = el('tbody', '');
+  for (const r of res.results) {
+    const tr = el('tr', '');
+    tr.append(
+      el('td', 'padding:4px 6px;white-space:nowrap', multiTargetLabel(r)),
+      el('td', `padding:4px 6px;white-space:nowrap;font-weight:700;color:${color[r.status]}`, JS_CONFIG_MULTI_STATUS_LABEL[r.status]),
+      el('td', 'padding:4px 6px;word-break:break-all', describeJsConfigMultiDetail(r))
+    );
+    tbody.appendChild(tr);
+  }
+  table.append(thead, tbody);
+  root.appendChild(table);
+  // 表の行には先頭の数件だけが入る。残りも読めるよう、表の下に全件を並べる（結果欄はコピー・保存できる）
+  const truncated = res.results.filter((r) => (r.errorDetails?.length ?? 0) > KINTONE_ERROR_SCREEN_LIMIT);
+  if (truncated.length) {
+    const box = el('div', 'padding:8px 10px;font-size:11px');
+    box.appendChild(el('div', 'font-weight:700', 'kintone が受け付けなかった項目（全件）'));
+    for (const r of truncated) {
+      const details = r.errorDetails || [];
+      box.appendChild(el('div', 'margin-top:4px', `${multiTargetLabel(r)}（${details.length} 件）`));
+      const list = el('ul', 'margin:2px 0 0;padding-left:18px');
+      for (const line of details) list.appendChild(el('li', 'word-break:break-all', line));
+      box.appendChild(list);
+    }
+    root.appendChild(box);
+  }
+  return root;
 }
 
 /** 事前確認で反映先ごとのファイルの確認が止まったことを、取得元が分からない場合と見分けるためのエラー。 */
@@ -716,7 +767,8 @@ class FileProblemError extends Error {
 export async function runApplyJsConfigMultiStandalone(
   p: { targets: JsConfigMultiTarget[]; jsonText: string; skipConfirm?: boolean; /** JSON を取得したアプリ。FILE 形式のファイルの本体の取得元 */ fileSource?: JsConfigFileSource | null },
   setStatus: (msg: string, err?: boolean) => void,
-  setLogHtml: (html: string) => void
+  /** 結果を結果欄へ出す（画面は renderJsConfigMultiResult で要素にする。kintone が返した文を HTML の文字列にしないため） */
+  showResult: (result: JsConfigMultiApplyResult) => void
 ): Promise<JsConfigMultiApplyResult> {
   // 入力の検証（API を呼ぶ前に、すべての行を調べる）
   const seen = new Set<string>();
@@ -764,7 +816,7 @@ export async function runApplyJsConfigMultiStandalone(
     } catch (e: any) {
       if (isCancelStop(e)) throw e;
       if (e instanceof FileProblemError && e.plan.onlyUnknownOrigin) { originBlocked++; originSample = e.plan; }
-      results.push({ ...target, status: 'failed', precheck: true, message: firstLine(e) });
+      results.push({ ...target, status: 'failed', precheck: true, ...failureReason(e) });
     }
   }
   // どの反映先にも渡せない原因が「取得元が分からない」ことだけなら、同じ理由の行を並べず、次にすることを 1 回だけ示して止める。
@@ -811,7 +863,7 @@ export async function runApplyJsConfigMultiStandalone(
   if (!prechecked.length) {
     // 反映できる反映先が 1 件もない: 確認も書き込みもせず、失敗の内訳を示す
     const res = finish(false, false);
-    setLogHtml(renderJsConfigMultiResultHtml(res));
+    showResult(res);
     return res;
   }
 
@@ -896,13 +948,13 @@ export async function runApplyJsConfigMultiStandalone(
         continue;
       }
       const decorated = decorateRevisionConflict(e, 'JS/CSS設定の反映');
-      results.push({ ...target, status: decorated?.revisionConflict ? 'conflict' : 'failed', message: firstLine(decorated) });
+      results.push({ ...target, status: decorated?.revisionConflict ? 'conflict' : 'failed', ...failureReason(decorated) });
     }
   }
   if (cancelled && unusedUploads) note = `中止した反映先でアップロード済みの ${unusedUploads}件のファイルは、使われずに残ります（反映先の設定には影響しません）。`;
 
   const res = finish(false, cancelled);
-  setLogHtml(renderJsConfigMultiResultHtml(res));
+  showResult(res);
   setStatus(res.headline, res.tone === 'err' || res.tone === 'warn');
   return res;
 }

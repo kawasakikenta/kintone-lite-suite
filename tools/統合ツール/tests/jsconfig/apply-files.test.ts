@@ -383,6 +383,6 @@ describe('apply JS/CSS with FILE entries to many preview targets', () => {
     expect(res.results[1].message).toContain('アップロード中に中止したため、この反映先には書き込んでいません');
     expect(res.headline).toContain('反映済みの 1件は取り消していません');
     expect(res.note).toContain('アップロード済みの 1件のファイルは、使われずに残ります');
-    expect(html.mock.calls[0][0]).toContain('使われずに残ります');
+    expect(html.mock.calls[0][0].note).toContain('使われずに残ります');
   });
 });

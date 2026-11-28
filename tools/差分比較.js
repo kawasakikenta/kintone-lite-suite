@@ -557,6 +557,858 @@
   var CALL_NAME_MAX = 256;
   var CALL_PATTERN = new RegExp("([^\\s()=!<>,+\\-*/&^;:%]{1," + CALL_NAME_MAX + "})\\s*\\(([^()]*)\\)", "g");
 
+  // src/kintone-enums.ts
+  var ENTITY_TYPE_JP = {
+    USER: "ユーザー",
+    GROUP: "グループ",
+    ORGANIZATION: "組織",
+    FIELD_ENTITY: "フィールド値",
+    CREATOR: "作成者",
+    MODIFIER: "更新者",
+    LOGIN_USER: "ログインユーザー",
+    ALL: "全員",
+    CUSTOM_FIELD: "カスタムフィールド"
+  };
+  var VIEW_TYPE_JP = {
+    LIST: "表形式",
+    CALENDAR: "カレンダー形式",
+    CUSTOM: "カスタマイズ"
+  };
+  var VIEW_BUILTIN_TYPE_JP = {
+    ASSIGNEE: "作業者ビュー",
+    UNDONE: "未完了レコード",
+    ACTIVE_BY_USER: "自分が処理すべきレコード",
+    RECORDS_OF_USER: "自分が関わるレコード"
+  };
+  var VIEW_DEVICE_JP = {
+    ANY: "PC・モバイル両方",
+    DESKTOP: "PC版のみ"
+  };
+  var PAGINATION_TYPE_JP = {
+    ROW: "行ページャ",
+    PAGE: "ページ番号"
+  };
+  var CHART_TYPE_JP = {
+    BAR: "横棒グラフ",
+    COLUMN: "縦棒グラフ",
+    LINE: "折れ線グラフ",
+    PIE: "円グラフ",
+    PIVOT_TABLE: "クロス集計表",
+    TABLE: "表",
+    AREA: "面グラフ",
+    SPLINE: "曲線グラフ",
+    SPLINE_AREA: "曲線面グラフ",
+    SCATTER: "散布図"
+  };
+  var CHART_MODE_JP = {
+    NORMAL: "通常",
+    STACKED: "積み上げ",
+    PERCENTAGE: "100%積み上げ"
+  };
+  var AGGREGATION_TYPE_JP = {
+    COUNT: "レコード数",
+    SUM: "合計",
+    // kintone の API が返す値は AVERAGE（AVG は旧来の表記として残す）
+    AVERAGE: "平均",
+    AVG: "平均",
+    MAX: "最大値",
+    MIN: "最小値"
+  };
+  var GROUP_PER_JP = {
+    YEAR: "年",
+    QUARTER: "四半期",
+    MONTH: "月",
+    WEEK: "週",
+    DAY: "日",
+    HOUR: "時",
+    MINUTE: "分"
+  };
+  var REPORT_SORT_BY_JP = {
+    TOTAL: "集計値",
+    GROUP1: "分類1",
+    GROUP2: "分類2",
+    GROUP3: "分類3"
+  };
+  var REPORT_SORT_ORDER_JP = {
+    ASC: "小さい順",
+    DESC: "大きい順"
+  };
+  var PERIODIC_REPORT_EVERY_JP = {
+    YEAR: "毎年",
+    QUARTER: "四半期ごと",
+    MONTH: "毎月",
+    WEEK: "毎週",
+    DAY: "毎日",
+    HOUR: "毎時"
+  };
+  var DAY_OF_WEEK_JP = {
+    SUNDAY: "日曜日",
+    MONDAY: "月曜日",
+    TUESDAY: "火曜日",
+    WEDNESDAY: "水曜日",
+    THURSDAY: "木曜日",
+    FRIDAY: "金曜日",
+    SATURDAY: "土曜日"
+  };
+  var PROCESS_ASSIGNEE_TYPE_JP = {
+    ONE: "候補から作業者を1人選ぶ",
+    ANY: "候補のうち誰か1人が作業する",
+    ANYONE: "候補のうち誰か1人が作業する",
+    ALL: "候補の全員が作業する"
+  };
+  var NOTIFICATION_TIMING_JP = {
+    CREATION: "レコード作成時",
+    DAYS_OF_WEEK: "曜日指定",
+    TIME: "時刻指定",
+    WEEKLY: "毎週",
+    MONTHLY: "毎月"
+  };
+  var RESOURCE_TYPE_JP = {
+    URL: "URL指定",
+    FILE: "ファイル指定"
+  };
+  var CUSTOMIZE_SCOPE_JP = {
+    ALL: "全ユーザー",
+    ADMIN: "管理者のみ",
+    NONE: "無効"
+  };
+  var ICON_TYPE_JP = {
+    PRESET: "プリセット",
+    FILE: "アップロードファイル"
+  };
+  var APP_THEME_JP = {
+    WHITE: "ホワイト",
+    RED: "レッド",
+    BLUE: "ブルー",
+    GREEN: "グリーン",
+    YELLOW: "イエロー",
+    BLACK: "ブラック",
+    CLIPBOARD: "クリップボード",
+    BINDER: "バインダー",
+    PENCIL: "ペンシル",
+    CLIPS: "クリップ"
+  };
+  var TITLE_SELECTION_JP = {
+    AUTO: "自動選択",
+    MANUAL: "手動指定"
+  };
+  var ROUNDING_MODE_JP = {
+    HALF_EVEN: "四捨五入（偶数丸め）",
+    UP: "切り上げ",
+    DOWN: "切り捨て"
+  };
+  var NUMBER_FORMAT_JP = {
+    NUMBER: "数値",
+    NUMBER_DIGIT: "数値（桁区切り）",
+    PERCENT: "パーセント",
+    CURRENCY: "通貨",
+    DATE: "日付",
+    TIME: "時刻",
+    DATETIME: "日時",
+    HOUR_MINUTE: "時:分",
+    HOUR_MINUTE_SECOND: "時:分:秒"
+  };
+  var ALIGN_JP = {
+    HORIZONTAL: "横並び",
+    VERTICAL: "縦並び"
+  };
+  var UNIT_POSITION_JP = {
+    BEFORE: "前につける",
+    AFTER: "後につける"
+  };
+  var LINK_PROTOCOL_JP = {
+    WEB: "Webサイトのアドレス",
+    CALL: "電話番号",
+    MAIL: "メールアドレス"
+  };
+  function lookupEnum(map, value) {
+    if (value == null || value === "") return "";
+    const key = String(value).trim().toUpperCase();
+    return map[key] || String(value);
+  }
+  function describeReminderOffset(kind, value) {
+    const raw = String(value ?? "").trim();
+    if (!/^[+-]?\d+$/.test(raw)) return null;
+    const n = Number(raw);
+    const unit = kind === "days" ? "日" : "時間";
+    if (n === 0) return kind === "days" ? "当日" : "同時刻";
+    return n < 0 ? `${-n}${unit}前` : `${n}${unit}後`;
+  }
+  function describePeriodicReport(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const report = value;
+    if (typeof report.active !== "boolean" && !report.period) return null;
+    const period = report.period && typeof report.period === "object" ? report.period : {};
+    const schedule = [
+      lookupEnum(PERIODIC_REPORT_EVERY_JP, period.every),
+      period.month != null && period.month !== "" ? `${period.month}月` : "",
+      period.dayOfMonth != null && period.dayOfMonth !== "" ? `${period.dayOfMonth}日` : "",
+      lookupEnum(DAY_OF_WEEK_JP, period.dayOfWeek),
+      period.time != null && period.time !== "" ? String(period.time) : ""
+    ].filter(Boolean).join(" ");
+    const state3 = report.active === false ? "無効" : "有効";
+    return schedule ? `${state3}（${schedule}）` : state3;
+  }
+
+  // src/diff/label-dict.ts
+  var VALUE_LABELS = {
+    // entity.type
+    "entity.type": {
+      USER: "👤 ユーザー",
+      GROUP: "👥 グループ",
+      ORGANIZATION: "🏢 部署",
+      DEPARTMENT: "🏢 部署",
+      DEPT: "🏢 部署",
+      CREATOR: "✏️ 作成者",
+      MODIFIER: "✏️ 更新者",
+      FUNCTION: "⚙ 関数",
+      LOGIN_USER: "👤 ログインユーザー",
+      ALL: "🌐 全員",
+      FIELD_ENTITY: "🔗 フィールド",
+      EVERYONE: "🌐 全員",
+      CUSTOM_FIELD: "🔗 ユーザー選択フィールド"
+    },
+    // field acl level
+    accessibility: {
+      NONE: "不可",
+      READ: "閲覧のみ",
+      WRITE: "閲覧・編集可",
+      READ_WRITE: "閲覧・編集可"
+    },
+    // 一覧の表示形式（kintone の一覧設定画面の選択肢名）
+    "view.type": {
+      LIST: "表形式",
+      CALENDAR: "カレンダー形式",
+      CUSTOM: "カスタマイズ"
+    },
+    // グラフ種別（kintone のグラフ設定画面の名称）
+    "chart.type": {
+      BAR: "横棒グラフ",
+      COLUMN: "縦棒グラフ",
+      PIE: "円グラフ",
+      LINE: "折れ線グラフ",
+      PIVOT_TABLE: "クロス集計表",
+      TABLE: "表",
+      AREA: "面グラフ",
+      AREA_STACKED: "積み上げ面グラフ",
+      SPLINE: "曲線グラフ",
+      SPLINE_AREA: "曲線面グラフ",
+      BUBBLE: "バブル",
+      BAR_STACKED: "積み上げ横棒",
+      FUNNEL: "ファネル"
+    },
+    // ページ送り
+    paginationStyle: {
+      NORMAL: "通常",
+      NUMBER: "ページ番号",
+      INFINITE: "無限スクロール"
+    },
+    // 通知トリガ
+    recordTrigger: {
+      APP: "アプリ全体",
+      RECORD: "レコード単位"
+    },
+    // アプリアクションのフィールド関連付けのコピー元／コピー先の種類
+    // （actionSettings 文脈で参照。表記は xlsx 出力の customerTypeLabel と揃える）
+    srcType: {
+      FIELD: "フィールド",
+      RECORD_URL: "レコードのURL"
+    },
+    destType: {
+      FIELD: "フィールド",
+      RECORD_URL: "レコードのURL"
+    },
+    // ここから下はセクション文脈込みで参照するスコープ（path-decoder が
+    // sectionKey を見て選択する）。kintone-enums の共通辞書を単一ソースとする。
+    "assignee.type": PROCESS_ASSIGNEE_TYPE_JP,
+    "icon.type": ICON_TYPE_JP,
+    "aggregation.type": AGGREGATION_TYPE_JP,
+    "resource.type": RESOURCE_TYPE_JP,
+    builtinType: VIEW_BUILTIN_TYPE_JP,
+    device: VIEW_DEVICE_JP,
+    chartMode: CHART_MODE_JP,
+    scope: CUSTOMIZE_SCOPE_JP,
+    theme: APP_THEME_JP,
+    selectionMode: TITLE_SELECTION_JP,
+    roundingMode: ROUNDING_MODE_JP,
+    per: GROUP_PER_JP,
+    by: REPORT_SORT_BY_JP,
+    order: REPORT_SORT_ORDER_JP,
+    every: PERIODIC_REPORT_EVERY_JP,
+    dayOfWeek: DAY_OF_WEEK_JP
+  };
+  var PROP_LABELS = {
+    // appAcl 操作権限（kintone のアクセス権設定画面の列名）
+    appEditable: { label: "アプリ管理", icon: "⚙" },
+    recordViewable: { label: "レコード閲覧", icon: "👁" },
+    recordAddable: { label: "レコード追加", icon: "➕" },
+    recordEditable: { label: "レコード編集", icon: "✏️" },
+    recordDeletable: { label: "レコード削除", icon: "🗑" },
+    recordImportable: { label: "ファイル読み込み", icon: "📥" },
+    recordExportable: { label: "ファイル書き出し", icon: "📤" },
+    // recordPermissions の権限
+    viewable: { label: "閲覧", icon: "👁" },
+    editable: { label: "編集", icon: "✏️" },
+    deletable: { label: "削除", icon: "🗑" },
+    // 共通
+    filterCond: { label: "絞込条件", icon: "🔍" },
+    includeSubs: { label: "配下を含む" },
+    entities: { label: "エンティティ" },
+    entity: { label: "対象" },
+    rights: { label: "権限エントリー" },
+    accessibility: { label: "アクセス権" },
+    // viewSettings（kintone の一覧設定画面の項目名）
+    fields: { label: "表示するフィールド", icon: "📋" },
+    sort: { label: "ソート", icon: "↕" },
+    index: { label: "表示順", icon: "🔢" },
+    paginationStyle: { label: "ページ送り", icon: "📄" },
+    defaultView: { label: "既定ビュー" },
+    view: { label: "ビュー" },
+    views: { label: "ビュー一覧" },
+    builtinType: { label: "標準一覧の種類" },
+    device: { label: "表示するデバイス" },
+    pager: { label: "ページ送りの表示" },
+    date: { label: "日付の基準フィールド" },
+    // reportSettings（kintone のグラフ設定画面の項目名）
+    groups: { label: "分類", icon: "📊" },
+    aggregations: { label: "集計", icon: "🧮" },
+    chartType: { label: "グラフ種別" },
+    chartMode: { label: "モード" },
+    reports: { label: "グラフ一覧" },
+    periodicReports: { label: "定期レポート" },
+    periodicReport: { label: "定期レポート" },
+    period: { label: "実行スケジュール" },
+    every: { label: "間隔" },
+    dayOfWeek: { label: "曜日" },
+    dayOfMonth: { label: "日" },
+    per: { label: "分類の時間単位" },
+    by: { label: "ソートの基準" },
+    order: { label: "ソートの順序" },
+    active: { label: "有効状態" },
+    // notifications（kintone の通知設定画面の項目名）
+    recordAdded: { label: "レコードの追加" },
+    recordEdited: { label: "レコードの編集" },
+    commentAdded: { label: "コメントの書き込み" },
+    statusChanged: { label: "ステータスの更新" },
+    fileImported: { label: "ファイルの読み込み" },
+    recipients: { label: "通知先" },
+    targets: { label: "通知先" },
+    notifications: { label: "通知ルール" },
+    timing: { label: "通知するタイミング" },
+    daysLater: { label: "通知する日" },
+    hoursLater: { label: "通知する時間" },
+    time: { label: "時刻" },
+    notifyToCommenter: { label: "コメントを書き込んだユーザーへの通知" },
+    notifyToMentioned: { label: "コメントの宛先ユーザーへの通知" },
+    notifyOnUpdate: { label: "更新時に通知" },
+    timezone: { label: "タイムゾーン" },
+    perRecordNotifications: { label: "レコード条件通知" },
+    reminderNotifications: { label: "リマインダー通知" },
+    title: { label: "タイトル" },
+    body: { label: "本文" },
+    // processSettings（kintone のプロセス管理設定画面の項目名）
+    enable: { label: "プロセス管理の有効化" },
+    states: { label: "ステータス" },
+    actions: { label: "アクション" },
+    from: { label: "実行前のステータス" },
+    to: { label: "実行後のステータス" },
+    assignee: { label: "作業者" },
+    type: { label: "種別" },
+    settings: { label: "設定" },
+    // actionSettings（kintone API の mappings[] キーは srcField/srcType/destField。
+    // sourceField は旧形式データの別名。xlsx 出力の「コピー元/コピー先」表記に揃える）
+    app: { label: "対象アプリ" },
+    mappings: { label: "フィールド対応" },
+    srcField: { label: "コピー元フィールド" },
+    sourceField: { label: "コピー元フィールド" },
+    srcType: { label: "コピー元の種類" },
+    destField: { label: "コピー先フィールド" },
+    destType: { label: "コピー先の種類" },
+    destApp: { label: "先アプリ" },
+    // customizeSettings
+    desktop: { label: "デスクトップ" },
+    mobile: { label: "モバイル" },
+    js: { label: "JS" },
+    css: { label: "CSS" },
+    file: { label: "ファイル" },
+    scope: { label: "適用範囲" },
+    url: { label: "URL" },
+    // pluginSettings
+    plugins: { label: "プラグイン一覧" },
+    version: { label: "バージョン" },
+    id: { label: "ID" },
+    enabled: { label: "有効状態" },
+    // appSettings / appInfo（kintone のアプリ設定画面の項目名）
+    name: { label: "名前" },
+    description: { label: "説明" },
+    theme: { label: "デザインテーマ" },
+    titleField: { label: "レコードのタイトル" },
+    selectionMode: { label: "選択方法" },
+    icon: { label: "アイコン" },
+    enableThumbnails: { label: "サムネイルの表示" },
+    enableBulkDeletion: { label: "レコードの一括削除" },
+    enableComments: { label: "レコードのコメント機能" },
+    enableDuplicateRecord: { label: "レコードの再利用" },
+    enableInlineRecordEditing: { label: "一覧でのレコードのインライン編集" },
+    numberPrecision: { label: "数値や計算の精度" },
+    digits: { label: "全体の桁数" },
+    decimalPlaces: { label: "小数部の桁数" },
+    roundingMode: { label: "数値の丸めかた" },
+    firstMonthOfFiscalYear: { label: "第1四半期の開始月" },
+    appId: { label: "アプリID" },
+    spaceId: { label: "スペースID" },
+    threadId: { label: "スレッドID" },
+    code: { label: "コード" },
+    label: { label: "ラベル" },
+    // categories
+    categories: { label: "カテゴリ" },
+    // layoutSettings
+    layout: { label: "レイアウト" },
+    row: { label: "行" },
+    width: { label: "横幅" },
+    height: { label: "高さ" },
+    innerHeight: { label: "入力欄の高さ" },
+    // fieldSettings: 関連レコード一覧（referenceTable）/ ルックアップ（lookup）
+    // kintone のフィールド設定画面の項目名に合わせる。
+    referenceTable: { label: "関連レコード一覧設定" },
+    lookup: { label: "ルックアップ設定" },
+    condition: { label: "表示するレコードの条件" },
+    displayFields: { label: "表示するフィールド" },
+    relatedApp: { label: "参照するアプリ" },
+    relatedField: { label: "参照するアプリのフィールド" },
+    relatedKeyField: { label: "コピー元のフィールド" },
+    fieldMappings: { label: "ほかのフィールドのコピー" },
+    lookupPickerFields: { label: "コピー元のレコード選択時に表示するフィールド" },
+    size: { label: "一度に表示する最大レコード数" }
+  };
+  var FIELD_SETTING_LABELS = {
+    label: "フィールド名",
+    name: "フィールド名",
+    code: "フィールドコード",
+    type: "フィールドの種類",
+    noLabel: "フィールド名を表示しない",
+    required: "必須項目にする",
+    unique: "値の重複を禁止する",
+    defaultValue: "初期値",
+    defaultNowValue: "レコード登録時の日時を初期値にする",
+    description: "説明",
+    minLength: "文字数（最小）",
+    maxLength: "文字数（最大）",
+    minValue: "数値の制限（最小）",
+    maxValue: "数値の制限（最大）",
+    expression: "計算式",
+    hideExpression: "計算式を表示しない",
+    options: "選択肢",
+    protocol: "入力値の種類",
+    displayScale: "小数点以下の表示桁数",
+    digit: "桁区切りを表示する",
+    unit: "単位記号",
+    unitPosition: "単位記号の表示位置",
+    align: "選択肢の並び",
+    format: "表示形式",
+    entities: "選択候補",
+    fields: "テーブル内のフィールド",
+    referenceTable: "関連レコード一覧設定",
+    lookup: "ルックアップ設定",
+    condition: "表示するレコードの条件",
+    displayFields: "表示するフィールド",
+    filterCond: "絞り込み条件",
+    relatedApp: "参照するアプリ",
+    size: "一度に表示する最大レコード数",
+    sort: "ソート",
+    relatedKeyField: "コピー元のフィールド",
+    fieldMappings: "ほかのフィールドのコピー",
+    lookupPickerFields: "コピー元のレコード選択時に表示するフィールド",
+    field: "自アプリのフィールド",
+    relatedField: "参照するアプリのフィールド",
+    app: "参照するアプリID",
+    thumbnailSize: "サムネイルの大きさ",
+    openGroup: "グループの初期表示",
+    enabled: "有効状態",
+    index: "並び順"
+  };
+  var SECTION_LABELS = {
+    appAcl: { label: "アプリ権限", icon: "🔐" },
+    fieldAcl: { label: "フィールド権限", icon: "🔐" },
+    recordPermissions: { label: "レコード権限", icon: "🔐" },
+    notifications: { label: "通知", icon: "🔔" },
+    perRecordNotifications: { label: "レコード条件通知", icon: "🔔" },
+    reminderNotifications: { label: "リマインダー通知", icon: "🔔" },
+    viewSettings: { label: "ビュー設定", icon: "📊" },
+    reportSettings: { label: "グラフ設定", icon: "📈" },
+    processSettings: { label: "プロセス管理", icon: "🔁" },
+    actionSettings: { label: "アクション設定", icon: "⚡" },
+    customizeSettings: { label: "JS/CSS設定", icon: "🧪" },
+    pluginSettings: { label: "プラグイン", icon: "🧩" },
+    appSettings: { label: "アプリ設定", icon: "⚙" },
+    appInfo: { label: "アプリ情報", icon: "ℹ️" },
+    formSettings: { label: "フォーム設定", icon: "📝" },
+    fieldSettings: { label: "フィールド設定", icon: "🔤" },
+    layoutSettings: { label: "レイアウト設定", icon: "🧩" },
+    categories: { label: "カテゴリ設定", icon: "🗂" }
+  };
+  function ownLookup(dict, key) {
+    if (!dict || key == null) return void 0;
+    const name = String(key);
+    return Object.prototype.hasOwnProperty.call(dict, name) ? dict[name] : void 0;
+  }
+  function labelOfProp(key) {
+    if (!key) return "";
+    return ownLookup(PROP_LABELS, key)?.label || ownLookup(FIELD_SETTING_LABELS, key) || String(key);
+  }
+  function iconOfProp(key) {
+    if (!key) return "";
+    return ownLookup(PROP_LABELS, key)?.icon || "";
+  }
+  function labelOfValue(scope, value) {
+    if (value == null) return null;
+    return ownLookup(ownLookup(VALUE_LABELS, scope), value) || null;
+  }
+  function stateRenameName(side, fallback) {
+    const name = side && typeof side === "object" ? side.name : side;
+    return String(name ?? fallback ?? "").trim() || "(不明)";
+  }
+  function labelOfSection(sectionKey) {
+    if (!sectionKey) return { label: "-", icon: "" };
+    return ownLookup(SECTION_LABELS, sectionKey) || { label: String(sectionKey), icon: "" };
+  }
+  var PERMISSION_KEYS = /* @__PURE__ */ new Set([
+    "appEditable",
+    "recordViewable",
+    "recordAddable",
+    "recordEditable",
+    "recordDeletable",
+    "recordImportable",
+    "recordExportable",
+    "viewable",
+    "editable",
+    "deletable",
+    "includeSubs"
+  ]);
+  function labelOfBool(value, propKey) {
+    if (propKey && PERMISSION_KEYS.has(propKey)) {
+      return value ? "許可" : "不許可";
+    }
+    if (propKey === "enable" || propKey === "enabled" || propKey === "active") {
+      return value ? "有効" : "無効";
+    }
+    if (propKey === "pager") {
+      return value ? "表示する" : "表示しない";
+    }
+    if (propKey === "notifyToCommenter" || propKey === "notifyToMentioned" || propKey === "notifyOnUpdate") {
+      return value ? "通知する" : "通知しない";
+    }
+    return value ? "はい" : "いいえ";
+  }
+  function formatEntityText(entity, options = {}) {
+    if (!entity || typeof entity !== "object") return "";
+    const type = String(entity.type || "");
+    const code = String(entity.code || entity.login || entity.id || "");
+    const name = String(entity.name || "");
+    const functionLabel = type.toUpperCase() === "FUNCTION" ? {
+      "LOGINUSER()": "ログインユーザー",
+      "PRIMARY_ORGANIZATION()": "優先する組織"
+    }[code.trim().toUpperCase()] : "";
+    if (functionLabel && !name) return functionLabel;
+    const typed = ownLookup(VALUE_LABELS["entity.type"], type) || (type ? `· ${type}` : "·");
+    const display = name || code || "(未設定)";
+    if (options.compact) return `${typed} ${display}`;
+    if (name && code && name !== code) return `${typed} ${name} (${code})`;
+    return `${typed} ${display}`;
+  }
+
+  // src/kintoneErrorDetail.ts
+  var KINTONE_ERROR_SCREEN_LIMIT = 3;
+  var KINTONE_ERROR_LIST_LIMIT = 100;
+  var MESSAGE_MAX = 200;
+  var WHERE_MAX = 160;
+  var clip = (text2, max) => text2.length > max ? `${text2.slice(0, max)}…` : text2;
+  var oneLine = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
+  function tokenizeKey(key) {
+    const tokens = [];
+    let i = 0;
+    while (i < key.length) {
+      if (key[i] === ".") {
+        i++;
+        continue;
+      }
+      if (key[i] === "[") {
+        const end = key.indexOf("]", i + 1);
+        if (end < 0) {
+          tokens.push({ kind: "name", value: key.slice(i), start: i });
+          break;
+        }
+        const inner = key.slice(i + 1, end);
+        tokens.push(/^\d+$/.test(inner) ? { kind: "index", value: Number(inner), start: i } : { kind: "key", value: inner, start: i });
+        i = end + 1;
+        continue;
+      }
+      let j = i;
+      while (j < key.length && key[j] !== "." && key[j] !== "[") j++;
+      tokens.push({ kind: "name", value: key.slice(i, j), start: i });
+      i = j;
+    }
+    return tokens;
+  }
+  var tokenText = (token) => token ? String(token.value) : "";
+  var isName = (token, ...names) => !!token && token.kind === "name" && names.includes(token.value);
+  var LAYOUT_LABELS = { fields: "部品", layout: "グループ内のレイアウト", code: "フィールドコード", type: "種類", size: "大きさ", width: "幅", height: "高さ", innerHeight: "高さ", label: "ラベル", elementId: "要素ID" };
+  var VIEW_LABELS = { type: "一覧の種類", builtinType: "一覧の種類", name: "一覧名", index: "並び順", fields: "表示するフィールド", filterCond: "絞り込み条件", sort: "ソート", html: "HTML", pager: "ページネーション", device: "表示する画面", date: "日付のフィールド", title: "タイトルのフィールド" };
+  var REPORT_LABELS = { name: "グラフ名", index: "並び順", chartType: "グラフの種類", chartMode: "表示モード", groups: "分類する項目", aggregations: "集計方法", filterCond: "絞り込み条件", sorts: "ソート", periodicReport: "定期レポート", code: "フィールドコード", per: "単位", type: "種類", by: "基準", order: "順序" };
+  var STATE_LABELS = { name: "ステータス名", index: "並び順", assignee: "作業者", type: "作業者の指定方法", entities: "作業者", entity: "作業者", code: "コード" };
+  var ACTION_LABELS = { name: "アクション名", from: "実行前のステータス", to: "実行後のステータス", filterCond: "実行条件", type: "種類", executableUser: "実行できるユーザー", destApp: "コピー先のアプリ", app: "アプリID", mappings: "コピーするフィールド", srcType: "コピー元の種類", srcField: "コピー元のフィールド", destField: "コピー先のフィールド", entities: "利用できるユーザー", entity: "ユーザー", index: "並び順", code: "コード" };
+  var CUSTOMIZE_LABELS = { js: "JavaScript", css: "CSS", url: "URL", type: "種類", file: "ファイル", fileKey: "ファイル", name: "ファイル名" };
+  var RIGHT_LABELS = {
+    entity: "対象",
+    entities: "対象",
+    type: "種類",
+    code: "コード",
+    filterCond: "条件",
+    includeSubs: "下位の組織への継承",
+    accessibility: "権限",
+    appEditable: "アプリ管理",
+    recordViewable: "レコード閲覧",
+    recordAddable: "レコード追加",
+    recordEditable: "レコード編集",
+    recordDeletable: "レコード削除",
+    recordImportable: "ファイルから読み込む",
+    recordExportable: "ファイルに書き出す",
+    viewable: "閲覧",
+    editable: "編集",
+    deletable: "削除"
+  };
+  var NOTIFICATION_LABELS = {
+    entity: "通知先",
+    targets: "通知先",
+    type: "種類",
+    code: "コード",
+    includeSubs: "下位の組織",
+    filterCond: "条件",
+    title: "通知の内容",
+    timing: "通知のタイミング",
+    recordAdded: "レコード追加",
+    recordEdited: "レコード編集",
+    commentAdded: "コメント書き込み",
+    statusChanged: "ステータスの更新",
+    fileImported: "ファイル読み込み",
+    daysLater: "日後",
+    hoursLater: "時間後",
+    time: "時刻",
+    field: "基準の日時のフィールド"
+  };
+  var APP_SETTING_LABELS = {
+    name: "アプリ名",
+    description: "説明",
+    icon: "アイコン",
+    theme: "デザインテーマ",
+    titleField: "レコードタイトル",
+    selectionMode: "選び方",
+    code: "フィールドコード",
+    enableThumbnails: "サムネイルの表示",
+    enableBulkDeletion: "レコードの一括削除",
+    enableComments: "コメント機能",
+    enableDuplicateRecord: "レコードの再利用",
+    enableInlineRecordEditing: "一覧での編集",
+    numberPrecision: "数値の計算の精度",
+    digits: "全体の桁数",
+    decimalPlaces: "小数部の桁数",
+    roundingMode: "数値の丸めかた",
+    firstMonthOfFiscalYear: "年度の開始月"
+  };
+  var SECTION_RULES = {
+    layout: { label: "レイアウト", labels: LAYOUT_LABELS, unit: "行目" },
+    views: { label: "一覧", labels: VIEW_LABELS },
+    reports: { label: "グラフ", labels: REPORT_LABELS },
+    states: { label: "ステータス", labels: STATE_LABELS },
+    actions: { label: "アクション", labels: ACTION_LABELS },
+    desktop: { label: "PC用", labels: CUSTOMIZE_LABELS },
+    mobile: { label: "モバイル用", labels: CUSTOMIZE_LABELS },
+    rights: { label: "アクセス権", labels: RIGHT_LABELS },
+    notifications: { label: "通知", labels: NOTIFICATION_LABELS },
+    categories: { label: "カテゴリー", labels: { name: "カテゴリー名", index: "並び順", children: "下位のカテゴリー" } },
+    apps: { label: "アプリ", labels: { app: "アプリID", revision: "設定の更新番号（revision）" } }
+  };
+  var SINGLE_LABELS = {
+    ...APP_SETTING_LABELS,
+    enable: "プロセス管理の有効化",
+    scope: "JavaScript・CSS の適用範囲",
+    notifyToCommenter: "コメント投稿者への通知",
+    timezone: "タイムゾーン",
+    enabled: "有効状態",
+    ids: "プラグイン",
+    app: "アプリID",
+    revision: "設定の更新番号（revision）",
+    revert: "変更の中止（revert）",
+    // 先頭の id は、レコード 1 件の更新ならレコードID・アプリの取得ならアプリIDで、決められないのでキーのまま出す（records[N].id はレコードID）
+    query: "条件",
+    limit: "件数の上限",
+    offset: "開始位置",
+    fields: "取得するフィールド",
+    totalCount: "件数の取得",
+    properties: "フィールドの設定",
+    records: "レコード",
+    record: "レコード"
+  };
+  function describeTokens(tokens, labels, unit = "件目") {
+    const parts = [];
+    for (const token of tokens) {
+      if (token.kind === "index") {
+        if (parts.length) parts[parts.length - 1] += `（${token.value + 1}${unit}）`;
+        else parts.push(`${token.value + 1}${unit}`);
+        continue;
+      }
+      const label = ownLookup(labels, token.value) || token.value;
+      const previous = parts[parts.length - 1];
+      if (previous === label) continue;
+      if (previous && !/）$/.test(previous) && label.startsWith(previous)) parts[parts.length - 1] = label;
+      else parts.push(label);
+    }
+    return parts.join("・");
+  }
+  function describeFieldSetting(rest, key) {
+    if (!rest.length) return "";
+    if (isName(rest[0], "options")) {
+      if (rest.length === 1) return "選択肢";
+      if (rest[1].kind === "key") {
+        const suffix = rest.slice(2);
+        return `選択肢「${rest[1].value}」${suffix.length ? `の${describeOptionProperty(suffix)}` : ""}`;
+      }
+      const tail = key.slice(rest[1].start);
+      const property = /^(.+)\.(label|index)$/.exec(tail);
+      return `選択肢「${property ? property[1] : tail}」${property ? `の${property[2] === "label" ? "名前" : "並び順"}` : ""}`;
+    }
+    return describeTokens(rest, FIELD_SETTING_LABELS);
+  }
+  function describeOptionProperty(tokens) {
+    if (tokens.length === 1 && isName(tokens[0], "label")) return "名前";
+    if (tokens.length === 1 && isName(tokens[0], "index")) return "並び順";
+    return describeTokens(tokens, FIELD_SETTING_LABELS);
+  }
+  function describePropertiesKey(tokens, key) {
+    const [, codeToken, ...after] = tokens;
+    if (!codeToken) return "フィールドの設定";
+    let where = `フィールド「${tokenText(codeToken)}」`;
+    let rest = after;
+    if (isName(rest[0], "fields") && rest[1] && rest[1].kind !== "index") {
+      where = `テーブル「${tokenText(codeToken)}」のフィールド「${tokenText(rest[1])}」`;
+      rest = rest.slice(2);
+    }
+    const setting = describeFieldSetting(rest, key);
+    return setting ? `${where}の${setting}` : where;
+  }
+  function describeRecordKey(tokens, naming) {
+    const single = isName(tokens[0], "record");
+    let rest = tokens.slice(1);
+    let recordLabel = "";
+    if (!single && rest[0]?.kind === "index") {
+      const index = rest[0].value;
+      recordLabel = naming.record ? naming.record(index) : `${index + 1}件目`;
+      rest = rest.slice(1);
+    }
+    if (!rest.length) return recordLabel || "レコード";
+    const fieldName = (code, table) => naming.recordField ? naming.recordField(code, table) : code;
+    const [head, ...tail] = rest;
+    const SPECIAL = { id: "レコードID", revision: "レコードの更新番号（revision）", action: "アクション", assignee: "作業者" };
+    let field;
+    if (head.kind === "name" && !tail.length && ownLookup(SPECIAL, head.value)) field = ownLookup(SPECIAL, head.value);
+    else if (head.kind === "index") field = describeTokens(rest, {});
+    else {
+      const code = tokenText(head);
+      const inner = isName(tail[0], "value") ? tail.slice(1) : tail;
+      if (!inner.length) field = fieldName(code);
+      else if (inner[0].kind === "index") {
+        const row = `${fieldName(code)}${inner[0].value + 1}行目`;
+        const cell = isName(inner[1], "value") ? inner.slice(2) : inner.slice(1);
+        if (!cell.length) field = row;
+        else if (cell.length === 1 && isName(cell[0], "id")) field = `${row}の行ID`;
+        else {
+          const child = tokenText(cell[0]);
+          const more = isName(cell[1], "value") ? cell.slice(2) : cell.slice(1);
+          field = `${row}・${fieldName(child, code)}${more.length ? `（${more.map(tokenText).join(".")}）` : ""}`;
+        }
+      } else field = `${fieldName(code)}（${inner.map(tokenText).join(".")}）`;
+    }
+    return [recordLabel, field].filter(Boolean).join("・");
+  }
+  function describeAppsKey(tokens, naming) {
+    const rest = tokens.slice(1);
+    if (rest[0]?.kind !== "index") return describeTokens(tokens, { apps: "アプリ", ...SECTION_RULES.apps.labels });
+    const app = naming.app ? naming.app(rest[0].value) : `${rest[0].value + 1}件目のアプリ`;
+    const setting = describeTokens(rest.slice(1), SECTION_RULES.apps.labels);
+    return setting ? `${app}の${setting}` : app;
+  }
+  function describeKintoneErrorKey(key, naming = {}) {
+    const raw = oneLine(key);
+    if (!raw) return "（場所の指定なし）";
+    const tokens = tokenizeKey(raw);
+    const head = tokens[0];
+    if (!head || head.kind !== "name") return clip(raw, WHERE_MAX);
+    let text2 = "";
+    if (head.value === "properties") text2 = describePropertiesKey(tokens, raw);
+    else if (head.value === "records" && tokens.length > 1 || head.value === "record" && tokens.length > 1) text2 = describeRecordKey(tokens, naming);
+    else if (head.value === "apps") text2 = describeAppsKey(tokens, naming);
+    else if (ownLookup(SECTION_RULES, head.value)) {
+      const rule = SECTION_RULES[head.value];
+      const [, entity, ...rest] = tokens;
+      if (!entity) text2 = rule.label;
+      else if (entity.kind === "index") {
+        const setting = describeTokens(rest, rule.labels);
+        text2 = `${rule.label}（${entity.value + 1}${rule.unit || "件目"}）${setting ? `の${setting}` : ""}`;
+      } else if (head.value === "desktop" || head.value === "mobile") {
+        text2 = `${rule.label}の${describeTokens([entity, ...rest], rule.labels)}`;
+      } else {
+        const setting = describeTokens(rest, rule.labels);
+        text2 = `${rule.label}「${entity.value}」${setting ? `の${setting}` : ""}`;
+      }
+    } else if (ownLookup(SINGLE_LABELS, head.value)) {
+      text2 = [ownLookup(SINGLE_LABELS, head.value), describeTokens(tokens.slice(1), APP_SETTING_LABELS)].filter(Boolean).join("・");
+    } else text2 = raw;
+    return clip(text2 || raw, WHERE_MAX);
+  }
+  function findKintoneErrorMap(error) {
+    for (let current = error, depth = 0; current && typeof current === "object" && depth < 6; current = current.original, depth++) {
+      const errors = current.errors;
+      if (errors && typeof errors === "object" && !Array.isArray(errors) && Object.keys(errors).length) return errors;
+    }
+    return null;
+  }
+  function messagesOf(value) {
+    const list = Array.isArray(value?.messages) ? value.messages : typeof value === "string" ? [value] : [];
+    return list.map((message) => clip(oneLine(message), MESSAGE_MAX)).filter(Boolean);
+  }
+  function collectKintoneErrors(error, naming = {}) {
+    const map = findKintoneErrorMap(error);
+    if (!map) return [];
+    return Object.entries(map).filter(([, value]) => value != null && (typeof value === "string" || typeof value === "object")).map(([key, value]) => ({ key, where: describeKintoneErrorKey(key, naming), messages: messagesOf(value) }));
+  }
+  function formatKintoneError(item) {
+    return `${item.where}: ${item.messages.join(" / ") || "(詳細なし)"}`;
+  }
+  var kintoneErrorOverflowLine = (rest) => `ほか ${rest} 件`;
+  function formatKintoneErrorLines(error, naming = {}, limit = KINTONE_ERROR_LIST_LIMIT) {
+    const lines = collectKintoneErrors(error, naming).map(formatKintoneError);
+    return lines.length > limit ? [...lines.slice(0, limit), kintoneErrorOverflowLine(lines.length - limit)] : lines;
+  }
+  function kintoneErrorDetailsOf(error) {
+    for (let current = error, depth = 0; current && typeof current === "object" && depth < 6; current = current.original, depth++) {
+      if (Array.isArray(current.kintoneErrorDetails)) return current.kintoneErrorDetails.map((line) => String(line));
+      const map = current.errors;
+      if (map && typeof map === "object" && !Array.isArray(map) && Object.keys(map).length) return formatKintoneErrorLines(current);
+    }
+    return [];
+  }
+  function summarizeKintoneErrorDetails(details, limit = KINTONE_ERROR_SCREEN_LIMIT) {
+    const list = [...details];
+    let hidden = 0;
+    const overflow = /^ほか (\d+) 件$/.exec(list[list.length - 1] || "");
+    if (overflow) {
+      hidden = Number(overflow[1]);
+      list.pop();
+    }
+    if (list.length <= limit) return hidden ? [...list, kintoneErrorOverflowLine(hidden)] : list;
+    return [...list.slice(0, limit), kintoneErrorOverflowLine(list.length - limit + hidden)];
+  }
+
   // src/utils.ts
   function getToolWindowSafe() {
     try {
@@ -665,14 +1517,6 @@
       return raw.length > max ? `${raw.slice(0, max)}...` : raw;
     }
   }
-  var MAX_API_FIELD_ERRORS = 5;
-  function formatApiFieldErrors(errors) {
-    if (!errors || typeof errors !== "object") return [];
-    const lines = Object.entries(errors).flatMap(([key, value]) => (Array.isArray(value?.messages) ? value.messages : []).map((message) => `${key}: ${String(message)}`));
-    const shown = lines.slice(0, MAX_API_FIELD_ERRORS);
-    if (lines.length > shown.length) shown.push(`ほか ${lines.length - shown.length} 件`);
-    return shown;
-  }
   function apiErrorWithContext(err, meta) {
     if (err && err.__apiDiag) return err;
     const method = meta?.method || "GET";
@@ -684,7 +1528,7 @@
     const endpoint = `${prefix}${path}`;
     const contextLine = `[API] ${method} ${endpoint}${app ? ` app=${app}` : ""}${bodySummary ? ` payload=${bodySummary}` : ""}`;
     const baseMessage = err?.message || String(err);
-    const wrapped = new Error([baseMessage, ...formatApiFieldErrors(err?.errors), contextLine].join("\n"));
+    const wrapped = new Error([baseMessage, ...formatKintoneErrorLines(err), contextLine].join("\n"));
     wrapped.__apiDiag = true;
     wrapped.original = err;
     if (err?.code) wrapped.code = err.code;
@@ -817,10 +1661,10 @@
   }
   async function copyTextToClipboard(text2) {
     if (!text2) return false;
-    const clip = typeof navigator !== "undefined" ? navigator.clipboard : void 0;
-    if (clip && typeof clip.writeText === "function") {
+    const clip2 = typeof navigator !== "undefined" ? navigator.clipboard : void 0;
+    if (clip2 && typeof clip2.writeText === "function") {
       try {
-        await clip.writeText(text2);
+        await clip2.writeText(text2);
         return true;
       } catch {
       }
@@ -3570,566 +4414,6 @@
       });
     });
     return out;
-  }
-
-  // src/kintone-enums.ts
-  var ENTITY_TYPE_JP = {
-    USER: "ユーザー",
-    GROUP: "グループ",
-    ORGANIZATION: "組織",
-    FIELD_ENTITY: "フィールド値",
-    CREATOR: "作成者",
-    MODIFIER: "更新者",
-    LOGIN_USER: "ログインユーザー",
-    ALL: "全員",
-    CUSTOM_FIELD: "カスタムフィールド"
-  };
-  var VIEW_TYPE_JP = {
-    LIST: "表形式",
-    CALENDAR: "カレンダー形式",
-    CUSTOM: "カスタマイズ"
-  };
-  var VIEW_BUILTIN_TYPE_JP = {
-    ASSIGNEE: "作業者ビュー",
-    UNDONE: "未完了レコード",
-    ACTIVE_BY_USER: "自分が処理すべきレコード",
-    RECORDS_OF_USER: "自分が関わるレコード"
-  };
-  var VIEW_DEVICE_JP = {
-    ANY: "PC・モバイル両方",
-    DESKTOP: "PC版のみ"
-  };
-  var PAGINATION_TYPE_JP = {
-    ROW: "行ページャ",
-    PAGE: "ページ番号"
-  };
-  var CHART_TYPE_JP = {
-    BAR: "横棒グラフ",
-    COLUMN: "縦棒グラフ",
-    LINE: "折れ線グラフ",
-    PIE: "円グラフ",
-    PIVOT_TABLE: "クロス集計表",
-    TABLE: "表",
-    AREA: "面グラフ",
-    SPLINE: "曲線グラフ",
-    SPLINE_AREA: "曲線面グラフ",
-    SCATTER: "散布図"
-  };
-  var CHART_MODE_JP = {
-    NORMAL: "通常",
-    STACKED: "積み上げ",
-    PERCENTAGE: "100%積み上げ"
-  };
-  var AGGREGATION_TYPE_JP = {
-    COUNT: "レコード数",
-    SUM: "合計",
-    // kintone の API が返す値は AVERAGE（AVG は旧来の表記として残す）
-    AVERAGE: "平均",
-    AVG: "平均",
-    MAX: "最大値",
-    MIN: "最小値"
-  };
-  var GROUP_PER_JP = {
-    YEAR: "年",
-    QUARTER: "四半期",
-    MONTH: "月",
-    WEEK: "週",
-    DAY: "日",
-    HOUR: "時",
-    MINUTE: "分"
-  };
-  var REPORT_SORT_BY_JP = {
-    TOTAL: "集計値",
-    GROUP1: "分類1",
-    GROUP2: "分類2",
-    GROUP3: "分類3"
-  };
-  var REPORT_SORT_ORDER_JP = {
-    ASC: "小さい順",
-    DESC: "大きい順"
-  };
-  var PERIODIC_REPORT_EVERY_JP = {
-    YEAR: "毎年",
-    QUARTER: "四半期ごと",
-    MONTH: "毎月",
-    WEEK: "毎週",
-    DAY: "毎日",
-    HOUR: "毎時"
-  };
-  var DAY_OF_WEEK_JP = {
-    SUNDAY: "日曜日",
-    MONDAY: "月曜日",
-    TUESDAY: "火曜日",
-    WEDNESDAY: "水曜日",
-    THURSDAY: "木曜日",
-    FRIDAY: "金曜日",
-    SATURDAY: "土曜日"
-  };
-  var PROCESS_ASSIGNEE_TYPE_JP = {
-    ONE: "候補から作業者を1人選ぶ",
-    ANY: "候補のうち誰か1人が作業する",
-    ANYONE: "候補のうち誰か1人が作業する",
-    ALL: "候補の全員が作業する"
-  };
-  var NOTIFICATION_TIMING_JP = {
-    CREATION: "レコード作成時",
-    DAYS_OF_WEEK: "曜日指定",
-    TIME: "時刻指定",
-    WEEKLY: "毎週",
-    MONTHLY: "毎月"
-  };
-  var RESOURCE_TYPE_JP = {
-    URL: "URL指定",
-    FILE: "ファイル指定"
-  };
-  var CUSTOMIZE_SCOPE_JP = {
-    ALL: "全ユーザー",
-    ADMIN: "管理者のみ",
-    NONE: "無効"
-  };
-  var ICON_TYPE_JP = {
-    PRESET: "プリセット",
-    FILE: "アップロードファイル"
-  };
-  var APP_THEME_JP = {
-    WHITE: "ホワイト",
-    RED: "レッド",
-    BLUE: "ブルー",
-    GREEN: "グリーン",
-    YELLOW: "イエロー",
-    BLACK: "ブラック",
-    CLIPBOARD: "クリップボード",
-    BINDER: "バインダー",
-    PENCIL: "ペンシル",
-    CLIPS: "クリップ"
-  };
-  var TITLE_SELECTION_JP = {
-    AUTO: "自動選択",
-    MANUAL: "手動指定"
-  };
-  var ROUNDING_MODE_JP = {
-    HALF_EVEN: "四捨五入（偶数丸め）",
-    UP: "切り上げ",
-    DOWN: "切り捨て"
-  };
-  var NUMBER_FORMAT_JP = {
-    NUMBER: "数値",
-    NUMBER_DIGIT: "数値（桁区切り）",
-    PERCENT: "パーセント",
-    CURRENCY: "通貨",
-    DATE: "日付",
-    TIME: "時刻",
-    DATETIME: "日時",
-    HOUR_MINUTE: "時:分",
-    HOUR_MINUTE_SECOND: "時:分:秒"
-  };
-  var ALIGN_JP = {
-    HORIZONTAL: "横並び",
-    VERTICAL: "縦並び"
-  };
-  var UNIT_POSITION_JP = {
-    BEFORE: "前につける",
-    AFTER: "後につける"
-  };
-  var LINK_PROTOCOL_JP = {
-    WEB: "Webサイトのアドレス",
-    CALL: "電話番号",
-    MAIL: "メールアドレス"
-  };
-  function lookupEnum(map, value) {
-    if (value == null || value === "") return "";
-    const key = String(value).trim().toUpperCase();
-    return map[key] || String(value);
-  }
-  function describeReminderOffset(kind, value) {
-    const raw = String(value ?? "").trim();
-    if (!/^[+-]?\d+$/.test(raw)) return null;
-    const n = Number(raw);
-    const unit = kind === "days" ? "日" : "時間";
-    if (n === 0) return kind === "days" ? "当日" : "同時刻";
-    return n < 0 ? `${-n}${unit}前` : `${n}${unit}後`;
-  }
-  function describePeriodicReport(value) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-    const report = value;
-    if (typeof report.active !== "boolean" && !report.period) return null;
-    const period = report.period && typeof report.period === "object" ? report.period : {};
-    const schedule = [
-      lookupEnum(PERIODIC_REPORT_EVERY_JP, period.every),
-      period.month != null && period.month !== "" ? `${period.month}月` : "",
-      period.dayOfMonth != null && period.dayOfMonth !== "" ? `${period.dayOfMonth}日` : "",
-      lookupEnum(DAY_OF_WEEK_JP, period.dayOfWeek),
-      period.time != null && period.time !== "" ? String(period.time) : ""
-    ].filter(Boolean).join(" ");
-    const state3 = report.active === false ? "無効" : "有効";
-    return schedule ? `${state3}（${schedule}）` : state3;
-  }
-
-  // src/diff/label-dict.ts
-  var VALUE_LABELS = {
-    // entity.type
-    "entity.type": {
-      USER: "👤 ユーザー",
-      GROUP: "👥 グループ",
-      ORGANIZATION: "🏢 部署",
-      DEPARTMENT: "🏢 部署",
-      DEPT: "🏢 部署",
-      CREATOR: "✏️ 作成者",
-      MODIFIER: "✏️ 更新者",
-      FUNCTION: "⚙ 関数",
-      LOGIN_USER: "👤 ログインユーザー",
-      ALL: "🌐 全員",
-      FIELD_ENTITY: "🔗 フィールド",
-      EVERYONE: "🌐 全員",
-      CUSTOM_FIELD: "🔗 ユーザー選択フィールド"
-    },
-    // field acl level
-    accessibility: {
-      NONE: "不可",
-      READ: "閲覧のみ",
-      WRITE: "閲覧・編集可",
-      READ_WRITE: "閲覧・編集可"
-    },
-    // 一覧の表示形式（kintone の一覧設定画面の選択肢名）
-    "view.type": {
-      LIST: "表形式",
-      CALENDAR: "カレンダー形式",
-      CUSTOM: "カスタマイズ"
-    },
-    // グラフ種別（kintone のグラフ設定画面の名称）
-    "chart.type": {
-      BAR: "横棒グラフ",
-      COLUMN: "縦棒グラフ",
-      PIE: "円グラフ",
-      LINE: "折れ線グラフ",
-      PIVOT_TABLE: "クロス集計表",
-      TABLE: "表",
-      AREA: "面グラフ",
-      AREA_STACKED: "積み上げ面グラフ",
-      SPLINE: "曲線グラフ",
-      SPLINE_AREA: "曲線面グラフ",
-      BUBBLE: "バブル",
-      BAR_STACKED: "積み上げ横棒",
-      FUNNEL: "ファネル"
-    },
-    // ページ送り
-    paginationStyle: {
-      NORMAL: "通常",
-      NUMBER: "ページ番号",
-      INFINITE: "無限スクロール"
-    },
-    // 通知トリガ
-    recordTrigger: {
-      APP: "アプリ全体",
-      RECORD: "レコード単位"
-    },
-    // アプリアクションのフィールド関連付けのコピー元／コピー先の種類
-    // （actionSettings 文脈で参照。表記は xlsx 出力の customerTypeLabel と揃える）
-    srcType: {
-      FIELD: "フィールド",
-      RECORD_URL: "レコードのURL"
-    },
-    destType: {
-      FIELD: "フィールド",
-      RECORD_URL: "レコードのURL"
-    },
-    // ここから下はセクション文脈込みで参照するスコープ（path-decoder が
-    // sectionKey を見て選択する）。kintone-enums の共通辞書を単一ソースとする。
-    "assignee.type": PROCESS_ASSIGNEE_TYPE_JP,
-    "icon.type": ICON_TYPE_JP,
-    "aggregation.type": AGGREGATION_TYPE_JP,
-    "resource.type": RESOURCE_TYPE_JP,
-    builtinType: VIEW_BUILTIN_TYPE_JP,
-    device: VIEW_DEVICE_JP,
-    chartMode: CHART_MODE_JP,
-    scope: CUSTOMIZE_SCOPE_JP,
-    theme: APP_THEME_JP,
-    selectionMode: TITLE_SELECTION_JP,
-    roundingMode: ROUNDING_MODE_JP,
-    per: GROUP_PER_JP,
-    by: REPORT_SORT_BY_JP,
-    order: REPORT_SORT_ORDER_JP,
-    every: PERIODIC_REPORT_EVERY_JP,
-    dayOfWeek: DAY_OF_WEEK_JP
-  };
-  var PROP_LABELS = {
-    // appAcl 操作権限（kintone のアクセス権設定画面の列名）
-    appEditable: { label: "アプリ管理", icon: "⚙" },
-    recordViewable: { label: "レコード閲覧", icon: "👁" },
-    recordAddable: { label: "レコード追加", icon: "➕" },
-    recordEditable: { label: "レコード編集", icon: "✏️" },
-    recordDeletable: { label: "レコード削除", icon: "🗑" },
-    recordImportable: { label: "ファイル読み込み", icon: "📥" },
-    recordExportable: { label: "ファイル書き出し", icon: "📤" },
-    // recordPermissions の権限
-    viewable: { label: "閲覧", icon: "👁" },
-    editable: { label: "編集", icon: "✏️" },
-    deletable: { label: "削除", icon: "🗑" },
-    // 共通
-    filterCond: { label: "絞込条件", icon: "🔍" },
-    includeSubs: { label: "配下を含む" },
-    entities: { label: "エンティティ" },
-    entity: { label: "対象" },
-    rights: { label: "権限エントリー" },
-    accessibility: { label: "アクセス権" },
-    // viewSettings（kintone の一覧設定画面の項目名）
-    fields: { label: "表示するフィールド", icon: "📋" },
-    sort: { label: "ソート", icon: "↕" },
-    index: { label: "表示順", icon: "🔢" },
-    paginationStyle: { label: "ページ送り", icon: "📄" },
-    defaultView: { label: "既定ビュー" },
-    view: { label: "ビュー" },
-    views: { label: "ビュー一覧" },
-    builtinType: { label: "標準一覧の種類" },
-    device: { label: "表示するデバイス" },
-    pager: { label: "ページ送りの表示" },
-    date: { label: "日付の基準フィールド" },
-    // reportSettings（kintone のグラフ設定画面の項目名）
-    groups: { label: "分類", icon: "📊" },
-    aggregations: { label: "集計", icon: "🧮" },
-    chartType: { label: "グラフ種別" },
-    chartMode: { label: "モード" },
-    reports: { label: "グラフ一覧" },
-    periodicReports: { label: "定期レポート" },
-    periodicReport: { label: "定期レポート" },
-    period: { label: "実行スケジュール" },
-    every: { label: "間隔" },
-    dayOfWeek: { label: "曜日" },
-    dayOfMonth: { label: "日" },
-    per: { label: "分類の時間単位" },
-    by: { label: "ソートの基準" },
-    order: { label: "ソートの順序" },
-    active: { label: "有効状態" },
-    // notifications（kintone の通知設定画面の項目名）
-    recordAdded: { label: "レコードの追加" },
-    recordEdited: { label: "レコードの編集" },
-    commentAdded: { label: "コメントの書き込み" },
-    statusChanged: { label: "ステータスの更新" },
-    fileImported: { label: "ファイルの読み込み" },
-    recipients: { label: "通知先" },
-    targets: { label: "通知先" },
-    notifications: { label: "通知ルール" },
-    timing: { label: "通知するタイミング" },
-    daysLater: { label: "通知する日" },
-    hoursLater: { label: "通知する時間" },
-    time: { label: "時刻" },
-    notifyToCommenter: { label: "コメントを書き込んだユーザーへの通知" },
-    notifyToMentioned: { label: "コメントの宛先ユーザーへの通知" },
-    notifyOnUpdate: { label: "更新時に通知" },
-    timezone: { label: "タイムゾーン" },
-    perRecordNotifications: { label: "レコード条件通知" },
-    reminderNotifications: { label: "リマインダー通知" },
-    title: { label: "タイトル" },
-    body: { label: "本文" },
-    // processSettings（kintone のプロセス管理設定画面の項目名）
-    enable: { label: "プロセス管理の有効化" },
-    states: { label: "ステータス" },
-    actions: { label: "アクション" },
-    from: { label: "実行前のステータス" },
-    to: { label: "実行後のステータス" },
-    assignee: { label: "作業者" },
-    type: { label: "種別" },
-    settings: { label: "設定" },
-    // actionSettings（kintone API の mappings[] キーは srcField/srcType/destField。
-    // sourceField は旧形式データの別名。xlsx 出力の「コピー元/コピー先」表記に揃える）
-    app: { label: "対象アプリ" },
-    mappings: { label: "フィールド対応" },
-    srcField: { label: "コピー元フィールド" },
-    sourceField: { label: "コピー元フィールド" },
-    srcType: { label: "コピー元の種類" },
-    destField: { label: "コピー先フィールド" },
-    destType: { label: "コピー先の種類" },
-    destApp: { label: "先アプリ" },
-    // customizeSettings
-    desktop: { label: "デスクトップ" },
-    mobile: { label: "モバイル" },
-    js: { label: "JS" },
-    css: { label: "CSS" },
-    file: { label: "ファイル" },
-    scope: { label: "適用範囲" },
-    url: { label: "URL" },
-    // pluginSettings
-    plugins: { label: "プラグイン一覧" },
-    version: { label: "バージョン" },
-    id: { label: "ID" },
-    enabled: { label: "有効状態" },
-    // appSettings / appInfo（kintone のアプリ設定画面の項目名）
-    name: { label: "名前" },
-    description: { label: "説明" },
-    theme: { label: "デザインテーマ" },
-    titleField: { label: "レコードのタイトル" },
-    selectionMode: { label: "選択方法" },
-    icon: { label: "アイコン" },
-    enableThumbnails: { label: "サムネイルの表示" },
-    enableBulkDeletion: { label: "レコードの一括削除" },
-    enableComments: { label: "レコードのコメント機能" },
-    enableDuplicateRecord: { label: "レコードの再利用" },
-    enableInlineRecordEditing: { label: "一覧でのレコードのインライン編集" },
-    numberPrecision: { label: "数値や計算の精度" },
-    digits: { label: "全体の桁数" },
-    decimalPlaces: { label: "小数部の桁数" },
-    roundingMode: { label: "数値の丸めかた" },
-    firstMonthOfFiscalYear: { label: "第1四半期の開始月" },
-    appId: { label: "アプリID" },
-    spaceId: { label: "スペースID" },
-    threadId: { label: "スレッドID" },
-    code: { label: "コード" },
-    label: { label: "ラベル" },
-    // categories
-    categories: { label: "カテゴリ" },
-    // layoutSettings
-    layout: { label: "レイアウト" },
-    row: { label: "行" },
-    width: { label: "横幅" },
-    height: { label: "高さ" },
-    innerHeight: { label: "入力欄の高さ" },
-    // fieldSettings: 関連レコード一覧（referenceTable）/ ルックアップ（lookup）
-    // kintone のフィールド設定画面の項目名に合わせる。
-    referenceTable: { label: "関連レコード一覧設定" },
-    lookup: { label: "ルックアップ設定" },
-    condition: { label: "表示するレコードの条件" },
-    displayFields: { label: "表示するフィールド" },
-    relatedApp: { label: "参照するアプリ" },
-    relatedField: { label: "参照するアプリのフィールド" },
-    relatedKeyField: { label: "コピー元のフィールド" },
-    fieldMappings: { label: "ほかのフィールドのコピー" },
-    lookupPickerFields: { label: "コピー元のレコード選択時に表示するフィールド" },
-    size: { label: "一度に表示する最大レコード数" }
-  };
-  var FIELD_SETTING_LABELS = {
-    label: "フィールド名",
-    name: "フィールド名",
-    code: "フィールドコード",
-    type: "フィールドの種類",
-    noLabel: "フィールド名を表示しない",
-    required: "必須項目にする",
-    unique: "値の重複を禁止する",
-    defaultValue: "初期値",
-    defaultNowValue: "レコード登録時の日時を初期値にする",
-    description: "説明",
-    minLength: "文字数（最小）",
-    maxLength: "文字数（最大）",
-    minValue: "数値の制限（最小）",
-    maxValue: "数値の制限（最大）",
-    expression: "計算式",
-    hideExpression: "計算式を表示しない",
-    options: "選択肢",
-    protocol: "入力値の種類",
-    displayScale: "小数点以下の表示桁数",
-    digit: "桁区切りを表示する",
-    unit: "単位記号",
-    unitPosition: "単位記号の表示位置",
-    align: "選択肢の並び",
-    format: "表示形式",
-    entities: "選択候補",
-    fields: "テーブル内のフィールド",
-    referenceTable: "関連レコード一覧設定",
-    lookup: "ルックアップ設定",
-    condition: "表示するレコードの条件",
-    displayFields: "表示するフィールド",
-    filterCond: "絞り込み条件",
-    relatedApp: "参照するアプリ",
-    size: "一度に表示する最大レコード数",
-    sort: "ソート",
-    relatedKeyField: "コピー元のフィールド",
-    fieldMappings: "ほかのフィールドのコピー",
-    lookupPickerFields: "コピー元のレコード選択時に表示するフィールド",
-    field: "自アプリのフィールド",
-    relatedField: "参照するアプリのフィールド",
-    app: "参照するアプリID",
-    thumbnailSize: "サムネイルの大きさ",
-    openGroup: "グループの初期表示",
-    enabled: "有効状態",
-    index: "並び順"
-  };
-  var SECTION_LABELS = {
-    appAcl: { label: "アプリ権限", icon: "🔐" },
-    fieldAcl: { label: "フィールド権限", icon: "🔐" },
-    recordPermissions: { label: "レコード権限", icon: "🔐" },
-    notifications: { label: "通知", icon: "🔔" },
-    perRecordNotifications: { label: "レコード条件通知", icon: "🔔" },
-    reminderNotifications: { label: "リマインダー通知", icon: "🔔" },
-    viewSettings: { label: "ビュー設定", icon: "📊" },
-    reportSettings: { label: "グラフ設定", icon: "📈" },
-    processSettings: { label: "プロセス管理", icon: "🔁" },
-    actionSettings: { label: "アクション設定", icon: "⚡" },
-    customizeSettings: { label: "JS/CSS設定", icon: "🧪" },
-    pluginSettings: { label: "プラグイン", icon: "🧩" },
-    appSettings: { label: "アプリ設定", icon: "⚙" },
-    appInfo: { label: "アプリ情報", icon: "ℹ️" },
-    formSettings: { label: "フォーム設定", icon: "📝" },
-    fieldSettings: { label: "フィールド設定", icon: "🔤" },
-    layoutSettings: { label: "レイアウト設定", icon: "🧩" },
-    categories: { label: "カテゴリ設定", icon: "🗂" }
-  };
-  function ownLookup(dict, key) {
-    if (!dict || key == null) return void 0;
-    const name = String(key);
-    return Object.prototype.hasOwnProperty.call(dict, name) ? dict[name] : void 0;
-  }
-  function labelOfProp(key) {
-    if (!key) return "";
-    return ownLookup(PROP_LABELS, key)?.label || ownLookup(FIELD_SETTING_LABELS, key) || String(key);
-  }
-  function iconOfProp(key) {
-    if (!key) return "";
-    return ownLookup(PROP_LABELS, key)?.icon || "";
-  }
-  function labelOfValue(scope, value) {
-    if (value == null) return null;
-    return ownLookup(ownLookup(VALUE_LABELS, scope), value) || null;
-  }
-  function stateRenameName(side, fallback) {
-    const name = side && typeof side === "object" ? side.name : side;
-    return String(name ?? fallback ?? "").trim() || "(不明)";
-  }
-  function labelOfSection(sectionKey) {
-    if (!sectionKey) return { label: "-", icon: "" };
-    return ownLookup(SECTION_LABELS, sectionKey) || { label: String(sectionKey), icon: "" };
-  }
-  var PERMISSION_KEYS = /* @__PURE__ */ new Set([
-    "appEditable",
-    "recordViewable",
-    "recordAddable",
-    "recordEditable",
-    "recordDeletable",
-    "recordImportable",
-    "recordExportable",
-    "viewable",
-    "editable",
-    "deletable",
-    "includeSubs"
-  ]);
-  function labelOfBool(value, propKey) {
-    if (propKey && PERMISSION_KEYS.has(propKey)) {
-      return value ? "許可" : "不許可";
-    }
-    if (propKey === "enable" || propKey === "enabled" || propKey === "active") {
-      return value ? "有効" : "無効";
-    }
-    if (propKey === "pager") {
-      return value ? "表示する" : "表示しない";
-    }
-    if (propKey === "notifyToCommenter" || propKey === "notifyToMentioned" || propKey === "notifyOnUpdate") {
-      return value ? "通知する" : "通知しない";
-    }
-    return value ? "はい" : "いいえ";
-  }
-  function formatEntityText(entity, options = {}) {
-    if (!entity || typeof entity !== "object") return "";
-    const type = String(entity.type || "");
-    const code = String(entity.code || entity.login || entity.id || "");
-    const name = String(entity.name || "");
-    const functionLabel = type.toUpperCase() === "FUNCTION" ? {
-      "LOGINUSER()": "ログインユーザー",
-      "PRIMARY_ORGANIZATION()": "優先する組織"
-    }[code.trim().toUpperCase()] : "";
-    if (functionLabel && !name) return functionLabel;
-    const typed = ownLookup(VALUE_LABELS["entity.type"], type) || (type ? `· ${type}` : "·");
-    const display = name || code || "(未設定)";
-    if (options.compact) return `${typed} ${display}`;
-    if (name && code && name !== code) return `${typed} ${name} (${code})`;
-    return `${typed} ${display}`;
   }
 
   // src/diff/enrich.ts
@@ -13639,6 +13923,10 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
       result.prepend(resultTools);
       result.classList.remove("kus-lp__result--empty");
     }
+    function setResultNode(node) {
+      result.replaceChildren(resultTools, node);
+      result.classList.remove("kus-lp__result--empty");
+    }
     function setResultHtml(html) {
       if (!html) {
         result.innerHTML = "";
@@ -13878,7 +14166,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
       } catch {
       }
     });
-    const handle = { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setPrimaryAction, requestCancel: requestCancel2, isCancelRequested: isCancelRequested2 };
+    const handle = { root: root2, body, status, result, setStatus, setResult, setResultHtml, setResultNode, setBusy, close, setCollapsed, resetPosition, setPrimaryAction, requestCancel: requestCancel2, isCancelRequested: isCancelRequested2 };
     return handle;
   }
   function makeRow(child, opts = {}) {
@@ -14196,9 +14484,12 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
       const message = String(e?.message || e || "不明なエラー");
       const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
       const [first, ...rest] = lines.length ? lines : [message];
+      const details = summarizeKintoneErrorDetails(kintoneErrorDetailsOf(e));
+      const withDetails = (text2) => details.length ? `${text2}
+${details.map((line) => `・${line}`).join("\n")}` : text2;
       if (e?.partialSuccess === true || e?.writeUnconfirmed === true) {
         const logNote = rest.length ? /[）)]$/.test(first) ? "。詳細は下のログを確認してください" : "（詳細は下のログ）" : "";
-        panel.setStatus(`${first}${logNote}`, "warn");
+        panel.setStatus(withDetails(`${first}${logNote}`), "warn");
         if (rest.length) panel.setResult(lines.join("\n"));
         return void 0;
       }
@@ -14208,11 +14499,11 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
         return void 0;
       }
       if (token?.cancelled) {
-        panel.setStatus(`エラー: ${first}（中止の要求後に失敗しました${rest.length ? "。詳細は下のログ" : ""}）`, "err");
+        panel.setStatus(withDetails(`エラー: ${first}（中止の要求後に失敗しました${rest.length ? "。詳細は下のログ" : ""}）`), "err");
         if (rest.length) panel.setResult(lines.join("\n"));
         return void 0;
       }
-      panel.setStatus(`エラー: ${first}${rest.length ? "（詳細は下のログ）" : ""}`, "err");
+      panel.setStatus(withDetails(`エラー: ${first}${rest.length ? "（詳細は下のログ）" : ""}`), "err");
       if (rest.length) panel.setResult(lines.join("\n"));
       return void 0;
     } finally {

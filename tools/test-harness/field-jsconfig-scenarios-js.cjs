@@ -90,6 +90,38 @@ module.exports = function (scenario, c) {
     ok('同名・同内容は再利用、それ以外はアップロード');
   });
 
+  // kintone の入力エラー（CB_VA01）の、受け付けなかった項目ごとの文。以前はステータスに「入力内容が正しくありません。」だけが出て、
+  // 複数の反映先の結果の表には 1 行目しか出なかった（どの JS/CSS が悪いかはどこにも出なかった）。
+  const JS_INPUT_ERRORS = {
+    'desktop.js[0].url': { messages: ['URLが正しくありません。'] },
+    'desktop.css[0].file.fileKey': { messages: ['ファイルが見つかりません。'] },
+    scope: { messages: ['scopeが正しくありません。'] },
+    'mobile.js[0].type': { messages: ['typeはFILEまたはURLを指定してください。'] }
+  };
+  const JS_INPUT_ERROR_LINES = [
+    'PC用のJavaScript（1件目）・URL: URLが正しくありません。',
+    'PC用のCSS（1件目）・ファイル: ファイルが見つかりません。',
+    'JavaScript・CSS の適用範囲: scopeが正しくありません。',
+    'モバイル用のJavaScript（1件目）・種類: typeはFILEまたはURLを指定してください。'
+  ];
+  scenario('JS/CSS: kintone の入力エラーは、どの JS/CSS の何が悪いかをステータスに示す（先頭 3 件とほか N 件・ログに全件）', async () => {
+    await reset('js', world({ failWrites: { '/202/app/customize.json': { code: 'CB_VA01', message: '入力内容が正しくありません。', errors: JS_INPUT_ERRORS } } }));
+    await jsFetch('101');
+    await jsApply('202');
+    await jsRunApply();
+    await assertNoViolations('JS/CSS 入力エラー', { allowedWrites: ['/202'] });
+    const text = await statusText();
+    assert.equal(await statusTone(), 'err');
+    assert.match(text, /^エラー: 入力内容が正しくありません。/, text);
+    for (const line of JS_INPUT_ERROR_LINES.slice(0, 3)) assert.ok(text.includes(line), `ステータスに先頭 3 件: ${line}\n${text}`);
+    assert.match(text, /ほか 1 件/, text);
+    assert.doesNotMatch(text, /desktop\.js\[|\[API\]|payload=/, text);
+    const log = await page.locator('.kus-lp__result').innerText();
+    for (const line of JS_INPUT_ERROR_LINES) assert.ok(log.includes(line), `ログに全件: ${line}\n${log}`);
+    await shot('js-input-error-1440');
+    ok('入力エラーは、JS/CSS のどの設定かを言葉で示す（先頭 3 件とほか 1 件、ログに全件）');
+  });
+
   scenario('JS/CSS: 取得後に反映先が更新されたら上書きしない（競合）', async () => {
     await reset('js');
     await jsFetch('101');
@@ -202,7 +234,7 @@ module.exports = function (scenario, c) {
 
   scenario('JS/CSS: 複数の反映先（成功・再利用・競合・失敗・存在しないアプリ・ゲストスペースの混在）', async () => {
     await reset('js', world({
-      failUploadNth: [], failWrites: { '/204/app/customize.json': { code: 'GAIA_CO02', message: '指定したrevisionは最新ではありません。他のユーザーによってアプリの設定が更新されています。' }, '/205/app/customize.json': { code: 'CB_VA01', message: '入力内容が正しくありません。' } }
+      failUploadNth: [], failWrites: { '/204/app/customize.json': { code: 'GAIA_CO02', message: '指定したrevisionは最新ではありません。他のユーザーによってアプリの設定が更新されています。' }, '/205/app/customize.json': { code: 'CB_VA01', message: '入力内容が正しくありません。', errors: JS_INPUT_ERRORS } }
     }));
     await jsFetch('101');
     await jsMulti(['202', '203', '204', '205', '999', { app: '401', guest: '7' }]);
@@ -233,6 +265,15 @@ module.exports = function (scenario, c) {
     const stated = /アップロードする: 合計 (\d+)件/.exec(text);
     assert.ok(stated, '確認画面にアップロード件数');
     assert.equal(snap.uploads.length, Number(stated[1]), '確認画面のアップロード件数と実際が一致する');
+    // 入力エラーの反映先の行に、どの設定が悪いか（先頭 3 件とほか N 件）を示し、全件は結果の下に残す
+    const inputRow = await page.locator('tr', { hasText: 'App 205' }).last().innerText();
+    for (const line of JS_INPUT_ERROR_LINES.slice(0, 3)) assert.ok(inputRow.includes(line), `入力エラーの行に先頭 3 件: ${line}\n${inputRow}`);
+    assert.match(inputRow, /ほか 1 件/, inputRow);
+    const jsResult = await panelText();
+    for (const line of JS_INPUT_ERROR_LINES) assert.ok(jsResult.includes(line), `結果に全件: ${line}`);
+    assert.doesNotMatch(jsResult, /desktop\.js\[|\[API\]/, '結果にキー・通信情報を出さない');
+    await page.locator('tr', { hasText: 'App 205' }).last().evaluate(element => element.scrollIntoView({ block: 'start' }));
+    await shot('js-input-error-multi-1440');
     assert.match(await statusText(), /6件中 3件を反映しました|件中 3件/);
     assert.equal(await statusTone(), 'warn');
     await shot('js-multi-mixed');

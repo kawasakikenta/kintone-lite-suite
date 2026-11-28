@@ -72,9 +72,11 @@ function fixtures() {
       if (name === 'runFieldApplyStandalone') return ['サンプル: フィールド1件の反映が完了'];
       if (name === 'runFieldApplyMultiStandalone') return { headline: `サンプル: ${args[0].targets.length} 件の反映先への反映が完了`, tone: 'ok', lines: args[0].targets.map(t => `成功\tApp ${t.appId}`), results: [] };
       if (name === 'runApplyJsConfigMultiStandalone') {
-        args[2]('<p>サンプル: 複数の反映先へのJS/CSS反映が完了</p>');
         const total = args[0].targets.length;
-        return { declined: false, cancelled: false, results: [], counts: { total, success: total, failed: 0, conflict: 0, notExecuted: 0 }, headline: `サンプル: ${total} 件の反映先への反映が完了`, tone: 'ok' };
+        const res = { declined: false, cancelled: false, results: [], counts: { total, success: total, failed: 0, conflict: 0, notExecuted: 0 }, headline: `サンプル: ${total} 件の反映先への反映が完了`, tone: 'ok' };
+        // 結果は結果のオブジェクトで渡す（画面が renderJsConfigMultiResult で要素にする）
+        args[2](res);
+        return res;
       }
       if (name === 'runProcessBatchZipStandalone') return {
         rows: args[0].apps.map(app => ({ appId: app.appId, guestId: app.guestId || '', appName: app.appName || '', outcome: 'enabled', stateCount: 2, actionCount: 1, warnings: [], reason: '', file: `diagrams/${app.appId}.mmd` })),
