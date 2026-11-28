@@ -165,10 +165,10 @@ async function main() {
           // 表面の操作は 3 つまで。残りは「ほかの操作…」のポップアップで選ぶ
           assert.equal(await stage(0).locator('input[type=radio]:visible').count(), 3, '設計書: 表面の操作は3つまで');
           const more = page.locator('.kus-wf-action--more');
-          assert.match(await more.innerText(), /ほかの操作…（8 件）/);
+          assert.match(await more.innerText(), /ほかの操作…（10 件）/);
           await more.click();
           assert.equal(await page.locator('#kus-design-lite-more-actions').isVisible(), true, '設計書: ほかの操作を開く');
-          assert.equal(await page.locator('#kus-design-lite-more-actions input[type=radio]:visible').count(), 8);
+          assert.equal(await page.locator('#kus-design-lite-more-actions input[type=radio]:visible').count(), 10);
           await page.getByRole('radio', { name: 'AI向けMarkdownをコピー', exact: true }).check();
           assert.equal(await page.locator('#kus-design-lite-more-actions').isVisible(), false, '設計書: 選ぶと閉じる');
           assert.equal(await more.getAttribute('aria-pressed'), 'true');
@@ -561,7 +561,16 @@ async function main() {
           const aiCopyCallsBefore = await page.evaluate(() => window.__workflowFixture.calls.length);
           await button('AI向けMarkdownをコピー').click(); await idle();
           assert.equal(await page.evaluate(() => window.__workflowFixture.calls.length), aiCopyCallsBefore + 1, '設計書: AI向けMarkdownコピーを実行する');
-          for (const [label, format] of [['全対象をMarkdown ZIPで保存', 'md'], ['全対象をAI向けMarkdown ZIPで保存', 'ai-md'], ['全対象をMarkdownとAI向けのZIPで保存', 'both']]) {
+          // HTML 設計書（1 行目のアプリ）
+          await button('対象・条件を変更').click();
+          await chooseAction('HTML設計書を保存');
+          await button('内容を確認する').click();
+          assert.match(await stage(1).innerText(), /出力形式\s*HTML（ブラウザで読む設計書）/, '設計書: HTML の確認画面');
+          await button('HTML設計書を保存').click(); await idle();
+          const htmlCall = await page.evaluate(() => window.__workflowFixture.calls.at(-1));
+          assert.equal(htmlCall.name, 'runDesignExportStandalone', '設計書: HTML設計書を保存を実行する');
+          assert.equal(htmlCall.input, 'html', '設計書: HTML 形式を渡す');
+          for (const [label, format] of [['全対象をMarkdown ZIPで保存', 'md'], ['全対象をAI向けMarkdown ZIPで保存', 'ai-md'], ['全対象をMarkdownとAI向けのZIPで保存', 'both'], ['全対象をHTML ZIPで保存', 'html']]) {
             await button('対象・条件を変更').click();
             await chooseAction(label);
             await button('内容を確認する').click();
