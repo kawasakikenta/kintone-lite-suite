@@ -344,6 +344,23 @@ export function getIssueSideLabel(side: string): string {
   return String(side || '-');
 }
 
+/** 権限エントリーの対象（ユーザー・組織・グループなど）を「コード (種別)」で示す。 */
+export function describeAclEntity(entity: any): string {
+  if (!entity || typeof entity !== 'object') return '';
+  const code = String(entity.code || '').trim();
+  const type = String(entity.type || '').trim();
+  if (!code) return type ? `(${type})` : '';
+  return type ? `${code} (${type})` : code;
+}
+
+/** 通知先（レコード条件通知・リマインダー通知の targets）を「通知先: コード (種別) 他N件」で示す。通知先が無ければ空文字。 */
+export function describeNotificationTargets(targets: any): string {
+  if (!Array.isArray(targets) || !targets.length) return '';
+  const first = describeAclEntity(targets[0]?.entity || targets[0]);
+  if (!first) return '';
+  return `通知先: ${first}${targets.length > 1 ? ` 他${targets.length - 1}件` : ''}`;
+}
+
 export function getPreviewStateLabel(preview: unknown): string {
   return preview ? 'プレビュー' : '本番';
 }

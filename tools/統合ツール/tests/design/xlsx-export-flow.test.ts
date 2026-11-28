@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readZip } from '../archive/zip-reader';
 import { clampCellText, getExporterDialogZIndex, readableErrorMessage, runAdvancedDesignExporter, runBatchDesignExportXlsxZip, toManifestTargets } from '../../src/tabs/design-xlsx';
+import { beginRun, endRun, isRunCancelledError, requestCancel } from '../../src/runControl';
 
 // 同梱の xlsx-js-style の代わりに、各テストが用意した記録用の偽物（globalThis.XLSX）を渡す。
 vi.mock('../../src/tabs/sheetLib', () => ({ loadSheetLib: async () => (globalThis as any).XLSX }));
@@ -339,6 +340,74 @@ describe('runBatchDesignExportXlsxZip の preview / preselectedSheets オプシ�
     expect(names.filter((name) => /^設計書_テスト\(app5\)_\d{8}_\d{6}\.xlsx$/.test(name))).toHaveLength(1);
     const manifest = JSON.parse(zipEntries['_manifest.json'].data.toString('utf8'));
     expect(manifest.successCount).toBe(1);
+  });
+});
+
+describe('runAdvancedDesignExporter の再試行', () => {
+  // kintone.api は失敗時に応答の JSON（code・message）で reject する。
+  const kintoneError = (code: string, message: string, extra: Record<string, unknown> = {}) => Object.assign(new Error(message), { code, ...extra });
+
+  async function runWith(responses: Record<string, any>) {
+    const env = installEnvironment(baseResponses(responses));
+    vi.useFakeTimers();
+    const promise = runAdvancedDesignExporter({ appId: '5', preselectedSheets: new Set(['summary']), returnWorkbook: true, suppressToast: true });
+    await vi.runAllTimersAsync();
+    const result: any = await promise;
+    vi.useRealTimers();
+    return { ...env, result };
+  }
+
+  it('権限が無い・アプリが無いなど、やり直しても変わらない失敗は再試行しない', async () => {
+    const { calls, result } = await runWith({
+      '/app/views.json': kintoneError('CB_NO02', '権限がありません。'),
+      '/app/reports.json': kintoneError('GAIA_AP01', '指定したアプリ（id: 5）が見つかりません。', { status: 404 })
+    });
+    expect(calls.filter((url) => url.endsWith('/app/views.json'))).toHaveLength(1);
+    expect(calls.filter((url) => url.endsWith('/app/reports.json'))).toHaveLength(1);
+    expect(result.failedAPIs.map((entry: any) => entry.name)).toEqual(expect.arrayContaining(['ビュー設定', 'グラフ設定']));
+  });
+
+  it('応答待ちの超過・通信失敗・混雑（429・5xx）は、差分比較・設定取得と同じく再試行する', async () => {
+    const failures: Record<string, any[]> = {
+      '/app/views.json': [kintoneError('TIMEOUT', '応答待ちが 120 秒を超えました（timeout）')],
+      '/app/reports.json': [kintoneError('', 'Too Many Requests', { status: 429 }), kintoneError('', 'Service Unavailable', { status: 503 })]
+    };
+    const env = installEnvironment(baseResponses());
+    const original = env.api.getMockImplementation()!;
+    env.api.mockImplementation(async (url: string, method: string, params: any) => {
+      const key = Object.keys(failures).find((suffix) => url.endsWith(suffix));
+      if (key && failures[key].length) { env.calls.push(url); throw failures[key].shift(); }
+      return original(url, method, params);
+    });
+    vi.useFakeTimers();
+    const promise = runAdvancedDesignExporter({ appId: '5', preselectedSheets: new Set(['summary']), returnWorkbook: true, suppressToast: true });
+    await vi.runAllTimersAsync();
+    const result: any = await promise;
+    vi.useRealTimers();
+    expect(env.calls.filter((url) => url.endsWith('/app/views.json'))).toHaveLength(2);
+    expect(env.calls.filter((url) => url.endsWith('/app/reports.json'))).toHaveLength(3);
+    expect(result.failedAPIs).toEqual([]);
+  });
+
+  it('再試行の待ち時間に「中止」すると、待ち終わるのを待たずに止める', async () => {
+    const env = installEnvironment(baseResponses({ '/app/views.json': kintoneError('', 'Service Unavailable', { status: 503 }) }));
+    const token = beginRun();
+    try {
+      vi.useFakeTimers();
+      const promise = runAdvancedDesignExporter({ appId: '5', preselectedSheets: new Set(['summary']), returnWorkbook: true, suppressToast: true });
+      let outcome = '';
+      promise.then(() => { outcome = 'resolved'; }, (error) => { outcome = isRunCancelledError(error) ? 'cancelled' : `error: ${error}`; });
+      // 1 回目の失敗の後の待ち時間（1 秒）の途中で中止する
+      await vi.advanceTimersByTimeAsync(10);
+      expect(env.calls.filter((url) => url.endsWith('/app/views.json'))).toHaveLength(1);
+      requestCancel(token);
+      await vi.advanceTimersByTimeAsync(50);
+      expect(outcome).toBe('cancelled');
+      expect(env.calls.filter((url) => url.endsWith('/app/views.json'))).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+      endRun(token);
+    }
   });
 });
 
