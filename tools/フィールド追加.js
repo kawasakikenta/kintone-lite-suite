@@ -3277,7 +3277,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     "TRUE",
     "FALSE"
   ]);
-  var FORMULA_TOKEN = /"(?:[^"\\]|\\.)*"|[\p{L}_][\p{L}\p{N}_]*/gu;
+  var FORMULA_TOKEN = /"(?:[^"\\]|\\.)*"|[\p{L}_・＄￥＿][\p{L}\p{N}_・＄￥＿]*/gu;
   function collectFormulaRefs(expression) {
     const refs = /* @__PURE__ */ new Set();
     const text = String(expression || "");
@@ -3617,7 +3617,7 @@ ${error?.message != null ? String(error.message) : String(error)}`);
   }
   function referencedFieldCodes(def) {
     const out = [];
-    if (def?.type === "CALC" && typeof def.expression === "string") out.push({ kind: "calc", codes: collectFormulaRefs(def.expression) });
+    if (typeof def?.expression === "string" && def.expression) out.push({ kind: "calc", codes: collectFormulaRefs(def.expression) });
     if (def?.lookup && Array.isArray(def.lookup.fieldMappings)) out.push({ kind: "lookup", codes: def.lookup.fieldMappings.map((item) => String(item?.field || "")).filter(Boolean) });
     const condition = def?.referenceTable?.condition?.field;
     if (typeof condition === "string" && condition) out.push({ kind: "reference", codes: [condition] });
@@ -4037,7 +4037,7 @@ ${logs.join("\n")}` : baseMessage;
     }
     const rewriteReferences = (def) => {
       let changed = false;
-      if (def.type === "CALC" && typeof def.expression === "string") {
+      if (typeof def.expression === "string" && def.expression) {
         const next = rewriteFormulaRefs(def.expression, codeMap);
         if (next !== def.expression) {
           def.expression = next;

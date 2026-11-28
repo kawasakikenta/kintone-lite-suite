@@ -122,6 +122,67 @@ describe('planBulkRename keeps references consistent with the new codes', () => 
   });
 });
 
+// kintone のフィールドコードには、文字・数字・「_」のほかに「・」（中黒）と全角の「＄」「￥」も使える。
+// 計算式の中のコードを途中で切ると、ありもしない「足りないコード」を警告し、一括整備では別のコードの一部を書き換えてしまう。
+describe('field codes with the symbols kintone allows (・ ＄ ￥ ＿)', () => {
+  it('reads a code with a middle dot or full-width symbols as one reference', () => {
+    expect(collectFormulaRefs('単価・税込 * 数量 + ＄送料 - ￥値引 + 予備＿金額')).toEqual(['単価・税込', '数量', '＄送料', '￥値引', '予備＿金額']);
+  });
+
+  it('rewrites the whole code, not the part after the middle dot', () => {
+    const map = new Map([['税込', 'dev_税込'], ['単価・税込', 'dev_単価・税込']]);
+    expect(rewriteFormulaRefs('単価・税込 + 税込', map)).toBe('dev_単価・税込 + dev_税込');
+  });
+
+  it('does not report a code with a middle dot as missing when the target has it', () => {
+    const cur = { '単価・税込': { type: 'NUMBER', code: '単価・税込' }, '数量': { type: 'NUMBER', code: '数量' } };
+    const p = plan({ total: calc('total', '単価・税込 * 数量') }, cur);
+    expect(findMissingFieldReferences(p, cur)).toEqual([]);
+  });
+
+  it('bulk rename keeps the formula pointing at the renamed fields', () => {
+    const props = {
+      '税込': { type: 'NUMBER', code: '税込' },
+      '単価・税込': { type: 'NUMBER', code: '単価・税込' },
+      total: calc('total', '単価・税込 + 税込')
+    };
+    const out = planBulkRename(props, 'dev_', false);
+    expect(out.properties.total.expression).toBe('dev_単価・税込 + dev_税込');
+    const p = planFieldApply(out.properties, props, {}, true);
+    expect(findMissingFieldReferences(p, props)).toEqual([]);
+  });
+});
+
+// 文字列（1行）の自動計算（expression）もフィールドを参照する。プレビュー反映（reflect/selectionPlan.ts）と同じく計算フィールドと同じに扱う。
+describe('auto-calculated single-line text (expression) is treated like a calculation field', () => {
+  const autoText = (code: string, expression: string) => text(code, { expression, hideExpression: false });
+
+  it('reports a missing field referred to by an auto-calculated text', () => {
+    const current = { amount: { type: 'NUMBER', code: 'amount' } };
+    const p = plan({ label: autoText('label', 'amount & shipping') }, current);
+    expect(findMissingFieldReferences(p, current)).toEqual([{ field: 'label', kind: 'calc', missing: ['shipping'] }]);
+  });
+
+  it('reports an existing auto-calculated text that refers to a field whose code the apply renames', () => {
+    const cur = { amount: { type: 'NUMBER', code: 'amount' }, label: autoText('label', 'amount & "円"') };
+    const p = plan({ amount: { type: 'NUMBER', code: 'dev_amount' } }, cur, true);
+    expect(findMissingFieldReferences(p, cur)).toEqual([{ field: 'label', kind: 'renamed', missing: ['amount'] }]);
+  });
+
+  it('bulk rename rewrites the expression of an auto-calculated text (also inside tables)', () => {
+    const props = {
+      amount: { type: 'NUMBER', code: 'amount' },
+      label: autoText('label', 'amount & "円"'),
+      items: { type: 'SUBTABLE', code: 'items', fields: { qty: { type: 'NUMBER', code: 'qty' }, note: autoText('note', 'qty & "個"') } }
+    };
+    const out = planBulkRename(props, 'dev_', false);
+    expect(out.properties.label.expression).toBe('dev_amount & "円"');
+    expect(out.properties.items.fields.note.expression).toBe('dev_qty & "個"');
+    const p = planFieldApply(out.properties, props, {}, true);
+    expect(findMissingFieldReferences(p, props)).toEqual([]);
+  });
+});
+
 describe('apply flow shows the warning but still lets the user decide', () => {
   beforeEach(() => {
     vi.clearAllMocks();
