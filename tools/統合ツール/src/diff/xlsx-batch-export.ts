@@ -8,6 +8,7 @@ import {
 } from '../archive/stored-zip.js';
 import { extractAppNameFromBundle, UNSAFE_FILENAME_CHARS } from '../utils.js';
 import { hasIncompleteActualDiffTruncation } from './engine.js';
+import { resolveDiffResultIdForExport } from './result-id.js';
 import {
   buildXlsxBlob,
   makeExcelCellTextVisible,
@@ -90,6 +91,8 @@ interface DiffXlsxBatchSummaryRow {
   counts: DiffXlsxBatchSummaryCounts | null;
   pairNameStatus: '一致' | '名称が異なります' | '名称未取得';
   filename: string;
+  /** 比較結果ID の先頭 12 桁（個別 Excel の比較概要と同じ値）。 */
+  resultIdShort: string;
 }
 
 export class DiffXlsxBatchExportError extends Error {
@@ -410,7 +413,8 @@ function successfulSummaryRow(
     coverageDetail: incomplete ? (customerIncompleteScopeSuffix(item.context) || '詳細は各Excelの「確認できなかった範囲」を確認') : '',
     counts,
     pairNameStatus: pairNameStatus(rawSourceName, rawTargetName),
-    filename
+    filename,
+    resultIdShort: resolveDiffResultIdForExport(item.context)?.short || ''
   };
 }
 
@@ -432,7 +436,8 @@ function failedSummaryRow(
     coverageDetail: `Excelを生成できませんでした\n原因: ${message}`,
     counts: null,
     pairNameStatus: pairNameStatus(rawSourceName, rawTargetName),
-    filename: ''
+    filename: '',
+    resultIdShort: ''
   };
 }
 
@@ -465,10 +470,10 @@ function summaryCoverageDetailStyle(
   return alternate ? 'zebra' : 'normal';
 }
 
-const BATCH_SUMMARY_COLUMN_COUNT = 13;
+const BATCH_SUMMARY_COLUMN_COUNT = 14;
 /** BATCH_SUMMARY_COLUMN_COUNT 列目の列記号。見出しの結合範囲に使う。 */
-const BATCH_SUMMARY_COLUMN_LAST = 'M';
-const BATCH_SUMMARY_COLUMN_WIDTHS = [7, 32, 32, 16, 13, 30, 10, 10, 10, 10, 14, 22, 44];
+const BATCH_SUMMARY_COLUMN_LAST = 'N';
+const BATCH_SUMMARY_COLUMN_WIDTHS = [7, 32, 32, 16, 13, 30, 10, 10, 10, 10, 14, 22, 44, 16];
 const BATCH_SUMMARY_DATA_ROW_HEIGHT = 32;
 const BATCH_SUMMARY_DATA_ROW_MAX_HEIGHT = 220;
 const BATCH_SUMMARY_DATA_LINE_HEIGHT = 17;
@@ -528,7 +533,7 @@ function buildBatchSummaryBlob(summaryRows: readonly DiffXlsxBatchSummaryRow[]):
     [buildBatchSummaryOverview(summaryRows), ...blank],
     [
       'No.', '比較元', '比較先', '結果', '取得状態', '未取得・打切りの範囲',
-      '合計', '追加', '削除', '変更', '並び順変更', 'アプリ名', 'Excelファイル'
+      '合計', '追加', '削除', '変更', '並び順変更', 'アプリ名', 'Excelファイル', '比較結果ID'
     ],
     ...summaryRows.map((row) => [
       row.sequence,
@@ -543,7 +548,8 @@ function buildBatchSummaryBlob(summaryRows: readonly DiffXlsxBatchSummaryRow[]):
       row.counts?.changed ?? '—',
       row.counts?.moved ?? '—',
       row.pairNameStatus,
-      row.filename || '—'
+      row.filename || '—',
+      row.resultIdShort || '—'
     ])
   ];
   const headerRowIndex = 2;
@@ -568,12 +574,14 @@ function buildBatchSummaryBlob(summaryRows: readonly DiffXlsxBatchSummaryRow[]):
       neutralCenterStyle,
       neutralCenterStyle,
       summaryPairNameStyle(summary.pairNameStatus),
+      neutralStyle,
       neutralStyle
     ];
     if (!summary.counts) {
       for (let column = 6; column <= 10; column += 1) cellStyles[index][column] = 'diffAbsent';
     }
     if (!summary.filename) cellStyles[index][12] = 'diffAbsent';
+    if (!summary.resultIdShort) cellStyles[index][13] = 'diffAbsent';
   }
   return buildXlsxBlob([{
     name: '一括比較結果',

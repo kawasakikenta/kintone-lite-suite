@@ -2,7 +2,7 @@
 
 import { installWorkflowNavigation } from './liteWorkflow.js';
 
-import { DEFAULT_APP_ID, DEFAULT_GUEST_ID, DIFF_NORMALIZATION_PRESETS, SECTION_DEFS } from '../constants.js';
+import { DEFAULT_APP_ID, DEFAULT_GUEST_ID, DIFF_NORMALIZATION_PRESETS, SECTION_DEFS, reprintSectionKeys } from '../constants.js';
 import {
   buildDiffComparisonProfile,
   parseDiffComparisonProfile,
@@ -56,6 +56,7 @@ import {
 } from '../diff/multi-targets.js';
 import { readSettingsBundleFile } from '../settingsBundleImport.js';
 import { stripComparisonScratchForRetention } from '../diff/retention.js';
+import { DIFF_RESULT_ID_LABEL, DIFF_RESULT_ID_MATCH_NOTE, diffResultIdOf } from '../diff/result-id.js';
 import { isCancelRequested, isRunCancelledError, RunCancelledError } from '../runControl.js';
 import { needsAppReferenceParse, parseAppReference } from '../reflect/appReference.js';
 import {
@@ -255,6 +256,12 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-alert{margin:0 12px 10px;padding:8px 10px;border:1px solid #fdba74;border-radius:7px;background:#fff7ed;color:#9a3412;font:600 12.5px/1.55 -apple-system,Segoe UI,sans-serif}
 .kus-dl-legend{margin:14px 12px 0;padding:11px 2px 13px;border-top:1px solid #e2e8f0;color:#475569;font:13px/1.7 -apple-system,Segoe UI,sans-serif}
 .kus-dl-legend span{display:block}
+.kus-dl-result-id{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;margin:0 12px 12px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;color:#334155;font:12.5px/1.6 -apple-system,Segoe UI,sans-serif}
+.kus-dl-result-id__label{font-weight:700;color:#0f172a}
+.kus-dl-result-id code{font:700 12.5px/1.5 ui-monospace,Menlo,monospace;color:#0f172a}
+.kus-dl-result-id__full{flex:1 1 100%;min-width:0;color:#475569;overflow-wrap:anywhere;word-break:break-all}
+.kus-dl-result-id__full code{font-weight:400;user-select:all}
+.kus-dl-result-id__note{flex:1 1 100%;color:#475569}
 .kus-dl-overview__actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin:0 12px 14px;padding:0 2px}
 .kus-dl-overview__actions-note{flex:1 1 220px;min-width:0;color:#475569;font:12.5px/1.6 -apple-system,Segoe UI,sans-serif}
 .kus-dl-result__summary{margin:0 2px 7px;font-family:-apple-system,Segoe UI,sans-serif;font-size:12.5px;color:#64748b;display:flex;flex-wrap:wrap;gap:6px 12px}
@@ -844,6 +851,8 @@ export function buildLiteDiffHtmlContext(
   return {
     ...cache,
     rows,
+    allRows: cache.rows,
+    resultId: diffResultIdOf(cache),
     exportMode,
     exportLabel,
     exportContentMode: safeContentMode,
@@ -862,6 +871,8 @@ export function buildLiteDiffXlsxContext(
   return {
     audience: options?.audience === 'internal' ? 'internal' : 'customer',
     rows,
+    allRows: cache.rows,
+    resultId: diffResultIdOf(cache),
     fetchIssues: cache.fetchIssues || [],
     partialIssues: cache.partialIssues || [],
     truncation: cache.truncation || null,
@@ -890,6 +901,7 @@ export function buildLiteDiffMarkdownContext(
   return {
     rows,
     allRows: cache.rows,
+    resultId: diffResultIdOf(cache),
     fetchIssues: cache.fetchIssues || [],
     partialIssues: cache.partialIssues || [],
     truncation: cache.truncation || null,
@@ -1530,7 +1542,19 @@ export function buildLiteDiffSummaryText(cache: DiffCache): string {
   if (sections.length) lines.push(`セクション別: ${sections.map((section) => `${section.label} ${section.countLabel}`).join('、')}`);
   liteDiffAlertMessages(cache).forEach((message) => lines.push(`注意: ${message}`));
   lines.push(`比較条件: ${conditions.ignore} ${conditions.normalization}`);
+  const resultId = diffResultIdOf(cache);
+  lines.push(`${DIFF_RESULT_ID_LABEL}: ${resultId.short}（完全な値: ${resultId.full}）`);
   return `${lines.join('\n')}\n`;
+}
+
+/** 概要の「比較結果ID」。短い表示と完全な値を出す（同じ比較から保存した HTML・Excel・Markdown と同じ値）。 */
+function renderLiteDiffResultIdHtml(cache: DiffCache): string {
+  const resultId = diffResultIdOf(cache);
+  return `<div class="kus-dl-result-id" role="note" data-kus-dl-result-id="${esc(resultId.full)}">` +
+    `<span class="kus-dl-result-id__label">${esc(DIFF_RESULT_ID_LABEL)}</span>` +
+    `<code class="kus-dl-result-id__short">${esc(resultId.short)}</code>` +
+    `<span class="kus-dl-result-id__full">完全な値: <code>${esc(resultId.full)}</code></span>` +
+    `<span class="kus-dl-result-id__note">${esc(DIFF_RESULT_ID_MATCH_NOTE)}</span></div>`;
 }
 
 export function renderLiteDiffOverviewHtml(cache: DiffCache, options: { announce?: boolean } = {}): string {
@@ -1570,9 +1594,10 @@ export function renderLiteDiffOverviewHtml(cache: DiffCache, options: { announce
     matchingNoticesHtml = `<div class="kus-dl-alert" role="note"><strong>対応付けの注意 ${totalNoticeCount}件</strong>${noticeLines}${omittedLine}</div>`;
   }
 
-  // 旧フォーム設定は、フィールド設定・レイアウト設定の再掲。件数には含めるが、Excel の変更一覧には含めない。
+  // 旧フォーム設定は、フィールド設定・レイアウト設定と一緒に比較したときは再掲。件数には含めるが、Excel の変更一覧には含めない
+  // （再掲の判定は Excel・差分の上限の別枠と同じ。どちらかを比較していなければ再掲ではなく、Excel も変更一覧に載せる）。
   const formReprintCount = (sections.find((section) => section.key === 'formSettings')?.rows || []).filter((row) => !row._displayOnly && row.type !== 'same').length;
-  const comparedWithOrigin = (cache.scopes || []).some((key) => key === 'fieldSettings' || key === 'layoutSettings');
+  const comparedWithOrigin = reprintSectionKeys(cache.scopes || []).has('formSettings');
   const formReprintNote = formReprintCount > 0 && comparedWithOrigin
     ? `<span>フォーム設定の ${formReprintCount} 件は、フィールド設定・レイアウト設定の変更の再掲です（Excelの変更一覧には含めません）。</span>`
     : '';
@@ -1594,6 +1619,7 @@ export function renderLiteDiffOverviewHtml(cache: DiffCache, options: { announce
     matchingNoticesHtml +
     `<div class="kus-dl-alert kus-dl-conditions" role="note"><strong>適用した比較条件</strong><span>${esc(ignoreCondition)} ${esc(normalizationCondition)}</span></div>` +
     `<div class="kus-dl-legend"><span>「比較先のみ」は追加、「比較元のみ」は削除として検出しています。</span><span>比較方向は上の矢印で確認できます。</span>${formReprintNote}</div>` +
+    renderLiteDiffResultIdHtml(cache) +
     `<div class="kus-dl-overview__actions"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-copy-summary>結果の要約をコピー</button>` +
     `<span class="kus-dl-overview__actions-note">比較方向・件数・セクション別の件数・注意を数行の文でコピーします（設定の値は含めません）。</span></div></section>`;
 }

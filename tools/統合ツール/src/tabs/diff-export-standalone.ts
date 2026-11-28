@@ -30,7 +30,10 @@ function diffPairLabel(sourceBundle: any, targetBundle: any): string {
  *   ignoreKeys: string,
  *   normalizationPresetState: object,
  *   exportContentMode?: 'diffOnly'|'withCompared',
- *   exportContentLabel?: string
+ *   exportContentLabel?: string,
+ *   truncation?: object|null,
+ *   resultId?: { full: string, short: string, version: number }|null,
+ *   allRows?: object[]
  * }} ctx
  */
 export function buildDiffHtmlStandaloneExport(ctx) {
@@ -53,7 +56,10 @@ export function buildDiffHtmlStandaloneExport(ctx) {
     exportContentLabel,
     normalizationState: ctx.normalizationPresetState || ({} as any),
     warning: warningInfoLite(rows, fetchIssues, partialIssues),
-    truncation: ctx.truncation || null
+    truncation: ctx.truncation || null,
+    // 比較結果ID（全件の比較結果のもの）。絞り込んだ出力でも同じ値を載せる。
+    resultId: ctx.resultId || null,
+    allRows: ctx.allRows
   });
   const filename = buildExportFilename('差分', 'html', { appLabel: diffPairLabel(ctx.sourceBundle, ctx.targetBundle) });
   return { filename, html };
