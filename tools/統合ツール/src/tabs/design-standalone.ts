@@ -8,6 +8,7 @@ import { loadJSZipLite } from '../jszipLoader.js';
 import { pickSettingsBundle } from '../settingsBundleImport.js';
 import { bundleToMarkdown } from '../diff/export.js';
 import { buildDesignAiMarkdown } from '../design/ai-markdown.js';
+import { BATCH_DESIGN_OVERVIEW_HEADERS, buildBatchDesignHtmlOverview, buildDesignHtml, type BatchDesignOverviewModel } from '../design/html.js';
 import { buildDesignSnapshot } from '../design/snapshot.js';
 import { stripSensitiveSupplements } from '../design/sanitize.js';
 import { runAdvancedDesignExporter, runBatchDesignExportXlsxZip, type BatchDesignExportInfo, type DesignExporterCompletionSummary } from './design-xlsx.js';
@@ -270,8 +271,14 @@ async function designMarkdownWithReferenceNames(bundle: any, source: DesignSourc
   return designMarkdownOf(bundle, { appNames });
 }
 
+/** 単一出力の設計書 HTML。参照先アプリの名前は Markdown と同じ（設定JSONから作るときは読み込んだJSONの名前だけ）。 */
+async function designHtmlWithReferenceNames(bundle: any, source: DesignSourceInput | undefined): Promise<string> {
+  const appNames = await resolveReferencedAppNames(bundle, { known: source?.appNameLookup, live: !source?.importedBundle, guestId: String(source?.guestId || '') });
+  return buildDesignHtml(bundle, { appNames, source: source?.importedBundle ? 'settings-json' : 'kintone' });
+}
+
 /**
- * @param {'md'|'json'|'ai-md'} kind
+ * @param {'md'|'json'|'ai-md'|'html'} kind
  * @param {{ appId: string, guestId: string, preview: boolean }} source
  * @param {(msg: string, err?: boolean) => void} setStatus
  */
@@ -289,7 +296,8 @@ export function designJsonSensitiveNotice(bundle: any): string {
 }
 
 export async function runDesignExportStandalone(kind, source, setStatus) {
-  if (kind !== 'md' && kind !== 'json' && kind !== 'ai-md') throw new Error('設計書の出力形式は md、json または ai-md を指定してください');
+  if (kind !== 'md' && kind !== 'json' && kind !== 'ai-md' && kind !== 'html') throw new Error('設計書の出力形式は md、json、ai-md または html を指定してください');
+  // HTML は Markdown と同じく、JS/CSS 本文とプラグインの設定値を取得しない（載せないため）
   const bundle = await resolveDesignBundle(source, 'source', setStatus, '', kind === 'ai-md', kind === 'json');
   state.lastSourceBundle = bundle;
 
@@ -298,6 +306,8 @@ export async function runDesignExportStandalone(kind, source, setStatus) {
   const sensitiveNotice = kind === 'json' ? designJsonSensitiveNotice(bundle) : '';
   if (kind === 'json') {
     downloadText(buildExportFilename('設計書', 'json', { appLabel }), JSON.stringify(bundle, null, 2), 'application/json');
+  } else if (kind === 'html') {
+    downloadText(buildExportFilename('設計書', 'html', { appLabel }), await designHtmlWithReferenceNames(bundle, source), 'text/html');
   } else {
     const baseLabel = kind === 'ai-md' ? '設計書_AI向けMarkdown' : '設計書';
     const markdown = kind === 'ai-md' ? buildDesignAiMarkdown(bundle) : await designMarkdownWithReferenceNames(bundle, source);
@@ -306,7 +316,8 @@ export async function runDesignExportStandalone(kind, source, setStatus) {
   // 取得失敗の警告は完了メッセージで上書きされないよう、エラー色のまま残す
   const note = failedSectionNote(failedSectionLabels(bundle));
   const completionNote = designBundleCompletionNote(bundle);
-  setStatus(`${kind === 'ai-md' ? 'AI向けMarkdown' : '設計書'}出力完了（App ${bundle.appId}）${note ? `。${note}` : ''}${completionNote}${kind === 'ai-md' ? designBundleSourceNote(bundle) : ''}${sensitiveNotice ? `。${sensitiveNotice}` : ''}`, !!note || !!completionNote);
+  const done = kind === 'html' ? `HTML設計書を保存しました（App ${bundle.appId}）` : `${kind === 'ai-md' ? 'AI向けMarkdown' : '設計書'}出力完了（App ${bundle.appId}）`;
+  setStatus(`${done}${note ? `。${note}` : ''}${completionNote}${kind === 'ai-md' ? designBundleSourceNote(bundle) : ''}${sensitiveNotice ? `。${sensitiveNotice}` : ''}`, !!note || !!completionNote);
 }
 
 /**
@@ -470,7 +481,8 @@ export async function runBatchDesignExportXlsxZipStandalone(
   setStatus(`設計書ZIP出力完了（${apps.length}件）`);
 }
 
-export type BatchDesignMdExportFormat = 'md' | 'ai-md' | 'both';
+/** 一括出力（ZIP）の形式。html は設計書 HTML と overview.html。 */
+export type BatchDesignMdExportFormat = 'md' | 'ai-md' | 'both' | 'html';
 
 export interface BatchDesignMdManifestItem {
   appId: string;
@@ -482,6 +494,7 @@ export interface BatchDesignMdManifestItem {
   files: string[];
   mdFile?: string;
   aiMdFile?: string;
+  htmlFile?: string;
   complete: boolean;
   missingSections: string[];
   failedSections: string[];
@@ -541,7 +554,8 @@ function firstErrorLine(error: unknown): string {
   return raw.split(/\r?\n/)[0].trim() || '不明なエラー';
 }
 
-function buildBatchDesignMdOverview(input: {
+/** 一括出力のサマリ（overview.md・overview.html）の中身。Markdown と HTML で同じ内容にする。 */
+function batchDesignOverviewModel(input: {
   generatedAt: string;
   format: BatchDesignMdExportFormat;
   preview: boolean;
@@ -549,56 +563,88 @@ function buildBatchDesignMdOverview(input: {
   cancelled: boolean;
   items: BatchDesignMdManifestItem[];
   failedApps: BatchDesignMdFailedApp[];
-}): string {
+}): BatchDesignOverviewModel {
   const notRunApps = input.failedApps.filter((f) => /未実行（中止）/.test(f.error));
   const actualFailedApps = input.failedApps.filter((f) => !/未実行（中止）/.test(f.error));
   const formatLabel = input.format === 'ai-md'
     ? 'AI向けMarkdown (ai-md)'
     : input.format === 'both'
       ? '設計書Markdown + AI向けMarkdown (both)'
-      : '設計書Markdown (md)';
+      : input.format === 'html'
+        ? '設計書HTML (html)'
+        : '設計書Markdown (md)';
+  const notes: string[] = [];
+  if (input.cancelled) notes.push('利用者の操作で中止したため、未実行のアプリは含まれていません。');
+  if (actualFailedApps.length) notes.push('取得に失敗したアプリがあります。下の表のエラー内容を確認してください。');
+  const rows: BatchDesignOverviewModel['rows'] = [];
+  for (const item of input.items) {
+    const remarks: string[] = [];
+    if (item.missingSections.length) remarks.push(`未取得: ${item.missingSections.join(', ')}`);
+    if (item.failedSections.length) remarks.push(`取得失敗: ${item.failedSections.join(', ')}`);
+    if (item.partialSections.length) remarks.push(`部分取得: ${item.partialSections.join(', ')}`);
+    rows.push({
+      appId: item.appId,
+      appName: item.appName,
+      guest: item.guestId || '(通常空間)',
+      source: item.source === 'settings-json' ? '設定JSON' : 'API',
+      status: item.complete ? '成功' : '一部未取得・失敗あり',
+      ok: true,
+      files: item.files,
+      remarks: remarks.join(' / ')
+    });
+  }
+  for (const failed of input.failedApps) {
+    const isNotRun = /未実行（中止）/.test(failed.error);
+    rows.push({
+      appId: failed.appId,
+      appName: '',
+      guest: failed.guestId || '(通常空間)',
+      source: '-',
+      status: isNotRun ? '未実行（中止）' : '失敗',
+      ok: false,
+      files: [],
+      remarks: failed.error
+    });
+  }
+  return {
+    facts: [
+      ['生成日時', input.generatedAt],
+      ['出力形式', formatLabel],
+      ['参照環境', input.preview ? 'プレビュー' : '本番'],
+      ['対象アプリ数', `${input.total}件（成功 ${input.items.length} / 失敗 ${actualFailedApps.length}${notRunApps.length ? ` / 未実行（中止） ${notRunApps.length}` : ''}）`]
+    ],
+    notes,
+    rows
+  };
+}
+
+function buildBatchDesignMdOverview(model: BatchDesignOverviewModel): string {
   const lines: string[] = [
     '# kintone 設計書 Markdown 一括出力サマリ',
     '',
-    `- 生成日時: ${input.generatedAt}`,
-    `- 出力形式: ${formatLabel}`,
-    `- 参照環境: ${input.preview ? 'プレビュー' : '本番'}`,
-    `- 対象アプリ数: ${input.total}件（成功 ${input.items.length} / 失敗 ${actualFailedApps.length}${notRunApps.length ? ` / 未実行（中止） ${notRunApps.length}` : ''}）`
+    ...model.facts.map(([label, value]) => `- ${label}: ${value}`),
+    ...model.notes.map((note) => `- 注意: ${note}`)
   ];
-  if (input.cancelled) {
-    lines.push('- 注意: 利用者の操作で中止したため、未実行のアプリは含まれていません。');
-  }
-  if (actualFailedApps.length) {
-    lines.push('- 注意: 取得に失敗したアプリがあります。下の表のエラー内容を確認してください。');
-  }
   lines.push(
     '',
     '## アプリ一覧',
     '',
-    '| アプリID | アプリ名 | ゲストスペース | 取得元 | 状態 | 出力ファイル | 備考・エラー |',
-    '| --- | --- | --- | --- | --- | --- | --- |'
+    `| ${BATCH_DESIGN_OVERVIEW_HEADERS.join(' | ')} |`,
+    `| ${BATCH_DESIGN_OVERVIEW_HEADERS.map(() => '---').join(' | ')} |`
   );
-  for (const item of input.items) {
-    const notes: string[] = [];
-    if (item.missingSections.length) notes.push(`未取得: ${item.missingSections.join(', ')}`);
-    if (item.failedSections.length) notes.push(`取得失敗: ${item.failedSections.join(', ')}`);
-    if (item.partialSections.length) notes.push(`部分取得: ${item.partialSections.join(', ')}`);
-    lines.push(
-      `| ${escapeOverviewCell(item.appId)} | ${escapeOverviewCell(item.appName)} | ${escapeOverviewCell(item.guestId || '(通常空間)')} | ${item.source === 'settings-json' ? '設定JSON' : 'API'} | ${item.complete ? '成功' : '一部未取得・失敗あり'} | ${escapeOverviewCell(item.files.join(', '))} | ${escapeOverviewCell(notes.join(' / '))} |`
-    );
-  }
-  for (const failed of input.failedApps) {
-    const isNotRun = /未実行（中止）/.test(failed.error);
-    lines.push(
-      `| ${escapeOverviewCell(failed.appId)} |  | ${escapeOverviewCell(failed.guestId || '(通常空間)')} | - | ${isNotRun ? '未実行（中止）' : '失敗'} |  | ${escapeOverviewCell(failed.error)} |`
-    );
+  for (const row of model.rows) {
+    const cells = row.ok
+      ? [escapeOverviewCell(row.appId), escapeOverviewCell(row.appName), escapeOverviewCell(row.guest), row.source, row.status, escapeOverviewCell(row.files.join(', ')), escapeOverviewCell(row.remarks)]
+      : [escapeOverviewCell(row.appId), '', escapeOverviewCell(row.guest), row.source, row.status, '', escapeOverviewCell(row.remarks)];
+    lines.push(`| ${cells.join(' | ')} |`);
   }
   lines.push('');
   return lines.join('\n');
 }
 
 /**
- * 複数アプリの設計書 Markdown / AI向けMarkdown を一括生成し、overview.md と _manifest.json を同梱した ZIP として保存する。
+ * 複数アプリの設計書 Markdown / AI向けMarkdown / HTML を一括生成し、サマリ（overview.md。HTML では overview.html）と
+ * _manifest.json を同梱した ZIP として保存する。
  */
 export async function runBatchDesignExportMdZipStandalone(
   source: {
@@ -613,10 +659,14 @@ export async function runBatchDesignExportMdZipStandalone(
   setStatus: (msg: string, err?: boolean) => void
 ): Promise<BatchDesignMdZipResult> {
   const format: BatchDesignMdExportFormat = (source?.format ?? 'md') as BatchDesignMdExportFormat;
-  if (format !== 'md' && format !== 'ai-md' && format !== 'both') {
-    throw new Error('一括Markdown出力の形式は md、ai-md または both を指定してください');
+  if (format !== 'md' && format !== 'ai-md' && format !== 'both' && format !== 'html') {
+    throw new Error('一括出力の形式は md、ai-md、both または html を指定してください');
   }
   const preview = !!source?.preview;
+  const isHtml = format === 'html';
+  // 完了メッセージ・ZIP の中のサマリの名前（Markdown の ZIP は今までどおり）
+  const zipLabel = isHtml ? '設計書HTML ZIP' : '設計書Markdown ZIP';
+  const overviewName = isHtml ? 'overview.html' : 'overview.md';
 
   let rawApps: Array<{ appId: string; guestId: string; bundle: any }>;
   if (Array.isArray(source?.apps)) {
@@ -663,11 +713,11 @@ export async function runBatchDesignExportMdZipStandalone(
   const referencedAppNameCache = new Map<string, string | null>();
 
   const importedCount = targets.filter((t) => t.bundle).length;
-  setStatus(`設計書Markdown ZIP出力を開始（${targets.length}件${importedCount ? ` / うち設定JSON ${importedCount}件` : ''}）...`);
+  setStatus(`${zipLabel}出力を開始（${targets.length}件${importedCount ? ` / うち設定JSON ${importedCount}件` : ''}）...`);
 
   const JSZipCtor = await loadJSZipLite();
   const zip = new JSZipCtor();
-  const usedFilenames = new Set<string>(['overview.md', '_manifest.json']);
+  const usedFilenames = new Set<string>([overviewName, '_manifest.json']);
   const items: BatchDesignMdManifestItem[] = [];
   const failedApps: BatchDesignMdFailedApp[] = [];
   const scopes = SECTION_DEFS.map((s) => s.key);
@@ -683,7 +733,8 @@ export async function runBatchDesignExportMdZipStandalone(
     try {
       let mdBundle: any = null;
       let aiBundle: any = null;
-      if (format === 'md') {
+      if (format === 'md' || format === 'html') {
+        // HTML は Markdown と同じ取得（JS/CSS 本文とプラグインの設定値は取得しない）
         mdBundle = await resolveDesignBundle(
           { appId: target.appId, guestId: target.guestId, preview, importedBundle: target.bundle },
           'source',
@@ -753,7 +804,14 @@ export async function runBatchDesignExportMdZipStandalone(
       const files: string[] = [];
       let mdFile: string | undefined;
       let aiMdFile: string | undefined;
+      let htmlFile: string | undefined;
 
+      if (format === 'html') {
+        htmlFile = uniqueMdZipEntryName(usedFilenames, `${guestPrefix}設計書_${appLabel}.html`);
+        const appNames = await resolveReferencedAppNames(mdBundle, { known: knownAppNames, live: !target.bundle, guestId: target.guestId, cache: referencedAppNameCache });
+        zip.file(htmlFile, buildDesignHtml(mdBundle, { appNames, source: target.bundle ? 'settings-json' : 'kintone' }));
+        files.push(htmlFile);
+      }
       if (format === 'md' || format === 'both') {
         mdFile = uniqueMdZipEntryName(usedFilenames, `${guestPrefix}設計書_${appLabel}.md`);
         const appNames = await resolveReferencedAppNames(mdBundle, { known: knownAppNames, live: !target.bundle, guestId: target.guestId, cache: referencedAppNameCache });
@@ -783,6 +841,7 @@ export async function runBatchDesignExportMdZipStandalone(
         files,
         ...(mdFile ? { mdFile } : {}),
         ...(aiMdFile ? { aiMdFile } : {}),
+        ...(htmlFile ? { htmlFile } : {}),
         complete,
         missingSections,
         failedSections,
@@ -816,18 +875,18 @@ export async function runBatchDesignExportMdZipStandalone(
   if (successCount === 0 && cancelled) {
     const priorFailures = failedApps.filter((f) => !/未実行（中止）/.test(f.error));
     throw createCancelReport(0, targets.length, [
-      '設計書Markdown ZIPは保存していません。',
+      `${zipLabel}は保存していません。`,
       ...priorFailures.map((f) => `App ${f.appId}: 中止前に失敗（${f.error}）`)
     ]);
   }
   if (successCount === 0) {
     const detail = failedApps.map((f) => `- App ${f.appId}: ${f.error}`).join('\n');
-    throw new Error(`設計書Markdown ZIPの生成に失敗しました\n${detail}`);
+    throw new Error(`${zipLabel}の生成に失敗しました\n${detail}`);
   }
 
   const generatedAt = new Date().toISOString();
   const guestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];
-  const overviewMd = buildBatchDesignMdOverview({
+  const overviewModel = batchDesignOverviewModel({
     generatedAt,
     format,
     preview,
@@ -851,16 +910,18 @@ export async function runBatchDesignExportMdZipStandalone(
     failedApps
   };
 
-  zip.file('overview.md', overviewMd);
+  zip.file(overviewName, isHtml ? buildBatchDesignHtmlOverview(overviewModel) : buildBatchDesignMdOverview(overviewModel));
   zip.file('_manifest.json', JSON.stringify(manifestPayload, null, 2));
 
-  setStatus('設計書Markdown ZIPファイルを生成中...');
+  setStatus(`${zipLabel}ファイルを生成中...`);
   const blob = await zip.generateAsync({ type: 'blob' });
   const baseLabel = format === 'ai-md'
     ? '設計書_AI向けMarkdown一括'
     : format === 'both'
       ? '設計書_Markdown一括(通常+AI)'
-      : '設計書_Markdown一括';
+      : isHtml
+        ? '設計書_HTML一括'
+        : '設計書_Markdown一括';
   const zipName = buildExportFilename(baseLabel, 'zip', {
     appLabel: `${successCount}件`,
     suffix: preview ? 'プレビュー' : ''
@@ -871,7 +932,7 @@ export async function runBatchDesignExportMdZipStandalone(
     const notRun = failedApps.filter((f) => /未実行（中止）/.test(f.error));
     const failed = failedApps.filter((f) => !/未実行（中止）/.test(f.error));
     throw createCancelReport(successCount, targets.length, [
-      `生成できた ${successCount} アプリ分の設計書Markdown ZIPを保存しました（詳細は ZIP 内の overview.md / _manifest.json）。`,
+      `生成できた ${successCount} アプリ分の${zipLabel}を保存しました（詳細は ZIP 内の ${overviewName} / _manifest.json）。`,
       ...failed.map((f) => `失敗 App ${f.appId}: ${f.error}`),
       ...(notRun.length ? [`未実行（中止）: ${notRun.map((f) => `App ${f.appId}`).join(', ')}`] : [])
     ]);
@@ -887,9 +948,9 @@ export async function runBatchDesignExportMdZipStandalone(
     if (incompleteApps.length > 0) {
       parts.push(`一部セクション未取得・失敗あり ${incompleteApps.length}件`);
     }
-    setStatus(`設計書Markdown ZIPを保存しました。${parts.join('。')}。詳細は ZIP 内の overview.md / _manifest.json を確認してください`, true);
+    setStatus(`${zipLabel}を保存しました。${parts.join('。')}。詳細は ZIP 内の ${overviewName} / _manifest.json を確認してください`, true);
   } else {
-    setStatus(`設計書Markdown ZIP出力完了（${successCount}件）`);
+    setStatus(isHtml ? `${zipLabel}を保存しました（${successCount}件）` : `${zipLabel}出力完了（${successCount}件）`);
   }
 
   return {

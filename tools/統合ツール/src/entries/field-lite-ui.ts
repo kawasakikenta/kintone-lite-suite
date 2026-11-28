@@ -47,10 +47,10 @@ export function mountFieldLitePanel() {
   });
 
   // ---- アプリ ----
-  const srcApp = makeInput({ placeholder: 'アプリID', value: DEFAULT_APP_ID || '', width: 'id' });
-  const srcGuest = makeInput({ placeholder: 'ゲストID (任意)', value: DEFAULT_GUEST_ID, width: 'guest' });
-  const tgtApp = makeInput({ placeholder: 'アプリID', width: 'id' });
-  const tgtGuest = makeInput({ placeholder: 'ゲストID (任意)', width: 'guest' });
+  const srcApp = makeInput({ placeholder: 'アプリID', value: DEFAULT_APP_ID || '', width: 'id', idInput: true });
+  const srcGuest = makeInput({ placeholder: 'ゲストID (任意)', value: DEFAULT_GUEST_ID, width: 'guest', idInput: true });
+  const tgtApp = makeInput({ placeholder: 'アプリID', width: 'id', idInput: true });
+  const tgtGuest = makeInput({ placeholder: 'ゲストID (任意)', width: 'guest', idInput: true });
 
   // まとめて反映する反映先（アプリごとにゲストスペースを変えられる表）。単一の反映先とは別に指定する。
   const multiCount = document.createElement('span');

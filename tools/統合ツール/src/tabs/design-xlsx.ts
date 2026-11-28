@@ -1,7 +1,7 @@
 'use strict';
 
 import { TOOL_ID, SECTION_DEFS } from '../constants.js';
-import { buildDesignSnapshot } from '../design/snapshot.js';
+import { buildDesignSnapshot, designSnapshotStatusLabel } from '../design/snapshot.js';
 import { getToolDocument } from '../ui/dialog.js';
 import { showToast, stripHtmlToText, extractAppNameFromBundle, flattenCategories, UNSAFE_FILENAME_CHARS } from '../utils.js';
 import { isCancelRequested, isRunCancelledError, raceWithCancel, requestCancel, RUN_CANCELLED_MESSAGE, sleepUnlessCancelled, throwIfCancelled } from '../runControl.js';
@@ -1156,13 +1156,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     const snapshotSectionMap = new Map(designSnapshot.sections.map((row) => [row.key, row]));
     const snapshotCounts = designSnapshot.counts || ({} as any);
     const displayCount = (value: any): string => value == null ? '未取得' : String(value);
-    const statusLabel = (value: any): string => ({
-      available: '取得済み',
-      empty: '空（0件）',
-      missing: '未取得',
-      'fetch-error': '取得失敗',
-      partial: '部分取得'
-    } as any)[value] || '未取得';
+    const statusLabel = designSnapshotStatusLabel;
     const hasFailedAPI = (name: string): boolean => UI.failedAPIs.some((entry: any) => entry?.name === name);
     const sectionRow = (key: string): any => snapshotSectionMap.get(key) || {
       key,

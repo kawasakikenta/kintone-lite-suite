@@ -37,7 +37,7 @@ function exportImageMeta(){
   const shown=ids.slice(0,5).join(", ")+(ids.length>5?" ほか"+(ids.length-5)+"件":"");
   return [
     "起点: "+(shown||"-"),
-    (ER_OPTIONS.sourceGuestId?("ゲスト "+ER_OPTIONS.sourceGuestId):"通常空間")+" / "+(ER_OPTIONS.sourcePreview?"プレビュー":"本番"),
+    (ER_OPTIONS.sourceLabel?ER_OPTIONS.sourceLabel+" / ":"")+(ER_OPTIONS.sourceGuestId?("ゲスト "+ER_OPTIONS.sourceGuestId):"通常空間")+" / "+(ER_OPTIONS.sourcePreview?"プレビュー":"本番"),
     "表示: "+scopeDescription(),
     "出力: "+new Date().toLocaleString("ja-JP")
   ].join("  |  ");
@@ -343,6 +343,7 @@ const exportRelationLabel=rel=>{
 function exportProvenanceEntries(){
   return [
     ["生成日時",new Date().toLocaleString("ja-JP")],
+    ...(ER_OPTIONS.sourceLabel?[["取得元",ER_OPTIONS.sourceLabel]]:[]),
     ["起点アプリ",(ER_OPTIONS.startAppIds||[]).join(", ")||"-"],
     ["探索深さ",ER_OPTIONS.maxDepth?String(ER_OPTIONS.maxDepth):"無制限"],
     ["逆引き探索",ER_OPTIONS.includeReverseLookup?"ON":"OFF"],
@@ -683,6 +684,7 @@ function showMarkdown(){
   lines.push("# kintone ER図 仕様書");
   lines.push("");
   lines.push("- 生成日時: " + new Date().toLocaleString("ja-JP"));
+  if(ER_OPTIONS.sourceLabel) lines.push("- 取得元: " + ER_OPTIONS.sourceLabel);
   lines.push("- 起点アプリ: " + ((ER_OPTIONS.startAppIds||[]).join(", ") || "-"));
   lines.push("- 探索深さ: " + (ER_OPTIONS.maxDepth||"無制限"));
   lines.push("- 逆引き探索: " + (ER_OPTIONS.includeReverseLookup?"ON":"OFF"));

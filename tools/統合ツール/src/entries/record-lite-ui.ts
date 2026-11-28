@@ -68,8 +68,8 @@ export function mountRecordLitePanel() {
   });
 
   // ---- 対象アプリ（共通） ----
-  const tgtApp = makeInput({ placeholder: 'アプリID（カンマ区切りで複数指定）', value: DEFAULT_APP_ID || '', width: 'wide', ariaLabel: '対象アプリID' });
-  const tgtGuest = makeInput({ placeholder: 'ゲストID（任意）', value: DEFAULT_GUEST_ID, width: 'guest' });
+  const tgtApp = makeInput({ placeholder: 'アプリID（カンマ区切りで複数指定）', value: DEFAULT_APP_ID || '', width: 'wide', ariaLabel: '対象アプリID', idInput: true });
+  const tgtGuest = makeInput({ placeholder: 'ゲストID（任意）', value: DEFAULT_GUEST_ID, width: 'guest', idInput: true });
   let connectionVersion = 0;
   const resetMetadata: Array<() => void> = [];
   for (const input of [tgtApp, tgtGuest]) {
@@ -496,8 +496,8 @@ export function mountRecordLitePanel() {
     {
       id: 'copy', label: 'コピー', build: (tabRoot) => {
         const root = tabCard(tabRoot, 'レコードコピー');
-        const srcApp = makeInput({ placeholder: 'コピー元アプリID', width: 'id' });
-        const srcGuest = makeInput({ placeholder: 'ゲストID（任意）', width: 'guest', ariaLabel: 'コピー元のゲストスペースID' });
+        const srcApp = makeInput({ placeholder: 'コピー元アプリID', width: 'id', idInput: true });
+        const srcGuest = makeInput({ placeholder: 'ゲストID（任意）', width: 'guest', ariaLabel: 'コピー元のゲストスペースID', idInput: true });
         const query = makeInput({ placeholder: '条件 (任意)', width: 'wide' });
         const useView = makeButton('▼ 一覧から', 'sub');
         useView.addEventListener('click', () => applyViewQuery(query));

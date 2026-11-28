@@ -104,6 +104,7 @@ tools/統合ツール/
 │   ├── utils.ts              # 汎用ユーティリティ（escape, clone, normalize, download等）
 │   ├── kintoneGuard.ts       # kintone 画面判定ガード（全エントリ共通）
 │   ├── handlers/             # 差分行のフォーカス移動
+│   ├── design/               # 設計書のスナップショット、AI向けMarkdown、HTML の設計書（html.ts）、機微な値の除外
 │   │
 │   ├── diff/                 # 差分エンジン
 │   │   ├── engine.ts         # コア差分アルゴリズム（deepDiff, LCS, objectKey/複合キー比較）
@@ -149,6 +150,7 @@ tools/統合ツール/
 │       ├── jsconfig-standalone.ts         # JS/CSS設定
 │       ├── design-standalone.ts           # 設計書
 │       ├── er-standalone.ts               # ER図（図の HTML の生成は er.ts）
+│       ├── er-offline.ts                  # ER図を設定JSON・ZIP から作る（kintone に問い合わせない）
 │       ├── er-viewer/                     # ER図の HTML の画面（page.ts が骨組み、viewer.css と viewer-*.js を文字列で埋め込む）
 │       ├── process-standalone.ts          # プロセス図
 │       ├── settings-export-standalone.ts  # 設定一括取得
@@ -187,7 +189,7 @@ tools/統合ツール/
 
 | タブ | 主な用途 | 代表機能 |
 |------|----------|----------|
-| 設計書 | 設定情報を設計資料として保存 | JSON/Markdown/Excel 出力、差分レポート |
+| 設計書 | 設定情報を設計資料として保存 | JSON/Markdown/Excel/HTML 出力（HTML はブラウザだけで読め、目次・絞り込み・印刷つき）、差分レポート |
 | ER図 | データ構造・参照関係の可視化 | ルックアップ/関連レコード一覧/アプリアクションの追跡、表示範囲の切り替え、表のビュー、構造チェック |
 | プロセス図 | 業務フローの可視化 | Mermaid フロー図生成、状態遷移シミュレーション |
 

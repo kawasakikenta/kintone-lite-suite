@@ -474,6 +474,9 @@
   function esc(s) {
     return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
+  function normalizeIdInputText(value) {
+    return String(value ?? "").replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 65248)).replace(/，/g, ",");
+  }
   function deepClone(v) {
     return v == null ? v : JSON.parse(JSON.stringify(v));
   }
@@ -4924,7 +4927,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 
   // src/handlers/diffFocus.ts
   function extractAppIdFromInput(value) {
-    const raw = String(value || "").trim();
+    const raw = normalizeIdInputText(value).trim();
     if (!raw) return "";
     if (/^\d+$/.test(raw)) return raw;
     let decoded = raw;
@@ -4941,7 +4944,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     return "";
   }
   function extractGuestIdFromInput(value) {
-    const raw = String(value || "").trim();
+    const raw = normalizeIdInputText(value).trim();
     if (!raw) return "";
     let decoded = raw;
     try {
@@ -5971,6 +5974,29 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     }
     return wrap;
   }
+  function normalizeIdInputValue(el) {
+    const next = normalizeIdInputText(el.value);
+    if (next === el.value) return false;
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    el.value = next;
+    if (start !== null && el.ownerDocument?.activeElement === el) {
+      try {
+        el.setSelectionRange(start, end ?? start);
+      } catch {
+      }
+    }
+    return true;
+  }
+  function installIdInputNormalizer(el) {
+    el.addEventListener("input", (ev) => {
+      if (ev.isComposing) return;
+      normalizeIdInputValue(el);
+    });
+    el.addEventListener("compositionend", () => {
+      if (normalizeIdInputValue(el)) el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
   function makeInput(opts = {}) {
     const inp = document.createElement("input");
     inp.type = opts.type || "text";
@@ -5978,6 +6004,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     if (opts.value) inp.value = opts.value;
     if (opts.ariaLabel) inp.setAttribute("aria-label", opts.ariaLabel);
     if (opts.noSubmit) inp.setAttribute("data-lp-no-submit", "");
+    if (opts.idInput) installIdInputNormalizer(inp);
     inp.className = "kus-lp__input" + (opts.width ? ` kus-lp__input--${opts.width}` : "");
     return inp;
   }
@@ -6319,14 +6346,14 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     ensureStyles();
     const { details, body } = makeDetails(opts.title || "アプリを検索（名前・コード・ID）", { open: !!opts.open });
     const keyword = makeInput({ placeholder: "アプリ名 / アプリID / URL", width: "wide", noSubmit: true });
-    const guest = makeInput({ placeholder: "ゲストID（任意）", width: "guest", noSubmit: true });
+    const guest = makeInput({ placeholder: "ゲストID（任意）", width: "guest", noSubmit: true, idInput: true });
     if (opts.guestEl?.value.trim()) guest.value = opts.guestEl.value.trim();
     const searchBtn = makeButton("検索", "sub", { icon: "🔍" });
     const allBtn = makeButton("環境内の全アプリ", "sub");
     allBtn.title = "接続先で閲覧できるアプリをすべて候補に表示します（検索語とスペースIDは使いません）";
     const searchMode = makeSelect([["name", "名前 / ID / URL"], ["code", "アプリコード（完全一致）"]]);
     searchMode.setAttribute("aria-label", "検索方法");
-    const space = makeInput({ placeholder: "スペースID（任意）", width: "guest", noSubmit: true, ariaLabel: "検索対象スペースID" });
+    const space = makeInput({ placeholder: "スペースID（任意）", width: "guest", noSubmit: true, ariaLabel: "検索対象スペースID", idInput: true });
     body.appendChild(makeRow([searchMode, space], { label: "検索方法" }));
     body.appendChild(makeRow([keyword, guest, searchBtn], { label: "検索語" }));
     body.appendChild(makeRow([allBtn], { label: "全アプリ" }));
@@ -6672,7 +6699,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 
   // src/reflect/appReference.ts
   function parseAppReference(text) {
-    const raw = String(text || "").trim();
+    const raw = normalizeIdInputText(text).trim();
     if (!raw) return null;
     if (/^[1-9]\d*$/.test(raw)) return { appId: raw, guestId: "" };
     const appId = extractAppIdFromInput(raw);
@@ -6683,7 +6710,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     return extractGuestIdFromInput(String(pathname || ""));
   }
   function needsAppReferenceParse(text) {
-    const raw = String(text || "").trim();
+    const raw = normalizeIdInputText(text).trim();
     return !!raw && !/^\d+$/.test(raw);
   }
 
@@ -6761,7 +6788,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   // src/reflect/liteSetup.ts
   var LOOKUP_PAIR_SEPARATOR = /\s*(?:→|->|=>|=|:|,|\t)\s*|\s+/;
   function parseLookupMapText(text) {
-    const trimmed = String(text || "").trim();
+    const trimmed = normalizeIdInputText(text || "").trim();
     if (!trimmed) return { ok: true, value: {}, count: 0 };
     const pairs = [];
     if (trimmed.startsWith("{")) {
@@ -8265,12 +8292,12 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     let busy = false;
     let sourceMode = "app";
     let restoreMode = null;
-    const srcApp = makeInput({ placeholder: "反映元アプリID", value: memoryState.sourceAppId || "", width: "id" });
-    const srcGuest = makeInput({ placeholder: "ゲストID", value: memoryState.sourceGuestId || "", width: "guest" });
+    const srcApp = makeInput({ placeholder: "反映元アプリID", value: memoryState.sourceAppId || "", width: "id", idInput: true });
+    const srcGuest = makeInput({ placeholder: "ゲストID", value: memoryState.sourceGuestId || "", width: "guest", idInput: true });
     const pageGuestId = () => guestIdFromPagePath(window.location?.pathname || "");
     const defaultsToCurrentApp = !memoryState.targetAppId && !!DEFAULT_APP_ID;
-    const tgtApp = makeInput({ placeholder: "反映先アプリID", value: memoryState.targetAppId || DEFAULT_APP_ID || "", width: "id" });
-    const tgtGuest = makeInput({ placeholder: "ゲストID", value: defaultsToCurrentApp ? pageGuestId() : memoryState.targetGuestId || "", width: "guest" });
+    const tgtApp = makeInput({ placeholder: "反映先アプリID", value: memoryState.targetAppId || DEFAULT_APP_ID || "", width: "id", idInput: true });
+    const tgtGuest = makeInput({ placeholder: "ゲストID", value: defaultsToCurrentApp ? pageGuestId() : memoryState.targetGuestId || "", width: "guest", idInput: true });
     const appLookupCache = createReflectAppLookupCache();
     const APP_LOOKUP_DELAY_MS = 350;
     function createAppNote(appInput, guestInput, isActive, onResolved) {
@@ -9969,7 +9996,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     confirmCard.body.appendChild(confirmBody);
     const acknowledged = makeCheck({ label: "反映先と変更・削除の内容を確認しました", checked: false });
     acknowledged.checkbox.setAttribute("aria-label", "反映内容の確認");
-    const targetCheck = makeInput({ placeholder: "反映先アプリIDを入力", width: "wide" });
+    const targetCheck = makeInput({ placeholder: "反映先アプリIDを入力", width: "wide", idInput: true });
     targetCheck.setAttribute("aria-label", "確認用の反映先アプリID");
     targetCheck.setAttribute("data-lp-no-submit", "");
     targetCheck.inputMode = "numeric";

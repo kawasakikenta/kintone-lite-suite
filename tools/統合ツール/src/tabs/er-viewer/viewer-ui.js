@@ -1161,6 +1161,7 @@ const commands=[
   {label:"ミニマップ",icon:"🗺",action:toggleMinimap},
   {label:"配色を切り替える（明るい / 暗い）",icon:"◐",action:toggleTheme},
   {label:"編集済みHTMLを保存",icon:"💾",action:exportEditedHtml},
+  {label:"編集済みHTMLから編集を取り込む",icon:"📥",action:openEditImport},
   {label:"PNG 画像を保存（白背景）",icon:"🖼",action:exportPNG},
   {label:"Mermaid を出力",icon:"🧜",action:showMermaid},
   {label:"draw.io XML を出力",icon:"📊",action:showDrawio},
@@ -1455,6 +1456,7 @@ function buildPrintDocHtml(){
   const startNames=startIds.slice(0,8).map(id=>{const a=findApp(id);return a?a.name+"（App "+id+"）":"App "+id;});
   const meta=[
     ["対象（起点）",startNames.join("、")+(startIds.length>8?" ほか "+(startIds.length-8)+" 件":"")||"-"],
+    ...(ER_OPTIONS.sourceLabel?[["取得元",ER_OPTIONS.sourceLabel]]:[]),
     ["取得日時",ER_OPTIONS.generatedAt?new Date(ER_OPTIONS.generatedAt).toLocaleString("ja-JP"):"-"],
     ["印刷日時",new Date().toLocaleString("ja-JP")],
     ["接続先",printConnectionText()],

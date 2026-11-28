@@ -1,6 +1,6 @@
 'use strict';
 
-import { downloadBlob, kusConfirm, buildExportFilename, buildAppFilenameLabel, sanitizeFilenamePart, UNSAFE_FILENAME_CHARS } from '../utils.js';
+import { downloadBlob, kusConfirm, buildExportFilename, buildAppFilenameLabel, normalizeIdInputText, sanitizeFilenamePart, UNSAFE_FILENAME_CHARS } from '../utils.js';
 import { FILE_DOWNLOAD_TIMEOUT_MS, apiGet, apiPost, apiPut, buildApiPrefix, fetchBundle, fetchRecordsByQuery, isRetriableApiError, isRevisionConflictError } from '../api.js';
 import { loadJSZipLite } from '../jszipLoader.js';
 import { RunCancelledError, activeRun, createRequestSignal, isRunCancelledError, sleepUnlessCancelled, throwIfCancelled } from '../runControl.js';
@@ -31,11 +31,12 @@ export { parseCsvText, validateCsvImportHeader, coerceCsvImportValue, splitCsvLi
 
 /**
  * Paste-friendly parser used by every record-management operation.
- * Commas (including Japanese commas), spaces and newlines are accepted and
+ * Commas (including Japanese commas), spaces and newlines are accepted,
+ * full-width digits (１０１) become ASCII digits, and
  * duplicate IDs are removed without changing the user's order.
  */
 export function parseRecordAppIds(value: unknown): string[] {
-  const tokens = String(value ?? '').split(/[\s,\u3001\uFF0C]+/).filter(Boolean);
+  const tokens = normalizeIdInputText(value).split(/[\s,\u3001\uFF0C]+/).filter(Boolean);
   const invalid = tokens.filter((id) => !/^\d+$/.test(id) || Number(id) <= 0);
   if (invalid.length) throw new Error(`アプリIDは正の数値で入力してください: ${invalid.join(', ')}`);
   return [...new Set(tokens)];

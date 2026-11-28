@@ -8,13 +8,14 @@ import viewerCore from './viewer-core.js?raw';
 import viewerEdit from './viewer-edit.js?raw';
 import viewerUi from './viewer-ui.js?raw';
 import viewerExport from './viewer-export.js?raw';
+import viewerImport from './viewer-import.js?raw';
 import viewerBoot from './viewer-boot.js?raw';
 
 /** 取り込んだテキストの改行を LF にそろえる（作業ツリーは CRLF のことがある）。 */
 const lf = (text: string): string => String(text).replace(/\r\n?/g, '\n');
 
 /** viewer-*.js を、起動処理が最後になる順につなぐ。 */
-export const ER_VIEWER_SCRIPT = [viewerCore, viewerEdit, viewerUi, viewerExport, viewerBoot].map(lf).join('\n');
+export const ER_VIEWER_SCRIPT = [viewerCore, viewerEdit, viewerUi, viewerExport, viewerImport, viewerBoot].map(lf).join('\n');
 export const ER_VIEWER_CSS = lf(viewerCss);
 
 export interface ErViewerAnalysisCounts {
@@ -31,6 +32,8 @@ export interface ErViewerPageContext {
   targetTitle: string;
   /** 取得日時（表示用） */
   generatedText: string;
+  /** 設定JSONから作った図の取得元（「設定JSONから作成（取得日時 取得）」）。あれば見出しの取得日時の代わりに出す */
+  sourceText?: string;
   /** 接続先（ホスト・空間・本番／プレビュー） */
   connectionText: string;
   libraryScripts: string;
@@ -87,7 +90,7 @@ ${ER_VIEWER_CSS}
     <h1 id="er-title" title="${esc(ctx.targetTitle)}">kintone ER図<small>${esc(ctx.targetText)}</small></h1>
     <div class="brand-sub">
       <button type="button" class="meta-pill meta-pill--btn" id="overview-pill" onclick="toggleOverview()" title="取得・関連サマリーを開く" aria-controls="overview" aria-expanded="false">${ctx.appCount}アプリ · ${ctx.relationCount}関連 · 循環${a.cycles} · 孤立${a.isolated} · 未取得${a.unresolved}<span aria-hidden="true"> ▾</span></button>
-      <span class="brand-meta" title="取得日時と接続先">${esc(ctx.generatedText)} 取得 · ${esc(ctx.connectionText)}</span>
+      <span class="brand-meta" title="${ctx.sourceText ? esc(`${ctx.sourceText} · ${ctx.connectionText}`) : '取得日時と接続先'}">${ctx.sourceText ? esc(ctx.sourceText) : `${esc(ctx.generatedText)} 取得`} · ${esc(ctx.connectionText)}</span>
     </div>
   </div>
   <div class="search-wrap" role="search">
@@ -184,6 +187,9 @@ ${ER_VIEWER_CSS}
         <button type="button" class="tb" onclick="restoreRemovedApps()">削除したアプリを戻す</button>
         <button type="button" class="tb" onclick="restoreAllHiddenFields()">隠した項目をすべて戻す</button>
         <button type="button" class="tb" onclick="clearPins()">固定をすべて解除</button>
+        <div class="menu-heading">取り込む</div>
+        <button type="button" class="tb" onclick="openEditImport()" title="以前に保存した編集済みHTMLの、手動の追加・名前と色・位置・メモ・削除をこの図へ取り込みます">編集済みHTMLから取り込む</button>
+        <input type="file" id="edit-import-file" accept=".html,.htm,text/html" hidden aria-label="取り込む編集済みHTML">
       </div>
     </div>
     <div class="tb-menu" id="export-menu">

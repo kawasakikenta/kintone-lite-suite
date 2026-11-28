@@ -198,6 +198,17 @@ assert.ok(aiDesignMd.includes('missing'), '未取得セクションをAI用Markd
 writeFileSync(resolve(outDir, 'design-ai.md'), aiDesignMd, 'utf8');
 console.log(`[harness] wrote design-ai.md (${(aiDesignMd.length / 1024).toFixed(1)} KB)`);
 
+// 設計書 HTML: Markdown と同じセクション・同じ値を持ち、自己完結（外部を読まず、スクリプトとスタイルはハッシュの CSP で許可）
+const designHtml = api.buildDesignHtml(targetBundle);
+assert.match(designHtml, /<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-[^']+'; style-src 'sha256-[^']+';/);
+assert.doesNotMatch(designHtml, /<script[^>]*\ssrc=|<link\b|https?:\/\//);
+for (const section of ['appSettings', 'fieldSettings', 'viewSettings', 'notifications']) assert.ok(designHtml.includes(`id="sec-${section}"`), `設計書 HTML: ${section}`);
+for (const code of ['顧客名', '金額', 'ステータス', '担当者メモ']) assert.ok(designHtml.includes(`<td data-label="コード" class="col-code">${code}</td>`), `設計書 HTML: フィールド ${code}`);
+assert.ok(designHtml.includes('失注'), '設計書 HTML: 選択肢');
+assert.equal((designHtml.match(/<tr data-search=/g) || []).length, Object.keys(targetBundle.sections.fieldSettings.properties).length);
+writeFileSync(resolve(outDir, 'design-doc.html'), designHtml, 'utf8');
+console.log(`[harness] wrote design-doc.html (${(designHtml.length / 1024).toFixed(1)} KB)`);
+
 // ------------ 5) ER HTML viewer ---------------------------------------------
 const erApps = [
   { id: '100', name: '営業案件管理', recordCount: 1240, ok: true, depth: 0,
@@ -344,6 +355,7 @@ console.log('  diff-patch.json   (差分パッチ JSON)');
 console.log('  bundle.json       (比較バンドル JSON)');
 console.log('  design-doc.md     (設計書 Markdown)');
 console.log('  design-ai.md      (AI向け設計書 Markdown)');
+console.log('  design-doc.html   (設計書 HTML)');
 console.log('  er-diagram.html   (ER図ビューア)');
 console.log('  records.csv       (レコード CSV)');
 console.log('  record-subtables/ (親CSVとテーブル別明細CSV: 2親レコード・3テーブル)');

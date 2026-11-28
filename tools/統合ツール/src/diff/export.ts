@@ -51,6 +51,16 @@ import {
   sha256Base64
 } from './export-safety.js';
 import { buildDesignSnapshot } from '../design/snapshot.js';
+import {
+  codeOf,
+  joinRich,
+  mapJoinRich,
+  richText,
+  richToMarkdown,
+  type DesignInline,
+  type DesignRichText,
+  type DesignTable
+} from '../design/doc-text.js';
 
 // ---------------------------------------------------------------------------
 // Diff display helpers
@@ -1405,17 +1415,32 @@ function mdFieldTypeLabel(type) {
   return MD_FIELD_TYPE_LABELS[key] || key || '';
 }
 
-function mdEntityList(entities) {
-  if (!Array.isArray(entities) || entities.length === 0) return '';
-  return entities.map((e) => {
+/** フィールドの種類の表示名（設計書の「種別」の列と同じ）。 */
+export function designFieldTypeLabel(type: unknown): string {
+  return String(mdFieldTypeLabel(type));
+}
+
+/** 権限・通知の対象（ユーザー・組織・グループなど）を「種別: `コード`（配下含む）」で並べる。対象が無ければ空。 */
+export function designEntityList(entities): DesignRichText {
+  if (!Array.isArray(entities) || entities.length === 0) return richText();
+  const items = entities.map((e): DesignInline[] => {
     const entity = e?.entity || e;
-    if (!entity) return '';
+    if (!entity) return [];
     const typeLabel = MD_ENTITY_TYPE_LABELS[entity.type] || entity.type || '';
-    const code = entity.code ? `\`${entity.code}\`` : '';
-    const parts = [typeLabel, code].filter(Boolean);
-    const subs = e?.includeSubs ? '（配下含む）' : '';
-    return parts.join(': ') + subs;
-  }).filter(Boolean).join(' / ');
+    const parts: DesignInline[] = [];
+    if (typeLabel) parts.push(String(typeLabel));
+    if (entity.code) {
+      if (parts.length) parts.push(': ');
+      parts.push(codeOf(entity.code));
+    }
+    if (e?.includeSubs) parts.push('（配下含む）');
+    return parts;
+  }).filter((parts) => String(richToMarkdown(richText(...parts))) !== '');
+  return joinRich(items, ' / ');
+}
+
+function mdEntityList(entities) {
+  return String(richToMarkdown(designEntityList(entities)));
 }
 
 function mdBoolMark(value) {
@@ -1429,6 +1454,18 @@ function mdTable(headers, rows) {
   const sep = `| ${headers.map(() => '---').join(' | ')} |`;
   const body = rows.map((r) => `| ${r.map(mdEsc).join(' | ')} |`).join('\n');
   return `${head}\n${sep}\n${body}`;
+}
+
+/** `value.map(…)` と同じく、配列でなければ例外にする（整形できない設定は「整形表示できる項目はありません」にする）。 */
+function designArrayOrThrow<T = any>(value: unknown): T[] {
+  if (!Array.isArray(value)) throw new TypeError('設定の値が配列ではありません');
+  return value;
+}
+
+/** 設計書の表（DesignTable）を Markdown の表にする。セルのコード表記は `…` にしてからエスケープする。 */
+function mdDesignTable(table: DesignTable | null | undefined) {
+  if (!table) return '';
+  return mdTable(table.headers, table.rows.map((row) => row.map(richToMarkdown)));
 }
 
 function mdLongestBacktickRun(value: string): number {
@@ -1480,7 +1517,8 @@ function mdFieldOptions(options: any): string {
   return entries.map((o) => decodeHtmlEntities(o.label)).filter(Boolean).join(' / ');
 }
 
-function mdRenderAppSettings(sec: any) {
+/** アプリ設定の表（項目・値）。値の無い項目は載せない。 */
+export function designAppSettingsTable(sec: any): DesignTable {
   const rows = [
     ['アプリ名', sec.name || ''],
     ['説明', stripHtmlToText(sec.description || '')],
@@ -1495,11 +1533,15 @@ function mdRenderAppSettings(sec: any) {
     ['会計年度開始月', sec.firstMonthOfFiscalYear != null ? String(sec.firstMonthOfFiscalYear) : ''],
     ['リビジョン', sec.revision != null ? String(sec.revision) : '']
   ].filter((r) => r[1] !== '');
-  return mdTable(['項目', '値'], rows);
+  return { headers: ['項目', '値'], rows };
 }
 
-/** 設計書 Markdown の描画に使う、設定の外から渡された情報。 */
-interface MdRenderContext {
+function mdRenderAppSettings(sec: any) {
+  return mdDesignTable(designAppSettingsTable(sec));
+}
+
+/** 設計書（Markdown・HTML）の描画に使う、設定の外から渡された情報。 */
+export interface MdRenderContext {
   /** 参照先アプリの名前。キーは `${appId}::${guestId}` または appId。 */
   appNames?: Record<string, string>;
   guestId?: string;
@@ -1509,7 +1551,7 @@ interface MdRenderContext {
  * 参照先アプリ（ルックアップ・関連レコード一覧・アクションの連携先）を「名前（App ID）」で示す。名前が分からなければ「App ID」。
  * 表のセルに入れる値（エスケープは mdTable が行う）。
  */
-function mdAppRef(ref: any, ctx: MdRenderContext = {}): string {
+export function mdAppRef(ref: any, ctx: MdRenderContext = {}): string {
   const id = ref?.app != null && ref.app !== '' ? String(ref.app) : '';
   if (!id) return ref?.code ? `コード ${ref.code}` : '参照先不明';
   const names = ctx.appNames || {};
@@ -1519,44 +1561,64 @@ function mdAppRef(ref: any, ctx: MdRenderContext = {}): string {
   return name ? `${name}（App ${id}）` : `App ${id}`;
 }
 
-function mdFieldNotes(f: any, ctx: MdRenderContext = {}): string {
-  if (!f || typeof f !== 'object') return '';
-  const notes: string[] = [];
+/** フィールドの「参照先/制約」の列（ルックアップ・関連レコード一覧の参照先、単位・桁・範囲・初期値など）。 */
+export function designFieldNotes(f: any, ctx: MdRenderContext = {}): DesignRichText {
+  if (!f || typeof f !== 'object') return richText();
+  const notes: DesignInline[][] = [];
   const lookup = f.lookup;
   if (lookup && typeof lookup === 'object') {
-    const app = mdAppRef(lookup.relatedApp, ctx);
-    const key = lookup.relatedKeyField ? ` キー \`${lookup.relatedKeyField}\`` : '';
+    const note: DesignInline[] = ['ルックアップ: ', mdAppRef(lookup.relatedApp, ctx)];
+    if (lookup.relatedKeyField) note.push(' キー ', codeOf(lookup.relatedKeyField));
     const mappingList = Array.isArray(lookup.fieldMappings) ? lookup.fieldMappings : [];
     // コピー先 ← コピー元（参照先アプリのフィールド）を、件数だけでなく読める形で出す
-    const copies = mappingList.map((m: any) => `\`${m?.field ?? ''}\` ← \`${m?.relatedField ?? ''}\``).join('、');
-    notes.push(`ルックアップ: ${app}${key}${mappingList.length ? ` / 転記 ${mappingList.length}項目（${copies}）` : ''}`);
+    if (mappingList.length) {
+      const copies = mapJoinRich(mappingList, (m: any) => [codeOf(m?.field ?? ''), ' ← ', codeOf(m?.relatedField ?? '')], '、');
+      note.push(` / 転記 ${mappingList.length}項目（`, ...copies.parts, '）');
+    }
+    notes.push(note);
   }
   const ref = f.referenceTable;
   if (ref && typeof ref === 'object') {
-    const app = mdAppRef(ref.relatedApp, ctx);
-    const cond = ref.condition?.field && ref.condition?.relatedField ? ` 条件 \`${ref.condition.field}\` = \`${ref.condition.relatedField}\`` : '';
+    const note: DesignInline[] = ['関連レコード: ', mdAppRef(ref.relatedApp, ctx)];
+    if (ref.condition?.field && ref.condition?.relatedField) note.push(' 条件 ', codeOf(ref.condition.field), ' = ', codeOf(ref.condition.relatedField));
     const shownList = Array.isArray(ref.displayFields) ? ref.displayFields : [];
-    notes.push(`関連レコード: ${app}${cond}${shownList.length ? ` / 表示 ${shownList.length}項目（${shownList.map((code: any) => `\`${code}\``).join('、')}）` : ''}${ref.size ? ` / ${ref.size}件表示` : ''}`);
+    if (shownList.length) {
+      const shown = mapJoinRich(shownList, (code: any) => [codeOf(code)], '、');
+      note.push(` / 表示 ${shownList.length}項目（`, ...shown.parts, '）');
+    }
+    if (ref.size) note.push(` / ${ref.size}件表示`);
+    notes.push(note);
   }
-  if (f.unit) notes.push(`単位: ${decodeHtmlEntities(f.unit)}${f.unitPosition === 'BEFORE' ? '（前）' : f.unitPosition === 'AFTER' ? '（後）' : ''}`);
-  if (f.digit === true || f.digit === 'true') notes.push('桁区切りあり');
-  if (f.displayScale !== undefined && f.displayScale !== null && f.displayScale !== '') notes.push(`小数 ${f.displayScale}桁`);
-  if (f.format && f.type === 'CALC') notes.push(`表示形式: ${f.format}`);
+  const push = (text: string) => notes.push([text]);
+  if (f.unit) push(`単位: ${decodeHtmlEntities(f.unit)}${f.unitPosition === 'BEFORE' ? '（前）' : f.unitPosition === 'AFTER' ? '（後）' : ''}`);
+  if (f.digit === true || f.digit === 'true') push('桁区切りあり');
+  if (f.displayScale !== undefined && f.displayScale !== null && f.displayScale !== '') push(`小数 ${f.displayScale}桁`);
+  if (f.format && f.type === 'CALC') push(`表示形式: ${f.format}`);
   const range = (min: any, max: any) => (min !== undefined && min !== null && min !== '') || (max !== undefined && max !== null && max !== '')
     ? `${min ?? ''}〜${max ?? ''}` : '';
   const len = range(f.minLength, f.maxLength);
-  if (len) notes.push(`文字数 ${len}`);
+  if (len) push(`文字数 ${len}`);
   const val = range(f.minValue, f.maxValue);
-  if (val) notes.push(`値 ${val}`);
-  if (f.defaultNowValue === true || f.defaultNowValue === 'true') notes.push('初期値: 現在日時');
-  if (f.protocol) notes.push(`リンク種別: ${f.protocol}`);
-  if (f.hideExpression === true || f.hideExpression === 'true') notes.push('計算式を非表示');
-  if (f.noLabel === true || f.noLabel === 'true') notes.push('ラベル非表示');
-  if (f.thumbnailSize) notes.push(`サムネイル ${f.thumbnailSize}px`);
-  return notes.join(' / ');
+  if (val) push(`値 ${val}`);
+  if (f.defaultNowValue === true || f.defaultNowValue === 'true') push('初期値: 現在日時');
+  if (f.protocol) push(`リンク種別: ${f.protocol}`);
+  if (f.hideExpression === true || f.hideExpression === 'true') push('計算式を非表示');
+  if (f.noLabel === true || f.noLabel === 'true') push('ラベル非表示');
+  if (f.thumbnailSize) push(`サムネイル ${f.thumbnailSize}px`);
+  return joinRich(notes, ' / ');
 }
 
-function mdRenderFieldSettings(sec: any, _sections?: any, ctx: MdRenderContext = {}) {
+export const DESIGN_FIELD_TABLE_HEADERS = ['コード', 'フィールド名', '種別', '必須', '重複禁止', '初期値', '選択肢/式', '参照先/制約'] as const;
+export const DESIGN_SUBTABLE_FIELD_TABLE_HEADERS = ['コード', 'フィールド名', '種別', '必須', '初期値', '選択肢/式', '参照先/制約'] as const;
+
+/** フィールド設定の表。トップレベルのフィールド（コード順）と、テーブルごとのテーブル内のフィールド。 */
+export interface DesignFieldTables {
+  /** トップレベルのフィールドの表。行の 0 列目がコード、1 列目がフィールド名。 */
+  fields: DesignTable;
+  subtables: Array<{ code: unknown; label: string; table: DesignTable }>;
+}
+
+export function designFieldTables(sec: any, ctx: MdRenderContext = {}): DesignFieldTables {
   const props = sec?.properties || ({} as any);
   const rows: any[][] = [];
   const subtables: any[] = [];
@@ -1570,36 +1632,44 @@ function mdRenderFieldSettings(sec: any, _sections?: any, ctx: MdRenderContext =
       f.unique ? '○' : '',
       mdFormatDefaultValue(f.defaultValue),
       mdFieldOptions(f.options) || (f.expression ? `式: ${f.expression}` : ''),
-      mdFieldNotes(f, ctx)
+      designFieldNotes(f, ctx)
     ]);
     if (f.type === 'SUBTABLE' && f.fields) {
       subtables.push(f);
     }
   });
   rows.sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+  return {
+    fields: { headers: DESIGN_FIELD_TABLE_HEADERS, rows },
+    subtables: subtables.map((tbl: any) => {
+      const label = stripHtmlToText(tbl.label || '');
+      const subRows = (Object.values(tbl.fields || ({} as any)) as any[]).map((f: any) => [
+        f.code || '',
+        stripHtmlToText(f.label || ''),
+        mdFieldTypeLabel(f.type),
+        f.required ? '○' : '',
+        mdFormatDefaultValue(f.defaultValue),
+        mdFieldOptions(f.options) || (f.expression ? `式: ${f.expression}` : ''),
+        designFieldNotes(f, ctx)
+      ]);
+      subRows.sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+      return { code: tbl.code, label, table: { headers: DESIGN_SUBTABLE_FIELD_TABLE_HEADERS, rows: subRows } };
+    })
+  };
+}
+
+function mdRenderFieldSettings(sec: any, _sections?: any, ctx: MdRenderContext = {}) {
+  const tables = designFieldTables(sec, ctx);
   const parts: string[] = [];
-  parts.push(`- フィールド数: ${rows.length}`);
+  parts.push(`- フィールド数: ${tables.fields.rows.length}`);
   parts.push('');
-  parts.push(mdTable(
-    ['コード', 'フィールド名', '種別', '必須', '重複禁止', '初期値', '選択肢/式', '参照先/制約'],
-    rows
-  ));
-  subtables.forEach((tbl: any) => {
+  parts.push(mdDesignTable(tables.fields));
+  tables.subtables.forEach((tbl) => {
     parts.push('');
-    const tableLabel = mdLine(stripHtmlToText(tbl.label || ''));
+    const tableLabel = mdLine(tbl.label);
     parts.push(`#### テーブル: \`${tbl.code}\`${tableLabel ? ` — ${tableLabel}` : ''}`);
     parts.push('');
-    const subRows = (Object.values(tbl.fields || ({} as any)) as any[]).map((f: any) => [
-      f.code || '',
-      stripHtmlToText(f.label || ''),
-      mdFieldTypeLabel(f.type),
-      f.required ? '○' : '',
-      mdFormatDefaultValue(f.defaultValue),
-      mdFieldOptions(f.options) || (f.expression ? `式: ${f.expression}` : ''),
-      mdFieldNotes(f, ctx)
-    ]);
-    subRows.sort((a, b) => String(a[0]).localeCompare(String(b[0])));
-    parts.push(mdTable(['コード', 'フィールド名', '種別', '必須', '初期値', '選択肢/式', '参照先/制約'], subRows));
+    parts.push(mdDesignTable(tbl.table));
   });
   return parts.join('\n');
 }
@@ -1639,7 +1709,8 @@ function mdRenderLayoutSettings(sec, sections: any = {}) {
   return lines.join('\n');
 }
 
-function mdRenderViewSettings(sec: any) {
+/** 一覧（ビュー設定）の表。表示順に並べる。 */
+export function designViewTable(sec: any): DesignTable {
   const views = sec?.views || ({} as any);
   const entries = (Object.entries(views) as Array<[string, any]>).map(([name, v]) => ({ name, ...(v as any) }));
   entries.sort((a, b) => Number(a.index ?? 0) - Number(b.index ?? 0));
@@ -1647,17 +1718,17 @@ function mdRenderViewSettings(sec: any) {
     const builtinNote = v.builtinType
       ? (mdLookupLabel(MD_VIEW_BUILTIN_LABELS, v.builtinType) || v.builtinType)
       : '';
-    const extras: string[] = [];
-    if (v.customView || v.html) extras.push('カスタムHTMLあり');
+    const extras: DesignInline[][] = [];
+    if (v.customView || v.html) extras.push(['カスタムHTMLあり']);
     if (v.type === 'CALENDAR') {
-      if (v.date) extras.push(`日付: \`${v.date}\``);
-      if (v.title) extras.push(`タイトル: \`${v.title}\``);
+      if (v.date) extras.push(['日付: ', codeOf(v.date)]);
+      if (v.title) extras.push(['タイトル: ', codeOf(v.title)]);
     }
-    if (v.device === 'DESKTOP') extras.push('PC版のみ');
-    if (v.pager === false) extras.push('ページャー無効');
+    if (v.device === 'DESKTOP') extras.push(['PC版のみ']);
+    if (v.pager === false) extras.push(['ページャー無効']);
     if (v.paginationStyle) {
       const paginationLabel = mdLookupLabel(MD_PAGINATION_LABELS, v.paginationStyle) || v.paginationStyle;
-      extras.push(`ページャー:${paginationLabel}`);
+      extras.push([`ページャー:${paginationLabel}`]);
     }
     return [
       v.name || '',
@@ -1667,13 +1738,18 @@ function mdRenderViewSettings(sec: any) {
       Array.isArray(v.fields) ? v.fields.join(' / ') : '',
       v.filterCond || '',
       v.sort || '',
-      extras.join(' / ')
+      joinRich(extras, ' / ')
     ];
   });
-  return mdTable(['ビュー名', '種別', '表示順', '組み込み種別', '表示フィールド', '絞り込み条件', 'ソート', '備考'], rows);
+  return { headers: ['ビュー名', '種別', '表示順', '組み込み種別', '表示フィールド', '絞り込み条件', 'ソート', '備考'], rows };
 }
 
-function mdRenderReportSettings(sec: any) {
+function mdRenderViewSettings(sec: any) {
+  return mdDesignTable(designViewTable(sec));
+}
+
+/** グラフ（レポート設定）の表。表示順に並べる。 */
+export function designReportTable(sec: any): DesignTable {
   const reports = sec?.reports || ({} as any);
   const entries = (Object.entries(reports) as Array<[string, any]>).map(([name, r]) => ({ name, ...(r as any) }));
   entries.sort((a, b) => Number(a.index ?? 0) - Number(b.index ?? 0));
@@ -1691,48 +1767,62 @@ function mdRenderReportSettings(sec: any) {
     r.filterCond || '',
     r.periodicReport?.active ? '定期実行あり' : ''
   ]);
-  return mdTable(['レポート名', 'チャート', 'モード', '分類', '集計', '絞り込み条件', '定期実行'], rows);
+  return { headers: ['レポート名', 'チャート', 'モード', '分類', '集計', '絞り込み条件', '定期実行'], rows };
 }
 
-function mdRenderProcessSettings(sec: any) {
-  const parts: string[] = [];
-  parts.push(`- プロセス管理: ${sec?.enable ? '有効' : '無効'}`);
-  parts.push('');
+function mdRenderReportSettings(sec: any) {
+  return mdDesignTable(designReportTable(sec));
+}
+
+/** プロセス管理の有効・無効と、ステータス・アクションの表（それぞれ無ければ null）。 */
+export function designProcessTables(sec: any): { enabled: boolean; states: DesignTable | null; actions: DesignTable | null } {
+  const enabled = !!sec?.enable;
   const states = sec?.states || ({} as any);
   const stateEntries = (Object.entries(states) as Array<[string, any]>).map(([name, s]) => ({ name, ...(s as any) }));
   stateEntries.sort((a, b) => Number(a.index ?? 0) - Number(b.index ?? 0));
-  if (stateEntries.length) {
+  const stateTable = stateEntries.length ? {
+    headers: ['ステータス名', '表示順', '作業者の選び方', '作業者候補'],
+    rows: stateEntries.map((s) => [
+      s.name || '',
+      s.index ?? '',
+      mdProcessAssigneeTypeLabel(s.assignee?.type),
+      designEntityList(s.assignee?.entities)
+    ])
+  } : null;
+  const actions = Array.isArray(sec?.actions) ? sec.actions : [];
+  const actionTable = actions.length ? {
+    headers: ['アクション名', '遷移元（From）', '遷移先（To）', '絞り込み条件'],
+    rows: actions.map((a) => [
+      a.name || '',
+      Array.isArray(a.from) ? a.from.join(' / ') : (a.from || ''),
+      a.to || '',
+      a.filterCond || ''
+    ])
+  } : null;
+  return { enabled, states: stateTable, actions: actionTable };
+}
+
+function mdRenderProcessSettings(sec: any) {
+  const tables = designProcessTables(sec);
+  const parts: string[] = [];
+  parts.push(`- プロセス管理: ${tables.enabled ? '有効' : '無効'}`);
+  parts.push('');
+  if (tables.states) {
     parts.push('#### ステータス');
     parts.push('');
-    parts.push(mdTable(
-      ['ステータス名', '表示順', '作業者の選び方', '作業者候補'],
-      stateEntries.map((s) => [
-        s.name || '',
-        s.index ?? '',
-        mdProcessAssigneeTypeLabel(s.assignee?.type),
-        mdEntityList(s.assignee?.entities)
-      ])
-    ));
+    parts.push(mdDesignTable(tables.states));
     parts.push('');
   }
-  const actions = Array.isArray(sec?.actions) ? sec.actions : [];
-  if (actions.length) {
+  if (tables.actions) {
     parts.push('#### アクション');
     parts.push('');
-    parts.push(mdTable(
-      ['アクション名', '遷移元（From）', '遷移先（To）', '絞り込み条件'],
-      actions.map((a) => [
-        a.name || '',
-        Array.isArray(a.from) ? a.from.join(' / ') : (a.from || ''),
-        a.to || '',
-        a.filterCond || ''
-      ])
-    ));
+    parts.push(mdDesignTable(tables.actions));
   }
   return parts.join('\n');
 }
 
-function mdRenderPluginSettings(sec) {
+/** プラグインの表（ID・名称・有効状態など）。設定値は載せない。 */
+export function designPluginTable(sec: any): DesignTable {
   const plugins = sec?.plugins || [];
   const rows = plugins.map((p) => [
     p.id || '',
@@ -1741,28 +1831,59 @@ function mdRenderPluginSettings(sec) {
     p.version || '',
     p.description || ''
   ]);
-  return mdTable(['プラグインID', '名称', '状態', 'バージョン', '説明'], rows);
+  return { headers: ['プラグインID', '名称', '状態', 'バージョン', '説明'], rows };
 }
 
-function mdRenderCustomizeSettings(sec) {
-  const parts: string[] = [];
-  parts.push(`- 適用範囲（スコープ）: ${mdLookupLabel(MD_CUSTOMIZE_SCOPE_LABELS, sec?.scope) || '（未設定）'}`);
-  parts.push('');
+function mdRenderPluginSettings(sec) {
+  return mdDesignTable(designPluginTable(sec));
+}
+
+export interface DesignCustomizeArea {
+  /** 'desktop' | 'mobile' */
+  area: string;
+  label: string;
+  kinds: Array<{ kind: string; label: string; items: Array<{ typeLabel: string; src: unknown }> }>;
+}
+
+/** JS/CSS 設定の適用範囲と、PC・モバイルごとの JS・CSS の一覧（URL またはファイル名。本文は載せない）。 */
+export function designCustomizeAreas(sec: any): { scopeLabel: string; areas: DesignCustomizeArea[] } {
+  const scopeLabel = mdLookupLabel(MD_CUSTOMIZE_SCOPE_LABELS, sec?.scope) || '（未設定）';
+  const areas: DesignCustomizeArea[] = [];
   ['desktop', 'mobile'].forEach((area) => {
     const zone = sec?.[area];
     if (!zone) return;
-    parts.push(`#### ${area === 'desktop' ? 'PC（デスクトップ）' : 'モバイル'}`);
-    parts.push('');
+    const kinds: DesignCustomizeArea['kinds'] = [];
     ['js', 'css'].forEach((kind) => {
       const list = zone[kind];
       if (!Array.isArray(list) || list.length === 0) return;
-      parts.push(`- ${kind.toUpperCase()}（${kind === 'js' ? 'JavaScript' : 'スタイルシート'}）:`);
-      list.forEach((item) => {
-        let src = '';
-        if (item.type === 'URL') src = item.url || '';
-        else if (item.file) src = `ファイル: ${item.file.name || item.file.fileKey || ''}`;
-        const typeLabel = mdLookupLabel(MD_RESOURCE_TYPE_LABELS, item.type);
-        parts.push(`  - ${typeLabel || '(種別不明)'}: ${mdLine(src)}`);
+      kinds.push({
+        kind,
+        label: `${kind.toUpperCase()}（${kind === 'js' ? 'JavaScript' : 'スタイルシート'}）`,
+        items: list.map((item) => {
+          let src: unknown = '';
+          if (item.type === 'URL') src = item.url || '';
+          else if (item.file) src = `ファイル: ${item.file.name || item.file.fileKey || ''}`;
+          return { typeLabel: mdLookupLabel(MD_RESOURCE_TYPE_LABELS, item.type), src };
+        })
+      });
+    });
+    areas.push({ area, label: area === 'desktop' ? 'PC（デスクトップ）' : 'モバイル', kinds });
+  });
+  return { scopeLabel, areas };
+}
+
+function mdRenderCustomizeSettings(sec) {
+  const data = designCustomizeAreas(sec);
+  const parts: string[] = [];
+  parts.push(`- 適用範囲（スコープ）: ${data.scopeLabel}`);
+  parts.push('');
+  data.areas.forEach((area) => {
+    parts.push(`#### ${area.label}`);
+    parts.push('');
+    area.kinds.forEach((kind) => {
+      parts.push(`- ${kind.label}:`);
+      kind.items.forEach((item) => {
+        parts.push(`  - ${item.typeLabel || '(種別不明)'}: ${mdLine(item.src)}`);
       });
     });
     parts.push('');
@@ -1770,148 +1891,218 @@ function mdRenderCustomizeSettings(sec) {
   return parts.join('\n').trimEnd();
 }
 
-function mdRenderActionSettings(sec, _sections?: any, ctx: MdRenderContext = {}) {
+/** アプリアクションの表（連携先アプリは名前と App ID、コピー項目はコピー元 → コピー先を 1 行ずつ）。 */
+export function designActionTable(sec: any, ctx: MdRenderContext = {}): DesignTable {
   const actions = sec?.actions || [];
   const list = Array.isArray(actions) ? actions : Object.values(actions);
   const rows = list.map((a) => [
     a.name || '',
     a.index ?? '',
     a.destApp ? (a.destApp.app != null && a.destApp.app !== '' ? mdAppRef(a.destApp, ctx) : (a.destApp.code || '')) : '',
-    Array.isArray(a.entities) && a.entities.length ? mdEntityList(a.entities) : 'すべてのユーザー',
+    Array.isArray(a.entities) && a.entities.length ? designEntityList(a.entities) : 'すべてのユーザー',
     String((a.mappings || []).length),
     // コピー元 → コピー先（レコードの URL は srcType が RECORD_URL でコピー元のフィールドが無い）
-    (a.mappings || []).map((m: any) => `${m?.srcType === 'RECORD_URL' ? 'レコードのURL' : `\`${m?.srcField ?? ''}\``} → \`${m?.destField ?? ''}\``).join('\n'),
+    mapJoinRich(designArrayOrThrow(a.mappings || []), (m: any): DesignInline[] => [
+      m?.srcType === 'RECORD_URL' ? 'レコードのURL' : codeOf(m?.srcField ?? ''),
+      ' → ',
+      codeOf(m?.destField ?? '')
+    ], '\n'),
     a.filterCond || ''
   ]);
-  return mdTable(['アクション名', '表示順', '連携先アプリ', '利用できるユーザー', 'マッピング数', 'コピー項目（コピー元 → コピー先）', '実行条件'], rows);
+  return { headers: ['アクション名', '表示順', '連携先アプリ', '利用できるユーザー', 'マッピング数', 'コピー項目（コピー元 → コピー先）', '実行条件'], rows };
 }
 
-function mdRenderAclRights(rights, columns) {
-  if (!Array.isArray(rights) || rights.length === 0) return '';
-  return mdTable(
-    ['対象', ...columns.map((c) => c.label)],
-    rights.map((r) => [
-      mdEntityList([{ entity: r.entity, includeSubs: r.includeSubs }]) || r.code || r.filterCond || '',
-      ...columns.map((c) => mdBoolMark(r[c.key]))
+function mdRenderActionSettings(sec, _sections?: any, ctx: MdRenderContext = {}) {
+  return mdDesignTable(designActionTable(sec, ctx));
+}
+
+/** 権限の対象の列。対象の種別とコードが無ければ、コードや条件の文字列にする。 */
+function designAclTarget(r: any): unknown {
+  const entities = designEntityList([{ entity: r.entity, includeSubs: r.includeSubs }]);
+  return richToMarkdown(entities) ? entities : (r.code || r.filterCond || '');
+}
+
+const DESIGN_APP_ACL_COLUMNS = [
+  { key: 'appEditable', label: 'アプリ管理' },
+  { key: 'recordViewable', label: '閲覧' },
+  { key: 'recordAddable', label: '追加' },
+  { key: 'recordEditable', label: '編集' },
+  { key: 'recordDeletable', label: '削除' },
+  { key: 'recordImportable', label: '読込' },
+  { key: 'recordExportable', label: '書出' }
+];
+
+/** アプリ権限の表。権限の行が無ければ null。 */
+export function designAppAclTable(sec: any): DesignTable | null {
+  const rights = sec?.rights;
+  if (!Array.isArray(rights) || rights.length === 0) return null;
+  return {
+    headers: ['対象', ...DESIGN_APP_ACL_COLUMNS.map((c) => c.label)],
+    rows: rights.map((r) => [
+      designAclTarget(r),
+      ...DESIGN_APP_ACL_COLUMNS.map((c) => mdBoolMark(r[c.key]))
     ])
-  );
+  };
 }
 
 function mdRenderAppAcl(sec) {
-  return mdRenderAclRights(sec?.rights, [
-    { key: 'appEditable', label: 'アプリ管理' },
-    { key: 'recordViewable', label: '閲覧' },
-    { key: 'recordAddable', label: '追加' },
-    { key: 'recordEditable', label: '編集' },
-    { key: 'recordDeletable', label: '削除' },
-    { key: 'recordImportable', label: '読込' },
-    { key: 'recordExportable', label: '書出' }
-  ]);
+  return mdDesignTable(designAppAclTable(sec));
+}
+
+/** フィールド権限。フィールドごとの対象とアクセス権の表。 */
+export function designFieldAclTables(sec: any): Array<{ code: unknown; table: DesignTable }> {
+  const rights = sec?.rights || [];
+  const out: Array<{ code: unknown; table: DesignTable }> = [];
+  rights.forEach((r) => {
+    out.push({
+      code: r.code || '',
+      table: {
+        headers: ['対象', 'アクセス権'],
+        rows: (r.entities || []).map((e) => [
+          designEntityList([{ entity: e.entity, includeSubs: e.includeSubs }]),
+          mdLookupLabel(MD_FIELD_ACCESSIBILITY_LABELS, e.accessibility)
+        ])
+      }
+    });
+  });
+  return out;
 }
 
 function mdRenderFieldAcl(sec) {
-  const rights = sec?.rights || [];
   const parts: string[] = [];
-  rights.forEach((r) => {
-    parts.push(`#### \`${r.code || ''}\``);
+  designFieldAclTables(sec).forEach((item) => {
+    parts.push(`#### \`${item.code}\``);
     parts.push('');
-    parts.push(mdTable(
-      ['対象', 'アクセス権'],
-      (r.entities || []).map((e) => [
-        mdEntityList([{ entity: e.entity, includeSubs: e.includeSubs }]),
-        mdLookupLabel(MD_FIELD_ACCESSIBILITY_LABELS, e.accessibility)
-      ])
-    ));
+    parts.push(mdDesignTable(item.table));
     parts.push('');
   });
   return parts.join('\n').trimEnd();
+}
+
+/** レコード権限。条件ごとの対象と閲覧・編集・削除の表。 */
+export function designRecordPermissionTables(sec: any): Array<{ index: number; filterCond: unknown; table: DesignTable }> {
+  const rights = sec?.rights || [];
+  const out: Array<{ index: number; filterCond: unknown; table: DesignTable }> = [];
+  rights.forEach((r, index) => {
+    out.push({
+      index,
+      filterCond: r.filterCond,
+      table: {
+        headers: ['対象', '閲覧', '編集', '削除'],
+        rows: (r.entities || []).map((e) => [
+          designEntityList([{ entity: e.entity, includeSubs: e.includeSubs }]),
+          mdBoolMark(e.viewable),
+          mdBoolMark(e.editable),
+          mdBoolMark(e.deletable)
+        ])
+      }
+    });
+  });
+  return out;
 }
 
 function mdRenderRecordPermissions(sec) {
-  const rights = sec?.rights || [];
   const parts: string[] = [];
-  rights.forEach((r, idx) => {
-    parts.push(`#### 条件 ${idx + 1}${r.filterCond ? `: ${mdCode(r.filterCond)}` : ''}`);
+  designRecordPermissionTables(sec).forEach((item) => {
+    parts.push(`#### 条件 ${item.index + 1}${item.filterCond ? `: ${mdCode(item.filterCond)}` : ''}`);
     parts.push('');
-    parts.push(mdTable(
-      ['対象', '閲覧', '編集', '削除'],
-      (r.entities || []).map((e) => [
-        mdEntityList([{ entity: e.entity, includeSubs: e.includeSubs }]),
-        mdBoolMark(e.viewable),
-        mdBoolMark(e.editable),
-        mdBoolMark(e.deletable)
-      ])
-    ));
+    parts.push(mdDesignTable(item.table));
     parts.push('');
   });
   return parts.join('\n').trimEnd();
 }
 
-function mdRenderNotifications(sec) {
+/** 通知設定（一般）。コメント投稿者への通知（設定が無ければ null）と、通知先ごとの表。 */
+export function designNotificationTable(sec: any): { notifyToCommenter: boolean | null; table: DesignTable } {
   const list = sec?.notifications || [];
   const rows = list.map((n) => [
-    mdEntityList([{ entity: n.entity, includeSubs: n.includeSubs }]),
+    designEntityList([{ entity: n.entity, includeSubs: n.includeSubs }]),
     mdBoolMark(n.recordAdded),
     mdBoolMark(n.recordEdited),
     mdBoolMark(n.commentAdded),
     mdBoolMark(n.statusChanged),
     mdBoolMark(n.fileImported)
   ]);
+  return {
+    notifyToCommenter: sec?.notifyToCommenter != null ? !!sec.notifyToCommenter : null,
+    table: { headers: ['対象', 'レコード追加', 'レコード編集', 'コメント', 'ステータス変更', 'ファイル取込'], rows }
+  };
+}
+
+function mdRenderNotifications(sec) {
+  const data = designNotificationTable(sec);
   const parts: string[] = [];
-  if (sec?.notifyToCommenter != null) {
-    parts.push(`- コメント投稿者へ通知: ${sec.notifyToCommenter ? '有効' : '無効'}`);
+  if (data.notifyToCommenter != null) {
+    parts.push(`- コメント投稿者へ通知: ${data.notifyToCommenter ? '有効' : '無効'}`);
     parts.push('');
   }
-  parts.push(mdTable(
-    ['対象', 'レコード追加', 'レコード編集', 'コメント', 'ステータス変更', 'ファイル取込'],
-    rows
-  ));
+  parts.push(mdDesignTable(data.table));
   return parts.join('\n');
+}
+
+/** レコード条件通知の表。 */
+export function designPerRecordNotificationTable(sec: any): DesignTable {
+  const list = sec?.notifications || [];
+  return {
+    headers: ['タイトル', '絞り込み条件', '通知先'],
+    rows: list.map((n) => [n.title || '', n.filterCond || '', designEntityList(n.targets)])
+  };
 }
 
 function mdRenderPerRecordNotifications(sec) {
+  return mdDesignTable(designPerRecordNotificationTable(sec));
+}
+
+/** リマインダー通知。タイムゾーン（設定のまま）と、通知ごとの表。 */
+export function designReminderNotificationTable(sec: any): { timezone: unknown; table: DesignTable } {
   const list = sec?.notifications || [];
-  return mdTable(
-    ['タイトル', '絞り込み条件', '通知先'],
-    list.map((n) => [n.title || '', n.filterCond || '', mdEntityList(n.targets)])
-  );
+  return {
+    timezone: sec?.timezone,
+    table: {
+      headers: ['タイトル', '基準フィールド', '通知タイミング', '絞り込み条件', '通知先'],
+      rows: list.map((n) => {
+        const t = n.timing || ({} as any);
+        const timingParts: any[] = [];
+        if (t.daysLater != null && t.daysLater !== '') {
+          const d = Number(t.daysLater);
+          timingParts.push(!Number.isFinite(d) ? String(t.daysLater) : (d === 0 ? '当日' : (d > 0 ? `${d}日後` : `${Math.abs(d)}日前`)));
+        }
+        if (t.hoursLater != null && t.hoursLater !== '') {
+          const h = Number(t.hoursLater);
+          timingParts.push(!Number.isFinite(h) ? String(t.hoursLater) : (h === 0 ? '同時刻' : (h > 0 ? `${h}時間後` : `${Math.abs(h)}時間前`)));
+        }
+        if (t.time) timingParts.push(`${t.time}`);
+        return [n.title || '', t.code ? richText(codeOf(t.code)) : '', timingParts.join(' '), n.filterCond || '', designEntityList(n.targets)];
+      })
+    }
+  };
 }
 
 function mdRenderReminderNotifications(sec) {
-  const list = sec?.notifications || [];
+  const data = designReminderNotificationTable(sec);
   const parts: string[] = [];
-  if (sec?.timezone) {
-    parts.push(`- タイムゾーン: ${mdLine(sec.timezone)}`);
+  if (data.timezone) {
+    parts.push(`- タイムゾーン: ${mdLine(data.timezone)}`);
     parts.push('');
   }
-  parts.push(mdTable(
-    ['タイトル', '基準フィールド', '通知タイミング', '絞り込み条件', '通知先'],
-    list.map((n) => {
-      const t = n.timing || ({} as any);
-      const timingParts: any[] = [];
-      if (t.daysLater != null && t.daysLater !== '') {
-        const d = Number(t.daysLater);
-        timingParts.push(!Number.isFinite(d) ? String(t.daysLater) : (d === 0 ? '当日' : (d > 0 ? `${d}日後` : `${Math.abs(d)}日前`)));
-      }
-      if (t.hoursLater != null && t.hoursLater !== '') {
-        const h = Number(t.hoursLater);
-        timingParts.push(!Number.isFinite(h) ? String(t.hoursLater) : (h === 0 ? '同時刻' : (h > 0 ? `${h}時間後` : `${Math.abs(h)}時間前`)));
-      }
-      if (t.time) timingParts.push(`${t.time}`);
-      return [n.title || '', t.code ? `\`${t.code}\`` : '', timingParts.join(' '), n.filterCond || '', mdEntityList(n.targets)];
-    })
-  ));
+  parts.push(mdDesignTable(data.table));
   return parts.join('\n');
 }
 
+/** カテゴリーの有効・無効と、カテゴリーの表（階層は「親 > 子」）。 */
+export function designCategoryTable(sec: any): { enabled: boolean; table: DesignTable } {
+  return {
+    enabled: !!sec?.enabled,
+    table: { headers: ['カテゴリー', '表示順'], rows: flattenCategories(sec?.categories).map((c) => [c.path, c.index]) }
+  };
+}
+
 function mdRenderCategories(sec) {
+  const data = designCategoryTable(sec);
   const parts: string[] = [];
-  parts.push(`- カテゴリー機能: ${sec?.enabled ? '有効' : '無効'}`);
+  parts.push(`- カテゴリー機能: ${data.enabled ? '有効' : '無効'}`);
   parts.push('');
-  parts.push(mdTable(
-    ['カテゴリー', '表示順'],
-    flattenCategories(sec?.categories).map((c) => [c.path, c.index])
-  ));
+  parts.push(mdDesignTable(data.table));
   return parts.join('\n');
 }
 
@@ -1944,7 +2135,8 @@ function mdAllFieldDefinitions(fields: any): any[] {
   return all;
 }
 
-function mdBundleSummary(bundle) {
+/** サマリーの表（項目・件数）。0 件の項目は載せない。 */
+export function designSummaryTable(bundle): DesignTable {
   const sections = bundle?.sections || ({} as any);
   const rows: any[][] = [];
   const fields = sections.fieldSettings?.properties || ({} as any);
@@ -1980,10 +2172,18 @@ function mdBundleSummary(bundle) {
   if (pluginCount) rows.push(['プラグイン数', String(pluginCount)]);
   if (notifCount) rows.push(['一般通知宛先数', String(notifCount)]);
   if (customizeCount) rows.push(['JS/CSSカスタマイズ数', String(customizeCount)]);
-  return rows.length ? mdTable(['項目', '件数'], rows) : '';
+  return { headers: ['項目', '件数'], rows };
 }
 
-function mdDesignReviewPoints(bundle: any) {
+function mdBundleSummary(bundle) {
+  return mdDesignTable(designSummaryTable(bundle));
+}
+
+/** 確認ポイントが無いときの文。 */
+export const DESIGN_NO_REVIEW_POINTS = '特に目立つ確認ポイントはありません。';
+
+/** 確認ポイント（ルックアップ・計算式・権限・JS/CSS・プロセス管理の件数から、確認すべきことを 1 文ずつ）。 */
+export function designReviewPoints(bundle: any): string[] {
   const sections = bundle?.sections || ({} as any);
   const fields: any[] = mdAllFieldDefinitions(sections.fieldSettings?.properties || ({} as any));
   const points: string[] = [];
@@ -1996,12 +2196,17 @@ function mdDesignReviewPoints(bundle: any) {
     const zone = sections.customizeSettings?.[area] || ({} as any);
     return sum + (zone.js || []).length + (zone.css || []).length;
   }, 0);
-  if (lookupCount) points.push(`- ルックアップ設定が ${lookupCount} 件あります。参照先アプリIDとフィールドマッピングを確認してください。`);
-  if (calcCount) points.push(`- 計算式フィールドが ${calcCount} 件あります。参照フィールド変更時の影響を確認してください。`);
-  if (permissionCount) points.push(`- 権限設定エントリが ${permissionCount} 件あります。移行前後でユーザー/組織/グループの差異を確認してください。`);
-  if (customizeCount) points.push(`- JS/CSSカスタマイズが ${customizeCount} 件あります。URL・ファイル参照・読み込み順を確認してください。`);
-  if (sections.processSettings?.enable) points.push('- プロセス管理が有効です。ステータス、作業者、アクション条件を確認してください。');
-  return points.length ? points.join('\n') : '- 特に目立つ確認ポイントはありません。';
+  if (lookupCount) points.push(`ルックアップ設定が ${lookupCount} 件あります。参照先アプリIDとフィールドマッピングを確認してください。`);
+  if (calcCount) points.push(`計算式フィールドが ${calcCount} 件あります。参照フィールド変更時の影響を確認してください。`);
+  if (permissionCount) points.push(`権限設定エントリが ${permissionCount} 件あります。移行前後でユーザー/組織/グループの差異を確認してください。`);
+  if (customizeCount) points.push(`JS/CSSカスタマイズが ${customizeCount} 件あります。URL・ファイル参照・読み込み順を確認してください。`);
+  if (sections.processSettings?.enable) points.push('プロセス管理が有効です。ステータス、作業者、アクション条件を確認してください。');
+  return points;
+}
+
+function mdDesignReviewPoints(bundle: any) {
+  const points = designReviewPoints(bundle);
+  return points.length ? points.map((point) => `- ${point}`).join('\n') : `- ${DESIGN_NO_REVIEW_POINTS}`;
 }
 
 /** `_fetchError` / `_partial` 以外の本体があるか（一覧は取得できたが付随情報の取得に失敗した場合など）。 */
@@ -2009,9 +2214,10 @@ function mdSectionHasData(sec: any): boolean {
   return !!sec && typeof sec === 'object' && Object.keys(sec).some((key) => key !== '_fetchError' && key !== '_partial');
 }
 
-function mdDesignSectionRows(bundle: any, snapshotByKey?: Map<string, any>) {
+/** 「出力セクション」の表（設定にあるセクションと、取得状態と同じ数え方の件数）。 */
+export function designOutputSectionTable(bundle: any, snapshotByKey?: Map<string, any>): DesignTable {
   const sections = bundle?.sections || ({} as any);
-  return SECTION_DEFS
+  const rows = SECTION_DEFS
     .filter((def) => sections[def.key])
     .map((def): string[] => {
       const sec = sections[def.key];
@@ -2020,6 +2226,34 @@ function mdDesignSectionRows(bundle: any, snapshotByKey?: Map<string, any>) {
       const count = snapshotByKey?.get(def.key)?.count;
       return [def.label, def.key, count == null ? '-' : String(count)];
     });
+  return { headers: ['セクション', 'キー', '件数'], rows };
+}
+
+/**
+ * 設計書の各セクションの本文の出し方。Markdown と HTML で同じ判断にする。
+ * - fetchError: セクションの取得失敗の理由（先頭に警告として出す）。無ければ null
+ * - mode: none（警告だけ。取得できた本体が無い）/ fetch-error / partial / empty / unsupported（整形表示が無い）/ render
+ */
+export interface DesignSectionPlan {
+  fetchError: string | null;
+  mode: 'none' | 'fetch-error' | 'partial' | 'empty' | 'unsupported' | 'render';
+  detail: string;
+}
+
+export function designSectionPlan(sec: any, snapshotSection: { status?: string; detail?: string } | undefined, hasRenderer: boolean): DesignSectionPlan {
+  const fetchError = sec._fetchError ? String(sec._fetchError) : null;
+  // 付随情報（JS/CSS本文・プラグイン設定など）だけ失敗した場合は、取得できた本体を捨てずに続けて出す
+  if (sec._fetchError && !mdSectionHasData(sec)) return { fetchError, mode: 'none', detail: '' };
+  if (snapshotSection?.status === 'fetch-error' && !sec._fetchError) return { fetchError, mode: 'fetch-error', detail: snapshotSection.detail as string };
+  if (snapshotSection?.status === 'partial') return { fetchError, mode: 'partial', detail: snapshotSection.detail as string };
+  if (snapshotSection?.status === 'empty') return { fetchError, mode: 'empty', detail: '' };
+  if (!hasRenderer) return { fetchError, mode: 'unsupported', detail: '' };
+  return { fetchError, mode: 'render', detail: '' };
+}
+
+/** 設計書の本文を持つセクションのキー（それ以外は「整形表示は未対応」として原文だけを出す）。 */
+export function hasDesignSectionRenderer(key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(MD_SECTION_RENDERERS, key);
 }
 
 function mdFetchedAt(value: unknown): string {
@@ -2048,12 +2282,18 @@ export interface BundleToMarkdownOptions {
   appNames?: Record<string, string>;
 }
 
-export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions = {}) {
-  const includeRawJson = options.rawJson !== false;
+/** 設計書の先頭に出す、アプリと取得元の情報。 */
+export interface DesignDocumentInfo {
+  /** アプリ名（取得できなければ空） */
+  appName: string;
+  /** 先頭の表（項目・値） */
+  table: DesignTable;
+  /** 取得できなかったセクションのラベル */
+  failedSectionLabels: string[];
+}
+
+export function designDocumentInfo(bundle: any, options: { fetchedAt?: boolean } = {}): DesignDocumentInfo {
   const sections = bundle?.sections || ({} as any);
-  const renderContext: MdRenderContext = { appNames: options.appNames || {}, guestId: String(bundle?.guestId ?? '') };
-  const designSnapshot = buildDesignSnapshot(bundle);
-  const snapshotByKey = new Map(designSnapshot.sections.map((row) => [row.key, row]));
   const appName = decodeHtmlEntities(sections.appSettings?.name || '');
   const hasGuestId = Object.prototype.hasOwnProperty.call(bundle || {}, 'guestId');
   const hasPreview = Object.prototype.hasOwnProperty.call(bundle || {}, 'preview');
@@ -2065,36 +2305,58 @@ export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions =
   const environmentLabel = previewKnown
     ? (bundle.preview ? 'プレビュー（未公開の設定）' : '本番（運用中の設定）')
     : '不明（設定JSONに記載なし）';
-  const lines: string[] = [];
-  lines.push('# kintone アプリ設計書');
-  lines.push('');
-  if (appName) {
-    lines.push(`> ${mdLine(appName)}`);
-    lines.push('');
-  }
-  const failedSections = SECTION_DEFS.filter((def) => sections[def.key]?._fetchError);
-  lines.push(mdTable(['項目', '値'], [
-    ['アプリID', bundle.appId],
-    ['アプリ名', appName || '（取得なし）'],
-    ['ゲストスペースID', guestIdLabel],
-    ['取得環境', environmentLabel],
-    ...(options.fetchedAt === false ? [] : [['取得日時', mdFetchedAt(bundle.fetchedAt)]]),
-    ['取得できなかったセクション', failedSections.length ? failedSections.map((def) => def.label).join('、') : 'なし']
-  ]));
-  lines.push('');
+  const failedSectionLabels = SECTION_DEFS.filter((def) => sections[def.key]?._fetchError).map((def) => def.label);
+  return {
+    appName,
+    failedSectionLabels,
+    table: {
+      headers: ['項目', '値'],
+      rows: [
+        ['アプリID', bundle?.appId],
+        ['アプリ名', appName || '（取得なし）'],
+        ['ゲストスペースID', guestIdLabel],
+        ['取得環境', environmentLabel],
+        ...(options.fetchedAt === false ? [] : [['取得日時', mdFetchedAt(bundle?.fetchedAt)]]),
+        ['取得できなかったセクション', failedSectionLabels.length ? failedSectionLabels.join('、') : 'なし']
+      ]
+    }
+  };
+}
 
-  lines.push('## 取得状態');
-  lines.push('');
-  lines.push(mdTable(
-    ['セクション', 'キー', '状態', '件数', '詳細'],
-    designSnapshot.sections.map((row) => [
+/** 「取得状態」の表（既知のセクションすべての状態・件数・詳細。未取得の件数は「不明」）。 */
+export function designStatusTable(snapshot: ReturnType<typeof buildDesignSnapshot>): DesignTable {
+  return {
+    headers: ['セクション', 'キー', '状態', '件数', '詳細'],
+    rows: snapshot.sections.map((row) => [
       row.label,
       row.key,
       row.status,
       row.count == null ? '不明' : String(row.count),
       row.detail
     ])
-  ));
+  };
+}
+
+export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions = {}) {
+  const includeRawJson = options.rawJson !== false;
+  const sections = bundle?.sections || ({} as any);
+  const renderContext: MdRenderContext = { appNames: options.appNames || {}, guestId: String(bundle?.guestId ?? '') };
+  const designSnapshot = buildDesignSnapshot(bundle);
+  const snapshotByKey = new Map(designSnapshot.sections.map((row) => [row.key, row]));
+  const info = designDocumentInfo(bundle, { fetchedAt: options.fetchedAt });
+  const lines: string[] = [];
+  lines.push('# kintone アプリ設計書');
+  lines.push('');
+  if (info.appName) {
+    lines.push(`> ${mdLine(info.appName)}`);
+    lines.push('');
+  }
+  lines.push(mdDesignTable(info.table));
+  lines.push('');
+
+  lines.push('## 取得状態');
+  lines.push('');
+  lines.push(mdDesignTable(designStatusTable(designSnapshot)));
   lines.push('');
 
   const available = SECTION_DEFS.filter((def) => sections[def.key]);
@@ -2120,11 +2382,11 @@ export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions =
   lines.push(mdDesignReviewPoints(bundle));
   lines.push('');
 
-  const sectionRows = mdDesignSectionRows(bundle, snapshotByKey);
-  if (sectionRows.length) {
+  const sectionTable = designOutputSectionTable(bundle, snapshotByKey);
+  if (sectionTable.rows.length) {
     lines.push('## 出力セクション');
     lines.push('');
-    lines.push(mdTable(['セクション', 'キー', '件数'], sectionRows));
+    lines.push(mdDesignTable(sectionTable));
     lines.push('');
   }
 
@@ -2136,29 +2398,30 @@ export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions =
     const snapshotSection = snapshotByKey.get(def.key);
     lines.push(`## ${def.label}`);
     lines.push('');
-    if (sec._fetchError) {
-      // 取得に失敗したセクションを「0件」や「データなし」と読み違えないよう、失敗を明示する
-      lines.push(`> ⚠ 取得できませんでした: ${mdLine(String(sec._fetchError))}`);
-      lines.push('');
-      // 付随情報（JS/CSS本文・プラグイン設定など）だけ失敗した場合は、取得できた本体を捨てずに続けて出す
-      if (!mdSectionHasData(sec)) continue;
-    }
     const renderer = MD_SECTION_RENDERERS[def.key];
+    const plan = designSectionPlan(sec, snapshotSection, !!renderer);
+    if (plan.fetchError !== null) {
+      // 取得に失敗したセクションを「0件」や「データなし」と読み違えないよう、失敗を明示する
+      lines.push(`> ⚠ 取得できませんでした: ${mdLine(plan.fetchError)}`);
+      lines.push('');
+      if (plan.mode === 'none') continue;
+    }
     let rendered = '';
-    // 上の警告を出したうえで本体が残っているセクション（付随情報だけ失敗）は、取得できた本体を通常どおり整形する。
-    if (snapshotSection?.status === 'fetch-error' && !sec._fetchError) {
-      lines.push(`（取得失敗: ${mdLine(snapshotSection.detail)}）`);
+    // 取得状態ごとに出し分ける。上で警告を出したうえで本体が残っているセクション（付随情報だけ失敗）は、
+    // 最後の分岐で取得できた本体を通常どおり整形する。
+    if (plan.mode === 'fetch-error') {
+      lines.push(`（取得失敗: ${mdLine(plan.detail)}）`);
       if (!includeRawJson) lines.push('', '（原文JSONは rawJson:false のため省略されています）');
-    } else if (snapshotSection?.status === 'partial') {
-      lines.push(`（部分取得: ${snapshotSection.detail}）`);
+    } else if (plan.mode === 'partial') {
+      lines.push(`（部分取得: ${plan.detail}）`);
       if (renderer) {
         try { rendered = renderer(sec, sections, renderContext) || ''; } catch { rendered = ''; }
         if (rendered.trim()) lines.push('', rendered);
       }
       if (!includeRawJson) lines.push('', '（原文JSONは rawJson:false のため省略されています）');
-    } else if (snapshotSection?.status === 'empty') {
+    } else if (plan.mode === 'empty') {
       lines.push('（設定コレクションは空です）');
-    } else if (!renderer) {
+    } else if (plan.mode === 'unsupported') {
       lines.push('（整形表示は未対応です。設定データは下の原文を参照してください）');
       if (!includeRawJson) lines.push('', '（原文JSONは rawJson:false のため省略されています）');
     } else {

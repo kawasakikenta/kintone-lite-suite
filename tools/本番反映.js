@@ -538,6 +538,9 @@
     if (items.length <= limit) return items.join("\n");
     return [...items.slice(0, limit), `…ほか ${items.length - limit} 件（合計 ${items.length} 件）`].join("\n");
   }
+  function normalizeIdInputText(value) {
+    return String(value ?? "").replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 65248)).replace(/，/g, ",");
+  }
   function deepClone(v) {
     return v == null ? v : JSON.parse(JSON.stringify(v));
   }
@@ -5214,7 +5217,7 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
 
   // src/handlers/diffFocus.ts
   function extractAppIdFromInput(value) {
-    const raw = String(value || "").trim();
+    const raw = normalizeIdInputText(value).trim();
     if (!raw) return "";
     if (/^\d+$/.test(raw)) return raw;
     let decoded = raw;
@@ -5231,7 +5234,7 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
     return "";
   }
   function extractGuestIdFromInput(value) {
-    const raw = String(value || "").trim();
+    const raw = normalizeIdInputText(value).trim();
     if (!raw) return "";
     let decoded = raw;
     try {
@@ -5244,7 +5247,7 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
 
   // src/reflect/appReference.ts
   function parseAppReference(text) {
-    const raw = String(text || "").trim();
+    const raw = normalizeIdInputText(text).trim();
     if (!raw) return null;
     if (/^[1-9]\d*$/.test(raw)) return { appId: raw, guestId: "" };
     const appId = extractAppIdFromInput(raw);
@@ -5255,14 +5258,14 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
     return extractGuestIdFromInput(String(pathname || ""));
   }
   function needsAppReferenceParse(text) {
-    const raw = String(text || "").trim();
+    const raw = normalizeIdInputText(text).trim();
     return !!raw && !/^\d+$/.test(raw);
   }
 
   // src/reflect/liteSetup.ts
   var LOOKUP_PAIR_SEPARATOR = /\s*(?:→|->|=>|=|:|,|\t)\s*|\s+/;
   function parseLookupMapText(text) {
-    const trimmed = String(text || "").trim();
+    const trimmed = normalizeIdInputText(text || "").trim();
     if (!trimmed) return { ok: true, value: {}, count: 0 };
     const pairs = [];
     if (trimmed.startsWith("{")) {
@@ -6614,6 +6617,29 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
     }
     return wrap;
   }
+  function normalizeIdInputValue(el2) {
+    const next = normalizeIdInputText(el2.value);
+    if (next === el2.value) return false;
+    const start = el2.selectionStart;
+    const end = el2.selectionEnd;
+    el2.value = next;
+    if (start !== null && el2.ownerDocument?.activeElement === el2) {
+      try {
+        el2.setSelectionRange(start, end ?? start);
+      } catch {
+      }
+    }
+    return true;
+  }
+  function installIdInputNormalizer(el2) {
+    el2.addEventListener("input", (ev) => {
+      if (ev.isComposing) return;
+      normalizeIdInputValue(el2);
+    });
+    el2.addEventListener("compositionend", () => {
+      if (normalizeIdInputValue(el2)) el2.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
   function makeInput(opts = {}) {
     const inp = document.createElement("input");
     inp.type = opts.type || "text";
@@ -6621,6 +6647,7 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
     if (opts.value) inp.value = opts.value;
     if (opts.ariaLabel) inp.setAttribute("aria-label", opts.ariaLabel);
     if (opts.noSubmit) inp.setAttribute("data-lp-no-submit", "");
+    if (opts.idInput) installIdInputNormalizer(inp);
     inp.className = "kus-lp__input" + (opts.width ? ` kus-lp__input--${opts.width}` : "");
     return inp;
   }
@@ -6908,9 +6935,9 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
       const seen = /* @__PURE__ */ new Set();
       const out = [];
       for (const r of rows) {
-        const appId = r.app.value.trim();
+        const appId = normalizeIdInputText(r.app.value).trim();
         if (!appId) continue;
-        const guestId = r.guest.value.trim();
+        const guestId = normalizeIdInputText(r.guest.value).trim();
         const key = `${appId}::${guestId}`;
         if (seen.has(key)) continue;
         seen.add(key);
@@ -6922,7 +6949,7 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
     }
     function getAllRows() {
       return rows.map((r) => {
-        const row = { appId: r.app.value.trim(), guestId: r.guest.value.trim() };
+        const row = { appId: normalizeIdInputText(r.app.value).trim(), guestId: normalizeIdInputText(r.guest.value).trim() };
         if (r.appName) row.appName = r.appName;
         return row;
       });
@@ -6952,7 +6979,7 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
       opts.onChange?.(getApps());
     }
     function parseAppToken(token, fallbackGuest) {
-      const trimmed = token.trim();
+      const trimmed = normalizeIdInputText(token).trim();
       if (!trimmed || /^\d+$/.test(trimmed)) return { appId: trimmed, guestId: fallbackGuest };
       const extractedApp = extractAppIdFromInput(trimmed);
       if (!extractedApp) return { appId: trimmed, guestId: fallbackGuest };
@@ -6961,11 +6988,12 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
       return { appId: extractedApp, guestId };
     }
     function distributeAppTokens(entry) {
-      const raw = entry.app.value;
+      normalizeIdInputValue(entry.guest);
+      const raw = normalizeIdInputText(entry.app.value);
       const guestVal = entry.guest.value.trim();
       if (!/[,、，\s]/.test(raw)) {
         const parsed = parseAppToken(raw, guestVal);
-        if (parsed.appId !== raw || parsed.guestId !== guestVal) {
+        if (parsed.appId !== entry.app.value || parsed.guestId !== guestVal) {
           entry.app.value = parsed.appId;
           entry.guest.value = parsed.guestId;
           setAppName(entry, "");
@@ -7021,8 +7049,8 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
       const tdGuest = document.createElement("td");
       const tdAct = document.createElement("td");
       tdAct.className = "kus-lp__apptable-acts";
-      const app = makeInput({ placeholder: opts.appPlaceholder || "アプリID（カンマ区切りで複数可）", ariaLabel: "アプリID" });
-      const guest = makeInput({ placeholder: opts.guestPlaceholder || "空欄=通常スペース", ariaLabel: "ゲストスペースID" });
+      const app = makeInput({ placeholder: opts.appPlaceholder || "アプリID（カンマ区切りで複数可）", ariaLabel: "アプリID", idInput: true });
+      const guest = makeInput({ placeholder: opts.guestPlaceholder || "空欄=通常スペース", ariaLabel: "ゲストスペースID", idInput: true });
       app.value = appId;
       guest.value = guestId;
       const name = document.createElement("div");
@@ -7180,7 +7208,7 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
       first: () => {
         const r = rows[0];
         if (!r) return { appId: "", guestId: "" };
-        const row = { appId: r.app.value.trim(), guestId: r.guest.value.trim() };
+        const row = { appId: normalizeIdInputText(r.app.value).trim(), guestId: normalizeIdInputText(r.guest.value).trim() };
         if (r.appName) row.appName = r.appName;
         return row;
       },
@@ -7302,14 +7330,14 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
     ensureStyles();
     const { details, body } = makeDetails(opts.title || "アプリを検索（名前・コード・ID）", { open: !!opts.open });
     const keyword = makeInput({ placeholder: "アプリ名 / アプリID / URL", width: "wide", noSubmit: true });
-    const guest = makeInput({ placeholder: "ゲストID（任意）", width: "guest", noSubmit: true });
+    const guest = makeInput({ placeholder: "ゲストID（任意）", width: "guest", noSubmit: true, idInput: true });
     if (opts.guestEl?.value.trim()) guest.value = opts.guestEl.value.trim();
     const searchBtn = makeButton("検索", "sub", { icon: "🔍" });
     const allBtn = makeButton("環境内の全アプリ", "sub");
     allBtn.title = "接続先で閲覧できるアプリをすべて候補に表示します（検索語とスペースIDは使いません）";
     const searchMode = makeSelect([["name", "名前 / ID / URL"], ["code", "アプリコード（完全一致）"]]);
     searchMode.setAttribute("aria-label", "検索方法");
-    const space = makeInput({ placeholder: "スペースID（任意）", width: "guest", noSubmit: true, ariaLabel: "検索対象スペースID" });
+    const space = makeInput({ placeholder: "スペースID（任意）", width: "guest", noSubmit: true, ariaLabel: "検索対象スペースID", idInput: true });
     body.appendChild(makeRow([searchMode, space], { label: "検索方法" }));
     body.appendChild(makeRow([keyword, guest, searchBtn], { label: "検索語" }));
     body.appendChild(makeRow([allBtn], { label: "全アプリ" }));
@@ -11279,11 +11307,11 @@ ${P} .kus-ds-impact{margin-top:6px;font-size:13px;line-height:1.6;font-weight:60
     let restore = null;
     let sessionRestoreLabel = "";
     const pageGuest = () => guestIdFromPagePath(window.location?.pathname || "");
-    const srcApp = makeInput({ placeholder: "反映元アプリID", value: memory.sourceApp, width: "id" });
-    const srcGuest = makeInput({ placeholder: "ゲストID", value: memory.sourceGuest, width: "guest" });
+    const srcApp = makeInput({ placeholder: "反映元アプリID", value: memory.sourceApp, width: "id", idInput: true });
+    const srcGuest = makeInput({ placeholder: "ゲストID", value: memory.sourceGuest, width: "guest", idInput: true });
     const defaultsToCurrentApp = !memory.targetApp && !!DEFAULT_APP_ID;
-    const tgtApp = makeInput({ placeholder: "反映先アプリID", value: memory.targetApp || DEFAULT_APP_ID || "", width: "id" });
-    const tgtGuest = makeInput({ placeholder: "ゲストID", value: defaultsToCurrentApp ? pageGuest() : memory.targetGuest, width: "guest" });
+    const tgtApp = makeInput({ placeholder: "反映先アプリID", value: memory.targetApp || DEFAULT_APP_ID || "", width: "id", idInput: true });
+    const tgtGuest = makeInput({ placeholder: "ゲストID", value: defaultsToCurrentApp ? pageGuest() : memory.targetGuest, width: "guest", idInput: true });
     srcApp.setAttribute("aria-label", "反映元アプリID");
     srcGuest.setAttribute("aria-label", "反映元ゲストスペースID");
     tgtApp.setAttribute("aria-label", "反映先アプリID");
@@ -12137,7 +12165,7 @@ ${P} .kus-ds-impact{margin-top:6px;font-size:13px;line-height:1.6;font-weight:60
     const confirmBody = el("div");
     const ack = makeCheck({ label: "上記の内容を確認しました", checked: false });
     ack.checkbox.setAttribute("aria-label", "上記の内容を確認しました");
-    const confirmInput = makeInput({ width: "wide", noSubmit: true });
+    const confirmInput = makeInput({ width: "wide", noSubmit: true, idInput: true });
     confirmInput.autocomplete = "off";
     confirmInput.inputMode = "numeric";
     confirmInput.setAttribute("data-lp-no-submit", "");
@@ -13680,7 +13708,7 @@ ${P2} .kus-rl-items__more{margin-top:8px}
     const confirmBody = el("div");
     const ack = makeCheck({ label: "上記の内容を確認しました", checked: false });
     ack.checkbox.setAttribute("aria-label", "上記の内容を確認しました");
-    const confirmInput = makeInput({ width: "wide", noSubmit: true });
+    const confirmInput = makeInput({ width: "wide", noSubmit: true, idInput: true });
     confirmInput.autocomplete = "off";
     confirmInput.inputMode = "numeric";
     confirmInput.setAttribute("data-lp-no-submit", "");

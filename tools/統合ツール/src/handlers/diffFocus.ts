@@ -8,6 +8,7 @@
 
 import { state } from '../state.js';
 import { getToolDocument } from '../ui/dialog.js';
+import { normalizeIdInputText } from '../utils.js';
 
 export interface FocusDiffRowOptions {
   scroll?: boolean;
@@ -40,7 +41,7 @@ export function normalizeDiffFavoritePath(path: string): string {
 }
 
 export function extractAppIdFromInput(value: string): string {
-  const raw = String(value || '').trim();
+  const raw = normalizeIdInputText(value).trim();
   if (!raw) return '';
   if (/^\d+$/.test(raw)) return raw;
   let decoded = raw;
@@ -55,7 +56,7 @@ export function extractAppIdFromInput(value: string): string {
 }
 
 export function extractGuestIdFromInput(value: string): string {
-  const raw = String(value || '').trim();
+  const raw = normalizeIdInputText(value).trim();
   if (!raw) return '';
   let decoded = raw;
   try { decoded = decodeURIComponent(raw); } catch (e) { /* ignore malformed URI */ }

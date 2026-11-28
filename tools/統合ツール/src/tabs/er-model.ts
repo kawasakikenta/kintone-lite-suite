@@ -935,7 +935,8 @@ function erFieldTypeLabel(type: unknown): string {
 export function buildErMarkdownSpec(
   apps: any[],
   analysis?: Partial<ErDependencyAnalysis> & Record<string, any>,
-  options?: { generatedAt?: string }
+  /** sourceNote: 設定JSONから作ったときの取得元（「設定JSON「…」から作成（…）」）。見出しの下に出す */
+  options?: { generatedAt?: string; sourceNote?: string }
 ): string {
   const safeApps = (Array.isArray(apps) ? apps : []).filter((a) => a && a.id != null);
   const appMap = new Map<string, any>();
@@ -967,6 +968,7 @@ export function buildErMarkdownSpec(
   lines.push('# kintone ER図 仕様書');
   lines.push('');
   lines.push(`- 生成日時: ${generatedAt}`);
+  if (options?.sourceNote) lines.push(`- 取得元: ${options.sourceNote}`);
   lines.push(`- アプリ数: ${safeApps.length}`);
   lines.push(`- 総リレーション: ${totalRelations}`);
   lines.push(`- 取得完了: ${dep.counts.retrievalComplete}`);

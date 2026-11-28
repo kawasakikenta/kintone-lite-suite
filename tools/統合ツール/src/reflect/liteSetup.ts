@@ -6,6 +6,7 @@
 
 import type { ApplySectionOutcome } from './applyOutcome.js';
 import { reflectInspectionScopes } from './standalonePlan.js';
+import { normalizeIdInputText } from '../utils.js';
 
 export { parseAppReference, guestIdFromPagePath, needsAppReferenceParse, type AppReference } from './appReference.js';
 
@@ -19,9 +20,10 @@ const LOOKUP_PAIR_SEPARATOR = /\s*(?:→|->|=>|=|:|,|\t)\s*|\s+/;
  * ルックアップ参照アプリIDの変換表を解析する。
  * JSON オブジェクト（{"旧":"新"}）に加えて、1 行 1 組の「旧ID → 新ID」記法を受け付ける。
  * 区切りは →, ->, =>, =, :, カンマ, 空白のいずれか。# で始まる行は無視する。
+ * 全角数字・全角カンマ（１０ → ２５、１０，２５）は半角にしてから読む。
  */
 export function parseLookupMapText(text: string): LookupMapParseResult {
-  const trimmed = String(text || '').trim();
+  const trimmed = normalizeIdInputText(text || '').trim();
   if (!trimmed) return { ok: true, value: {}, count: 0 };
   const pairs: Array<[string, string]> = [];
   if (trimmed.startsWith('{')) {

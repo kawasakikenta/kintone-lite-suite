@@ -25,9 +25,10 @@ export function mountRecordQualityLitePanel() {
     placeholder: 'アプリID（カンマ区切りで複数指定）',
     value: DEFAULT_APP_ID || '',
     width: 'wide',
-    ariaLabel: '対象アプリID'
+    ariaLabel: '対象アプリID',
+    idInput: true
   });
-  const guestId = makeInput({ placeholder: 'ゲストID（任意）', value: DEFAULT_GUEST_ID, width: 'guest', ariaLabel: 'ゲストスペースID' });
+  const guestId = makeInput({ placeholder: 'ゲストID（任意）', value: DEFAULT_GUEST_ID, width: 'guest', ariaLabel: 'ゲストスペースID', idInput: true });
   let connectionVersion = 0;
   const resetMetadata: Array<() => void> = [];
   for (const input of [appId, guestId]) {

@@ -279,11 +279,11 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
   // ---------------------------------------------------------------------------
   // 段階 1: 対象を選ぶ
   // ---------------------------------------------------------------------------
-  const srcApp = makeInput({ placeholder: '反映元アプリID', value: memory.sourceApp, width: 'id' });
-  const srcGuest = makeInput({ placeholder: 'ゲストID', value: memory.sourceGuest, width: 'guest' });
+  const srcApp = makeInput({ placeholder: '反映元アプリID', value: memory.sourceApp, width: 'id', idInput: true });
+  const srcGuest = makeInput({ placeholder: 'ゲストID', value: memory.sourceGuest, width: 'guest', idInput: true });
   const defaultsToCurrentApp = !memory.targetApp && !!DEFAULT_APP_ID;
-  const tgtApp = makeInput({ placeholder: '反映先アプリID', value: memory.targetApp || DEFAULT_APP_ID || '', width: 'id' });
-  const tgtGuest = makeInput({ placeholder: 'ゲストID', value: defaultsToCurrentApp ? pageGuest() : memory.targetGuest, width: 'guest' });
+  const tgtApp = makeInput({ placeholder: '反映先アプリID', value: memory.targetApp || DEFAULT_APP_ID || '', width: 'id', idInput: true });
+  const tgtGuest = makeInput({ placeholder: 'ゲストID', value: defaultsToCurrentApp ? pageGuest() : memory.targetGuest, width: 'guest', idInput: true });
   srcApp.setAttribute('aria-label', '反映元アプリID');
   srcGuest.setAttribute('aria-label', '反映元ゲストスペースID');
   tgtApp.setAttribute('aria-label', '反映先アプリID');
@@ -1083,7 +1083,7 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
   const confirmBody = el('div');
   const ack = makeCheck({ label: '上記の内容を確認しました', checked: false });
   ack.checkbox.setAttribute('aria-label', '上記の内容を確認しました');
-  const confirmInput = makeInput({ width: 'wide', noSubmit: true });
+  const confirmInput = makeInput({ width: 'wide', noSubmit: true, idInput: true });
   confirmInput.autocomplete = 'off';
   confirmInput.inputMode = 'numeric';
   confirmInput.setAttribute('data-lp-no-submit', '');

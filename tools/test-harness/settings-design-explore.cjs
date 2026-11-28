@@ -189,6 +189,99 @@ async function main() {
     };
     return tool;
   }
+  /**
+   * 設計書 HTML を file:// で開き（file: 以外の通信はすべて遮断し、試みたら失敗）、目次・絞り込み・配色・印刷・画面幅を確かめる。
+   * 画面（1440・390・印刷）を OUT に保存する。
+   */
+  async function checkDesignHtmlPage(htmlText, name) {
+    const file = path.join(OUT, `${name}.html`);
+    fs.writeFileSync(file, htmlText, 'utf8');
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await context.newPage();
+    const errors = [];
+    const requests = [];
+    page.on('pageerror', error => errors.push(error.message));
+    page.on('console', message => { if (message.type() === 'error' || message.type() === 'warning') errors.push(`${message.type()}: ${message.text()}`); });
+    await page.route('**/*', route => { const url = route.request().url(); if (url.startsWith('file:')) return route.continue(); requests.push(url); return route.abort(); });
+    try {
+      await page.goto(require('node:url').pathToFileURL(file).href);
+      assert.equal(await page.evaluate(() => document.documentElement.classList.contains('js')), true, 'HTML: 埋め込んだスクリプトが CSP の下で動く');
+      await page.screenshot({ path: path.join(OUT, `${name}-1440.png`) });
+      // 絞り込み（フィールド名・コード。全角でも同じ）
+      const search = page.getByRole('searchbox', { name: 'フィールド名・コードで絞り込む' });
+      const total = await page.locator('tr[data-search]').count();
+      await search.fill('customer');
+      const shown = await page.locator('tr[data-search]:visible').count();
+      assert.ok(shown > 0 && shown < total, `HTML: 絞り込みで行が減る ${shown}/${total}`);
+      assert.equal(await page.locator('#field-search-meta').innerText(), `一致 ${shown} / ${total} 件`);
+      assert.ok((await page.locator('tr[data-search]:visible').evaluateAll(rows => rows.map(row => row.getAttribute('data-search')))).every(text => text.includes('customer')));
+      await search.fill('ＣＵＳＴＯＭＥＲ');
+      assert.equal(await page.locator('tr[data-search]:visible').count(), shown, 'HTML: 全角で入れても同じ行に絞り込む');
+      await search.press('Enter');
+      await page.locator('#sec-fieldSettings').scrollIntoViewIfNeeded();
+      await page.screenshot({ path: path.join(OUT, `${name}-1440-search.png`) });
+      await search.fill('該当しない語句');
+      assert.equal(await page.locator('#field-search-empty').isVisible(), true, 'HTML: 一致しないときは案内を出す');
+      await search.press('Escape');
+      assert.equal(await page.locator('tr[data-search]:visible').count(), total, 'HTML: Esc で絞り込みを解く');
+      // 目次から移る・いま読んでいるセクションを目次で示す
+      await page.locator('#toc').getByRole('link', { name: /プロセス管理/ }).click();
+      await page.waitForFunction(() => document.querySelector('.toc a[aria-current="true"]')?.getAttribute('href') === '#sec-processSettings', null, { timeout: 5000 });
+      // 配色: OS の設定に従い、ボタンで切り替える（保存しない）
+      await page.emulateMedia({ colorScheme: 'dark' });
+      const darkBg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+      assert.equal(darkBg, 'rgb(11, 18, 32)', 'HTML: OS が暗い配色なら暗い配色');
+      await page.getByRole('button', { name: '明るい配色に切り替える' }).click();
+      assert.equal(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(241, 245, 249)');
+      await page.emulateMedia({ colorScheme: 'light' });
+      // 印刷: 操作の部品・目次・原文を出さず、絞り込みは解いて全件、見出しに印刷日時
+      await search.fill('customer');
+      await page.emulateMedia({ media: 'print' });
+      await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+      const printed = await page.evaluate(() => ({
+        topbar: getComputedStyle(document.querySelector('.topbar')).display,
+        toc: getComputedStyle(document.querySelector('#toc')).display,
+        raw: getComputedStyle(document.querySelector('details.raw')).display,
+        rows: [...document.querySelectorAll('tr[data-search]')].filter(row => getComputedStyle(row).display !== 'none').length,
+        printedAt: document.getElementById('printed-at').textContent
+      }));
+      assert.deepEqual({ ...printed, printedAt: /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(printed.printedAt) }, { topbar: 'none', toc: 'none', raw: 'none', rows: total, printedAt: true }, `HTML: 印刷の形 ${JSON.stringify(printed)}`);
+      await page.setViewportSize({ width: 1047, height: 740 });
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.screenshot({ path: path.join(OUT, `${name}-print.png`) });
+      await page.pdf({ path: path.join(OUT, `${name}-print.pdf`), preferCSSPageSize: true, printBackground: true });
+      await page.emulateMedia({ media: 'screen' });
+      assert.equal(await page.locator('#printed-at').isVisible(), false, 'HTML: 印刷日時は印刷にだけ出す');
+      await search.fill('');
+      // 画面幅: 横にはみ出さない。1023px 以下は目次を引き出しにする
+      for (const width of [320, 390, 768, 1024, 1440]) {
+        await page.setViewportSize({ width, height: 844 });
+        const measured = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, inner: window.innerWidth }));
+        assert.ok(measured.scroll <= measured.inner + 1, `HTML ${width}px: 横にはみ出さない ${JSON.stringify(measured)}`);
+        const toggle = page.getByRole('button', { name: '目次', exact: true });
+        assert.equal(await toggle.isVisible(), width <= 1023, `HTML ${width}px: 目次の引き出しボタン`);
+        if (width === 390) {
+          await page.evaluate(() => window.scrollTo(0, 0));
+          await page.waitForTimeout(300); // 画面幅が変わったときの目次の引き出しの動きを待つ
+          await page.screenshot({ path: path.join(OUT, `${name}-390.png`) });
+          await toggle.click();
+          await page.waitForTimeout(300);
+          const box = await page.locator('#toc').boundingBox();
+          assert.ok(box && box.x >= 0 && box.x + box.width <= width + 1, `HTML 390px: 目次が画面内に開く ${JSON.stringify(box)}`);
+          await page.screenshot({ path: path.join(OUT, `${name}-390-toc.png`) });
+          await page.keyboard.press('Escape');
+          assert.equal(await page.evaluate(() => document.activeElement?.id), 'toc-toggle', 'HTML 390px: Esc で閉じて、開いたボタンへ戻る');
+          await page.locator('#toc').waitFor({ state: 'hidden', timeout: 3000 });
+          await page.locator('#sec-fieldSettings').scrollIntoViewIfNeeded();
+          await page.screenshot({ path: path.join(OUT, `${name}-390-fields.png`) });
+        }
+      }
+      assert.deepEqual(requests, [], 'HTML: 通信を試みない');
+      assert.deepEqual(errors, [], 'HTML: エラー・CSP の違反が無い');
+    } finally {
+      await context.close();
+    }
+  }
   const zipText = (zip, name) => zip.get([...zip.keys()].find(key => key === name || key.endsWith(`/${name}`)))?.toString('utf8');
   const jsonEntries = zip => [...zip.keys()].filter(key => key.endsWith('.json') && key !== 'manifest.json' && key !== '_manifest.json');
 
@@ -320,6 +413,9 @@ async function main() {
   const jsonOut = await design.run('設計書JSONを保存');
   const xlsxOut = await design.run('Excel設計書を保存', { dialog: true });
   assert.match(xlsxOut.status, /設計書Excel出力完了/);
+  const htmlOut = await design.run('HTML設計書を保存');
+  assert.match(htmlOut.status, /^HTML設計書を保存しました（App 401）$/);
+  assert.match(htmlOut.confirm, /出力形式\s*HTML（ブラウザで読む設計書）/, '確認画面: HTML の出力形式');
   const single = await design.files();
   const mdText = single.find(file => file.name.startsWith('設計書_案件管理') && file.name.endsWith('.md')).buffer.toString('utf8');
   const aiText = single.find(file => file.name.startsWith('設計書_AI向けMarkdown_') && file.name.endsWith('.md')).buffer.toString('utf8');
@@ -368,6 +464,18 @@ async function main() {
   const summaryRows = sheets['サマリー'].map(row => `${row[0]}|${row[1]}`);
   assert.ok(summaryRows.includes('プラグイン数|3') && summaryRows.includes('ステータス数|6') && summaryRows.includes('JS/CSSカスタマイズ件数|7'));
   await design.shot('design-single');
+  // ---- HTML 設計書（Markdown と同じ内容・言葉。開いて目次・絞り込み・印刷・配色を確かめる） ----
+  const htmlFile = single.find(file => /^設計書_案件管理\(app401\)_\d{8}_\d{6}\.html$/.test(file.name));
+  assert.ok(htmlFile, `HTML 設計書のファイル名: ${single.map(file => file.name).join(', ')}`);
+  const htmlText = htmlFile.buffer.toString('utf8');
+  assert.deepEqual(hasSecret(htmlText), [], 'HTML にも、プラグインの設定値・JS/CSS 本文を載せない（原文を含めて）');
+  for (const phrase of ['ルックアップ: 顧客マスタ（App 301） キー <code>customer_code</code>', '関連レコード: 見積管理（App 402）', '候補の誰でも（先着）', 'レコードのURL → <code>deal_url</code>', '<h3>テーブル: <code>tasks</code></h3>', 'グループ: <code>grp_basic</code> — 案件情報']) {
+    assert.ok(htmlText.includes(phrase), `HTML: Markdown と同じ言葉で出す（${phrase}）`);
+  }
+  const mdFieldRows = mdText.slice(mdText.indexOf('## フィールド設定'), mdText.indexOf('## レイアウト設定')).split('\n').filter(line => /^\| (?!---|コード \|)/.test(line)).length;
+  assert.equal((htmlText.match(/<tr data-search=/g) || []).length, mdFieldRows, `HTML: フィールドの行数が Markdown と同じ（テーブル内を含めて ${mdFieldRows}）`);
+  await checkDesignHtmlPage(htmlText, 'design-html');
+  ok('設計書 HTML: Markdown と同じ内容（参照先アプリ名・コピー項目・テーブル内・グループ名）、機微な値を載せない、通信せずに開けて目次・絞り込み・印刷・配色が動く');
   // ---- 複数アプリの ZIP（kintone から取得） ----
   await design.clearFiles();
   const mdZip = await design.run('全対象をMarkdown ZIPで保存');
@@ -385,6 +493,26 @@ async function main() {
   assert.match(app601Text, /ビュー設定 \| viewSettings \| fetch-error/, '個別の設計書にも取得失敗を残す（0 件にしない）');
   assert.match(app601Text, /> ⚠ 取得できませんでした: 権限がありません。一覧の設定を取得できません。/);
   ok('設計書 Markdown ZIP: 取得失敗を overview・manifest・個別の設計書に残し、使わない補助情報の失敗は失敗にしない');
+  await design.clearFiles();
+  const htmlZipRun = await design.run('全対象をHTML ZIPで保存');
+  assert.match(htmlZipRun.status, /^設計書HTML ZIPを保存しました。一部セクション未取得・失敗あり 1件。詳細は ZIP 内の overview\.html \/ _manifest\.json を確認してください$/);
+  const htmlZipFile = (await design.files())[0];
+  assert.match(htmlZipFile.name, /^設計書_HTML一括_10件_\d{8}_\d{6}\.zip$/);
+  const htmlZip = readZip(htmlZipFile.buffer);
+  const htmlEntries = [...htmlZip.keys()].filter(key => key.endsWith('.html') && key !== 'overview.html');
+  assert.equal(htmlEntries.length, 10, 'HTML ZIP: アプリごとの設計書 HTML');
+  assert.ok(!htmlZip.has('overview.md'), 'HTML ZIP の一覧は overview.html');
+  const htmlManifest = JSON.parse(zipText(htmlZip, '_manifest.json'));
+  assert.equal(htmlManifest.format, 'html');
+  assert.deepEqual(htmlManifest.items.map(item => item.htmlFile).sort(), htmlEntries.sort());
+  const htmlOverview = zipText(htmlZip, 'overview.html');
+  for (const entry of htmlEntries) assert.ok(htmlOverview.includes(`href="${encodeURIComponent(entry)}"`), `overview.html から ${entry} へリンクする`);
+  assert.match(htmlOverview, /取得失敗: ビュー設定, フィールド権限, リマインダー通知/);
+  const html601 = htmlZip.get(htmlEntries.find(key => key.includes('(app601)'))).toString('utf8');
+  assert.ok(html601.includes('⚠ 取得できませんでした: 権限がありません。一覧の設定を取得できません。'), 'HTML ZIP: 個別の設計書にも取得失敗を残す');
+  assert.ok(html601.includes('<span class="badge badge--err" data-status="fetch-error">取得失敗</span>'));
+  assert.deepEqual(hasSecret([...htmlZip.values()].map(buffer => buffer.toString('utf8')).join('\n')), []);
+  ok('設計書 HTML ZIP: アプリごとの HTML と overview.html（各設計書へのリンク）・_manifest.json、取得失敗を残し、機微な値を載せない');
   await design.clearFiles();
   await design.run('全対象をExcel ZIPで保存', { dialog: true });
   const xlsxZip = readZip((await design.files())[0].buffer);
@@ -443,6 +571,17 @@ async function main() {
   const countsOf = sheetsOf => ['プラグイン数', 'ステータス数', 'JS/CSSカスタマイズ件数', 'ビュー数', 'グラフ数'].map(label => sheetsOf['サマリー'].find(row => row[0] === label)?.[1]);
   assert.deepEqual(countsOf(rt401), countsOf(xl601 && readXlsx(xlsxZip.get([...xlsxZip.keys()].find(key => key.includes('(app401)'))))), '件数が、取得した設計書と設定JSONから作った設計書で同じ');
   ok('往復: 設定取得の JSON を設計書へ読み込み、Markdown・AI向け・Excel の件数・名前・取得失敗が取得した設計書と一致する');
+  await roundtrip.clearFiles();
+  await roundtrip.run('全対象をHTML ZIPで保存');
+  const rtHtmlZip = readZip((await roundtrip.files())[0].buffer);
+  assert.equal((await roundtrip.calls()).length, 0, 'HTML ZIP: 読み込んだアプリは kintone から取得しない（参照先アプリの名前も JSON から）');
+  const rtHtmlNames = [...rtHtmlZip.keys()].filter(key => key.endsWith('.html') && key !== 'overview.html').map(key => key.replace(/^設計書_|\.html$/g, '')).sort();
+  assert.deepEqual(rtHtmlNames, liveNames, 'HTML ZIP: ファイル名が Markdown ZIP と同じ');
+  const rtHtml401 = rtHtmlZip.get([...rtHtmlZip.keys()].find(key => key.includes('(app401)'))).toString('utf8');
+  assert.ok(rtHtml401.includes('<dt>取得元</dt><dd>読み込んだ設定JSON</dd>') && rtHtml401.includes('設定JSONから作成'), 'HTML: 設定JSONから作ったことを見出しに示す');
+  assert.ok(rtHtml401.includes('ルックアップ: 顧客マスタ（App 301）'), 'HTML: 参照先アプリの名前は読み込んだ JSON から');
+  assert.deepEqual(hasSecret([...rtHtmlZip.values()].map(buffer => buffer.toString('utf8')).join('\n')), [], '設定JSON由来でも HTML にプラグインの設定値・JS/CSS 本文を載せない');
+  ok('往復: 設定JSONから HTML ZIP を作る（kintone に問い合わせない・取得元を示す・機微な値を載せない）');
   // プラグインの設定値を含めない JSON も、そのまま読み込める
   await roundtrip.page.getByRole('button', { name: '詳細設定…', exact: true }).click();
   await roundtrip.page.locator('input.kus-lp__file').setInputFiles({ name: 'omitted.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(settingsJsonAll)) });

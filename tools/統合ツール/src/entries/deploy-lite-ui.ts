@@ -938,7 +938,7 @@ export function mountDeployLitePanel() {
   const confirmBody = el('div');
   const ack = makeCheck({ label: '上記の内容を確認しました', checked: false });
   ack.checkbox.setAttribute('aria-label', '上記の内容を確認しました');
-  const confirmInput = makeInput({ width: 'wide', noSubmit: true });
+  const confirmInput = makeInput({ width: 'wide', noSubmit: true, idInput: true });
   confirmInput.autocomplete = 'off';
   confirmInput.inputMode = 'numeric';
   confirmInput.setAttribute('data-lp-no-submit', '');

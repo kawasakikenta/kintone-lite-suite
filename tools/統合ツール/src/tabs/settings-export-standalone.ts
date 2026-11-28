@@ -1,7 +1,7 @@
 'use strict';
 
 import { CUSTOMIZE_BODY_SENSITIVE_NOTE, PLUGIN_CONFIG_INCLUDED_NOTE, SECTION_DEFS } from '../constants.js';
-import { esc, downloadText, downloadBlob, selectedScopeKeys, buildExportFilename, buildAppFilenameLabel, extractAppNameFromBundle } from '../utils.js';
+import { esc, downloadText, downloadBlob, selectedScopeKeys, buildExportFilename, buildAppFilenameLabel, extractAppNameFromBundle, normalizeIdInputText } from '../utils.js';
 import { fetchBundle, buildApiPrefix, apiGet, fetchAppsInSpace } from '../api.js';
 import { PLUGIN_CONFIG_OMITTED_KIND, markPluginConfigOmitted } from '../pluginConfigMarker.js';
 import { extractAppIdFromInput, extractGuestIdFromInput } from '../handlers/diffFocus.js';
@@ -171,7 +171,8 @@ function customizeFilesNote(files: AppCustomizeFiles | null): string {
 }
 
 function parseAppIdList(text) {
-  const tokens = String(text || '')
+  // 全角数字・全角カンマ（１０１，１０２）も受け付ける
+  const tokens = normalizeIdInputText(text || '')
     .split(/[\s,、，]+/)
     .map((s) => s.trim())
     .filter(Boolean);
@@ -455,12 +456,12 @@ export async function runSettingsExportListSpaceAppsStandalone(
   guestId: any,
   setStatus: (msg: string, isError?: boolean) => void
 ): Promise<Array<{ appId: string; name: string }>> {
-  const sid = String(spaceId || '').trim();
+  const sid = normalizeIdInputText(spaceId || '').trim();
   if (!/^\d+$/.test(sid)) throw new Error('スペースIDは半角数字で入力してください');
-  const guest = String(guestId || '').trim();
+  const guest = normalizeIdInputText(guestId || '').trim();
   if (guest && !/^\d+$/.test(guest)) throw new Error(`ゲストスペースIDは半角数字で入力してください: ${guest}`);
   setStatus(`スペース ${sid} のアプリ一覧を取得中...`);
-  const apps = await fetchAppsInSpace(sid, guestId);
+  const apps = await fetchAppsInSpace(sid, guest);
   if (!apps.length) {
     setStatus(`スペース ${sid} に取得対象アプリがありませんでした`, true);
     return [];
@@ -478,10 +479,10 @@ function resolveExportTargets(opts: any): Array<{ appId: string; guestId: string
   const out: Array<{ appId: string; guestId: string }> = [];
   const seen = new Set<string>();
   const push = (appId: string, guestId: string) => {
-    const id = String(appId || '').trim();
+    const id = normalizeIdInputText(appId || '').trim();
     if (!id) return;
     if (!/^\d+$/.test(id)) throw new Error(`アプリIDは半角数字で入力してください: ${id}`);
-    const g = String(guestId || '').trim();
+    const g = normalizeIdInputText(guestId || '').trim();
     if (g && !/^\d+$/.test(g)) throw new Error(`ゲストスペースIDは半角数字で入力してください: ${g}`);
     const key = `${id}::${g}`;
     if (seen.has(key)) return;
