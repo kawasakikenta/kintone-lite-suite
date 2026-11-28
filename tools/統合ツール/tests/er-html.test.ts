@@ -500,7 +500,7 @@ describe('ER diagram HTML', () => {
     });
     const script = extractViewerScript(html);
 
-    expect(script).toContain('/^[\\t\\r\\n ]*[=+\\-@]/');
+    expect(script).toContain('/^(?:[\\t\\r\\n]|[\\t\\r\\n \\u3000]*[=+\\-@\\uff1d\\uff0b\\uff0d\\uff20])/');
     expect(script).toContain('%% ACTION ');
     expect(script).toContain("+' ..> '+");
     expect(script).toContain('kind:"kintone-er-model"');

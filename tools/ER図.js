@@ -4167,9 +4167,10 @@ ${String(text).trim().replace(/\*\//g, "* /")}
     });
     return lines.join("\n");
   }
+  var ER_CSV_FORMULA_LIKE = /^(?:[\t\r\n]|[\t\r\n \u3000]*[=+\-@\uff1d\uff0b\uff0d\uff20])/;
   function erCsvCell(value) {
     const raw = String(value == null ? "" : value);
-    const safe = /^[\t\r\n ]*[=+\-@]/.test(raw) ? `'${raw}` : raw;
+    const safe = ER_CSV_FORMULA_LIKE.test(raw) ? `'${raw}` : raw;
     return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
   }
   function erCsvLine(row) {
@@ -9254,9 +9255,10 @@ function showJSON(){\r
 }\r
 \r
 // ─── CSV exports ───\r
+// 表計算ソフトで式になり得る値（= + - @ で始まる値。日本語版の Excel は全角の ＝ ＋ － ＠ も式にする。先頭のタブ・改行・空白を除いて評価するソフトもある）は ' を付けて文字列にする\r
 function csvCell(v){\r
   const raw=String(v==null?"":v);\r
-  const s=/^[\\t\\r\\n ]*[=+\\-@]/.test(raw)?"'"+raw:raw;\r
+  const s=/^(?:[\\t\\r\\n]|[\\t\\r\\n \\u3000]*[=+\\-@\\uff1d\\uff0b\\uff0d\\uff20])/.test(raw)?"'"+raw:raw;\r
   return /[",\\n\\r]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;\r
 }\r
 function csvLine(arr){return arr.map(csvCell).join(",");}\r

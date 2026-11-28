@@ -2383,7 +2383,7 @@
     const s = String(val == null ? "" : val);
     return s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r") ? '"' + s.replace(/"/g, '""') + '"' : s;
   }
-  var CSV_FORMULA_RE = /^[\s\uFEFF]*[=+\-@]/;
+  var CSV_FORMULA_RE = /^[\s\uFEFF]*[=+\-@\uff1d\uff0b\uff0d\uff20]/;
   var CSV_CONTROL_RE = /^[\t\r\n]/;
   var CSV_NUMERIC_RE = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
   function neutralizeCsvFormula(text) {

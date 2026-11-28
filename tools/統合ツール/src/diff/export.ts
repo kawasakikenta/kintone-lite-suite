@@ -3501,9 +3501,9 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
 
   function csvEscape(v) {
     const raw = String(v == null ? '' : v);
-    // Excel 等で CSV を開いた際、先頭空白の後に = + - @ が続く値も式として
-    // 評価され得るため、文字列として扱われるよう先頭に apostrophe を付ける。
-    const s = /^[\\t\\r\\n ]*[=+\\-@]/.test(raw) ? "'" + raw : raw;
+    // Excel 等で CSV を開いた際に式として評価され得る値（= + - @ で始まる値。日本語版の Excel は全角の ＝ ＋ － ＠ も式にする。
+    // 先頭のタブ・改行・空白を除いて評価する表計算ソフトもある）は、文字列として扱われるよう先頭に apostrophe を付ける。
+    const s = /^(?:[\\t\\r\\n]|[\\t\\r\\n \\u3000]*[=+\\-@\\uff1d\\uff0b\\uff0d\\uff20])/.test(raw) ? "'" + raw : raw;
     if (/[",\\n\\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
     return s;
   }

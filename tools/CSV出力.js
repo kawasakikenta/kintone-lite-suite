@@ -3522,7 +3522,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const s = String(val == null ? "" : val);
     return s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r") ? '"' + s.replace(/"/g, '""') + '"' : s;
   }
-  var CSV_FORMULA_RE = /^[\s\uFEFF]*[=+\-@]/;
+  var CSV_FORMULA_RE = /^[\s\uFEFF]*[=+\-@\uff1d\uff0b\uff0d\uff20]/;
   var CSV_CONTROL_RE = /^[\t\r\n]/;
   var CSV_NUMERIC_RE = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
   function neutralizeCsvFormula(text) {
@@ -3762,7 +3762,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         "テーブルごとに独立したCSVです。別のテーブルとの行の組み合わせは作りません。",
         "CSVは閲覧・集計用です。このツールのCSV取込でテーブルを復元することはできません。",
         "添付フィールドはファイル名のみです。実体を保存する場合はバックアップで「添付ファイルも保存」を選択してください。",
-        "= + - @ で始まる文字列セルは Excel の数式実行を防ぐため先頭に ' を付けています（数値は対象外）。"
+        "= + - @（全角を含む）で始まる文字列セルは Excel の数式実行を防ぐため先頭に ' を付けています（数値は対象外）。"
       ]
     };
   }
@@ -4364,7 +4364,7 @@ ${failures.join("\n")}`);
       ["crlf", "CRLF（Windows標準）"]
     ]);
     lineEndingSelect.setAttribute("aria-label", "改行コード");
-    const neutralizeCb = makeCheck({ label: "= + - @ で始まる文字列の先頭に ' を付ける（Excel向け・既定）", checked: true });
+    const neutralizeCb = makeCheck({ label: "= + - @（全角を含む）で始まる文字列の先頭に ' を付ける（Excel向け・既定）", checked: true });
     cardCond.body.appendChild(makeRow([query, useView], { label: "共通クエリ" }));
     cardCond.body.appendChild(makeRow([viewApp, viewGuest, loadViews], { label: "一覧取得元" }));
     cardCond.body.appendChild(makeRow(viewSelect, { label: "一覧" }));
@@ -4379,7 +4379,7 @@ ${failures.join("\n")}`);
     cardFormat.body.appendChild(makeRow(filename, { label: "ファイル名" }));
     cardFormat.body.appendChild(makeRow([headerModeSelect, lineEndingSelect], { label: "出力形式" }));
     cardFormat.body.appendChild(makeRow(neutralizeCb.label, { label: "Excel保護" }));
-    cardFormat.body.appendChild(makeNote("Excelで数式として実行されないよう、= + - @ で始まる文字列の先頭に ' を付けます（数値は対象外）。", "help"));
+    cardFormat.body.appendChild(makeNote("Excelで数式として実行されないよう、= + - @（全角を含む）で始まる文字列の先頭に ' を付けます（数値は対象外）。", "help"));
     let loadedViews = [];
     let viewContext = "";
     let viewAppEdited = false;

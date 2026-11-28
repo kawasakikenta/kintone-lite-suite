@@ -3566,7 +3566,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const s = String(val == null ? "" : val);
     return s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r") ? '"' + s.replace(/"/g, '""') + '"' : s;
   }
-  var CSV_FORMULA_RE = /^[\s\uFEFF]*[=+\-@]/;
+  var CSV_FORMULA_RE = /^[\s\uFEFF]*[=+\-@\uff1d\uff0b\uff0d\uff20]/;
   var CSV_CONTROL_RE = /^[\t\r\n]/;
   var CSV_NUMERIC_RE = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
   function neutralizeCsvFormula(text) {
@@ -4466,7 +4466,7 @@ ZIP ${downloads.length}個のダウンロードを依頼しました。ブラウ
         "テーブルごとに独立したCSVです。別のテーブルとの行の組み合わせは作りません。",
         "CSVは閲覧・集計用です。このツールのCSV取込でテーブルを復元することはできません。",
         "添付フィールドはファイル名のみです。実体を保存する場合はバックアップで「添付ファイルも保存」を選択してください。",
-        "= + - @ で始まる文字列セルは Excel の数式実行を防ぐため先頭に ' を付けています（数値は対象外）。"
+        "= + - @（全角を含む）で始まる文字列セルは Excel の数式実行を防ぐため先頭に ' を付けています（数値は対象外）。"
       ]
     };
   }
@@ -6801,7 +6801,7 @@ ${failures.join("\n")}` };
             ["crlf", "CRLF（Windows標準）"]
           ]);
           lineEndingSelect.setAttribute("aria-label", "改行コード");
-          const neutralizeCb = makeCheck({ label: "= + - @ で始まる文字列の先頭に ' を付ける（Excel向け・既定）", checked: true });
+          const neutralizeCb = makeCheck({ label: "= + - @（全角を含む）で始まる文字列の先頭に ' を付ける（Excel向け・既定）", checked: true });
           const useView = makeButton("▼ 一覧から", "sub");
           useView.addEventListener("click", () => applyViewQuery(query));
           root2.appendChild(makeRow([query, useView], { label: "クエリ" }));
@@ -7246,7 +7246,7 @@ ${r.error || (r.report ? formatRecordCopyPreview(r.report) : "")}`).join("\n\n")
             scopeBox.style.display = incSettings.checkbox.checked ? "flex" : "none";
           });
           root2.appendChild(makeNote("ZIPには records.csv / records.json と manifest.json を保存します。テーブルがある場合は tables/ に明細CSVを追加し、親レコードの $id で紐付けできます。", "help"));
-          root2.appendChild(makeNote("CSVは閲覧・集計用で、CSV取込用の互換形式ではありません。Excelで数式として実行されないよう、= + - @ で始まる文字列の先頭に ' を付けます（数値は対象外）。", "help"));
+          root2.appendChild(makeNote("CSVは閲覧・集計用で、CSV取込用の互換形式ではありません。Excelで数式として実行されないよう、= + - @（全角を含む）で始まる文字列の先頭に ' を付けます（数値は対象外）。", "help"));
           root2.appendChild(makeNote("添付ファイルの本体は「添付ファイルも保存」で取得します。取得できなかった添付・コメント・設定は manifest.json に記録し、完了メッセージに件数を表示します。", "help"));
           root2.appendChild(makeNote("添付が約 2GB（またはファイル数が約 65,000 件）を超えるときは、添付を「…_part1.zip」「…_part2.zip」のように分け、レコード・コメント・設定と全体の manifest.json は最後の ZIP に保存します。", "help"));
           const run = makeButton("バックアップをZIPで保存", "primary", { icon: "↓" });
