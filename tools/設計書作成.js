@@ -22586,7 +22586,7 @@ ${detail}`);
     cardTarget.body.appendChild(makeNote("アプリごとに別のゲストスペースを指定できます。各行の「↑コピー」で上の行を複製できます。", "help"));
     panel.body.insertBefore(cardTarget.card, panel.status);
     const cardImport = makeCard({ title: "設定JSON読込（任意）", soft: true });
-    cardImport.body.appendChild(makeNote("「設定一括取得」で保存した JSON（「設定をZIPで保存」の ZIP も可）を読み込むと、そのアプリは kintone から取得せず、JSON の内容だけで設計書を作ります。読み込んだアプリは対象アプリ表に追加されます。", "help"));
+    cardImport.body.appendChild(makeNote("「設定一括取得」で保存した JSON（「設定をZIPで保存」の ZIP も可）を読み込むと、そのアプリは kintone から取得せず、JSON の内容だけで設計書を作ります。読み込んだアプリは対象アプリ表に追加されます（比較元・比較先を持つ差分用の JSON は、設計差分で比べる1・2行目に入ります）。", "help"));
     const importFile = document.createElement("input");
     importFile.type = "file";
     importFile.accept = ".json,.zip,application/json,application/zip";
@@ -22662,12 +22662,14 @@ ${detail}`);
       importedBundles.clear();
       importedSlotBundles.clear();
       let added = 0;
+      let placedNote = "";
       const loadedLabels = [];
       const warnings = [...zipWarnings];
       if (raw && typeof raw === "object" && raw.source && raw.target) {
         const srcBundles = pickAllSettingsBundles(raw, "source", true, true);
         const tgtBundles = pickAllSettingsBundles(raw, "target", true, true);
         const pair = [srcBundles[0], tgtBundles[0]].filter(Boolean);
+        const pairRows = [];
         pair.forEach((b, idx) => {
           const appId = storeImportedBundle(b, idx);
           if (!appId) {
@@ -22675,16 +22677,17 @@ ${detail}`);
             return;
           }
           const guestId = String(b?.guestId || "").trim();
-          const appName = extractAppNameFromBundle(b);
           loadedLabels.push(`#${appId}${guestId ? `(guest:${guestId})` : ""}`);
-          const res = appTable.putApp(appId, guestId, { appName });
-          if (res.action === "added" || res.action === "filled") {
-            added += 1;
-          } else if (idx === 1 && appTable.getAllRows().filter((r) => r.appId).length < 2) {
-            appTable.addRow(appId, guestId, { appName });
-            added += 1;
-          }
+          pairRows.push({ appId, guestId, appName: extractAppNameFromBundle(b) });
         });
+        if (pairRows.length) {
+          const before = appTable.getAllRows().filter((r) => r.appId);
+          const sameApp = (a, b) => a.appId === b.appId && (a.guestId || "") === (b.guestId || "");
+          const rest = before.filter((r) => !pairRows.some((p) => sameApp(p, r)));
+          added = Math.max(0, pairRows.length + rest.length - before.length);
+          appTable.setApps([...pairRows, ...rest]);
+          if (pairRows.length === 2) placedNote = "比較元・比較先を対象アプリ表の1・2行目にしました（設計差分はこの2行を比べます）。";
+        }
       } else {
         const bundles = pickAllSettingsBundles(raw, void 0, true, true);
         let missingAppId = 0;
@@ -22722,7 +22725,7 @@ ${detail}`);
       importStatus.setAttribute("data-import-status", "loaded");
       importStatus.textContent = `読込中: ${file.name} (App ${loadedLabels.join(", ")})`;
       cardImport.card.dispatchEvent(new Event("input", { bubbles: true }));
-      panel.setStatus(`設定JSON「${file.name}」から${loadedLabels.length}件のアプリ設定を読み込みました（対象アプリ表に新規追加 ${added}件）。読み込んだアプリは kintone から取得しません。${warnings.length ? `注意: ${warnings.join("。")}` : ""}`, warnings.length ? "warn" : "ok");
+      panel.setStatus(`設定JSON「${file.name}」から${loadedLabels.length}件のアプリ設定を読み込みました（対象アプリ表に新規追加 ${added}件）。読み込んだアプリは kintone から取得しません。${placedNote}${warnings.length ? `注意: ${warnings.join("。")}` : ""}`, warnings.length ? "warn" : "ok");
     }));
     clearImportBtn.addEventListener("click", () => {
       importedBundles.clear();

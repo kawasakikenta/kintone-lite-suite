@@ -622,6 +622,32 @@ async function main() {
   assert.deepEqual(await dt.violations(), []);
   assert.deepEqual(dt.errors, []);
   await dt.close();
+  // 別のアプリどうしの差分バンドル JSON（比較元・比較先）: 開いたアプリ（401）が表の 1 行目にあっても、
+  // 読み込んだ比較元・比較先を 1・2 行目にして比べる（開いたアプリを kintone から取得して比べない）
+  const settingsApps = JSON.parse(fullJsonFile.buffer.toString('utf8')).apps;
+  const pairSource = settingsApps.find(app => app.appId === '301');
+  const pairTarget = settingsApps.find(app => app.appId === '302');
+  const pairTool = await openTool(DESIGN_TOOL, 'kus-design-lite');
+  await pairTool.page.evaluate(() => { window.__k.rejectAll = true; window.__k.calls.length = 0; });
+  const tableIds = () => pairTool.page.locator('.kus-lp__apptable input[aria-label="アプリID"]').evaluateAll(inputs => inputs.map(input => input.value).filter(Boolean));
+  assert.deepEqual(await tableIds(), ['401'], '開いたアプリが表の 1 行目');
+  await pairTool.button('詳細設定…').click();
+  await pairTool.page.locator('input.kus-lp__file').setInputFiles({ name: 'pair.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ source: pairSource, target: pairTarget })) });
+  await pairTool.page.waitForTimeout(600);
+  await pairTool.page.getByRole('button', { name: '詳細設定を閉じる', exact: true }).click();
+  assert.deepEqual((await tableIds()).slice(0, 2), ['301', '302'], '差分バンドル JSON の比較元・比較先を表の 1・2 行目にする');
+  assert.ok((await tableIds()).includes('401'), 'それまでの行も残す');
+  await pairTool.clearFiles();
+  const pairRun = await pairTool.run('2アプリの設計差分を保存');
+  assert.match(pairRun.confirm, /比較元\s*#301 · 読込済みJSON[\s\S]*比較先\s*#302 · 読込済みJSON/, '確認画面: 読み込んだ比較元・比較先を比べる');
+  const pairReport = (await pairTool.files())[0].buffer.toString('utf8');
+  assert.match(pairReport, /\| 比較元（追加・更新後の姿） \| App 301 顧客マスタ · 読み込んだ設定JSON \|/);
+  assert.match(pairReport, /\| 比較先（現在の設定） \| App 302 商品マスタ · 読み込んだ設定JSON \|/);
+  assert.equal((await pairTool.calls()).length, 0, '差分バンドル JSON から作るときは kintone に問い合わせない');
+  ok('設計書の差分レポート: 別のアプリどうしの差分バンドル JSON は、開いたアプリがあっても読み込んだ比較元・比較先を比べる');
+  assert.deepEqual(await pairTool.violations(), []);
+  assert.deepEqual(pairTool.errors, []);
+  await pairTool.close();
 
   console.log('== 画面（320〜1440px・キーボード） ==');
   for (const [toolFile, panelId, name] of [[SETTINGS_TOOL, 'kus-settings-export-lite', 'settings'], [DESIGN_TOOL, 'kus-design-lite', 'design']]) {
