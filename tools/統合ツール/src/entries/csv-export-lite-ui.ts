@@ -76,7 +76,7 @@ export function mountCsvExportLitePanel() {
     ['crlf', 'CRLF（Windows標準）']
   ]);
   lineEndingSelect.setAttribute('aria-label', '改行コード');
-  const neutralizeCb = makeCheck({ label: '= + - @ で始まる文字列の先頭に \' を付ける（Excel向け・既定）', checked: true });
+  const neutralizeCb = makeCheck({ label: '= + - @（全角を含む）で始まる文字列の先頭に \' を付ける（Excel向け・既定）', checked: true });
 
   cardCond.body.appendChild(makeRow([query, useView], { label: '共通クエリ' }));
   cardCond.body.appendChild(makeRow([viewApp, viewGuest, loadViews], { label: '一覧取得元' }));
@@ -94,7 +94,7 @@ export function mountCsvExportLitePanel() {
   cardFormat.body.appendChild(makeRow(filename, { label: 'ファイル名' }));
   cardFormat.body.appendChild(makeRow([headerModeSelect, lineEndingSelect], { label: '出力形式' }));
   cardFormat.body.appendChild(makeRow(neutralizeCb.label, { label: 'Excel保護' }));
-  cardFormat.body.appendChild(makeNote('Excelで数式として実行されないよう、= + - @ で始まる文字列の先頭に \' を付けます（数値は対象外）。', 'help'));
+  cardFormat.body.appendChild(makeNote('Excelで数式として実行されないよう、= + - @（全角を含む）で始まる文字列の先頭に \' を付けます（数値は対象外）。', 'help'));
 
   let loadedViews: RecordViewChoice[] = [];
   let viewContext = '';

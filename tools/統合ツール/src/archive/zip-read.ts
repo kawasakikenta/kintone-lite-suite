@@ -4,7 +4,7 @@
  * ZIP の読み取り（DOM 非依存。通信しない）。設定取得が保存した ZIP を、設計書作成の「設定JSON読込」で読むために使う。
  * - 中央ディレクトリから各エントリを読み、STORE（0）と DEFLATE（8）に対応する（DEFLATE は `DecompressionStream('deflate-raw')`）。
  * - 暗号化・ZIP64・分割 ZIP は扱わない（設定取得の ZIP は使わない）。
- * - 展開後の大きさと件数に上限を設け、CRC-32 で内容を確かめる。
+ * - 展開後の大きさと件数に上限を設け、CRC-32 で内容を確かめる。各ファイルは中央ディレクトリに書かれた大きさを超えて展開しない。
  */
 
 import { crc32 } from './crc32.js';
@@ -35,10 +35,32 @@ export function looksLikeZip(bytes: Uint8Array): boolean {
   return bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && ((bytes[2] === 0x03 && bytes[3] === 0x04) || (bytes[2] === 0x05 && bytes[3] === 0x06));
 }
 
-async function inflateRaw(bytes: Uint8Array): Promise<Uint8Array> {
+/**
+ * DEFLATE を展開する。中央ディレクトリに書かれた大きさ（expectedSize）を超えたところで展開をやめる
+ * （大きさを小さく偽った ZIP で、展開後の上限を素通りしてメモリを使い切らないように）。超えたときは null を返す。
+ */
+async function inflateRaw(bytes: Uint8Array, expectedSize: number): Promise<Uint8Array | null> {
   if (typeof DecompressionStream !== 'function') throw new Error('このブラウザは ZIP の展開（deflate-raw）に対応していません。設定JSONを読み込んでください');
-  const stream = new Blob([bytes as BlobPart]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
+  const reader = new Blob([bytes as BlobPart]).stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    length += value.byteLength;
+    if (length > expectedSize) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
 }
 
 /** ZIP のエントリを読み出す。壊れた ZIP・未対応の形式・上限超えは、利用者向けの理由を付けて例外にする。 */
@@ -84,8 +106,8 @@ export async function readZipEntries(bytes: Uint8Array, options: ZipReadOptions 
     const dataStart = localOffset + 30 + u16(localOffset + 26) + u16(localOffset + 28);
     if (dataStart + compressedSize > bytes.length) throw new Error(`ZIP のファイル「${name}」が途中で切れています`);
     const raw = bytes.subarray(dataStart, dataStart + compressedSize);
-    const data = method === 8 ? await inflateRaw(raw) : raw.slice();
-    if (data.length !== size || crc32(data) !== crc) throw new Error(`ZIP のファイル「${name}」の内容が壊れています（大きさ・CRC が一致しません）`);
+    const data = method === 8 ? await inflateRaw(raw, size) : raw.slice();
+    if (!data || data.length !== size || crc32(data) !== crc) throw new Error(`ZIP のファイル「${name}」の内容が壊れています（大きさ・CRC が一致しません）`);
     entries.push({ name, data });
   }
   return entries;

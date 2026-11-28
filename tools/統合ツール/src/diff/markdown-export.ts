@@ -7,7 +7,8 @@ import {
   buildExportFilename,
   extractAppNameFromBundle,
   getIssueSideLabel,
-  getPreviewStateLabel
+  getPreviewStateLabel,
+  UNSAFE_FILENAME_CHARS
 } from '../utils.js';
 import { hasIncompleteActualDiffTruncation } from './engine.js';
 import { buildFieldLabelResolver, extractFieldPathInfo, fieldSettingIdentity, tokenizeRowPath, type FieldLabelResolver } from './enrich.js';
@@ -763,7 +764,7 @@ function cleanMarkdownEntryToken(value: unknown, maxLength = 40): string {
   // 「`」はインデックス表のコード表記を途中で閉じるため、ファイル名に使える記号でも置き換える
   const cleaned = String(value ?? '')
     .replace(/[\\/:*?"<>|`]/g, '_')
-    .replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ')
+    .replace(UNSAFE_FILENAME_CHARS, ' ')
     .replace(/\s+/g, '_')
     .replace(/_+/g, '_')
     .replace(/^[._]+|[._]+$/g, '');

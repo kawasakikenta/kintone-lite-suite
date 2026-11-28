@@ -479,7 +479,8 @@
   }
   var QUERY_KEYWORDS = /* @__PURE__ */ new Set(["and", "or", "not", "in", "like", "order", "by", "asc", "desc", "limit", "offset"]);
   var NUMBER_TOKEN = /^[+-]?\d+(?:\.\d+)?$/;
-  var CALL_PATTERN = /([^\s()=!<>,+\-*/&^;:%]+)\s*\(([^()]*)\)/g;
+  var CALL_NAME_MAX = 256;
+  var CALL_PATTERN = new RegExp("([^\\s()=!<>,+\\-*/&^;:%]{1," + CALL_NAME_MAX + "})\\s*\\(([^()]*)\\)", "g");
   var QUERY_SPLIT = /[^\s()=!<>,]+/g;
   var EXPRESSION_SPLIT = /[^\s()=!<>,+\-*/&^;:%]+/g;
   function uniqueKnownTokens(text, split, known) {
@@ -508,7 +509,7 @@
     const known = knownCodes instanceof Set ? knownCodes : new Set(knownCodes);
     if (!known.size) return [];
     const syntax = querySyntaxText(expression);
-    const withoutNames = syntax.replace(/([^\s()=!<>,+\-*/&^;:%]+)(\s*\()/g, (_match, name, paren) => " ".repeat(name.length) + paren);
+    const withoutNames = syntax.replace(new RegExp("([^\\s()=!<>,+\\-*/&^;:%]{1," + CALL_NAME_MAX + "})(\\s*\\()", "g"), (_match, name, paren) => " ".repeat(name.length) + paren);
     return uniqueKnownTokens(withoutNames, EXPRESSION_SPLIT, known);
   }
 
@@ -595,9 +596,10 @@
     const p = (n) => String(n).padStart(2, "0");
     return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
   }
+  var UNSAFE_FILENAME_CHARS = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u206f]/g;
   function sanitizeFilenamePart(value, fallback = "不明") {
     const text = String(value || "").trim();
-    const cleaned = text.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
+    const cleaned = text.replace(/[\\/:*?"<>|]/g, " ").replace(UNSAFE_FILENAME_CHARS, " ").replace(/\s+/g, " ").trim();
     return cleaned || fallback;
   }
   function extractAppNameFromBundle(bundle) {
@@ -820,10 +822,20 @@
   }
 
   // src/api.ts
+  var GUEST_SPACE_ID_PATTERN = /^\d+$/;
   function buildApiPrefix(guestId, preview) {
     const g = String(guestId || "").trim();
+    if (g && !GUEST_SPACE_ID_PATTERN.test(g)) throw new Error(`ゲストスペースIDは半角数字で指定してください（${g.slice(0, 40)}）。`);
     if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
     return `/k/v1${preview ? "/preview" : ""}`;
+  }
+  var MUTATING_PREFIX_PATTERN = /^\/k(?:\/guest\/\d+)?\/v1(?:\/preview)?$/;
+  var MUTATING_PATH_PATTERN = /^(?:\/[A-Za-z0-9_-]+)+\.json$/;
+  var ERR_BAD_WRITE_TARGET = "kintone REST API の書き込み先の URL が不正なため、書き込みを中止しました。";
+  function assertMutatingRestTarget(prefix, path) {
+    if (!MUTATING_PREFIX_PATTERN.test(String(prefix ?? "")) || !MUTATING_PATH_PATTERN.test(String(path ?? ""))) {
+      throw new Error(`${ERR_BAD_WRITE_TARGET}（${String(prefix ?? "").slice(0, 80)}${String(path ?? "").slice(0, 80)}）`);
+    }
   }
   var DEPLOY_PATH_SNIPPET = "app/deploy.json";
   var ERR_NO_PROD_WRITE = "本番APIへの追加・更新・削除は無効です。プレビューAPIへの書き込みのみ可能です。本番への反映はkintone管理画面から手動でデプロイしてください。";
@@ -872,21 +884,22 @@
     if (m !== "POST" && m !== "PUT" && m !== "DELETE" && m !== "PATCH") return;
     const rel = String(path || "").replace(/\\/g, "/");
     if (rel.includes(DEPLOY_PATH_SNIPPET)) {
-      if (options.allowAppDeploy === true && path === APP_DEPLOY_PATH && m === "POST" && isPreviewRestPrefix(prefix)) return;
+      if (options.allowAppDeploy === true && path === APP_DEPLOY_PATH && m === "POST" && isPreviewRestPrefix(prefix)) return assertMutatingRestTarget(prefix, path);
       throw new Error(ERR_NO_DEPLOY_API);
     }
     if (normalizeApiResourcePath(rel) === RECORD_CURSOR_PATH && (m === "POST" || m === "DELETE")) {
       if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
-      return;
+      return assertMutatingRestTarget(prefix, path);
     }
     if (isRecordDataMutationPath(rel)) {
       if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
-      return;
+      return assertMutatingRestTarget(prefix, path);
     }
-    if (path === FILE_UPLOAD_PATH && m === "POST" && !isPreviewRestPrefix(prefix)) return;
+    if (path === FILE_UPLOAD_PATH && m === "POST" && !isPreviewRestPrefix(prefix)) return assertMutatingRestTarget(prefix, path);
     if (!isPreviewRestPrefix(prefix)) {
       throw new Error(ERR_NO_PROD_WRITE);
     }
+    assertMutatingRestTarget(prefix, path);
   }
   function normalizeApiGetOptions(optionsOrRetries) {
     if (typeof optionsOrRetries === "number") return { retries: optionsOrRetries };
@@ -1480,6 +1493,11 @@ ${base}`
   // src/reflect/customizeFiles.ts
   function customizeSlotKey(platform, kind, fileKey) {
     return `${platform}/${kind}/${fileKey}`;
+  }
+  var BACKUP_FILE_BODY_NOTICE = "取扱注意: バックアップに JS/CSS ファイルの本体を入れました。本文に API トークンなどが含まれる場合があるため、保管と共有に注意してください";
+  function hasEmbeddedFileBodies(value) {
+    if (!value || typeof value !== "object") return false;
+    return JSON.stringify(value).includes('"_content":{');
   }
   var PLATFORMS = ["desktop", "mobile"];
   var KINDS = ["js", "css"];
@@ -3824,6 +3842,7 @@ ${base}`
       }
       backup = { fileName, appCount: targets.length, generatedAt: built.file.generatedAt, environment: built.file.environment, unavailableFiles: built.unavailableFiles, content: built.file };
       log(`バックアップを保存しました（${fileName}、${targets.length} アプリ、${revert ? "中止前のプレビュー" : "反映前の本番"}）`);
+      if (hasEmbeddedFileBodies(built.file)) log(BACKUP_FILE_BODY_NOTICE);
       if (batchMode === "atomic") {
         const guestId = outcomes[0].guestId;
         throwIfCancelled();
@@ -5494,6 +5513,74 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
     for (const cat of DIFF_CATEGORIES) for (const sec of cat.sections) m[sec] = cat.key;
     return m;
   })();
+
+  // src/diff/export-safety.ts
+  var SHA256_ROUND_CONSTANTS = new Int32Array([
+    1116352408,
+    1899447441,
+    3049323471,
+    3921009573,
+    961987163,
+    1508970993,
+    2453635748,
+    2870763221,
+    3624381080,
+    310598401,
+    607225278,
+    1426881987,
+    1925078388,
+    2162078206,
+    2614888103,
+    3248222580,
+    3835390401,
+    4022224774,
+    264347078,
+    604807628,
+    770255983,
+    1249150122,
+    1555081692,
+    1996064986,
+    2554220882,
+    2821834349,
+    2952996808,
+    3210313671,
+    3336571891,
+    3584528711,
+    113926993,
+    338241895,
+    666307205,
+    773529912,
+    1294757372,
+    1396182291,
+    1695183700,
+    1986661051,
+    2177026350,
+    2456956037,
+    2730485921,
+    2820302411,
+    3259730800,
+    3345764771,
+    3516065817,
+    3600352804,
+    4094571909,
+    275423344,
+    430227734,
+    506948616,
+    659060556,
+    883997877,
+    958139571,
+    1322822218,
+    1537002063,
+    1747873779,
+    1955562222,
+    2024104815,
+    2227730452,
+    2361852424,
+    2428436474,
+    2756734187,
+    3204031479,
+    3329325298
+  ]);
 
   // src/diff/export.ts
   var DIFF_HTML_REVIEW_STATE_MAX_BYTES = 2 * 1024 * 1024;
@@ -9080,6 +9167,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 5e3);
       logs.push("バックアップ取得完了（保存を開始しました）");
+      if (hasEmbeddedFileBodies(bundle.sections?.customizeSettings)) logs.push(BACKUP_FILE_BODY_NOTICE);
     }
     const prefix = buildApiPrefix(opts.targetGuestId || "", true);
     const bodyWithUploads = async (operation) => {

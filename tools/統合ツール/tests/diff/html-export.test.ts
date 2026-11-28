@@ -1446,7 +1446,7 @@ describe('diff/html export', () => {
     expect(script).toContain('const FIELD_REFLECT_BATCH_LIMIT = 100;');
     expect(script).toContain('buildPluginReflectRequests');
     expect(script).toContain('比較元のみのプラグインだけを追加します');
-    expect(script).toContain('/^[\\t\\r\\n ]*[=+\\-@]/');
+    expect(script).toContain('/^(?:[\\t\\r\\n]|[\\t\\r\\n \\u3000]*[=+\\-@\\uff1d\\uff0b\\uff0d\\uff20])/');
     expect(script).toContain('method: null');
     expect(script).not.toContain("method: 'DELETE', api: TARGET_PREVIEW_API_PREFIX + '/app/form/fields.json'");
     expect(script).toContain('if (sec && sec.enable !== undefined) p.enable = sec.enable;');

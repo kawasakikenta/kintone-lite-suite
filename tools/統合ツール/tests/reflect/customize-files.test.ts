@@ -287,6 +287,8 @@ describe('preview reflection with file upload', () => {
     expect(JSON.stringify(writes[0][2])).not.toContain('_content');
     expect(result.logs).toContain('  OK ファイルアップロード: app.js（PC JS）');
     expect(result.logs).toContain('  OK ファイルアップロード: style.css（PC JS）');
+    // バックアップに JS/CSS の本体が入ったことを、取扱注意として結果のログに示す
+    expect(result.logs.some(line => line.includes('JS/CSS ファイルの本体') && line.includes('取扱注意'))).toBe(true);
     expect(result.finalRevision).toBe('31');
   });
 

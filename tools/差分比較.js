@@ -553,6 +553,10 @@
     "modifier"
   ]);
 
+  // src/kintone-query.ts
+  var CALL_NAME_MAX = 256;
+  var CALL_PATTERN = new RegExp("([^\\s()=!<>,+\\-*/&^;:%]{1," + CALL_NAME_MAX + "})\\s*\\(([^()]*)\\)", "g");
+
   // src/utils.ts
   function getToolWindowSafe() {
     try {
@@ -609,6 +613,9 @@
   }
   function safeJsonForScript(v) {
     return JSON.stringify(v).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
+  }
+  function safeJsLiteralForScript(v) {
+    return safeJsonForScript(v).replace(/([{,])"__proto__":/g, '$1["__proto__"]:');
   }
   function deepClone(v) {
     return v == null ? v : JSON.parse(JSON.stringify(v));
@@ -690,9 +697,10 @@
     const p = (n) => String(n).padStart(2, "0");
     return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
   }
+  var UNSAFE_FILENAME_CHARS = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u206f]/g;
   function sanitizeFilenamePart(value, fallback = "不明") {
     const text2 = String(value || "").trim();
-    const cleaned = text2.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
+    const cleaned = text2.replace(/[\\/:*?"<>|]/g, " ").replace(UNSAFE_FILENAME_CHARS, " ").replace(/\s+/g, " ").trim();
     return cleaned || fallback;
   }
   function extractAppNameFromBundle(bundle) {
@@ -948,8 +956,10 @@
   }
 
   // src/api.ts
+  var GUEST_SPACE_ID_PATTERN = /^\d+$/;
   function buildApiPrefix(guestId, preview) {
     const g = String(guestId || "").trim();
+    if (g && !GUEST_SPACE_ID_PATTERN.test(g)) throw new Error(`ゲストスペースIDは半角数字で指定してください（${g.slice(0, 40)}）。`);
     if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
     return `/k/v1${preview ? "/preview" : ""}`;
   }
@@ -1752,9 +1762,57 @@
   function tokenHasWildcard(token) {
     return token.includes("*");
   }
-  function compileWildcardRegex(token) {
-    const escaped = token.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
-    return new RegExp(`^${escaped}$`);
+  function isWildcardLineTerminator(code) {
+    return code === 10 || code === 13 || code === 8232 || code === 8233;
+  }
+  function matchWildcardByTable(pattern, value) {
+    let previous = new Uint8Array(value.length + 1);
+    previous[0] = 1;
+    for (let p = 0; p < pattern.length; p += 1) {
+      const current = new Uint8Array(value.length + 1);
+      if (pattern[p] === "*") {
+        current[0] = previous[0];
+        for (let v = 1; v <= value.length; v += 1) {
+          current[v] = previous[v] || current[v - 1] && !isWildcardLineTerminator(value.charCodeAt(v - 1)) ? 1 : 0;
+        }
+      } else {
+        for (let v = 1; v <= value.length; v += 1) {
+          current[v] = previous[v - 1] && pattern[p] === value[v - 1] ? 1 : 0;
+        }
+      }
+      previous = current;
+    }
+    return previous[value.length] === 1;
+  }
+  function matchWildcard(pattern, value) {
+    for (let i = 0; i < pattern.length; i += 1) {
+      if (isWildcardLineTerminator(pattern.charCodeAt(i))) return matchWildcardByTable(pattern, value);
+    }
+    let p = 0;
+    let v = 0;
+    let starAt = -1;
+    let starValueAt = 0;
+    while (v < value.length) {
+      if (p < pattern.length && pattern[p] === "*") {
+        starAt = p;
+        starValueAt = v;
+        p += 1;
+      } else if (p < pattern.length && pattern[p] === value[v]) {
+        p += 1;
+        v += 1;
+      } else if (starAt >= 0 && !isWildcardLineTerminator(value.charCodeAt(starValueAt))) {
+        starValueAt += 1;
+        v = starValueAt;
+        p = starAt + 1;
+      } else {
+        return false;
+      }
+    }
+    while (p < pattern.length && pattern[p] === "*") p += 1;
+    return p === pattern.length;
+  }
+  function compileWildcardMatcher(token) {
+    return { test: (value) => matchWildcard(token, String(value)) };
   }
   function parseIgnoreRules(text2) {
     const keySet = new Set(DEFAULT_IGNORE_KEYS);
@@ -1773,12 +1831,9 @@
       const isPath = tokenLooksLikePath(token);
       const cleaned = token;
       if (tokenHasWildcard(cleaned)) {
-        try {
-          const re = compileWildcardRegex(cleaned);
-          if (isPath) pathPatterns.push(re);
-          else keyPatterns.push(re);
-        } catch {
-        }
+        const matcher = compileWildcardMatcher(cleaned);
+        if (isPath) pathPatterns.push(matcher);
+        else keyPatterns.push(matcher);
         return;
       }
       if (isPath) pathSet.add(cleaned);
@@ -5945,114 +6000,192 @@
     "pluginSettings"
   ]);
   var SENSITIVE_SAME_VALUE_REDACTION = "（同一の機密値は安全のため省略しました）";
+  var SHA256_ROUND_CONSTANTS = new Int32Array([
+    1116352408,
+    1899447441,
+    3049323471,
+    3921009573,
+    961987163,
+    1508970993,
+    2453635748,
+    2870763221,
+    3624381080,
+    310598401,
+    607225278,
+    1426881987,
+    1925078388,
+    2162078206,
+    2614888103,
+    3248222580,
+    3835390401,
+    4022224774,
+    264347078,
+    604807628,
+    770255983,
+    1249150122,
+    1555081692,
+    1996064986,
+    2554220882,
+    2821834349,
+    2952996808,
+    3210313671,
+    3336571891,
+    3584528711,
+    113926993,
+    338241895,
+    666307205,
+    773529912,
+    1294757372,
+    1396182291,
+    1695183700,
+    1986661051,
+    2177026350,
+    2456956037,
+    2730485921,
+    2820302411,
+    3259730800,
+    3345764771,
+    3516065817,
+    3600352804,
+    4094571909,
+    275423344,
+    430227734,
+    506948616,
+    659060556,
+    883997877,
+    958139571,
+    1322822218,
+    1537002063,
+    1747873779,
+    1955562222,
+    2024104815,
+    2227730452,
+    2361852424,
+    2428436474,
+    2756734187,
+    3204031479,
+    3329325298
+  ]);
   function sha256Hex(text2) {
-    const bytes = new TextEncoder().encode(text2);
-    const bitLength = bytes.length * 8;
-    const paddedLength = Math.ceil((bytes.length + 9) / 64) * 64;
-    const message = new Uint8Array(paddedLength);
-    message.set(bytes);
-    message[bytes.length] = 128;
-    const view = new DataView(message.buffer);
-    view.setUint32(paddedLength - 8, Math.floor(bitLength / 4294967296), false);
-    view.setUint32(paddedLength - 4, bitLength >>> 0, false);
-    const constants = [
-      1116352408,
-      1899447441,
-      3049323471,
-      3921009573,
-      961987163,
-      1508970993,
-      2453635748,
-      2870763221,
-      3624381080,
-      310598401,
-      607225278,
-      1426881987,
-      1925078388,
-      2162078206,
-      2614888103,
-      3248222580,
-      3835390401,
-      4022224774,
-      264347078,
-      604807628,
-      770255983,
-      1249150122,
-      1555081692,
-      1996064986,
-      2554220882,
-      2821834349,
-      2952996808,
-      3210313671,
-      3336571891,
-      3584528711,
-      113926993,
-      338241895,
-      666307205,
-      773529912,
-      1294757372,
-      1396182291,
-      1695183700,
-      1986661051,
-      2177026350,
-      2456956037,
-      2730485921,
-      2820302411,
-      3259730800,
-      3345764771,
-      3516065817,
-      3600352804,
-      4094571909,
-      275423344,
-      430227734,
-      506948616,
-      659060556,
-      883997877,
-      958139571,
-      1322822218,
-      1537002063,
-      1747873779,
-      1955562222,
-      2024104815,
-      2227730452,
-      2361852424,
-      2428436474,
-      2756734187,
-      3204031479,
-      3329325298
-    ];
-    const state3 = [1779033703, 3144134277, 1013904242, 2773480762, 1359893119, 2600822924, 528734635, 1541459225];
-    const words = new Uint32Array(64);
-    const rotateRight = (value, amount) => value >>> amount | value << 32 - amount;
-    for (let offset = 0; offset < paddedLength; offset += 64) {
-      for (let i = 0; i < 16; i += 1) words[i] = view.getUint32(offset + i * 4, false);
+    const block = new Uint8Array(64);
+    const words = new Int32Array(64);
+    let blockLength = 0;
+    let byteLength = 0;
+    let h0 = 1779033703 | 0;
+    let h1 = 3144134277 | 0;
+    let h2 = 1013904242 | 0;
+    let h3 = 2773480762 | 0;
+    let h4 = 1359893119 | 0;
+    let h5 = 2600822924 | 0;
+    let h6 = 528734635 | 0;
+    let h7 = 1541459225 | 0;
+    const compress = () => {
+      for (let i = 0; i < 16; i += 1) {
+        const at = i * 4;
+        words[i] = block[at] << 24 | block[at + 1] << 16 | block[at + 2] << 8 | block[at + 3];
+      }
       for (let i = 16; i < 64; i += 1) {
-        const a2 = words[i - 15];
-        const b2 = words[i - 2];
-        const s0 = rotateRight(a2, 7) ^ rotateRight(a2, 18) ^ a2 >>> 3;
-        const s1 = rotateRight(b2, 17) ^ rotateRight(b2, 19) ^ b2 >>> 10;
-        words[i] = words[i - 16] + s0 + words[i - 7] + s1 >>> 0;
+        const x = words[i - 15];
+        const y = words[i - 2];
+        const s0 = (x >>> 7 | x << 25) ^ (x >>> 18 | x << 14) ^ x >>> 3;
+        const s1 = (y >>> 17 | y << 15) ^ (y >>> 19 | y << 13) ^ y >>> 10;
+        words[i] = words[i - 16] + s0 + words[i - 7] + s1 | 0;
       }
-      let [a, b, c, d, e, f, g, h] = state3;
+      let a = h0;
+      let b = h1;
+      let c = h2;
+      let d = h3;
+      let e = h4;
+      let f = h5;
+      let g = h6;
+      let h = h7;
       for (let i = 0; i < 64; i += 1) {
-        const sum1 = rotateRight(e, 6) ^ rotateRight(e, 11) ^ rotateRight(e, 25);
+        const sum1 = (e >>> 6 | e << 26) ^ (e >>> 11 | e << 21) ^ (e >>> 25 | e << 7);
         const choice = e & f ^ ~e & g;
-        const temp1 = h + sum1 + choice + constants[i] + words[i] >>> 0;
-        const sum0 = rotateRight(a, 2) ^ rotateRight(a, 13) ^ rotateRight(a, 22);
+        const temp1 = h + sum1 + choice + SHA256_ROUND_CONSTANTS[i] + words[i] | 0;
+        const sum0 = (a >>> 2 | a << 30) ^ (a >>> 13 | a << 19) ^ (a >>> 22 | a << 10);
         const majority = a & b ^ a & c ^ b & c;
-        const temp2 = sum0 + majority >>> 0;
-        [a, b, c, d, e, f, g, h] = [temp1 + temp2 >>> 0, a, b, c, d + temp1 >>> 0, e, f, g];
+        const temp2 = sum0 + majority | 0;
+        h = g;
+        g = f;
+        f = e;
+        e = d + temp1 | 0;
+        d = c;
+        c = b;
+        b = a;
+        a = temp1 + temp2 | 0;
       }
-      state3[0] = state3[0] + a >>> 0;
-      state3[1] = state3[1] + b >>> 0;
-      state3[2] = state3[2] + c >>> 0;
-      state3[3] = state3[3] + d >>> 0;
-      state3[4] = state3[4] + e >>> 0;
-      state3[5] = state3[5] + f >>> 0;
-      state3[6] = state3[6] + g >>> 0;
-      state3[7] = state3[7] + h >>> 0;
+      h0 = h0 + a | 0;
+      h1 = h1 + b | 0;
+      h2 = h2 + c | 0;
+      h3 = h3 + d | 0;
+      h4 = h4 + e | 0;
+      h5 = h5 + f | 0;
+      h6 = h6 + g | 0;
+      h7 = h7 + h | 0;
+    };
+    const push = (byte) => {
+      block[blockLength] = byte;
+      blockLength += 1;
+      if (blockLength === 64) {
+        compress();
+        blockLength = 0;
+      }
+    };
+    for (let i = 0; i < text2.length; i += 1) {
+      let code = text2.charCodeAt(i);
+      if (code < 128) {
+        push(code);
+        byteLength += 1;
+        continue;
+      }
+      if (code < 2048) {
+        push(192 | code >> 6);
+        push(128 | code & 63);
+        byteLength += 2;
+        continue;
+      }
+      if (code >= 55296 && code <= 56319 && i + 1 < text2.length) {
+        const next = text2.charCodeAt(i + 1);
+        if (next >= 56320 && next <= 57343) {
+          const point = 65536 + (code - 55296 << 10) + (next - 56320);
+          push(240 | point >> 18);
+          push(128 | point >> 12 & 63);
+          push(128 | point >> 6 & 63);
+          push(128 | point & 63);
+          byteLength += 4;
+          i += 1;
+          continue;
+        }
+      }
+      if (code >= 55296 && code <= 57343) code = 65533;
+      push(224 | code >> 12);
+      push(128 | code >> 6 & 63);
+      push(128 | code & 63);
+      byteLength += 3;
     }
-    return state3.map((value) => value.toString(16).padStart(8, "0")).join("");
+    const bitLength = byteLength * 8;
+    push(128);
+    while (blockLength !== 56) push(0);
+    const high = Math.floor(bitLength / 4294967296);
+    const low = bitLength >>> 0;
+    [high >>> 24, high >>> 16 & 255, high >>> 8 & 255, high & 255, low >>> 24, low >>> 16 & 255, low >>> 8 & 255, low & 255].forEach(push);
+    return [h0, h1, h2, h3, h4, h5, h6, h7].map((value) => (value >>> 0).toString(16).padStart(8, "0")).join("");
+  }
+  var BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  function sha256Base64(text2) {
+    const hex = sha256Hex(text2);
+    const bytes = [];
+    for (let i = 0; i < hex.length; i += 2) bytes.push(parseInt(hex.slice(i, i + 2), 16));
+    let out = "";
+    for (let i = 0; i < bytes.length; i += 3) {
+      const [a, b = 0, c = 0] = bytes.slice(i, i + 3);
+      const triple = a << 16 | b << 8 | c;
+      out += BASE64_ALPHABET[triple >> 18 & 63] + BASE64_ALPHABET[triple >> 12 & 63];
+      out += i + 1 < bytes.length ? BASE64_ALPHABET[triple >> 6 & 63] : "=";
+      out += i + 2 < bytes.length ? BASE64_ALPHABET[triple & 63] : "=";
+    }
+    return out;
   }
   function contentIdentifier(text2) {
     return `SHA256-${sha256Hex(text2).slice(0, 16).toUpperCase()}`;
@@ -6951,13 +7084,13 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const tgtLayoutRows = includesComparedContent ? targetBundle?.sections?.layoutSettings?.layout || [] : [];
     const logicScript = `
 (() => {
-  const REPORT_ROWS = ${safeJsonForScript(reportRows)};
+  const REPORT_ROWS = ${safeJsLiteralForScript(reportRows)};
   const ROW_SEARCH_TEXT_CACHE = new WeakMap();
   const REPORT_SEARCH_DEBOUNCE_MS = 150;
-  const SECTION_LABEL_MAP = ${safeJsonForScript(sectionLabelMap)};
-  const ENTITY_KIND_LABEL_MAP = ${safeJsonForScript(entityKindLabelMap)};
-  const REPORT_META = ${safeJsonForScript(reportMeta)};
-  const REPORT_EMPTY_STATE = ${safeJsonForScript({ title: emptyFactTitle, note: emptyFactNote })};
+  const SECTION_LABEL_MAP = ${safeJsLiteralForScript(sectionLabelMap)};
+  const ENTITY_KIND_LABEL_MAP = ${safeJsLiteralForScript(entityKindLabelMap)};
+  const REPORT_META = ${safeJsLiteralForScript(reportMeta)};
+  const REPORT_EMPTY_STATE = ${safeJsLiteralForScript({ title: emptyFactTitle, note: emptyFactNote })};
   const REVIEW_STATE_KIND = String(REPORT_META.reviewState.kind || '');
   const REVIEW_STATE_VERSION = Number(REPORT_META.reviewState.version || 0);
   const REVIEW_STATE_MAX_BYTES = Number(REPORT_META.reviewState.maxBytes || ${DIFF_HTML_REVIEW_STATE_MAX_BYTES});
@@ -6965,9 +7098,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   const HAS_COMPARED_CONTENT = ${includesComparedContent ? "true" : "false"};
   const CAN_BUILD_REFLECT_JSON = !!REPORT_META.reflectJsonAvailable;
   const REFLECT_JSON_BLOCK_REASON = String(REPORT_META.reflectJsonBlockedReason || '反映JSONを作成できません');
-  const DIFF_NAV_RANGE_NOTE = ${safeJsonForScript(diffNavRangeNote)};
-  const TARGET_PREVIEW_API_PREFIX = ${safeJsonForScript(targetPreviewApiPrefix)};
-  const NORMALIZATION_PRESETS = ${safeJsonForScript(clientNormalizationPresets)};
+  const DIFF_NAV_RANGE_NOTE = ${safeJsLiteralForScript(diffNavRangeNote)};
+  const TARGET_PREVIEW_API_PREFIX = ${safeJsLiteralForScript(targetPreviewApiPrefix)};
+  const NORMALIZATION_PRESETS = ${safeJsLiteralForScript(clientNormalizationPresets)};
   const THEME_KEY = '${TOOL_ID}:diffReportTheme';
   const ACTIVE_TAB_KEY = '${TOOL_ID}:diffReportActiveTab';
   const LINE_DIFF_MAX_CELLS = ${LINE_DIFF_MAX_CELLS};
@@ -6987,12 +7120,12 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   const expandedVals = new Set();
   const sameOpen = new Set();
   const KUC_SEMVER = '${KUC_REPORT_VERSION}';
-  const FIELD_PROPS_SRC = ${safeJsonForScript(srcFieldProps)};
-  const FIELD_PROPS_TGT = ${safeJsonForScript(tgtFieldProps)};
-  const SOURCE_SECTIONS = ${safeJsonForScript(srcSectionsForReport)};
-  const TARGET_SECTIONS = ${safeJsonForScript(tgtSectionsForReport)};
-  const LAYOUT_ROWS_SRC = ${safeJsonForScript(srcLayoutRows)};
-  const LAYOUT_ROWS_TGT = ${safeJsonForScript(tgtLayoutRows)};
+  const FIELD_PROPS_SRC = ${safeJsLiteralForScript(srcFieldProps)};
+  const FIELD_PROPS_TGT = ${safeJsLiteralForScript(tgtFieldProps)};
+  const SOURCE_SECTIONS = ${safeJsLiteralForScript(srcSectionsForReport)};
+  const TARGET_SECTIONS = ${safeJsLiteralForScript(tgtSectionsForReport)};
+  const LAYOUT_ROWS_SRC = ${safeJsLiteralForScript(srcLayoutRows)};
+  const LAYOUT_ROWS_TGT = ${safeJsLiteralForScript(tgtLayoutRows)};
   const FLAT_FIELD_PROPS_SRC = collectFlatFieldMap(FIELD_PROPS_SRC);
   const FLAT_FIELD_PROPS_TGT = collectFlatFieldMap(FIELD_PROPS_TGT);
   let activeFieldCode = '';
@@ -7350,9 +7483,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
 
   function csvEscape(v) {
     const raw = String(v == null ? '' : v);
-    // Excel 等で CSV を開いた際、先頭空白の後に = + - @ が続く値も式として
-    // 評価され得るため、文字列として扱われるよう先頭に apostrophe を付ける。
-    const s = /^[\\t\\r\\n ]*[=+\\-@]/.test(raw) ? "'" + raw : raw;
+    // Excel 等で CSV を開いた際に式として評価され得る値（= + - @ で始まる値。日本語版の Excel は全角の ＝ ＋ － ＠ も式にする。
+    // 先頭のタブ・改行・空白を除いて評価する表計算ソフトもある）は、文字列として扱われるよう先頭に apostrophe を付ける。
+    const s = /^(?:[\\t\\r\\n]|[\\t\\r\\n \\u3000]*[=+\\-@\\uff1d\\uff0b\\uff0d\\uff20])/.test(raw) ? "'" + raw : raw;
     if (/[",\\n\\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
     return s;
   }
@@ -7536,9 +7669,64 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     }
   }
 
+  // 改行類。* はこれらの文字に一致しない（比較時の照合と同じ）。
+  function isWildcardLineTerminator(code) {
+    return code === 10 || code === 13 || code === 0x2028 || code === 0x2029;
+  }
+
+  // パターン側に改行類があるときだけ使う、表による照合。
+  function matchWildcardByTable(pattern, value) {
+    let previous = new Uint8Array(value.length + 1);
+    previous[0] = 1;
+    for (let p = 0; p < pattern.length; p += 1) {
+      const current = new Uint8Array(value.length + 1);
+      if (pattern[p] === '*') {
+        current[0] = previous[0];
+        for (let v = 1; v <= value.length; v += 1) {
+          current[v] = previous[v] || (current[v - 1] && !isWildcardLineTerminator(value.charCodeAt(v - 1))) ? 1 : 0;
+        }
+      } else {
+        for (let v = 1; v <= value.length; v += 1) {
+          current[v] = previous[v - 1] && pattern[p] === value[v - 1] ? 1 : 0;
+        }
+      }
+      previous = current;
+    }
+    return previous[value.length] === 1;
+  }
+
+  // * だけを「改行以外の任意の文字列」とみなす全体一致。正規表現にすると * の多いルールと長いパスで固まるため、
+  // 最後の * の位置だけを覚えて進める（比較時の matchWildcard と同じ）。
+  function matchWildcard(pattern, value) {
+    for (let i = 0; i < pattern.length; i += 1) {
+      if (isWildcardLineTerminator(pattern.charCodeAt(i))) return matchWildcardByTable(pattern, value);
+    }
+    let p = 0;
+    let v = 0;
+    let starAt = -1;
+    let starValueAt = 0;
+    while (v < value.length) {
+      if (p < pattern.length && pattern[p] === '*') {
+        starAt = p;
+        starValueAt = v;
+        p += 1;
+      } else if (p < pattern.length && pattern[p] === value[v]) {
+        p += 1;
+        v += 1;
+      } else if (starAt >= 0 && !isWildcardLineTerminator(value.charCodeAt(starValueAt))) {
+        starValueAt += 1;
+        v = starValueAt;
+        p = starAt + 1;
+      } else {
+        return false;
+      }
+    }
+    while (p < pattern.length && pattern[p] === '*') p += 1;
+    return p === pattern.length;
+  }
+
   function compileIgnoreWildcard(token) {
-    const escaped = token.replace(/[.+?^\${}()|[\\]\\\\]/g, '\\\\$&').replace(/\\*/g, '.*');
-    return new RegExp('^' + escaped + '$');
+    return { test: (value) => matchWildcard(token, String(value)) };
   }
 
   function parseExtraIgnoreRules(text) {
@@ -7561,11 +7749,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         const isPath = token.indexOf('.') >= 0 || token.indexOf('[') >= 0;
         const cleaned = token;
         if (cleaned.indexOf('*') >= 0) {
-          try {
-            const re = compileIgnoreWildcard(cleaned);
-            if (isPath) pathPatterns.push(re);
-            else keyPatterns.push(re);
-          } catch (e) { /* 不正なパターンは無視 */ }
+          const matcher = compileIgnoreWildcard(cleaned);
+          if (isPath) pathPatterns.push(matcher);
+          else keyPatterns.push(matcher);
           return;
         }
         if (isPath) pathSet.push(cleaned);
@@ -8025,13 +8211,17 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
 
   // ---- 「JSONで比較」: フィールド単位に区切った WinMerge 風の左右比較 ----
 
+  // 設定の名前（フィールドコードなど）で引く表は、自身のプロパティだけを見る（constructor などを Object.prototype から拾わない）。
+  function ownValue(map, key) {
+    return map && Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined;
+  }
+
   function stripInternalFieldKeys(def) {
     if (!def || typeof def !== 'object' || Array.isArray(def)) return def;
-    const out = {};
-    Object.keys(def).forEach((k) => {
-      if (k === '__parentTableCode' || k === '__parentTableLabel') return;
-      out[k] = def[k];
-    });
+    // 代入ではなくスプレッドで写し、__proto__ という名前のキーも普通のプロパティとして残す。
+    const out = { ...def };
+    delete out.__parentTableCode;
+    delete out.__parentTableLabel;
     return out;
   }
 
@@ -8049,8 +8239,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     });
     const groups = [];
     map.forEach((bucket, code) => {
-      let src = stripInternalFieldKeys(FIELD_PROPS_SRC[code] || null);
-      let tgt = stripInternalFieldKeys(FIELD_PROPS_TGT[code] || null);
+      let src = stripInternalFieldKeys(ownValue(FIELD_PROPS_SRC, code) || null);
+      let tgt = stripInternalFieldKeys(ownValue(FIELD_PROPS_TGT, code) || null);
       if (!src && !tgt) {
         const rootRow = bucket.find((row) => {
           const info = extractFieldPathInfo(row.path);
@@ -8509,7 +8699,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
 
   function groupBySection(rows) {
     const order = {};
-    const defs = ${safeJsonForScript(SECTION_DEFS.map((d, i) => ({ key: d.key, label: d.label, order: i })))};
+    const defs = ${safeJsLiteralForScript(SECTION_DEFS.map((d, i) => ({ key: d.key, label: d.label, order: i })))};
     defs.forEach((d) => { order[d.key] = d.order; });
     const map = new Map();
     for (const row of rows) {
@@ -8773,7 +8963,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const entries = Object.values(fields);
     if (!entries.length) return '<div class="sl-empty">（項目なし）</div>';
     const cp = (counterpart && typeof counterpart === 'object' && !Array.isArray(counterpart)) ? counterpart : null;
-    const cpByCode = {};
+    const cpByCode = Object.create(null);
     if (cp) {
       Object.entries(cp).forEach(([key, child]) => {
         const code = String((child && child.code) || key);
@@ -9436,7 +9626,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   }
 
   function collectFlatFieldMap(properties, out) {
-    const dest = out || ({});
+    // プロトタイプの無い表にする（__proto__・constructor という名前のフィールドも、自身のプロパティとして持ち・引く）
+    const dest = out || Object.create(null);
     function walk(props, parentMeta) {
       Object.entries(props || ({})).forEach(([code, field]) => {
         if (!field || typeof field !== 'object' || Array.isArray(field)) return;
@@ -11419,10 +11610,21 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   setActiveTab(safeStorageGet(ACTIVE_TAB_KEY) || 'diff');
 })();
 `;
+    const contentSecurityPolicy = [
+      "default-src 'none'",
+      `script-src 'sha256-${sha256Base64(logicScript)}'`,
+      "style-src 'unsafe-inline'",
+      "connect-src 'none'",
+      "object-src 'none'",
+      "base-uri 'none'",
+      "form-action 'none'",
+      "frame-src 'none'"
+    ].join("; ");
     return `<!doctype html>
 <html lang="ja">
 <head>
   <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="${contentSecurityPolicy}">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>kintone差分レポート</title>
   <style>
@@ -20007,7 +20209,7 @@ ${item.target}` : item.target;
     return String(value || "").trim() || `比較 ${index + 1}`;
   }
   function normalizeFilenameText(value) {
-    return String(value || "").replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").replace(/\s+/g, " ").trim().replace(/^[._ ]+/g, "").replace(/[. ]+$/g, "");
+    return String(value || "").replace(/[\\/:*?"<>|]/g, "_").replace(UNSAFE_FILENAME_CHARS, "_").replace(/\s+/g, " ").trim().replace(/^[._ ]+/g, "").replace(/[. ]+$/g, "");
   }
   function truncateCodePoints(value, maxCodePoints) {
     const points = Array.from(value);
@@ -20982,7 +21184,7 @@ ${fence}`;
 ` };
   }
   function cleanMarkdownEntryToken(value, maxLength = 40) {
-    const cleaned = String(value ?? "").replace(/[\\/:*?"<>|`]/g, "_").replace(/[\u0000-\u001F\u007F-\u009F]/g, " ").replace(/\s+/g, "_").replace(/_+/g, "_").replace(/^[._]+|[._]+$/g, "");
+    const cleaned = String(value ?? "").replace(/[\\/:*?"<>|`]/g, "_").replace(UNSAFE_FILENAME_CHARS, " ").replace(/\s+/g, "_").replace(/_+/g, "_").replace(/^[._]+|[._]+$/g, "");
     if (!cleaned) return "";
     const chars = Array.from(cleaned);
     return chars.length <= maxLength ? cleaned : chars.slice(0, maxLength).join("");

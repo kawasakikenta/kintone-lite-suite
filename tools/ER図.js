@@ -654,9 +654,10 @@
     const p = (n) => String(n).padStart(2, "0");
     return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
   }
+  var UNSAFE_FILENAME_CHARS = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u206f]/g;
   function sanitizeFilenamePart(value, fallback = "不明") {
     const text = String(value || "").trim();
-    const cleaned = text.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
+    const cleaned = text.replace(/[\\/:*?"<>|]/g, " ").replace(UNSAFE_FILENAME_CHARS, " ").replace(/\s+/g, " ").trim();
     return cleaned || fallback;
   }
   function buildAppFilenameLabel(appId, appName) {
@@ -741,6 +742,10 @@
     // 選択肢のキーもラベルを識別子とする名前付きマップ。
     new RegExp(`^fieldsettings\\.properties${ENTITY_PATH_SEGMENT}(?:\\.fields${ENTITY_PATH_SEGMENT})?\\.options${ENTITY_PATH_SEGMENT}$`)
   ];
+
+  // src/kintone-query.ts
+  var CALL_NAME_MAX = 256;
+  var CALL_PATTERN = new RegExp("([^\\s()=!<>,+\\-*/&^;:%]{1," + CALL_NAME_MAX + "})\\s*\\(([^()]*)\\)", "g");
 
   // src/runControl.ts
   var RUN_CANCELLED_MESSAGE = "利用者の操作で中止しました";
@@ -843,8 +848,10 @@
   }
 
   // src/api.ts
+  var GUEST_SPACE_ID_PATTERN = /^\d+$/;
   function buildApiPrefix(guestId, preview) {
     const g = String(guestId || "").trim();
+    if (g && !GUEST_SPACE_ID_PATTERN.test(g)) throw new Error(`ゲストスペースIDは半角数字で指定してください（${g.slice(0, 40)}）。`);
     if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
     return `/k/v1${preview ? "/preview" : ""}`;
   }
@@ -991,6 +998,74 @@
     for (const cat of DIFF_CATEGORIES) for (const sec of cat.sections) m[sec] = cat.key;
     return m;
   })();
+
+  // src/diff/export-safety.ts
+  var SHA256_ROUND_CONSTANTS = new Int32Array([
+    1116352408,
+    1899447441,
+    3049323471,
+    3921009573,
+    961987163,
+    1508970993,
+    2453635748,
+    2870763221,
+    3624381080,
+    310598401,
+    607225278,
+    1426881987,
+    1925078388,
+    2162078206,
+    2614888103,
+    3248222580,
+    3835390401,
+    4022224774,
+    264347078,
+    604807628,
+    770255983,
+    1249150122,
+    1555081692,
+    1996064986,
+    2554220882,
+    2821834349,
+    2952996808,
+    3210313671,
+    3336571891,
+    3584528711,
+    113926993,
+    338241895,
+    666307205,
+    773529912,
+    1294757372,
+    1396182291,
+    1695183700,
+    1986661051,
+    2177026350,
+    2456956037,
+    2730485921,
+    2820302411,
+    3259730800,
+    3345764771,
+    3516065817,
+    3600352804,
+    4094571909,
+    275423344,
+    430227734,
+    506948616,
+    659060556,
+    883997877,
+    958139571,
+    1322822218,
+    1537002063,
+    1747873779,
+    1955562222,
+    2024104815,
+    2227730452,
+    2361852424,
+    2428436474,
+    2756734187,
+    3204031479,
+    3329325298
+  ]);
 
   // src/diff/export.ts
   var DIFF_HTML_REVIEW_STATE_MAX_BYTES = 2 * 1024 * 1024;
@@ -4165,9 +4240,10 @@ ${String(text).trim().replace(/\*\//g, "* /")}
     });
     return lines.join("\n");
   }
+  var ER_CSV_FORMULA_LIKE = /^(?:[\t\r\n]|[\t\r\n \u3000]*[=+\-@\uff1d\uff0b\uff0d\uff20])/;
   function erCsvCell(value) {
     const raw = String(value == null ? "" : value);
-    const safe = /^[\t\r\n ]*[=+\-@]/.test(raw) ? `'${raw}` : raw;
+    const safe = ER_CSV_FORMULA_LIKE.test(raw) ? `'${raw}` : raw;
     return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
   }
   function erCsvLine(row) {
@@ -9252,9 +9328,10 @@ function showJSON(){\r
 }\r
 \r
 // ─── CSV exports ───\r
+// 表計算ソフトで式になり得る値（= + - @ で始まる値。日本語版の Excel は全角の ＝ ＋ － ＠ も式にする。先頭のタブ・改行・空白を除いて評価するソフトもある）は ' を付けて文字列にする\r
 function csvCell(v){\r
   const raw=String(v==null?"":v);\r
-  const s=/^[\\t\\r\\n ]*[=+\\-@]/.test(raw)?"'"+raw:raw;\r
+  const s=/^(?:[\\t\\r\\n]|[\\t\\r\\n \\u3000]*[=+\\-@\\uff1d\\uff0b\\uff0d\\uff20])/.test(raw)?"'"+raw:raw;\r
   return /[",\\n\\r]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;\r
 }\r
 function csvLine(arr){return arr.map(csvCell).join(",");}\r

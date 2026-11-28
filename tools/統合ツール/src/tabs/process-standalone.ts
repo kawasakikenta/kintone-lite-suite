@@ -571,8 +571,9 @@ const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
 
 /** ファイル名に使うアプリ名。禁則文字・制御文字・表示偽装用の文字を除き、長い名前は切り詰める。 */
 function safeFileNamePart(name: unknown): string {
-  const cleaned = Array.from(sanitizeFilenamePart(name, '')
-    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, '')
+  // 表示偽装用の文字は先に取り除く（sanitizeFilenamePart は制御文字などを空白に置き換えるため）
+  const cleaned = Array.from(sanitizeFilenamePart(String(name ?? '')
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, ''), '')
     .trim())
     .slice(0, PROCESS_BATCH_NAME_MAX)
     .join('')

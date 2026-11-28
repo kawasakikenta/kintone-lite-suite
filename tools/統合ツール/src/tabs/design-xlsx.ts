@@ -3,7 +3,7 @@
 import { TOOL_ID, SECTION_DEFS } from '../constants.js';
 import { buildDesignSnapshot } from '../design/snapshot.js';
 import { getToolDocument } from '../ui/dialog.js';
-import { showToast, stripHtmlToText, extractAppNameFromBundle, flattenCategories } from '../utils.js';
+import { showToast, stripHtmlToText, extractAppNameFromBundle, flattenCategories, UNSAFE_FILENAME_CHARS } from '../utils.js';
 import { isCancelRequested, isRunCancelledError, raceWithCancel, requestCancel, RUN_CANCELLED_MESSAGE, sleepUnlessCancelled, throwIfCancelled } from '../runControl.js';
 import { API_GET_TIMEOUT_MS, isRetriableApiError } from '../api.js';
 import { loadJSZipLite } from '../jszipLoader.js';
@@ -396,7 +396,7 @@ function createBatchExporterUI() {
         doc.body.appendChild(el);
       }
       el.style.zIndex = getExporterOverlayZIndex();
-      el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px clamp(16px,6vw,48px);box-sizing:border-box;text-align:center;min-width:min(440px,calc(100vw - 32px));max-width:calc(100vw - 32px);"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📦 設計書一括エクスポーター (ZIP)</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${msg}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div><div style="margin-top:10px;text-align:right;"><button id="kex-cancel-batch" style="font-size:12px;padding:6px 12px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;">中止</button></div></div>`;
+      el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px clamp(16px,6vw,48px);box-sizing:border-box;text-align:center;min-width:min(440px,calc(100vw - 32px));max-width:calc(100vw - 32px);"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📦 設計書一括エクスポーター (ZIP)</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${escapeHtmlAttr(String(msg ?? ''))}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div><div style="margin-top:10px;text-align:right;"><button id="kex-cancel-batch" style="font-size:12px;padding:6px 12px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;">中止</button></div></div>`;
     },
     update(msg: string, step?: number) {
       if (step != null) currentStep = step; else currentStep++;
@@ -644,7 +644,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       let el = doc.getElementById(UI.id);
       if (!el) { el = doc.createElement('div'); el.id = UI.id; Object.assign(el.style, { position: 'fixed', top: '0', left: '0', width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.7)', zIndex: getExporterOverlayZIndex(), display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', color: '#fff', fontSize: '16px', fontFamily: '"Meiryo", sans-serif' }); doc.body.appendChild(el); }
       el.style.zIndex = getExporterOverlayZIndex();
-      el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px clamp(16px,6vw,48px);box-sizing:border-box;text-align:center;min-width:min(400px,calc(100vw - 32px));max-width:calc(100vw - 32px);"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📊 kintone 設計書エクスポーター v2.1</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${msg}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div><div style="margin-top:10px;text-align:right;"><button id="kex-cancel-batch" style="font-size:12px;padding:6px 12px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;">中止</button></div></div>`;
+      el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px clamp(16px,6vw,48px);box-sizing:border-box;text-align:center;min-width:min(400px,calc(100vw - 32px));max-width:calc(100vw - 32px);"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📊 kintone 設計書エクスポーター v2.1</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${escapeHtmlAttr(String(msg ?? ''))}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div><div style="margin-top:10px;text-align:right;"><button id="kex-cancel-batch" style="font-size:12px;padding:6px 12px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;">中止</button></div></div>`;
     },
     update(msg: string, step?: number) {
       if (step !== undefined) UI.currentStep = step; else UI.currentStep++;
@@ -2737,7 +2737,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     }
 
     UI.update(returnWorkbook ? '生成完了' : 'ダウンロード中...', 12);
-    const safeAppName = String(appSettings?.name || '').replace(/[\\/:*?"<>|]/g, '_').replace(/[\u0000-\u001f]/g, ' ').trim();
+    const safeAppName = String(appSettings?.name || '').replace(/[\\/:*?"<>|]/g, '_').replace(UNSAFE_FILENAME_CHARS, ' ').trim();
     const appLabel = safeAppName ? `${safeAppName}(app${APP_ID})` : `app${APP_ID}`;
     const filename = `設計書_${appLabel}_${nowStampZip()}.xlsx`;
 
@@ -2792,7 +2792,7 @@ function nowStampZip(d = new Date()): string {
   return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}_${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
 }
 function sanitizeFilename(name: string): string {
-  return String(name || '').replace(/[\\/:*?"<>|]/g, '_').replace(/[\u0000-\u001f]/g, '').trim() || 'untitled';
+  return String(name || '').replace(/[\\/:*?"<>|]/g, '_').replace(UNSAFE_FILENAME_CHARS, '').trim() || 'untitled';
 }
 
 /**

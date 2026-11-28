@@ -11874,9 +11874,10 @@
     const p = (n) => String(n).padStart(2, "0");
     return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
   }
+  var UNSAFE_FILENAME_CHARS = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u206f]/g;
   function sanitizeFilenamePart(value, fallback = "不明") {
     const text = String(value || "").trim();
-    const cleaned = text.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
+    const cleaned = text.replace(/[\\/:*?"<>|]/g, " ").replace(UNSAFE_FILENAME_CHARS, " ").replace(/\s+/g, " ").trim();
     return cleaned || fallback;
   }
   function extractAppNameFromBundle(bundle) {
@@ -12061,6 +12062,10 @@
     MINUTE: "分"
   };
 
+  // src/kintone-query.ts
+  var CALL_NAME_MAX = 256;
+  var CALL_PATTERN = new RegExp("([^\\s()=!<>,+\\-*/&^;:%]{1," + CALL_NAME_MAX + "})\\s*\\(([^()]*)\\)", "g");
+
   // src/runControl.ts
   var RUN_CANCELLED_MESSAGE = "利用者の操作で中止しました";
   var RunCancelledError = class extends Error {
@@ -12192,8 +12197,10 @@
   }
 
   // src/api.ts
+  var GUEST_SPACE_ID_PATTERN = /^\d+$/;
   function buildApiPrefix(guestId, preview) {
     const g = String(guestId || "").trim();
+    if (g && !GUEST_SPACE_ID_PATTERN.test(g)) throw new Error(`ゲストスペースIDは半角数字で指定してください（${g.slice(0, 40)}）。`);
     if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
     return `/k/v1${preview ? "/preview" : ""}`;
   }
@@ -12626,6 +12633,74 @@
     for (const cat of DIFF_CATEGORIES) for (const sec of cat.sections) m[sec] = cat.key;
     return m;
   })();
+
+  // src/diff/export-safety.ts
+  var SHA256_ROUND_CONSTANTS = new Int32Array([
+    1116352408,
+    1899447441,
+    3049323471,
+    3921009573,
+    961987163,
+    1508970993,
+    2453635748,
+    2870763221,
+    3624381080,
+    310598401,
+    607225278,
+    1426881987,
+    1925078388,
+    2162078206,
+    2614888103,
+    3248222580,
+    3835390401,
+    4022224774,
+    264347078,
+    604807628,
+    770255983,
+    1249150122,
+    1555081692,
+    1996064986,
+    2554220882,
+    2821834349,
+    2952996808,
+    3210313671,
+    3336571891,
+    3584528711,
+    113926993,
+    338241895,
+    666307205,
+    773529912,
+    1294757372,
+    1396182291,
+    1695183700,
+    1986661051,
+    2177026350,
+    2456956037,
+    2730485921,
+    2820302411,
+    3259730800,
+    3345764771,
+    3516065817,
+    3600352804,
+    4094571909,
+    275423344,
+    430227734,
+    506948616,
+    659060556,
+    883997877,
+    958139571,
+    1322822218,
+    1537002063,
+    1747873779,
+    1955562222,
+    2024104815,
+    2227730452,
+    2361852424,
+    2428436474,
+    2756734187,
+    3204031479,
+    3329325298
+  ]);
 
   // src/design/snapshot.ts
   var hasOwn = (value, key) => value != null && Object.prototype.hasOwnProperty.call(value, key);
@@ -17206,7 +17281,7 @@ ${fence}`;
           doc.body.appendChild(el);
         }
         el.style.zIndex = getExporterOverlayZIndex();
-        el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px clamp(16px,6vw,48px);box-sizing:border-box;text-align:center;min-width:min(440px,calc(100vw - 32px));max-width:calc(100vw - 32px);"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📦 設計書一括エクスポーター (ZIP)</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${msg}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div><div style="margin-top:10px;text-align:right;"><button id="kex-cancel-batch" style="font-size:12px;padding:6px 12px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;">中止</button></div></div>`;
+        el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px clamp(16px,6vw,48px);box-sizing:border-box;text-align:center;min-width:min(440px,calc(100vw - 32px));max-width:calc(100vw - 32px);"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📦 設計書一括エクスポーター (ZIP)</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${escapeHtmlAttr(String(msg ?? ""))}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div><div style="margin-top:10px;text-align:right;"><button id="kex-cancel-batch" style="font-size:12px;padding:6px 12px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;">中止</button></div></div>`;
       },
       update(msg, step) {
         if (step != null) currentStep = step;
@@ -17541,7 +17616,7 @@ ${fence}`;
           doc.body.appendChild(el);
         }
         el.style.zIndex = getExporterOverlayZIndex2();
-        el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px clamp(16px,6vw,48px);box-sizing:border-box;text-align:center;min-width:min(400px,calc(100vw - 32px));max-width:calc(100vw - 32px);"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📊 kintone 設計書エクスポーター v2.1</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${msg}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div><div style="margin-top:10px;text-align:right;"><button id="kex-cancel-batch" style="font-size:12px;padding:6px 12px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;">中止</button></div></div>`;
+        el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px clamp(16px,6vw,48px);box-sizing:border-box;text-align:center;min-width:min(400px,calc(100vw - 32px));max-width:calc(100vw - 32px);"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📊 kintone 設計書エクスポーター v2.1</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${escapeHtmlAttr(String(msg ?? ""))}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div><div style="margin-top:10px;text-align:right;"><button id="kex-cancel-batch" style="font-size:12px;padding:6px 12px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;">中止</button></div></div>`;
       },
       update(msg, step) {
         if (step !== void 0) UI.currentStep = step;
@@ -19620,7 +19695,7 @@ ${fence}`;
         }
       }
       UI.update(returnWorkbook ? "生成完了" : "ダウンロード中...", 12);
-      const safeAppName = String(appSettings?.name || "").replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f]/g, " ").trim();
+      const safeAppName = String(appSettings?.name || "").replace(/[\\/:*?"<>|]/g, "_").replace(UNSAFE_FILENAME_CHARS, " ").trim();
       const appLabel = safeAppName ? `${safeAppName}(app${APP_ID})` : `app${APP_ID}`;
       const filename = `設計書_${appLabel}_${nowStampZip()}.xlsx`;
       if (returnWorkbook) {
@@ -19673,7 +19748,7 @@ ${fence}`;
     return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}_${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
   }
   function sanitizeFilename(name) {
-    return String(name || "").replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f]/g, "").trim() || "untitled";
+    return String(name || "").replace(/[\\/:*?"<>|]/g, "_").replace(UNSAFE_FILENAME_CHARS, "").trim() || "untitled";
   }
   function toManifestTargets(targets) {
     return targets.map((t) => ({ appId: t.appId, guestId: t.guestId, source: t.bundle ? "settings-json" : "api" }));
@@ -20227,7 +20302,7 @@ ${lines.join("\n")}`), { partialSuccess: true });
     setStatus(`設計書ZIP出力完了（${apps.length}件）`);
   }
   function uniqueMdZipEntryName(used, baseName) {
-    const cleaned = String(baseName || "").replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f]/g, "").trim() || "design.md";
+    const cleaned = String(baseName || "").replace(/[\\/:*?"<>|]/g, "_").replace(UNSAFE_FILENAME_CHARS, "").trim() || "design.md";
     let candidate = cleaned;
     let n = 2;
     while (used.has(candidate.toLowerCase())) {
@@ -20866,10 +20941,29 @@ ${detail}`);
   function looksLikeZip(bytes) {
     return bytes.length >= 4 && bytes[0] === 80 && bytes[1] === 75 && (bytes[2] === 3 && bytes[3] === 4 || bytes[2] === 5 && bytes[3] === 6);
   }
-  async function inflateRaw(bytes) {
+  async function inflateRaw(bytes, expectedSize) {
     if (typeof DecompressionStream !== "function") throw new Error("このブラウザは ZIP の展開（deflate-raw）に対応していません。設定JSONを読み込んでください");
-    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
-    return new Uint8Array(await new Response(stream).arrayBuffer());
+    const reader = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw")).getReader();
+    const chunks = [];
+    let length = 0;
+    for (; ; ) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > expectedSize) {
+        await reader.cancel().catch(() => {
+        });
+        return null;
+      }
+      chunks.push(value);
+    }
+    const out = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) {
+      out.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return out;
   }
   async function readZipEntries(bytes, options = {}) {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -20918,8 +21012,8 @@ ${detail}`);
       const dataStart = localOffset + 30 + u16(localOffset + 26) + u16(localOffset + 28);
       if (dataStart + compressedSize > bytes.length) throw new Error(`ZIP のファイル「${name}」が途中で切れています`);
       const raw = bytes.subarray(dataStart, dataStart + compressedSize);
-      const data = method === 8 ? await inflateRaw(raw) : raw.slice();
-      if (data.length !== size || crc32(data) !== crc) throw new Error(`ZIP のファイル「${name}」の内容が壊れています（大きさ・CRC が一致しません）`);
+      const data = method === 8 ? await inflateRaw(raw, size) : raw.slice();
+      if (!data || data.length !== size || crc32(data) !== crc) throw new Error(`ZIP のファイル「${name}」の内容が壊れています（大きさ・CRC が一致しません）`);
       entries.push({ name, data });
     }
     return entries;

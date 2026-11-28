@@ -171,7 +171,7 @@ tools/統合ツール/
 - 出力形式: IIFE（即時実行関数）
 - CSS: カスタム esbuild プラグインで `.css` ファイルを JS 文字列としてインライン化し、実行時に `<style>` タグとして注入
 - ターゲット: ES2020
-- 外部依存: ZIP 作成は自前実装、設計書 Excel は xlsx-js-style を `設計書作成.js` にだけ同梱。Mermaid・Cytoscape は実行時に CDN から読み込む（Mermaid は固定版を SRI で検証）
+- 外部依存: ZIP 作成は自前実装、設計書 Excel は xlsx-js-style を `設計書作成.js` にだけ同梱。ER図の描画ライブラリ（Cytoscape.js・Dagre・cytoscape-dagre）は `ER図.js` に同梱し、生成する HTML へ埋め込む。実行時に CDN から読み込むのはプロセス図の Mermaid だけ（固定版を SRI で検証）
 
 ## 機能一覧（整理版）
 

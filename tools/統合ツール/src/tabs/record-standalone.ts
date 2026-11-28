@@ -1,6 +1,6 @@
 'use strict';
 
-import { downloadBlob, kusConfirm, buildExportFilename, buildAppFilenameLabel, sanitizeFilenamePart } from '../utils.js';
+import { downloadBlob, kusConfirm, buildExportFilename, buildAppFilenameLabel, sanitizeFilenamePart, UNSAFE_FILENAME_CHARS } from '../utils.js';
 import { FILE_DOWNLOAD_TIMEOUT_MS, apiGet, apiPost, apiPut, buildApiPrefix, fetchBundle, fetchRecordsByQuery, isRetriableApiError, isRevisionConflictError } from '../api.js';
 import { loadJSZipLite } from '../jszipLoader.js';
 import { RunCancelledError, activeRun, createRequestSignal, isRunCancelledError, sleepUnlessCancelled, throwIfCancelled } from '../runControl.js';
@@ -341,7 +341,7 @@ function csvExportManifest(appId: string, guestId: string, recordCount: number, 
       'テーブルごとに独立したCSVです。別のテーブルとの行の組み合わせは作りません。',
       'CSVは閲覧・集計用です。このツールのCSV取込でテーブルを復元することはできません。',
       '添付フィールドはファイル名のみです。実体を保存する場合はバックアップで「添付ファイルも保存」を選択してください。',
-      "= + - @ で始まる文字列セルは Excel の数式実行を防ぐため先頭に ' を付けています（数値は対象外）。"
+      "= + - @（全角を含む）で始まる文字列セルは Excel の数式実行を防ぐため先頭に ' を付けています（数値は対象外）。"
     ]
   };
 }
@@ -353,7 +353,7 @@ function addRecordCsvFiles(zip: any, csv: RecordCsvExport, prefix = ''): void {
 
 export function recordExportFilename(filename: unknown, extension: 'csv' | 'zip', fallback: string): string {
   // 拡張子だけ・パス区切りや禁則文字を含む入力でも、空の名前や意図しない階層名にしない。
-  const stem = String(filename || '').trim().replace(/\.(csv|zip)$/i, '').replace(/[\u0000-\u001f\u007f]/g, '').trim();
+  const stem = String(filename || '').trim().replace(/\.(csv|zip)$/i, '').replace(UNSAFE_FILENAME_CHARS, '').trim();
   // 先頭・末尾のドットや空白だけが残る名前（`...` や `../` 由来）は隠しファイル・空名になるので除く。
   const safe = stem ? sanitizeFilenamePart(stem, '').replace(/^[. ]+|[. ]+$/g, '') : '';
   return safe ? `${safe}.${extension}` : fallback;

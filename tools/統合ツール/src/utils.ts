@@ -90,6 +90,17 @@ export function safeJsonForScript(v: unknown): string {
     .replace(/\u2029/g, '\\u2029');
 }
 
+/**
+ * `<script>` の中へ JavaScript のリテラル（`const X = …;` の右辺）として埋め込む。
+ * JSON の `"__proto__": …` は、オブジェクトリテラルではプロトタイプの指定になり、そのキーが消える
+ * （フィールドコード・一覧名・選択肢名が `__proto__` のとき、その設定がレポートのデータから落ちる）。
+ * 計算されたプロパティ名 `["__proto__"]: …` に変えて、普通のプロパティとして残す。
+ * JSON.stringify の出力では、文字列の中の `"` は必ず `\"` になるため、`{"` `,"` で始まるのはキーだけ。
+ */
+export function safeJsLiteralForScript(v: unknown): string {
+  return safeJsonForScript(v).replace(/([{,])"__proto__":/g, '$1["__proto__"]:');
+}
+
 /** 確認画面・確認ダイアログの一覧に載せる件数の既定値。全アプリを対象にしても一覧が長くなりすぎないようにする。 */
 export const SUMMARY_LIST_LIMIT = 20;
 
@@ -282,10 +293,17 @@ export function nowStamp(): string {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
+/**
+ * ファイル名（保存するファイル・ZIP 内の名前）に残さない文字。制御文字（C0・C1。NUL があると ZIP を作れない）と、
+ * 表示上の名前や拡張子を入れ替えて見せられる双方向制御（RLO など）。アプリ名・添付ファイル名は利用者が自由に付けられるため取り除く。
+ */
+export const UNSAFE_FILENAME_CHARS = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u206f]/g;
+
 export function sanitizeFilenamePart(value: unknown, fallback: string = '不明'): string {
   const text = String(value || '').trim();
   const cleaned = text
     .replace(/[\\/:*?"<>|]/g, ' ')
+    .replace(UNSAFE_FILENAME_CHARS, ' ')
     .replace(/\s+/g, ' ')
     .trim();
   return cleaned || fallback;

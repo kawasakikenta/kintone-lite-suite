@@ -37,6 +37,7 @@ import type {
   DeployRunResult
 } from '../deploy/types.js';
 import { reflectFieldLabels } from '../reflect/changeSummary.js';
+import { BACKUP_FILE_BODY_NOTICE, hasEmbeddedFileBodies } from '../reflect/customizeFiles.js';
 import { isRunCancelledError, throwIfCancelled } from '../runControl.js';
 import { buildAppFilenameLabel, buildExportFilename, withoutApiContextLines } from '../utils.js';
 
@@ -431,6 +432,7 @@ export async function runDeployStandalone(opts: DeployRunOptions): Promise<Deplo
     }
     backup = { fileName, appCount: targets.length, generatedAt: built.file.generatedAt, environment: built.file.environment, unavailableFiles: built.unavailableFiles, content: built.file };
     log(`バックアップを保存しました（${fileName}、${targets.length} アプリ、${revert ? '中止前のプレビュー' : '反映前の本番'}）`);
+    if (hasEmbeddedFileBodies(built.file)) log(BACKUP_FILE_BODY_NOTICE);
 
     // 3. 反映
     if (batchMode === 'atomic') {
