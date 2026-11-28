@@ -149,7 +149,7 @@ export function mountRecordQualityLitePanel() {
   installLiteWorkflow(panel, {
     setup: [target.card, conditions.card],
     advanced: [compareOptions.card],
-    advancedCopy: '文字列・リンクの前後の空白や英字の大小を無視して比較できます。',
+    advancedCopy: '文字列・リンクの前後の空白・英字の大小・全角と半角の違いを無視して比較できます。',
     actions: [qualityAction],
     results: [resultHost],
     resultActions: ['quality']

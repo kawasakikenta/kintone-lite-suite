@@ -190,7 +190,12 @@ async function main() {
     assert.equal(await page.getByRole('checkbox', { name: '文字列・リンクの英字の大小を無視', exact: true }).isVisible(), false, '比較オプションは表面に出さない');
     await button('詳細設定…').click();
     await page.getByRole('checkbox', { name: '文字列・リンクの英字の大小を無視', exact: true }).check();
+    // 全角・半角の違いを無視（既定は区別）。「ＡＢＣ商事」と「ABC商事」を同じ値として数える
+    const widthOption = page.getByRole('checkbox', { name: '文字列・リンクの全角・半角の違いを無視（英数字・記号・カタカナ・スペース）', exact: true });
+    assert.equal(await widthOption.isChecked(), false, '全角・半角は既定で区別する');
+    await widthOption.check();
     await page.getByRole('button', { name: '詳細設定を閉じる', exact: true }).click();
+    await page.evaluate(() => { window.records[100].title.value = 'ＡＢＣ商事'; window.records[101].title.value = 'ABC商事'; });
     assert.equal(await button('内容を確認する').isDisabled(), true, '検査項目が未選択なら確認へ進めない');
     assert.equal(await page.evaluate(() => window.calls.length), 0, '未選択では設定もレコードも取得しない');
     await page.evaluate(() => { window.defer = true; });
@@ -203,6 +208,7 @@ async function main() {
     await page.evaluate(() => { window.holdRecords = true; });
     await button('内容を確認する').click();
     assert.match(await page.locator('.kus-wf-stage').nth(1).innerText(), /大小文字 無視/, '詳細設定の変更を確認画面に反映する');
+    assert.match(await page.locator('.kus-wf-stage').nth(1).innerText(), /全角半角 無視/, '全角・半角の設定も確認画面に出す');
     await button('重複・未入力を検査').click(); await button('重複・未入力を検査').click({ force: true });
     await page.waitForFunction(() => window.releaseRecords);
     await page.evaluate(() => { window.holdRecords = false; window.releaseRecords(); });
@@ -210,13 +216,14 @@ async function main() {
     assert.equal(await callCount('/records.json'), 21, '検査の二重クリックで取得を重複実行しない');
     assert.match(await status.innerText(), /1アプリを検査しました/);
     assert.equal(await output.locator('li').count() > 0, true);
+    assert.match(await output.innerText(), /重複 2組・63件/, '全角の「ＡＢＣ商事」と半角の「ABC商事」を重複として数える');
     await button('対象・条件を変更').click();
     await page.getByLabel('データ検査のクエリ', { exact: true }).fill('amount > 0');
     assert.equal(await output.innerText(), '');
     assert.match(await status.innerText(), /対象や条件が変わりました/, '完了メッセージを古い結果のまま残さない');
     await page.getByLabel('対象アプリID', { exact: true }).fill('9');
     assert.equal(await fields.getByRole('checkbox').count(), 0);
-    results.push('単機能パネルの未選択実行防止・二重クリック防止・条件変更後の完了表示の解除');
+    results.push('単機能パネルの未選択実行防止・二重クリック防止・条件変更後の完了表示の解除・全角半角の違いを無視する設定');
 
     assert.deepEqual(errors, []);
     assert.equal(await page.evaluate(() => window.calls.every(call => call.method === 'GET' || call.url.endsWith('/records/cursor.json'))), true);

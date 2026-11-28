@@ -133,4 +133,25 @@ describe('record status updates preserve the reviewed revisions', () => {
     expect(status).toHaveBeenLastCalledWith('ステータス一括更新をキャンセルしました', 'info');
     expect(result).toEqual({ cancelled: true });
   });
+
+  // ステータスの更新は冪等ではない。kintone で確定したのに応答だけ届かなかった塊を自動で送り直すと、
+  // 確定で進んだ revision と食い違って「revision 競合」になり、実際は更新済みなのに「別の更新が入った」と案内してしまう。
+  it.each([
+    ['a lost response', { code: 'NETWORK', message: 'Network Error' }],
+    ['a 5xx response', { status: 502, message: 'Bad Gateway' }]
+  ])('does not resend a chunk after %s, and says the chunk may already be applied', async (_label, failure) => {
+    api.mockResolvedValueOnce({ records: makeRecords(150) })
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(failure)
+      .mockRejectedValueOnce({ code: 'GAIA_CO02', message: '指定したリビジョンは最新ではありません。' });
+
+    const error = await runBatchProcessStandalone(options, status).catch((caught) => caught);
+
+    expect(writes()).toHaveLength(2);
+    expect(error.message).toContain('確定済み: 100件 / 失敗チャンク: 101～150件目');
+    expect(error.message).toContain('kintone に書き込まれたかどうか確認できません。再実行する前に、kintone 画面で失敗チャンクのレコードのステータスを確認してください。');
+    expect(error.message).toContain('この塊の 50件: レコードID 101 〜 レコードID 150');
+    expect(error.message).not.toContain('revision 競合');
+    expect(error.partial).toEqual({ done: 100, from: 101, to: 150, total: 150, unconfirmed: true });
+  });
 });

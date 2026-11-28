@@ -1,7 +1,7 @@
 'use strict';
 
 import { downloadBlob, kusConfirm, buildExportFilename, buildAppFilenameLabel, sanitizeFilenamePart } from '../utils.js';
-import { FILE_DOWNLOAD_TIMEOUT_MS, apiGet, apiPost, apiPut, buildApiPrefix, fetchBundle, fetchRecordsByQuery, isRevisionConflictError } from '../api.js';
+import { FILE_DOWNLOAD_TIMEOUT_MS, apiGet, apiPost, apiPut, buildApiPrefix, fetchBundle, fetchRecordsByQuery, isRetriableApiError, isRevisionConflictError } from '../api.js';
 import { loadJSZipLite } from '../jszipLoader.js';
 import { RunCancelledError, activeRun, createRequestSignal, isRunCancelledError, sleepUnlessCancelled, throwIfCancelled } from '../runControl.js';
 import { createCancelReport, describeInnerCancel, formatCancelledHeadline, isCancelStop } from './run-cancel-summary.js';
@@ -225,8 +225,8 @@ export type FileFetchResult =
   | { ok: false; reason: string };
 
 /**
- * /file.json からファイル本体を取得する。403（閲覧権限なし）は再試行せず、
- * それ以外の失敗は 1 回だけ再試行する。失敗理由は呼び出し側で集計して利用者に見せる。
+ * /file.json からファイル本体を取得する。時間を置けば成功し得る失敗（通信エラー・応答待ちの超過・429・5xx など。apiGet と同じ基準）だけ
+ * 1 回再試行し、403（閲覧権限なし）・404・400 など何度やっても同じ失敗は再試行しない。失敗理由は呼び出し側で集計して利用者に見せる。
  */
 async function downloadFileBlob(prefix: string, fileKey: string): Promise<FileFetchResult> {
   if (!fileKey) return { ok: false, reason: 'fileKey がありません' };
@@ -244,6 +244,7 @@ async function downloadFileBlob(prefix: string, fileKey: string): Promise<FileFe
       if (resp.status === 403) return { ok: false, reason: '閲覧権限なし (HTTP 403)' };
       if (!resp.ok) {
         lastReason = `HTTP ${resp.status}`;
+        if (!isRetriableApiError({ status: resp.status })) return { ok: false, reason: lastReason };
       } else {
         return { ok: true, blob: await resp.blob() };
       }
@@ -668,10 +669,11 @@ async function writeChunksUnlessCancelled<T>(
   writeChunk: (chunk: T[], chunkIndex: number) => Promise<void>,
   onProgress: (done: number, total: number) => void,
   describeItem?: (index: number) => string,
-  describeField?: (path: string) => string
+  describeField?: (path: string) => string,
+  checkBeforeRetry?: string
 ): Promise<number> {
   try {
-    return await writeInChunks(items, label, writeChunk, onProgress, undefined, describeItem, describeField);
+    return await writeInChunks(items, label, writeChunk, onProgress, undefined, describeItem, describeField, checkBeforeRetry);
   } catch (error: any) {
     if (!isRunCancelledError(error)) throw error;
     const done = Math.max(0, Number(error?.partial?.done) || 0);
@@ -757,10 +759,11 @@ export async function runBatchProcessStandalone(opts, setStatus) {
     `App ${appId} のステータス更新`,
     async (batch) => {
       try {
+        // ステータスの更新は冪等ではない（確定したのに応答だけ届かなかった塊を送り直すと、進んだ revision と食い違って競合に見える）ので、自動では再送しない
         await apiPut(prefix, '/records/status.json', {
           app: appId,
           records: batch.map(({ id, revision }) => ({ id, revision, action, ...(assignee ? { assignee } : {}) }))
-        });
+        }, 1);
       } catch (error: any) {
         if (!isRevisionConflictError(error)) throw error;
         const reported = new Error(
@@ -771,7 +774,9 @@ export async function runBatchProcessStandalone(opts, setStatus) {
       }
     },
     (done, total) => setStatus(`ステータス更新中... ${done}/${total}件`),
-    index => `レコードID ${targets[index]?.id}`
+    index => `レコードID ${targets[index]?.id}`,
+    undefined,
+    '失敗チャンクのレコードのステータス'
   );
   const summary: RecordOperationSummary = { counts: { 件: ok }, written: ok, describe: countedSummary('のステータスを更新しました', { withApp: true }) };
   setStatus(summary.describe(summary.counts, [appId]), 'ok');

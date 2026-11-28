@@ -338,7 +338,8 @@ function finalFieldCodes(plan: FieldApplyPlan, current: Record<string, any>): { 
 /** 1 つのフィールド定義が参照する、この JSON のアプリ内のフィールドコード。 */
 function referencedFieldCodes(def: any): Array<{ kind: FieldMissingReference['kind']; codes: string[] }> {
   const out: Array<{ kind: FieldMissingReference['kind']; codes: string[] }> = [];
-  if (def?.type === 'CALC' && typeof def.expression === 'string') out.push({ kind: 'calc', codes: collectFormulaRefs(def.expression) });
+  // 計算フィールドに加えて、文字列（1行）の自動計算も expression でフィールドを参照する
+  if (typeof def?.expression === 'string' && def.expression) out.push({ kind: 'calc', codes: collectFormulaRefs(def.expression) });
   if (def?.lookup && Array.isArray(def.lookup.fieldMappings)) out.push({ kind: 'lookup', codes: def.lookup.fieldMappings.map((item: any) => String(item?.field || '')).filter(Boolean) });
   const condition = def?.referenceTable?.condition?.field;
   if (typeof condition === 'string' && condition) out.push({ kind: 'reference', codes: [condition] });
@@ -925,7 +926,8 @@ export function planBulkRename(
   /** 定義の中の参照を新しいコードへ書き換える。書き換えたら true */
   const rewriteReferences = (def: any): boolean => {
     let changed = false;
-    if (def.type === 'CALC' && typeof def.expression === 'string') {
+    // 計算フィールドと、文字列（1行）の自動計算の式
+    if (typeof def.expression === 'string' && def.expression) {
       const next = rewriteFormulaRefs(def.expression, codeMap);
       if (next !== def.expression) { def.expression = next; changed = true; }
     }

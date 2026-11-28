@@ -14,7 +14,8 @@ export interface ProcessActionChoice {
 
 function describeEntities(entities: any): string[] {
   if (!Array.isArray(entities)) return [];
-  const types = { USER: 'ユーザー', GROUP: 'グループ', ORGANIZATION: '組織', FIELD_ENTITY: 'フィールド', CREATOR: 'アプリ作成者', CUSTOM_FIELD: '共通管理項目' };
+  // プロセス管理の CREATOR はレコードの作成者（kintone の設定画面の「作成者」）。アプリの作成者ではない。
+  const types = { USER: 'ユーザー', GROUP: 'グループ', ORGANIZATION: '組織', FIELD_ENTITY: 'フィールド', CREATOR: '作成者', CUSTOM_FIELD: '共通管理項目' };
   return entities.map(item => {
     const entity = item?.entity || {};
     return `${types[entity.type] || entity.type || '不明'}${entity.code ? `: ${entity.code}` : ''}${item?.includeSubs ? '（下位組織を含む）' : ''}`;

@@ -386,8 +386,8 @@ describe('buildProcessSpecMarkdown & formatProcessSimulationHistory & offline st
     expect(md).toContain('- 終端ステータス: 完了');
     expect(md).toContain('- 分岐ステータス: 上長承認待ち');
     expect(md).toContain('## ステータス定義一覧');
-    expect(md).toContain('| 0 | 未処理 | 1人 (ONE) | 作成者 (CREATOR) |');
-    expect(md).toContain('| 1 | 上長承認待ち | 全員 (ALL) | 組織 (sales_dept)（下位組織含む） |');
+    expect(md).toContain('| 0 | 未処理 | 候補から作業者を1人選ぶ (ONE) | 作成者 (CREATOR) |');
+    expect(md).toContain('| 1 | 上長承認待ち | 候補の全員が作業する (ALL) | 組織 (sales_dept)（下位組織含む） |');
     expect(md).toContain('## アクション遷移定義一覧');
     expect(md).toContain('| 申請する | 通常 (PRIMARY) | 未処理 | 上長承認待ち | 金額 &gt;= 10000 |');
     expect(md).toContain('| 強制却下 | 作業者以外も実行可 (SECONDARY) | 上長承認待ち | 未処理 | 緊急フラグ in ("要") |');
@@ -397,7 +397,7 @@ describe('buildProcessSpecMarkdown & formatProcessSimulationHistory & offline st
   it('formats simulation transition history for test evidence / review records', () => {
     const initialFormatted = formatProcessSimulationHistory([], '未処理', sampleStates);
     expect(initialFormatted).toContain('## プロセス遷移シミュレーション履歴');
-    expect(initialFormatted).toContain('- 現在ステータス: 未処理（作業者(1人): 作成者）');
+    expect(initialFormatted).toContain('- 現在ステータス: 未処理（作業者（候補から作業者を1人選ぶ）: 作成者）');
     expect(initialFormatted).toContain('- 実行ステップ数: 0手');
     expect(initialFormatted).toContain('- 遷移経路: 未処理（遷移履歴なし）');
 
@@ -413,7 +413,7 @@ describe('buildProcessSpecMarkdown & formatProcessSimulationHistory & offline st
     expect(stepFormatted).toContain('- 現在ステータス: 完了（作業者設定: なし）');
     expect(stepFormatted).toContain('- 実行ステップ数: 2手');
     expect(stepFormatted).toContain('- 遷移経路: 未処理 [申請する] → 上長承認待ち [承認する] → 完了');
-    expect(stepFormatted).toContain('| 1 | 未処理 | 申請する | 上長承認待ち | 作業者(全員): sales_dept（下位組織含む） / 実行条件: 金額 &gt;= 10000 |');
+    expect(stepFormatted).toContain('| 1 | 未処理 | 申請する | 上長承認待ち | 作業者（候補の全員が作業する）: sales_dept（下位組織含む） / 実行条件: 金額 &gt;= 10000 |');
   });
 
   it('renders and simulates offline via source.statusData or source.importedBundle without calling apiGet, and enables copyHistoryBtn', async () => {
@@ -454,5 +454,22 @@ describe('buildProcessSpecMarkdown & formatProcessSimulationHistory & offline st
       const historyMd = copyHistoryBtn.__getSimHistoryText();
       expect(historyMd).toContain('未処理 [申請する] → 上長承認待ち');
     });
+  });
+});
+
+// kintone の assignee.type: ONE＝候補から作業者を選ぶ、ANY＝候補のうち誰か1人が作業する、ALL＝候補の全員が作業する。
+// 「1人」「誰でも」だと ONE と ANY の違い（前の作業者が選ぶか、候補の誰が作業してもよいか）が読み取れない。
+describe('作業者の選び方は kintone の意味で示す（ほかのツールの kintone-enums.ts と同じ言葉）', () => {
+  const state = (type: string) => ({ index: '0', assignee: { type, entities: [{ entity: { type: 'USER', code: 'alice' }, includeSubs: false }] } });
+  it('シミュレーションの作業者設定', () => {
+    expect(describeStateAssignee(state('ONE'))).toBe('作業者（候補から作業者を1人選ぶ）: alice');
+    expect(describeStateAssignee(state('ANY'))).toBe('作業者（候補のうち誰か1人が作業する）: alice');
+    expect(describeStateAssignee(state('ALL'))).toBe('作業者（候補の全員が作業する）: alice');
+  });
+  it('仕様書 Markdown の作業者種別', () => {
+    const md = buildProcessSpecMarkdown({ appId: '1', states: { A: state('ONE'), B: { ...state('ANY'), index: '1' }, C: { ...state('ALL'), index: '2' } }, actions: [] });
+    expect(md).toContain('| 0 | A | 候補から作業者を1人選ぶ (ONE) | ユーザー (alice) |');
+    expect(md).toContain('| 1 | B | 候補のうち誰か1人が作業する (ANY) | ユーザー (alice) |');
+    expect(md).toContain('| 2 | C | 候補の全員が作業する (ALL) | ユーザー (alice) |');
   });
 });

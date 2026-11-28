@@ -33,6 +33,16 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
+describe('JS/CSS batch download retries only failures that can recover', () => {
+  it.each([[404, 1], [400, 1], [503, 2]])('HTTP %i fetches the file %i time(s)', async (code, times) => {
+    vi.mocked(apiGet).mockImplementationOnce(async () => ({ apps: [{ appId: '5', name: '案件' }] }));
+    vi.mocked(fetch).mockImplementation(async (url: string) => url.includes('k1') ? new Response('', { status: code }) : new Response('console.log(1)'));
+    const result = await runBatchJsConfigDownloadStandalone({ guestId: '' }, vi.fn());
+    expect(result).toMatchObject({ failed: 1 });
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes('k1'))).toHaveLength(times);
+  });
+});
+
 describe('JS/CSS batch download manifest', () => {
   it('records the source slot of every file, failures, and skips URL entries', async () => {
     vi.mocked(apiGet).mockImplementationOnce(async () => ({ apps: [{ appId: '5', name: '案件/管理' }] }));

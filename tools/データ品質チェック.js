@@ -2494,6 +2494,7 @@
         values.push(multi ? value.map((item) => typeof item === "string" ? item : item.code).join(", ") : String(value ?? ""));
         let key = multi ? JSON.stringify([...new Set(value.map((item) => typeof item === "string" ? item : item.code))].sort()) : String(value ?? "");
         if (TEXT.has(field.type)) {
+          if (options.ignoreWidth) key = key.normalize("NFKC");
           if (options.trimText) key = key.trim();
           if (options.ignoreCase) key = key.toLowerCase();
         }
@@ -2536,7 +2537,7 @@
     const rows = [["アプリID", "種別", "レコードID", "レコードURL", "重複グループ", "対象フィールド", "説明", ...codes.map((code) => `値:${code}`)]];
     for (const result of results) {
       const report = result.report;
-      rows.push([result.appId, report ? "集計" : "エラー", "", "", "", report?.fields.map((field) => field.code).join(", "), result.error || `検査 ${report.total}件 / 重複 ${report.duplicateGroups}組・${report.duplicateRecords}件 / 未入力 ${report.emptyRecords}件 / 取得不可 ${report.unavailableRecords}件 / 条件: ${query || "全件"} / 前後空白を無視: ${options.trimText} / 大小文字を無視: ${options.ignoreCase}`]);
+      rows.push([result.appId, report ? "集計" : "エラー", "", "", "", report?.fields.map((field) => field.code).join(", "), result.error || `検査 ${report.total}件 / 重複 ${report.duplicateGroups}組・${report.duplicateRecords}件 / 未入力 ${report.emptyRecords}件 / 取得不可 ${report.unavailableRecords}件 / 条件: ${query || "全件"} / 前後空白を無視: ${options.trimText} / 大小文字を無視: ${options.ignoreCase} / 全角半角を無視: ${!!options.ignoreWidth}`]);
       if (!report) continue;
       for (const finding of report.findings) {
         const recordPath = qualityRecordPath(result.appId, guestId, finding.recordId);
@@ -2632,8 +2633,9 @@
     const note = makeNote("先頭の対象アプリからフィールドを読み込み、1〜5項目を選んでください。");
     const trim = makeCheck({ label: "文字列・リンクの前後の空白を無視", checked: false });
     const ignoreCase = makeCheck({ label: "文字列・リンクの英字の大小を無視", checked: false });
+    const ignoreWidth = makeCheck({ label: "文字列・リンクの全角・半角の違いを無視（英数字・記号・カタカナ・スペース）", checked: false });
     root2.append(makeRow(load), pickWrap, note);
-    optionsHost.appendChild(makeRow([trim.label, ignoreCase.label]));
+    optionsHost.appendChild(makeRow([trim.label, ignoreCase.label, ignoreWidth.label]));
     root2.appendChild(makeNote("選んだ項目がすべて一致するレコードを、アプリごとに重複として検出します（項目の順序は問いません）。空の項目があるレコードは、未入力として別に集計します。", "help"));
     root2.appendChild(makeNote("テーブル内・添付・計算・システム項目と、アプリ間の重複は対象外です。取得できたレコードだけを検査し、取得不可の項目は未入力と区別します。", "help"));
     let fields = [], selected = /* @__PURE__ */ new Set(), version = 0, fieldsVersion = 0;
@@ -2680,7 +2682,7 @@
       resetResults();
       refreshNote();
     });
-    for (const input of [query, trim.checkbox, ignoreCase.checkbox]) {
+    for (const input of [query, trim.checkbox, ignoreCase.checkbox, ignoreWidth.checkbox]) {
       input.addEventListener("input", resetResults);
       input.addEventListener("change", resetResults);
     }
@@ -2735,7 +2737,7 @@
       }
       resetResults();
       const current = version;
-      const guestId = tgtGuest.value.trim(), options = { trimText: trim.checkbox.checked, ignoreCase: ignoreCase.checkbox.checked };
+      const guestId = tgtGuest.value.trim(), options = { trimText: trim.checkbox.checked, ignoreCase: ignoreCase.checkbox.checked, ignoreWidth: ignoreWidth.checkbox.checked };
       const queryText = query.value.trim();
       const inspected = await runRecordQualityStandalone({ appIdsText: tgtApp.value, guestId, codes: [...selected], query: queryText, ...options }, (message, tone) => panel.setStatus(message, toPanelTone(tone)));
       if (current !== version) {
@@ -2825,7 +2827,7 @@
       description: "選んだ項目の重複と未入力を検査し、該当レコードを一覧で表示します。",
       button: run,
       validate,
-      summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["検査項目", [...selected].join("、")], ["比較", `前後空白 ${trim.checkbox.checked ? "無視" : "区別"} / 大小文字 ${ignoreCase.checkbox.checked ? "無視" : "区別"}`]]
+      summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["検査項目", [...selected].join("、")], ["比較", `前後空白 ${trim.checkbox.checked ? "無視" : "区別"} / 大小文字 ${ignoreCase.checkbox.checked ? "無視" : "区別"} / 全角半角 ${ignoreWidth.checkbox.checked ? "無視" : "区別"}`]]
     };
   }
 
@@ -3716,7 +3718,7 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
     installLiteWorkflow(panel, {
       setup: [target.card, conditions.card],
       advanced: [compareOptions.card],
-      advancedCopy: "文字列・リンクの前後の空白や英字の大小を無視して比較できます。",
+      advancedCopy: "文字列・リンクの前後の空白・英字の大小・全角と半角の違いを無視して比較できます。",
       actions: [qualityAction],
       results: [resultHost],
       resultActions: ["quality"]

@@ -298,8 +298,12 @@ async function executeMutatingApiWithRetry(
   throw apiErrorWithContext(lastErr, { method, prefix, path, payload: body });
 }
 
-export async function apiPut(prefix: string, path: string, body: Record<string, unknown>): Promise<any> {
-  return executeMutatingApiWithRetry('PUT', prefix, path, body);
+/**
+ * @param retries 試行回数の上限（既定 3）。ステータスの更新（PUT /records/status.json）のように、送り直すと結果が変わる書き込みは
+ *   1 を指定して自動で再送しない（確定したのに応答だけ届かなかった塊を送り直すと、進んだ revision と食い違って競合に見える）。
+ */
+export async function apiPut(prefix: string, path: string, body: Record<string, unknown>, retries?: number): Promise<any> {
+  return executeMutatingApiWithRetry('PUT', prefix, path, body, retries);
 }
 
 /**

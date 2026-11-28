@@ -7,7 +7,11 @@ const MULTI = new Set(['CHECK_BOX', 'MULTI_SELECT', 'USER_SELECT', 'ORGANIZATION
 const TEXT = new Set(['SINGLE_LINE_TEXT', 'MULTI_LINE_TEXT', 'LINK']);
 const has = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key);
 export interface QualityField { code: string; label: string; type: string }
-export interface QualityOptions { trimText: boolean; ignoreCase: boolean }
+/**
+ * 文字列・リンクの比べ方。ignoreWidth は全角・半角の違い（英数字・記号・カタカナ・全角スペース）を無視する（Unicode の NFKC 正規化）。
+ * 省略は従来どおり区別する。
+ */
+export interface QualityOptions { trimText: boolean; ignoreCase: boolean; ignoreWidth?: boolean }
 export interface QualityFinding { recordId: string; kind: '重複' | '未入力' | '取得不可'; group: number; fields: string[]; values: string[] }
 export interface QualityReport {
   fields: QualityField[]; total: number; duplicateGroups: number; duplicateRecords: number;
@@ -58,7 +62,11 @@ export function inspectRecordQuality(records: any[], fields: QualityField[], opt
       }
       values.push(multi ? value.map(item => typeof item === 'string' ? item : item.code).join(', ') : String(value ?? ''));
       let key = multi ? JSON.stringify([...new Set(value.map(item => typeof item === 'string' ? item : item.code))].sort()) : String(value ?? '');
-      if (TEXT.has(field.type)) { if (options.trimText) key = key.trim(); if (options.ignoreCase) key = key.toLowerCase(); }
+      if (TEXT.has(field.type)) {
+        if (options.ignoreWidth) key = key.normalize('NFKC');
+        if (options.trimText) key = key.trim();
+        if (options.ignoreCase) key = key.toLowerCase();
+      }
       if (multi ? !value.length : !key) empty.push(field.code);
       keys.push(field.type === 'NUMBER' && key ? numberKey(key) : key);
     }
@@ -95,7 +103,7 @@ export function qualityReportCsv(results: QualityAppResult[], guestId: string, o
   for (const result of results) {
     const report = result.report;
     rows.push([result.appId, report ? '集計' : 'エラー', '', '', '', report?.fields.map(field => field.code).join(', '), result.error ||
-      `検査 ${report.total}件 / 重複 ${report.duplicateGroups}組・${report.duplicateRecords}件 / 未入力 ${report.emptyRecords}件 / 取得不可 ${report.unavailableRecords}件 / 条件: ${query || '全件'} / 前後空白を無視: ${options.trimText} / 大小文字を無視: ${options.ignoreCase}`]);
+      `検査 ${report.total}件 / 重複 ${report.duplicateGroups}組・${report.duplicateRecords}件 / 未入力 ${report.emptyRecords}件 / 取得不可 ${report.unavailableRecords}件 / 条件: ${query || '全件'} / 前後空白を無視: ${options.trimText} / 大小文字を無視: ${options.ignoreCase} / 全角半角を無視: ${!!options.ignoreWidth}`]);
     if (!report) continue;
     for (const finding of report.findings) {
       const recordPath = qualityRecordPath(result.appId, guestId, finding.recordId);

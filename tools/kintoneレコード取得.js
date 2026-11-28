@@ -1095,8 +1095,8 @@
     }
     throw apiErrorWithContext(lastErr, { method, prefix, path, payload: body });
   }
-  async function apiPut(prefix, path, body) {
-    return executeMutatingApiWithRetry("PUT", prefix, path, body);
+  async function apiPut(prefix, path, body, retries) {
+    return executeMutatingApiWithRetry("PUT", prefix, path, body, retries);
   }
   async function apiPost(prefix, path, body, retries) {
     return executeMutatingApiWithRetry("POST", prefix, path, body, retries);
@@ -3607,6 +3607,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     return cand;
   }
   var RECORD_ERROR_DETAIL_LIMIT = 10;
+  var DEFAULT_CHECK_BEFORE_RETRY = "対象アプリのレコード件数";
   function describeKintoneRecordErrors(error, offset = 0, describeItem = (index) => `${index + 1}件目`, describeField = (path) => path) {
     let errors = null;
     for (let current = error, depth = 0; current && typeof current === "object" && depth < 5; current = current.original, depth++) {
@@ -3639,12 +3640,13 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     return [
       `${label}が途中で失敗しました。`,
       `確定済み: ${failure.done}件 / 失敗チャンク: ${failure.from}～${failure.to}件目 / 未処理: ${remaining}件（全${failure.total}件）`,
-      failure.unconfirmed ? `失敗チャンク（${failure.from}～${failure.to}件目）は、応答が届かなかったため、kintone に書き込まれたかどうか確認できません。再実行する前に、kintone 画面で対象アプリのレコード件数を確認してください。` : "",
+      failure.unconfirmed ? `失敗チャンク（${failure.from}～${failure.to}件目）は、応答が届かなかったため、kintone に書き込まれたかどうか確認できません。再実行する前に、kintone 画面で${failure.checkBeforeRetry || DEFAULT_CHECK_BEFORE_RETRY}を確認してください。` : "",
+      failure.unconfirmed && failure.chunkSpan ? `この塊の ${failure.to - failure.from + 1}件: ${failure.chunkSpan.first === failure.chunkSpan.last ? failure.chunkSpan.first : `${failure.chunkSpan.first} 〜 ${failure.chunkSpan.last}`}` : "",
       reason ? `原因: ${reason}` : "",
       ...details.length ? ["エラーの詳細（このチャンクは全体が取り消されています）:", ...details] : []
     ].filter(Boolean).join("\n");
   }
-  async function writeInChunks(items, label, writeChunk, onProgress, chunkSize = RECORDS_WRITE_CHUNK, describeItem, describeField) {
+  async function writeInChunks(items, label, writeChunk, onProgress, chunkSize = RECORDS_WRITE_CHUNK, describeItem, describeField, checkBeforeRetry) {
     const size = Math.max(1, Math.floor(chunkSize) || RECORDS_WRITE_CHUNK);
     let done = 0;
     for (let i = 0; i < items.length; i += size) {
@@ -3654,7 +3656,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       } catch (error) {
         const details = describeKintoneRecordErrors(error, i, describeItem, describeField);
         const unconfirmed = isUnconfirmedWriteFailure(error);
-        const wrapped = new Error(describeBatchWriteFailure(label, { done, from: i + 1, to: i + chunk.length, total: items.length, unconfirmed }, error, details));
+        const chunkSpan = unconfirmed && describeItem ? { first: describeItem(i), last: describeItem(i + chunk.length - 1) } : void 0;
+        const wrapped = new Error(describeBatchWriteFailure(label, { done, from: i + 1, to: i + chunk.length, total: items.length, unconfirmed, checkBeforeRetry, chunkSpan }, error, details));
         wrapped.partial = { done, from: i + 1, to: i + chunk.length, total: items.length, ...unconfirmed ? { unconfirmed } : {} };
         wrapped.original = error;
         throw wrapped;
@@ -4025,7 +4028,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   // src/tabs/record-process-metadata.ts
   function describeEntities(entities) {
     if (!Array.isArray(entities)) return [];
-    const types = { USER: "ユーザー", GROUP: "グループ", ORGANIZATION: "組織", FIELD_ENTITY: "フィールド", CREATOR: "アプリ作成者", CUSTOM_FIELD: "共通管理項目" };
+    const types = { USER: "ユーザー", GROUP: "グループ", ORGANIZATION: "組織", FIELD_ENTITY: "フィールド", CREATOR: "作成者", CUSTOM_FIELD: "共通管理項目" };
     return entities.map((item) => {
       const entity = item?.entity || {};
       return `${types[entity.type] || entity.type || "不明"}${entity.code ? `: ${entity.code}` : ""}${item?.includeSubs ? "（下位組織を含む）" : ""}`;
@@ -4383,6 +4386,7 @@ ZIP ${downloads.length}個のダウンロードを依頼しました。ブラウ
         if (resp.status === 403) return { ok: false, reason: "閲覧権限なし (HTTP 403)" };
         if (!resp.ok) {
           lastReason = `HTTP ${resp.status}`;
+          if (!isRetriableApiError({ status: resp.status })) return { ok: false, reason: lastReason };
         } else {
           return { ok: true, blob: await resp.blob() };
         }
@@ -4722,9 +4726,9 @@ ${failures.join("\n")}`);
     setStatus(problems ? `事前検査: ${problems}アプリに問題があります。まだ書き込んでいません。` : `事前検査完了: ${plans.length}アプリ。まだ書き込んでいません。`, problems > 0 ? "warn" : "ok");
     return result;
   }
-  async function writeChunksUnlessCancelled(items, label, writeChunk, onProgress, describeItem, describeField) {
+  async function writeChunksUnlessCancelled(items, label, writeChunk, onProgress, describeItem, describeField, checkBeforeRetry) {
     try {
-      return await writeInChunks(items, label, writeChunk, onProgress, void 0, describeItem, describeField);
+      return await writeInChunks(items, label, writeChunk, onProgress, void 0, describeItem, describeField, checkBeforeRetry);
     } catch (error) {
       if (!isRunCancelledError(error)) throw error;
       const done = Math.max(0, Number(error?.partial?.done) || 0);
@@ -4801,7 +4805,7 @@ ${[...problemBlocks, ...omitted(problems.length).map((line) => `${line}の詳細
           await apiPut(prefix, "/records/status.json", {
             app: appId,
             records: batch.map(({ id, revision }) => ({ id, revision, action, ...assignee ? { assignee } : {} }))
-          });
+          }, 1);
         } catch (error) {
           if (!isRevisionConflictError(error)) throw error;
           const reported = new Error(
@@ -4813,7 +4817,9 @@ ${error?.message || String(error)}`
         }
       },
       (done, total) => setStatus(`ステータス更新中... ${done}/${total}件`),
-      (index) => `レコードID ${targets[index]?.id}`
+      (index) => `レコードID ${targets[index]?.id}`,
+      void 0,
+      "失敗チャンクのレコードのステータス"
     );
     const summary = { counts: { 件: ok }, written: ok, describe: countedSummary("のステータスを更新しました", { withApp: true }) };
     setStatus(summary.describe(summary.counts, [appId]), "ok");
@@ -6130,6 +6136,7 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
         values.push(multi ? value.map((item) => typeof item === "string" ? item : item.code).join(", ") : String(value ?? ""));
         let key = multi ? JSON.stringify([...new Set(value.map((item) => typeof item === "string" ? item : item.code))].sort()) : String(value ?? "");
         if (TEXT.has(field.type)) {
+          if (options.ignoreWidth) key = key.normalize("NFKC");
           if (options.trimText) key = key.trim();
           if (options.ignoreCase) key = key.toLowerCase();
         }
@@ -6172,7 +6179,7 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
     const rows = [["アプリID", "種別", "レコードID", "レコードURL", "重複グループ", "対象フィールド", "説明", ...codes.map((code) => `値:${code}`)]];
     for (const result of results) {
       const report = result.report;
-      rows.push([result.appId, report ? "集計" : "エラー", "", "", "", report?.fields.map((field) => field.code).join(", "), result.error || `検査 ${report.total}件 / 重複 ${report.duplicateGroups}組・${report.duplicateRecords}件 / 未入力 ${report.emptyRecords}件 / 取得不可 ${report.unavailableRecords}件 / 条件: ${query || "全件"} / 前後空白を無視: ${options.trimText} / 大小文字を無視: ${options.ignoreCase}`]);
+      rows.push([result.appId, report ? "集計" : "エラー", "", "", "", report?.fields.map((field) => field.code).join(", "), result.error || `検査 ${report.total}件 / 重複 ${report.duplicateGroups}組・${report.duplicateRecords}件 / 未入力 ${report.emptyRecords}件 / 取得不可 ${report.unavailableRecords}件 / 条件: ${query || "全件"} / 前後空白を無視: ${options.trimText} / 大小文字を無視: ${options.ignoreCase} / 全角半角を無視: ${!!options.ignoreWidth}`]);
       if (!report) continue;
       for (const finding of report.findings) {
         const recordPath = qualityRecordPath(result.appId, guestId, finding.recordId);
@@ -6384,8 +6391,9 @@ ${failures.join("\n")}` };
     const note = makeNote("先頭の対象アプリからフィールドを読み込み、1〜5項目を選んでください。");
     const trim = makeCheck({ label: "文字列・リンクの前後の空白を無視", checked: false });
     const ignoreCase = makeCheck({ label: "文字列・リンクの英字の大小を無視", checked: false });
+    const ignoreWidth = makeCheck({ label: "文字列・リンクの全角・半角の違いを無視（英数字・記号・カタカナ・スペース）", checked: false });
     root2.append(makeRow(load), pickWrap, note);
-    optionsHost.appendChild(makeRow([trim.label, ignoreCase.label]));
+    optionsHost.appendChild(makeRow([trim.label, ignoreCase.label, ignoreWidth.label]));
     root2.appendChild(makeNote("選んだ項目がすべて一致するレコードを、アプリごとに重複として検出します（項目の順序は問いません）。空の項目があるレコードは、未入力として別に集計します。", "help"));
     root2.appendChild(makeNote("テーブル内・添付・計算・システム項目と、アプリ間の重複は対象外です。取得できたレコードだけを検査し、取得不可の項目は未入力と区別します。", "help"));
     let fields = [], selected = /* @__PURE__ */ new Set(), version = 0, fieldsVersion = 0;
@@ -6432,7 +6440,7 @@ ${failures.join("\n")}` };
       resetResults();
       refreshNote();
     });
-    for (const input of [query, trim.checkbox, ignoreCase.checkbox]) {
+    for (const input of [query, trim.checkbox, ignoreCase.checkbox, ignoreWidth.checkbox]) {
       input.addEventListener("input", resetResults);
       input.addEventListener("change", resetResults);
     }
@@ -6487,7 +6495,7 @@ ${failures.join("\n")}` };
       }
       resetResults();
       const current = version;
-      const guestId = tgtGuest.value.trim(), options = { trimText: trim.checkbox.checked, ignoreCase: ignoreCase.checkbox.checked };
+      const guestId = tgtGuest.value.trim(), options = { trimText: trim.checkbox.checked, ignoreCase: ignoreCase.checkbox.checked, ignoreWidth: ignoreWidth.checkbox.checked };
       const queryText = query.value.trim();
       const inspected = await runRecordQualityStandalone({ appIdsText: tgtApp.value, guestId, codes: [...selected], query: queryText, ...options }, (message, tone) => panel.setStatus(message, toPanelTone(tone)));
       if (current !== version) {
@@ -6577,7 +6585,7 @@ ${failures.join("\n")}` };
       description: "選んだ項目の重複と未入力を検査し、該当レコードを一覧で表示します。",
       button: run,
       validate,
-      summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["検査項目", [...selected].join("、")], ["比較", `前後空白 ${trim.checkbox.checked ? "無視" : "区別"} / 大小文字 ${ignoreCase.checkbox.checked ? "無視" : "区別"}`]]
+      summary: () => [targetSummary(), ["条件", query.value.trim() || "全件"], ["検査項目", [...selected].join("、")], ["比較", `前後空白 ${trim.checkbox.checked ? "無視" : "区別"} / 大小文字 ${ignoreCase.checkbox.checked ? "無視" : "区別"} / 全角半角 ${ignoreWidth.checkbox.checked ? "無視" : "区別"}`]]
     };
   }
   function buildCsvTemplateTab(root2, context) {
