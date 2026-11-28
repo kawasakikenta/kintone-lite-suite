@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { kusConfirm } from '../../src/utils';
 import { RunCancelledError, __resetRunControlForTests } from '../../src/runControl';
-import { runApplyJsConfigMultiStandalone } from '../../src/tabs/jsconfig-standalone';
+import { JS_CONFIG_MULTI_STATUS_LABEL, describeJsConfigMultiDetail, runApplyJsConfigMultiStandalone, type JsConfigMultiApplyResult } from '../../src/tabs/jsconfig-standalone';
+
+/** 結果欄の表の行（結果・内容）の文字。 */
+const rowsText = (res: JsConfigMultiApplyResult) => res.results.map(r => `${JS_CONFIG_MULTI_STATUS_LABEL[r.status]} ${describeJsConfigMultiDetail(r)}`).join('\n');
 
 vi.mock('../../src/utils', async original => ({ ...await original<typeof import('../../src/utils')>(), kusConfirm: vi.fn() }));
 
@@ -65,7 +68,7 @@ describe('apply JS/CSS to many preview targets', () => {
     expect(res.counts).toEqual({ total: 3, success: 3, failed: 0, conflict: 0, unconfirmed: 0, notExecuted: 0 });
     expect(res.tone).toBe('ok');
     expect(res.results.map(r => [r.appId, r.status, r.revision])).toEqual([['5', 'success', '8'], ['6', 'success', '4'], ['7', 'success', '12']]);
-    expect(html.mock.calls[0][0]).toContain('成功');
+    expect(rowsText(html.mock.calls[0][0])).toContain('成功');
     expect(status).toHaveBeenLastCalledWith(expect.stringContaining('3件の反映先プレビューへ JS/CSS 設定を反映しました'), false);
   });
 
@@ -106,7 +109,7 @@ describe('apply JS/CSS to many preview targets', () => {
     expect(puts()).toEqual([]);
     expect(res.tone).toBe('err');
     expect(res.counts.failed).toBe(2);
-    expect(html.mock.calls[0][0]).toContain('事前確認で失敗（書き込みなし）');
+    expect(rowsText(html.mock.calls[0][0])).toContain('事前確認で失敗（書き込みなし）');
   });
 
   it('treats a target without a numeric revision as a pre-check failure', async () => {
@@ -156,7 +159,7 @@ describe('apply JS/CSS to many preview targets', () => {
     expect(res.tone).toBe('warn');
     expect(res.headline).toContain('中止しました（1/3 件を処理、残り 2 件は未実行）');
     expect(res.headline).toContain('反映済みの 1件は取り消していません');
-    expect(html.mock.calls[0][0]).toContain('未実行（中止）');
+    expect(rowsText(html.mock.calls[0][0])).toContain('未実行（中止）');
   });
 
   it('does not write anything when the confirmation is declined', async () => {

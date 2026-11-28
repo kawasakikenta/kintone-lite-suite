@@ -7,6 +7,7 @@ import { isSettingsWriteUnconfirmed, writeSettingsWithRevision } from '../settin
 import { isCancelRequested, isRunCancelledError } from '../runControl.js';
 import { createCancelReport, isCancelReportError, isCancelStop } from './run-cancel-summary.js';
 import { collectFormulaRefs, rewriteFormulaRefs } from './field.js';
+import { KINTONE_ERROR_SCREEN_LIMIT, abbreviateKintoneErrorMessage, kintoneErrorDetailsOf } from '../kintoneErrorDetail.js';
 
 /** アプリID・ゲストIDは数値のみ。URL パスに組み込まれるため、空でも数値でもない値は呼び出し前に止める。 */
 function assertNumericIds(appId: unknown, guestId: unknown, appLabel: string) {
@@ -632,6 +633,8 @@ export interface FieldMultiTargetResult {
   message: string;
   /** 反映後のフォームに無いフィールドを参照する定義（事前確認の結果。最終確認に警告として示す） */
   missingRefs?: FieldMissingReference[];
+  /** kintone が受け付けなかった項目（入力エラーの errors。どのフィールドの何かを言葉にした全件）。message には先頭の数件だけ入る */
+  errorDetails?: string[];
 }
 
 export interface FieldMultiApplyReport {
@@ -692,9 +695,16 @@ export function findFieldMultiApplyProblem(input: { targets: FieldMultiTarget[];
 }
 
 function singleLineMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : String((error as any)?.message ?? error ?? 'エラーが発生しました');
+  // kintone が受け付けなかった項目ごとの行は、先頭の数件と「ほか N 件」にする（全件は errorDetails。kintoneErrorDetail.ts）
+  const message = abbreviateKintoneErrorMessage(error instanceof Error ? error.message : String((error as any)?.message ?? error ?? 'エラーが発生しました'), error);
   // 内部ログの「NG …」「不明 …」行は説明の重複になるので除き、反映済みの内訳（OK …）は残す。通信の詳細（[API] GET …）は利用者向けの結果に出さない。
   return message.split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('NG ') && !line.startsWith('不明 ') && !line.startsWith('[API]')).join(' / ');
+}
+
+/** kintone が受け付けなかった項目（全件）。無ければ空のオブジェクト（結果に項目を足さない）。 */
+function errorDetailsOf(error: unknown): { errorDetails?: string[] } {
+  const details = kintoneErrorDetailsOf(error);
+  return details.length ? { errorDetails: details } : {};
 }
 
 function countByStatus(results: FieldMultiTargetResult[]): Record<FieldMultiStatus, number> {
@@ -738,9 +748,14 @@ function finishFieldMultiReport(results: FieldMultiTargetResult[], flags: { decl
     (acc, r) => ({ add: acc.add + r.add, update: acc.update + r.update, skip: acc.skip + r.skip }),
     { add: 0, update: 0, skip: 0 }
   );
-  const lines = results.map((r) => {
+  const lines = results.flatMap((r) => {
     const detail = r.status === 'success' ? describePlanCounts(r) : r.status === 'unchanged' ? `スキップ ${r.skip}` : '';
-    return `[${FIELD_MULTI_STATUS_LABEL[r.status]}] ${fieldMultiLabel(r)}${detail ? `: ${detail}` : ''}${r.message ? `${detail ? ' / ' : ': '}${r.message}` : ''}`;
+    const row = `[${FIELD_MULTI_STATUS_LABEL[r.status]}] ${fieldMultiLabel(r)}${detail ? `: ${detail}` : ''}${r.message ? `${detail ? ' / ' : ': '}${r.message}` : ''}`;
+    // 行には kintone が受け付けなかった項目の先頭の数件だけが入る。残りも読めるよう、行の下に全件を並べる（結果欄はコピー・保存できる）
+    const all = r.errorDetails && r.errorDetails.length > KINTONE_ERROR_SCREEN_LIMIT
+      ? [`    kintone が受け付けなかった項目（${r.errorDetails.length} 件）:`, ...r.errorDetails.map((line) => `    ・${line}`)]
+      : [];
+    return [row, ...all];
   });
   const problems = results.filter((r) => r.status === 'failed' || r.status === 'conflict' || r.status === 'unconfirmed');
   const parts: string[] = [];
@@ -749,7 +764,9 @@ function finishFieldMultiReport(results: FieldMultiTargetResult[], flags: { decl
   if (counts.conflict) parts.push(`競合 ${counts.conflict} 件`);
   if (counts.failed) parts.push(`失敗 ${counts.failed} 件`);
   if (counts['not-run']) parts.push(`未実行（中止） ${counts['not-run']} 件`);
-  const firstProblem = problems[0] ? `（${fieldMultiLabel(problems[0])}: ${problems[0].message}${problems.length > 1 ? ` ほか${problems.length - 1}件` : ''}）` : '';
+  // 見出しは 1 行に収める。kintone が受け付けなかった項目があれば、1 行目の後ろに最初の項目だけを添える
+  const reasonOf = (r: FieldMultiTargetResult) => (r.errorDetails?.length ? `${r.message.split(' / ')[0]} / ${r.errorDetails[0]}` : r.message);
+  const firstProblem = problems[0] ? `（${fieldMultiLabel(problems[0])}: ${reasonOf(problems[0])}${problems.length > 1 ? ` ほか${problems.length - 1}件` : ''}）` : '';
   const total = results.length;
   let headline: string;
   let tone: FieldMultiApplyReport['tone'];
@@ -822,7 +839,7 @@ export async function runFieldApplyMultiStandalone(
       }
     } catch (e) {
       if (isRunCancelledError(e)) throw e;
-      results.push({ ...baseResult(target), add: 0, update: 0, skip: 0, status: 'failed', phase: 'precheck', message: singleLineMessage(e) });
+      results.push({ ...baseResult(target), add: 0, update: 0, skip: 0, status: 'failed', phase: 'precheck', message: singleLineMessage(e), ...errorDetailsOf(e) });
     }
   }
 
@@ -879,6 +896,7 @@ export async function runFieldApplyMultiStandalone(
         entry.status = 'failed';
         entry.phase = 'apply';
         entry.message = singleLineMessage(e);
+        Object.assign(entry, errorDetailsOf(e));
       }
       entry.phase = 'apply';
     }

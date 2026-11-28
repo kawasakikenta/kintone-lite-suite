@@ -195,7 +195,8 @@ function installSyntheticKintone(config) {
       if (S.holdWrites) { S.heldWrites += 1; await new Promise(resolve => S.writeResolvers.push(resolve)); }
       const fail = error => { record.rejected = true; record.error = `${error.code}: ${error.message}`; return error; };
       const injected = S.failWrites[`${record.appKey}${p}`] || S.failWrites[p];
-      if (injected) throw fail(kerr(injected.code, injected.message));
+      // errors を指定した失敗は、kintone.api と同じく応答の本文（code・id・message・errors。Error ではない）をそのまま返す。
+      if (injected) throw fail(injected.errors ? { code: injected.code, id: `req-${S.seq}`, message: injected.message, errors: clone(injected.errors) } : kerr(injected.code, injected.message));
       // 応答が届かない書き込み。kintone.api は kintone のエラー応答（id・code）の無い失敗として返す。
       const loseRule = S.loseWrites[`${record.appKey}${p}`] || S.loseWrites[p];
       const lose = loseRule && (!loseRule.method || loseRule.method === method) && (loseRule.times === undefined || loseRule.times > 0) ? loseRule : null;

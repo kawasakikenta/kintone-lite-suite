@@ -13,6 +13,7 @@ import { REFLECT_SECTION_KEYS, orderReflectWrites } from '../reflect/sections.js
 import { inspectTargetPendingChanges, type ReflectTargetPending } from '../reflect/targetPending.js';
 import { pushReflectErrorLog as pushErrorLog, type ApplySectionOutcome } from '../reflect/applyOutcome.js';
 import { RUN_CANCELLED_MESSAGE, isRunCancelledError } from '../runControl.js';
+import { abbreviateKintoneErrorMessage } from '../kintoneErrorDetail.js';
 import type { ComposedReflectSelection, ComposedSection, SectionSelectionState } from '../reflect/selectionTypes.js';
 import { buildPlanFromComposedAfter, buildSectionSelectionModel, composeSectionSelection, defaultSelectionState } from '../reflect/selection.js';
 import { SYSTEM_FIELD_TYPES } from '../constants.js';
@@ -484,11 +485,14 @@ export async function runApplyPreviewStandalone(
         break;
       }
       // 項目内の途中で止まった場合、先に完了した書き込みは反映先に残る。失敗の内容と一緒に必ず示す。
-      const message = `${error.message || String(error)}${written.length ? `\n（この項目では ${written.join('・')} まで書き込み済みです。差分を取得し直して現在の状態を確認してください）` : ''}`;
+      const writtenNote = written.length ? `\n（この項目では ${written.join('・')} まで書き込み済みです。差分を取得し直して現在の状態を確認してください）` : '';
+      const fullMessage = `${error.message || String(error)}${writtenNote}`;
+      // 項目ごとの結果（画面）には、kintone が受け付けなかった項目の先頭の数件と「ほか N 件」だけを載せ、全件は実行ログに残す（kintoneErrorDetail.ts）。
+      const message = `${abbreviateKintoneErrorMessage(error.message || String(error), error)}${writtenNote}`;
       // 応答が届かず反映されたか分からない書き込みは、失敗と言い切らない（status は ng のまま、unconfirmed で見分ける）。
       const unconfirmed = isSettingsWriteUnconfirmed(error);
       sections.push({ ...outcome, status: 'ng', message, ...(written.length ? { partiallyWritten: true } : {}), ...(unconfirmed ? { unconfirmed: true } : {}) }); notify(plan, 'ng', message, false, unconfirmed);
-      if (unconfirmed) logs.push(`不明 ${plan.label}: ${message}`); else pushErrorLog(logs, `NG ${plan.label}: ${message}`, message);
+      if (unconfirmed) logs.push(`不明 ${plan.label}: ${fullMessage}`); else pushErrorLog(logs, `NG ${plan.label}: ${fullMessage}`, fullMessage);
       if (opts.stopOnError !== false || error.stopReflection || isRevisionConflictError(error)) {
         for (const pending of plans.slice(index + 1)) { sections.push({ sectionKey: pending.sectionKey, label: pending.label, status: 'pending', message: '中断のため未実行' }); notify(pending, 'pending', '中断のため未実行'); }
         logs.push(`中断（未実行 ${plans.length - index - 1} 件）`); break;

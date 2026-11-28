@@ -14,6 +14,7 @@ import { setComponentUi } from '../ui/components.js';
 import { setRootElement } from '../ui/dialog.js';
 import { activeRun, beginRun, endRun, isRunCancelledError, requestCancel as requestRunCancel, type RunToken } from '../runControl.js';
 import { copyTextToClipboard, downloadText, normalizeIdInputText, nowStamp, sanitizeFilenamePart } from '../utils.js';
+import { kintoneErrorDetailsOf, summarizeKintoneErrorDetails } from '../kintoneErrorDetail.js';
 
 export { copyTextToClipboard };
 
@@ -480,6 +481,8 @@ export interface LitePanelHandle {
   setStatus: (msg: string, tone?: StatusTone) => void;
   setResult: (text: string) => void;
   setResultHtml: (html: string) => void;
+  /** 組み立てた要素を結果欄に置く（kintone が返した文を含む結果は、HTML の文字列にせず textContent で入れた要素で渡す）。 */
+  setResultNode: (node: Node) => void;
   setBusy: (busy: boolean) => void;
   close: () => void;
   /** 本文を畳んでヒーローだけにする／戻す（kintone 画面を確認したいとき用）。 */
@@ -739,6 +742,11 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
     result.classList.remove('kus-lp__result--empty');
   }
 
+  function setResultNode(node: Node) {
+    result.replaceChildren(resultTools, node);
+    result.classList.remove('kus-lp__result--empty');
+  }
+
   function setResultHtml(html: string) {
     if (!html) {
       result.innerHTML = '';
@@ -995,7 +1003,7 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
     try { first?.focus({ preventScroll: true } as any); } catch { /* noop */ }
   });
 
-  const handle: LitePanelHandle = { root, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setPrimaryAction, requestCancel, isCancelRequested };
+  const handle: LitePanelHandle = { root, body, status, result, setStatus, setResult, setResultHtml, setResultNode, setBusy, close, setCollapsed, resetPosition, setPrimaryAction, requestCancel, isCancelRequested };
   return handle;
 }
 
@@ -2017,12 +2025,16 @@ export async function liteRun<T>(
     const message = String(e?.message || e || '不明なエラー');
     const lines = message.split('\n').map((line) => line.trim()).filter(Boolean);
     const [first, ...rest] = lines.length ? lines : [message];
+    // kintone が受け付けなかった項目（入力エラーの errors）は、どのフィールドの何かが 1 行目だけでは分からないため、
+    // 先頭の数件と「ほか N 件」をステータスにも出す（全件は下のログ。kintoneErrorDetail.ts）。
+    const details = summarizeKintoneErrorDetails(kintoneErrorDetailsOf(e));
+    const withDetails = (text: string) => (details.length ? `${text}\n${details.map((line) => `・${line}`).join('\n')}` : text);
     if (e?.partialSuccess === true || e?.writeUnconfirmed === true) {
       // 一部だけ成功した結果（ファイルは保存済みなど）と、書き込みの応答が届かず反映されたか分からない結果（settingsWrite.ts）:
       // 失敗と言い切らず、要点を警告色で、内訳はログへ
       // 要点が括弧で終わるときは括弧を重ねない
       const logNote = rest.length ? (/[）)]$/.test(first) ? '。詳細は下のログを確認してください' : '（詳細は下のログ）') : '';
-      panel.setStatus(`${first}${logNote}`, 'warn');
+      panel.setStatus(withDetails(`${first}${logNote}`), 'warn');
       if (rest.length) panel.setResult(lines.join('\n'));
       return undefined;
     }
@@ -2034,12 +2046,12 @@ export async function liteRun<T>(
     }
     if (token?.cancelled) {
       // 中止を要求した後に起きた本物の失敗は、中止ではなくエラーとして示す
-      panel.setStatus(`エラー: ${first}（中止の要求後に失敗しました${rest.length ? '。詳細は下のログ' : ''}）`, 'err');
+      panel.setStatus(withDetails(`エラー: ${first}（中止の要求後に失敗しました${rest.length ? '。詳細は下のログ' : ''}）`), 'err');
       if (rest.length) panel.setResult(lines.join('\n'));
       return undefined;
     }
-    // 1 行目（要点）はステータスへ、部分成功の内訳や API コンテキストは下のログへ出す
-    panel.setStatus(`エラー: ${first}${rest.length ? '（詳細は下のログ）' : ''}`, 'err');
+    // 1 行目（要点）と kintone が受け付けなかった項目の先頭の数件はステータスへ、部分成功の内訳や API コンテキストは下のログへ出す
+    panel.setStatus(withDetails(`エラー: ${first}${rest.length ? '（詳細は下のログ）' : ''}`), 'err');
     if (rest.length) panel.setResult(lines.join('\n'));
     return undefined;
   } finally {

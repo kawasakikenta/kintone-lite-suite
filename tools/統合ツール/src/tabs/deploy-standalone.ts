@@ -41,6 +41,7 @@ import { reflectFieldLabels } from '../reflect/changeSummary.js';
 import { BACKUP_FILE_BODY_NOTICE, hasEmbeddedFileBodies } from '../reflect/customizeFiles.js';
 import { isRunCancelledError, throwIfCancelled } from '../runControl.js';
 import { buildAppFilenameLabel, buildExportFilename, withoutApiContextLines } from '../utils.js';
+import { abbreviateKintoneErrorMessage, kintoneErrorDetailsOf, type KintoneErrorNaming } from '../kintoneErrorDetail.js';
 
 /** 一度に確認できるアプリの上限。 */
 export const DEPLOY_MAX_TARGETS = 1000;
@@ -56,10 +57,16 @@ const POSITIVE_INTEGER = /^[1-9]\d*$/;
 
 const clean = (value: unknown): string => String(value ?? '').trim();
 
-/** 利用者に見せる失敗理由（内部の通信情報の行を除き、1 行にまとめる）。 */
-function reasonOf(error: unknown): string {
-  const text = withoutApiContextLines(error instanceof Error ? error.message : String(error)).replace(/\s*\n\s*/g, ' ').trim();
-  return (text || '不明なエラー').slice(0, 300);
+/**
+ * 利用者に見せる失敗理由（内部の通信情報の行を除き、1 行にまとめる）。
+ * kintone が受け付けなかった項目（入力エラーの errors）は、先頭の数件と「ほか N 件」にして添える（kintoneErrorDetail.ts）。
+ */
+function reasonOf(error: unknown, naming?: KintoneErrorNaming): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  // 項目ごとの行（先頭の数件。1 件ずつ長さの上限がある）が入るときだけ、上限を広げる
+  const limit = kintoneErrorDetailsOf(error).length ? 1200 : 300;
+  const text = withoutApiContextLines(abbreviateKintoneErrorMessage(raw, error, { naming })).replace(/\s*\n\s*/g, ' ').trim();
+  return (text || '不明なエラー').slice(0, limit);
 }
 
 const appTitle = (appId: string, name?: string) => `App ${appId}${name ? `（${name}）` : ''}`;
@@ -384,10 +391,12 @@ export async function runDeployStandalone(opts: DeployRunOptions): Promise<Deplo
     if (isRunCancelledError(error)) throw error;
     log(`${subject}の依頼に失敗: ${error instanceof Error ? error.message : String(error)}`);
     const kind = classifyRequestError(error);
+    // kintone が受け付けなかった項目のキー（apps[0].revision）の apps[N] は、依頼した順のアプリ
+    const naming: KintoneErrorNaming = { app: (position) => (indexes[position] !== undefined ? titleOf(indexes[position]) : `${position + 1}件目のアプリ`) };
     for (const index of indexes) {
       if (kind === 'conflict') emit(index, 'conflict', '依頼の時点で、プレビューの設定がすでに更新されていました。差分を確認し直してください。');
-      else if (kind === 'unknown') emit(index, 'unknown', `${revert ? '変更の中止' : '反映'}の依頼が kintone に届いたか確認できませんでした（${reasonOf(error)}）。二重に実行しないよう、アプリの設定画面で状態を確認してください。`);
-      else emit(index, 'failed', `kintone が${revert ? '変更の中止' : '反映'}の依頼を受け付けませんでした（${reasonOf(error)}）。`);
+      else if (kind === 'unknown') emit(index, 'unknown', `${revert ? '変更の中止' : '反映'}の依頼が kintone に届いたか確認できませんでした（${reasonOf(error, naming)}）。二重に実行しないよう、アプリの設定画面で状態を確認してください。`);
+      else emit(index, 'failed', `kintone が${revert ? '変更の中止' : '反映'}の依頼を受け付けませんでした（${reasonOf(error, naming)}）。`);
     }
   };
 
