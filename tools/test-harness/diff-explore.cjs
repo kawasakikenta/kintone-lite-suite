@@ -550,6 +550,35 @@ scenario('baseline: 業務アプリの全セクション（1対1）', async () =
   assert.ok(mappingRows.length >= 1 && mappingRows.every((row) => !/^アプリアクション「/.test(row[5] || '') && !/^アプリアクション「/.test(row[6] || '')), 'Excel のアクションの関連付けの行の値が、アクション名になっています');
   assert.ok(!list.some((row) => /(^|\s)2件目$/.test(row[4] || '') && (row[3] || '').includes('タグ')), 'Excel のフィールドの初期値の行が「2件目」だけになっています');
   ok('baseline: Excel の関連付け・初期値の行の表記');
+
+  // 結果の要約をコピー: 比較方向・件数・セクション別の件数を数行の文でコピーし、値は含めない
+  await page.evaluate(() => {
+    window.__copiedTexts = [];
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text) => { window.__copiedTexts.push(String(text)); } } });
+  });
+  await page.getByRole('button', { name: '結果の要約をコピー' }).click();
+  await page.waitForFunction(() => window.__copiedTexts.length > 0);
+  const copied = await page.evaluate(() => window.__copiedTexts[0]);
+  assert.match(copied, /^差分比較の結果\n比較元: .+（App 101）（本番 \/ 通常スペース）\n比較先: .+（App 202）（本番 \/ 通常スペース）\n/, `要約の比較方向: ${copied.slice(0, 200)}`);
+  assert.ok(copied.includes(`結果: 差分が ${panel.total} 件見つかりました。追加 ${panel.metrics.added} / 削除 ${panel.metrics.removed} / 内容変更 ${panel.metrics.changed}`), `要約の件数が画面と違います: ${copied}`);
+  assert.match(copied, /\n取得: 問題なし\n/);
+  assert.match(copied, /\nセクション別: .*フィールド設定 \d+件/);
+  assert.ok(!copied.includes('tok_') && copied.split('\n').length <= 12, `要約に値が入っているか、長すぎます: ${copied}`);
+  const copyStatus = await page.locator('#kus-diff-lite').evaluate((rootElement) => [...rootElement.querySelectorAll('[data-tone]')].map((element) => element.textContent).join('\n'));
+  assert.match(copyStatus, /結果の要約をクリップボードにコピーしました/, '要約をコピーしたことをステータスに示していません');
+  await page.locator('[data-kus-dl-overview]').screenshot({ path: path.join(shotsDir(), 'baseline-overview.png') });
+  {
+    const viewport = page.viewportSize();
+    await page.setViewportSize({ width: 320, height: viewport.height });
+    const copyButton = page.getByRole('button', { name: '結果の要約をコピー' });
+    await copyButton.scrollIntoViewIfNeeded();
+    const box = await copyButton.boundingBox();
+    const fits = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
+    await page.locator('.kus-dl-overview__actions').screenshot({ path: path.join(shotsDir(), 'baseline-overview-copy-320.png') });
+    await page.setViewportSize(viewport);
+    assert.ok(fits && box && box.x >= 0 && box.x + box.width <= 321 && box.height >= 32, `320px で「結果の要約をコピー」がはみ出すか押しにくい: ${JSON.stringify(box)}`);
+  }
+  ok('baseline: 「結果の要約をコピー」は比較方向・件数・セクション別の件数を、画面と同じ数で数行にする（値は含めない）');
   assert.deepEqual(errors, [], `ページのエラー: ${errors.join(' / ')}`);
   assert.deepEqual(await page.evaluate(() => window.__k.violations), [], '合成 kintone への想定外の通信（書き込みなど）');
   await context.close();

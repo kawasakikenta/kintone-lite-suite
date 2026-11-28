@@ -2219,7 +2219,7 @@
     function distributeAppTokens(entry) {
       const raw = entry.app.value;
       const guestVal = entry.guest.value.trim();
-      if (!/[,、\s]/.test(raw)) {
+      if (!/[,、，\s]/.test(raw)) {
         const parsed = parseAppToken(raw, guestVal);
         if (parsed.appId !== raw || parsed.guestId !== guestVal) {
           entry.app.value = parsed.appId;
@@ -2229,7 +2229,7 @@
         }
         return false;
       }
-      const tokens = raw.split(/[,、\s]+/).map((t) => t.trim()).filter(Boolean);
+      const tokens = raw.split(/[,、，\s]+/).map((t) => t.trim()).filter(Boolean);
       if (tokens.length <= 1) {
         const parsed = parseAppToken(tokens[0] || "", guestVal);
         if (entry.app.value !== parsed.appId || entry.guest.value.trim() !== parsed.guestId) {
@@ -2329,7 +2329,7 @@
       app.addEventListener("paste", (ev) => {
         const text = ev.clipboardData?.getData("text") || "";
         const hasUrl = Boolean(extractAppIdFromInput(text.trim())) && !/^\d+$/.test(text.trim());
-        if (!/[,、\s]/.test(text) && !hasUrl) return;
+        if (!/[,、，\s]/.test(text) && !hasUrl) return;
         ev.preventDefault();
         const start = app.selectionStart ?? app.value.length;
         const end = app.selectionEnd ?? start;

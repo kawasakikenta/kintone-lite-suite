@@ -225,6 +225,22 @@ async function main() {
       return window.table.getApps();
     });
     assert.deepEqual(pasted, [{ appId: '303', guestId: '7' }, { appId: '404', guestId: '7' }]);
+    // 全角カンマ「，」・読点「、」も区切りとして受け付ける（貼り付けと、入力の確定のどちらも）
+    const fullWidthSeparators = await page.evaluate(() => {
+      window.table.setApps([{ appId: '', guestId: '' }]);
+      const input = window.table.element.querySelector('input');
+      input.focus(); input.select();
+      const clipboardData = new DataTransfer(); clipboardData.setData('text/plain', '505，606、707');
+      input.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData }));
+      const afterPaste = window.table.getApps();
+      window.table.setApps([{ appId: '', guestId: '' }]);
+      const typed = window.table.element.querySelector('input');
+      typed.value = '808，909';
+      typed.dispatchEvent(new Event('change', { bubbles: true }));
+      return { afterPaste, afterChange: window.table.getApps() };
+    });
+    assert.deepEqual(fullWidthSeparators.afterPaste.map((app) => app.appId), ['505', '606', '707'], '貼り付けた全角カンマ・読点の区切りを行に分ける');
+    assert.deepEqual(fullWidthSeparators.afterChange.map((app) => app.appId), ['808', '909'], '入力した全角カンマの区切りを確定時に行に分ける');
     assert.deepEqual(await page.evaluate(() => {
       window.table.setApps([{ appId: '', guestId: '7' }]);
       window.table.putApp('42', '');
