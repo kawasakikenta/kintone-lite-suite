@@ -425,6 +425,43 @@ async function main() {
           assert.deepEqual(multiCall.input.fileSource.knownFileKeys, ['src-1'], 'JS/CSS: 取得元のファイル（fileKey）を複数反映に渡す');
           assert.match(await stage(2).innerText(), /2 件の反映先への反映が完了/);
         }
+        if (id === 'er') {
+          // 設定JSON・ZIP から作る: 詳細設定で読み込むと、起点を読み込んだアプリにし、kintone に問い合わせずに作ることを確認画面と 1 画面目に示す
+          const settingsFile = path.join(OUT, 'er-settings.json');
+          const bundle = (appId, sections) => ({ appId, guestId: '', preview: false, fetchedAt: '2026-11-20T01:39:00.000Z', meta: { sectionRevisions: {} }, sections });
+          fs.writeFileSync(settingsFile, JSON.stringify({ apps: [
+            bundle('202', { appInfo: { name: '案件' }, fieldSettings: { properties: { c: { type: 'SINGLE_LINE_TEXT', code: 'c', label: '顧客', lookup: { relatedApp: { app: '303' }, relatedKeyField: 'k', fieldMappings: [] } } } }, actionSettings: { actions: {} } }),
+            bundle('303', { appInfo: { name: '顧客' }, actionSettings: { actions: {} } })
+          ] }), 'utf8');
+          await button('対象・条件を変更').click();
+          const offlineBadge = page.locator('[data-er-offline]');
+          assert.equal(await offlineBadge.isVisible(), false, 'ER図: 設定JSONを読み込む前は取得元の表示を出さない');
+          await openAdvanced();
+          await page.locator('input[type=file][aria-label="設定JSON・ZIP を読み込む"]').setInputFiles(settingsFile);
+          await page.waitForSelector('[data-import-status="loaded"]');
+          assert.match(await page.locator('[data-import-status]').innerText(), /読込中: er-settings\.json（2アプリ）/);
+          assert.match(await page.locator('.kus-lp__status-text').first().innerText(), /設定JSON「er-settings\.json」から2アプリの設定を読み込みました。起点を読み込んだ2アプリにしました.*注意: 1アプリの設定にフィールド設定が含まれていない/);
+          await closeAdvanced();
+          assert.equal(await page.getByRole('textbox', { name: '起点アプリID', exact: true }).inputValue(), '202, 303', 'ER図: 起点を読み込んだアプリにする');
+          assert.match(await offlineBadge.innerText(), /設定JSON「er-settings\.json」の 2アプリから作ります（kintone に問い合わせません）/);
+          assert.equal(await page.getByRole('checkbox', { name: 'プレビュー環境を参照', exact: true }).isDisabled(), true, 'ER図: 設定JSONから作るときはプレビューの切り替えを使わない');
+          await page.screenshot({ path: path.join(OUT, 'er-offline-setup.png') });
+          await button('内容を確認する').click();
+          await page.screenshot({ path: path.join(OUT, 'er-offline-review.png') });
+          assert.match(await stage(1).innerText(), /取得元[\s\S]*読み込んだ設定JSON「er-settings\.json」（2アプリ）。kintone には問い合わせません/);
+          assert.match(await stage(1).innerText(), /参照環境[\s\S]*設定JSONのとおり（通常空間 \/ 本番）/);
+          await button(defaultAction).click(); await idle();
+          const offlineCall = await page.evaluate(() => { const call = window.__workflowFixture.calls.at(-1); return { name: call.name, appIds: call.input.offlineSource && call.input.offlineSource.appIds, fileName: call.input.offlineSource && call.input.offlineSource.fileName, ids: call.input.appIds }; });
+          assert.deepEqual(offlineCall, { name: 'runGenerateERDiagramStandalone', appIds: [202, 303], fileName: 'er-settings.json', ids: ['202', '303'] }, 'ER図: 読み込んだ設定を渡して作る');
+          await button('対象・条件を変更').click();
+          await openAdvanced();
+          await button('読込解除').click();
+          assert.match(await page.locator('.kus-lp__status-text').first().innerText(), /設定JSONの読込を解除しました/);
+          await closeAdvanced();
+          assert.equal(await offlineBadge.isVisible(), false, 'ER図: 解除したら取得元の表示を消す');
+          assert.equal(await page.getByRole('checkbox', { name: 'プレビュー環境を参照', exact: true }).isDisabled(), false);
+          await page.getByRole('textbox', { name: '起点アプリID', exact: true }).fill('202');
+        }
         if (id === 'settings-export') {
           // 全アプリ取得できたときは、取り直しの操作を出さない
           const retry = button('取得できなかったアプリだけを対象に残す');

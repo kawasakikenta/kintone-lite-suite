@@ -31,6 +31,8 @@ export interface ErViewerPageContext {
   targetTitle: string;
   /** 取得日時（表示用） */
   generatedText: string;
+  /** 設定JSONから作った図の取得元（「設定JSONから作成（取得日時 取得）」）。あれば見出しの取得日時の代わりに出す */
+  sourceText?: string;
   /** 接続先（ホスト・空間・本番／プレビュー） */
   connectionText: string;
   libraryScripts: string;
@@ -87,7 +89,7 @@ ${ER_VIEWER_CSS}
     <h1 id="er-title" title="${esc(ctx.targetTitle)}">kintone ER図<small>${esc(ctx.targetText)}</small></h1>
     <div class="brand-sub">
       <button type="button" class="meta-pill meta-pill--btn" id="overview-pill" onclick="toggleOverview()" title="取得・関連サマリーを開く" aria-controls="overview" aria-expanded="false">${ctx.appCount}アプリ · ${ctx.relationCount}関連 · 循環${a.cycles} · 孤立${a.isolated} · 未取得${a.unresolved}<span aria-hidden="true"> ▾</span></button>
-      <span class="brand-meta" title="取得日時と接続先">${esc(ctx.generatedText)} 取得 · ${esc(ctx.connectionText)}</span>
+      <span class="brand-meta" title="${ctx.sourceText ? esc(`${ctx.sourceText} · ${ctx.connectionText}`) : '取得日時と接続先'}">${ctx.sourceText ? esc(ctx.sourceText) : `${esc(ctx.generatedText)} 取得`} · ${esc(ctx.connectionText)}</span>
     </div>
   </div>
   <div class="search-wrap" role="search">

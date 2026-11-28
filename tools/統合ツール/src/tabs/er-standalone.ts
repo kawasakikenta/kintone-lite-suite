@@ -11,6 +11,7 @@ import {
   buildErRelationsCsv,
   buildErAppModelFromBundle
 } from './er-model.js';
+import { describeOfflineFetchedAt, listOfflineSpaceApps, type ErOfflineSource } from './er-offline.js';
 
 export {
   buildErMermaidSource,
@@ -130,15 +131,37 @@ async function resolveErOptions(opts: any, setStatus: (msg: string, err?: ErStat
   const appId = normalizeIdInputText(opts.appId || '').trim();
   const spaceId = normalizeIdInputText(opts.spaceId || '').trim();
   const options: any = buildErCrawlOptions(opts);
-  await applySpaceToErOptions(opts, options, setStatus);
-  if (!options.startAppIds.length) throw new Error('対象アプリが見つかりませんでした');
+  const offline: ErOfflineSource | null = opts?.offlineSource || null;
+  if (offline) {
+    // 設定JSONから作る: 接続先・環境は読み込んだ設定のとおりにし、スペースのアプリも読み込んだ設定（アプリ情報のスペースID）から探す
+    options.offlineSource = offline;
+    options.source = { guestId: offline.guestId, preview: offline.preview };
+    await applySpaceToErOptions(spaceId ? { ...opts, spaceApps: listOfflineSpaceApps(offline, spaceId) } : opts, options, setStatus);
+  } else {
+    await applySpaceToErOptions(opts, options, setStatus);
+  }
+  if (!options.startAppIds.length) throw new Error(offline ? '起点にするアプリがありません。起点アプリIDか、読み込んだ設定にあるスペースIDを入れてください' : '対象アプリが見つかりませんでした');
+  if (offline) {
+    const missing = options.startAppIds.filter((id: string) => !offline.bundles.has(Number(id)));
+    if (missing.length) {
+      throw new Error(`起点アプリ ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? ` ほか ${missing.length - 5} 件` : ''} は、読み込んだ設定JSONにありません。起点アプリIDを確かめるか、そのアプリを含む設定JSONを読み込んでください`);
+    }
+  }
   return options;
 }
 
 /** 保存するファイル名の末尾（ゲストスペースID・取得環境）。ゲストスペースIDは半角に直した値（options.source）を使う。 */
 function erFilenameSuffix(opts: any, options: any): string {
   const guestId = options?.source?.guestId || '';
-  return `${guestId ? `guest${guestId}_` : ''}${opts?.preview ? 'プレビュー' : '本番'}`;
+  // 設定JSONから作るときは、取得環境も読み込んだ設定のとおりにする
+  const preview = options?.offlineSource ? !!options.source?.preview : !!opts?.preview;
+  return `${guestId ? `guest${guestId}_` : ''}${preview ? 'プレビュー' : '本番'}`;
+}
+
+/** 完了の表示に添える取得元（設定JSONから作ったときだけ）。 */
+function offlineNote(options: any): string {
+  const offline: ErOfflineSource | null = options?.offlineSource || null;
+  return offline ? `。設定JSON${offline.fileName ? `「${offline.fileName}」` : ''}から作成（kintone には問い合わせていません）` : '';
 }
 
 /** 状態表示の種類。true は取得失敗あり、'warn' は部分成功（図は生成済み）。 */
@@ -206,8 +229,8 @@ export async function runGenerateERDiagramStandalone(opts, setStatus) {
     progressUi.close();
     const summary = summarizeCrawl(apps, options);
     setStatus(summary.note
-      ? `ER図を生成しました: ${apps.length}アプリ${summary.note}`
-      : `ER図の生成完了: ${apps.length}アプリを別タブ表示しました`, summary.tone);
+      ? `ER図を生成しました: ${apps.length}アプリ${summary.note}${offlineNote(options)}`
+      : `ER図の生成完了: ${apps.length}アプリを別タブ表示しました${offlineNote(options)}`, summary.tone);
     setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
   } catch (e) {
     try { popup.close(); } catch (_) { /* noop */ }
@@ -241,8 +264,8 @@ export async function runExportERDiagramHtmlStandalone(opts, setStatus) {
     progressUi.close();
     const summary = summarizeCrawl(apps, options);
     setStatus(summary.note
-      ? `ER図HTMLを保存しました: ${apps.length}アプリ${summary.note}`
-      : `ER図HTMLを保存しました (${apps.length}アプリ)`, summary.tone);
+      ? `ER図HTMLを保存しました: ${apps.length}アプリ${summary.note}${offlineNote(options)}`
+      : `ER図HTMLを保存しました (${apps.length}アプリ)${offlineNote(options)}`, summary.tone);
   } catch (e) {
     // 中止はエラー表示にせず、進捗表示を閉じる（件数つきの説明はパネルのステータスとログに出る）
     if (isCancelStop(e)) progressUi.dismiss(); else progressUi.error(e.message || String(e));
@@ -301,7 +324,11 @@ export async function runExportERMarkdownStandalone(
     usedProgress = !fromBundles;
     if (usedProgress) progressUi.update(94, 'Markdown仕様書データ生成中...');
     const analysis = analyzeErDependencies(apps);
-    const markdown = buildErMarkdownSpec(apps, analysis, { generatedAt: opts?.generatedAt });
+    const offline: ErOfflineSource | null = options.offlineSource || null;
+    const markdown = buildErMarkdownSpec(apps, analysis, {
+      generatedAt: opts?.generatedAt,
+      ...(offline ? { sourceNote: `設定JSON${offline.fileName ? `「${offline.fileName}」` : ''}から作成（${describeOfflineFetchedAt(offline, (d) => d.toLocaleString('ja-JP'))} 取得。kintone には問い合わせていません）` } : {})
+    });
     const baseName = options.startAppIds[0] || appId || (spaceId ? `space${spaceId}` : String(apps[0]?.id || 'er'));
     const suffix = erFilenameSuffix(opts, options);
     if (opts?.download !== false) downloadText(
@@ -312,8 +339,8 @@ export async function runExportERMarkdownStandalone(
     if (usedProgress) progressUi.close();
     const summary = summarizeCrawl(apps, options);
     setStatus(summary.note
-      ? `ER図仕様書を保存しました: ${apps.length}アプリ${summary.note}`
-      : `ER図仕様書を保存しました (${apps.length}アプリ)`, summary.tone);
+      ? `ER図仕様書を保存しました: ${apps.length}アプリ${summary.note}${offlineNote(options)}`
+      : `ER図仕様書を保存しました (${apps.length}アプリ)${offlineNote(options)}`, summary.tone);
     return { apps, analysis, markdown };
   } catch (e: any) {
     if (usedProgress) {
@@ -345,8 +372,8 @@ export async function runExportERMermaidStandalone(
     if (usedProgress) progressUi.close();
     const summary = summarizeCrawl(apps, options);
     setStatus(summary.note
-      ? `ER図Mermaidを保存しました: ${apps.length}アプリ${summary.note}`
-      : `ER図Mermaidを保存しました (${apps.length}アプリ)`, summary.tone);
+      ? `ER図Mermaidを保存しました: ${apps.length}アプリ${summary.note}${offlineNote(options)}`
+      : `ER図Mermaidを保存しました (${apps.length}アプリ)${offlineNote(options)}`, summary.tone);
     return { apps, mermaid };
   } catch (e: any) {
     if (usedProgress) {
@@ -378,8 +405,8 @@ export async function runExportERRelationsCsvStandalone(
     if (usedProgress) progressUi.close();
     const summary = summarizeCrawl(apps, options);
     setStatus(summary.note
-      ? `ER図リレーション一覧CSVを保存しました: ${apps.length}アプリ${summary.note}`
-      : `ER図リレーション一覧CSVを保存しました (${apps.length}アプリ)`, summary.tone);
+      ? `ER図リレーション一覧CSVを保存しました: ${apps.length}アプリ${summary.note}${offlineNote(options)}`
+      : `ER図リレーション一覧CSVを保存しました (${apps.length}アプリ)${offlineNote(options)}`, summary.tone);
     return { apps, csv };
   } catch (e: any) {
     if (usedProgress) {

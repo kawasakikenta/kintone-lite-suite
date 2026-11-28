@@ -345,6 +345,7 @@
     } },
     { key: "categories", label: "カテゴリ設定", endpoint: "/app/categories.json", put: true, putBuilder: (d) => ({ categories: d.categories || d }) }
   ];
+  var META_KEYS = /* @__PURE__ */ new Set(["revision", "creator", "createdAt", "modifier", "modifiedAt"]);
   var DEFAULT_SUBTAB_STATE = Object.freeze({
     diff: "conditions",
     reflect: "settings",
@@ -581,6 +582,19 @@
   }
   function normalizeIdInputText(value) {
     return String(value ?? "").replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 65248)).replace(/，/g, ",");
+  }
+  function deepClone(v) {
+    return v == null ? v : JSON.parse(JSON.stringify(v));
+  }
+  function normalizeSettingsSection(value) {
+    const sortValue = (current, responseRoot = false) => {
+      if (Array.isArray(current)) return current.map((item) => sortValue(item));
+      if (current && typeof current === "object") {
+        return Object.fromEntries(Object.keys(current).sort().filter((key) => !responseRoot || !META_KEYS.has(key)).map((key) => [key, sortValue(current[key])]));
+      }
+      return current;
+    };
+    return sortValue(value, true);
   }
   function compactForLog(value, max = 220) {
     try {
@@ -944,6 +958,31 @@
     apiGetMetrics.lastError = lastError;
     apiGetMetrics.lastLatencyMs = Date.now() - startAt;
     throw apiErrorWithContext(err, { method: "GET", prefix, path, payload: params });
+  }
+  function sanitizeBundleMeta(meta) {
+    const out = { sectionRevisions: {} };
+    const revisions = meta?.sectionRevisions;
+    if (!revisions || typeof revisions !== "object") return out;
+    Object.keys(revisions).forEach((key) => {
+      const value = revisions[key];
+      if (value == null || value === "") return;
+      out.sectionRevisions[key] = String(value);
+    });
+    return out;
+  }
+  function ensureBundleShape(bundle, rawSettings = false) {
+    if (!bundle || typeof bundle !== "object") throw new Error("バンドル形式が不正です");
+    if (!bundle.sections || typeof bundle.sections !== "object") throw new Error("sections がありません");
+    return {
+      appId: String(bundle.appId || ""),
+      guestId: String(bundle.guestId || ""),
+      preview: !!bundle.preview,
+      fetchedAt: bundle.fetchedAt || (/* @__PURE__ */ new Date()).toISOString(),
+      meta: sanitizeBundleMeta(bundle.meta),
+      sections: rawSettings ? deepClone(bundle.sections) : Object.fromEntries(
+        Object.keys(bundle.sections).sort().map((key) => [key, normalizeSettingsSection(bundle.sections[key])])
+      )
+    };
   }
   var CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
   var FILE_DOWNLOAD_DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
@@ -4135,6 +4174,7 @@ ${String(text).trim().replace(/\*\//g, "* /")}
     lines.push("# kintone ER図 仕様書");
     lines.push("");
     lines.push(`- 生成日時: ${generatedAt}`);
+    if (options?.sourceNote) lines.push(`- 取得元: ${options.sourceNote}`);
     lines.push(`- アプリ数: ${safeApps.length}`);
     lines.push(`- 総リレーション: ${totalRelations}`);
     lines.push(`- 取得完了: ${dep.counts.retrievalComplete}`);
@@ -8561,6 +8601,7 @@ function buildPrintDocHtml(){\r
   const startNames=startIds.slice(0,8).map(id=>{const a=findApp(id);return a?a.name+"（App "+id+"）":"App "+id;});\r
   const meta=[\r
     ["対象（起点）",startNames.join("、")+(startIds.length>8?" ほか "+(startIds.length-8)+" 件":"")||"-"],\r
+    ...(ER_OPTIONS.sourceLabel?[["取得元",ER_OPTIONS.sourceLabel]]:[]),\r
     ["取得日時",ER_OPTIONS.generatedAt?new Date(ER_OPTIONS.generatedAt).toLocaleString("ja-JP"):"-"],\r
     ["印刷日時",new Date().toLocaleString("ja-JP")],\r
     ["接続先",printConnectionText()],\r
@@ -8755,7 +8796,7 @@ function exportImageMeta(){\r
   const shown=ids.slice(0,5).join(", ")+(ids.length>5?" ほか"+(ids.length-5)+"件":"");\r
   return [\r
     "起点: "+(shown||"-"),\r
-    (ER_OPTIONS.sourceGuestId?("ゲスト "+ER_OPTIONS.sourceGuestId):"通常空間")+" / "+(ER_OPTIONS.sourcePreview?"プレビュー":"本番"),\r
+    (ER_OPTIONS.sourceLabel?ER_OPTIONS.sourceLabel+" / ":"")+(ER_OPTIONS.sourceGuestId?("ゲスト "+ER_OPTIONS.sourceGuestId):"通常空間")+" / "+(ER_OPTIONS.sourcePreview?"プレビュー":"本番"),\r
     "表示: "+scopeDescription(),\r
     "出力: "+new Date().toLocaleString("ja-JP")\r
   ].join("  |  ");\r
@@ -9061,6 +9102,7 @@ const exportRelationLabel=rel=>{\r
 function exportProvenanceEntries(){\r
   return [\r
     ["生成日時",new Date().toLocaleString("ja-JP")],\r
+    ...(ER_OPTIONS.sourceLabel?[["取得元",ER_OPTIONS.sourceLabel]]:[]),\r
     ["起点アプリ",(ER_OPTIONS.startAppIds||[]).join(", ")||"-"],\r
     ["探索深さ",ER_OPTIONS.maxDepth?String(ER_OPTIONS.maxDepth):"無制限"],\r
     ["逆引き探索",ER_OPTIONS.includeReverseLookup?"ON":"OFF"],\r
@@ -9401,6 +9443,7 @@ function showMarkdown(){\r
   lines.push("# kintone ER図 仕様書");\r
   lines.push("");\r
   lines.push("- 生成日時: " + new Date().toLocaleString("ja-JP"));\r
+  if(ER_OPTIONS.sourceLabel) lines.push("- 取得元: " + ER_OPTIONS.sourceLabel);\r
   lines.push("- 起点アプリ: " + ((ER_OPTIONS.startAppIds||[]).join(", ") || "-"));\r
   lines.push("- 探索深さ: " + (ER_OPTIONS.maxDepth||"無制限"));\r
   lines.push("- 逆引き探索: " + (ER_OPTIONS.includeReverseLookup?"ON":"OFF"));\r
@@ -9595,7 +9638,7 @@ ${ER_VIEWER_CSS}
     <h1 id="er-title" title="${esc(ctx.targetTitle)}">kintone ER図<small>${esc(ctx.targetText)}</small></h1>
     <div class="brand-sub">
       <button type="button" class="meta-pill meta-pill--btn" id="overview-pill" onclick="toggleOverview()" title="取得・関連サマリーを開く" aria-controls="overview" aria-expanded="false">${ctx.appCount}アプリ · ${ctx.relationCount}関連 · 循環${a.cycles} · 孤立${a.isolated} · 未取得${a.unresolved}<span aria-hidden="true"> ▾</span></button>
-      <span class="brand-meta" title="取得日時と接続先">${esc(ctx.generatedText)} 取得 · ${esc(ctx.connectionText)}</span>
+      <span class="brand-meta" title="${ctx.sourceText ? esc(`${ctx.sourceText} · ${ctx.connectionText}`) : "取得日時と接続先"}">${ctx.sourceText ? esc(ctx.sourceText) : `${esc(ctx.generatedText)} 取得`} · ${esc(ctx.connectionText)}</span>
     </div>
   </div>
   <div class="search-wrap" role="search">
@@ -9977,6 +10020,149 @@ ${ctx.mainScript}
     );
   }
 
+  // src/settingsBundleImport.ts
+  function preserveImportedMetadata(bundle, raw, preserve) {
+    if (!preserve || !bundle || !raw || typeof raw !== "object") return bundle;
+    bundle.fetchedAt = Object.prototype.hasOwnProperty.call(raw, "fetchedAt") ? raw.fetchedAt : null;
+    if (Object.prototype.hasOwnProperty.call(raw, "guestId")) bundle.guestId = raw.guestId;
+    else delete bundle.guestId;
+    if (Object.prototype.hasOwnProperty.call(raw, "preview")) bundle.preview = raw.preview;
+    else delete bundle.preview;
+    if (raw.meta && typeof raw.meta === "object" && !Array.isArray(raw.meta)) {
+      bundle.meta = {
+        ...raw.meta,
+        sectionRevisions: bundle.meta?.sectionRevisions || {}
+      };
+    }
+    return bundle;
+  }
+  function unwrapBundleCandidates(raw, side) {
+    if (!raw || typeof raw !== "object") return [];
+    if (raw.source && raw.target) return unwrapBundleCandidates(side === "target" ? raw.target : raw.source, side);
+    if (raw.bundle) return unwrapBundleCandidates(raw.bundle, side);
+    if (Array.isArray(raw.apps)) return raw.apps;
+    if (Array.isArray(raw.bundles)) return raw.bundles;
+    if (raw.sections && raw.appId != null) return [raw];
+    return [raw];
+  }
+  function pickAllSettingsBundles(raw, side, rawSettings = false, preserveMetadata = false) {
+    const candidates = unwrapBundleCandidates(raw, side).map((item) => {
+      try {
+        return preserveImportedMetadata(ensureBundleShape(item, rawSettings), item, preserveMetadata);
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+    if (!candidates.length) throw new Error("設定JSON内にアプリ設定バンドルが見つかりません");
+    return candidates;
+  }
+
+  // src/tabs/er-offline.ts
+  var ER_OFFLINE_SECTIONS = [
+    ["fieldSettings", "フィールド設定"],
+    ["appInfo", "アプリ情報"],
+    ["actionSettings", "アクション設定"]
+  ];
+  var hasOwn2 = (record, key) => !!record && typeof record === "object" && Object.prototype.hasOwnProperty.call(record, key);
+  function buildErOfflineSource(raw, fileName = "") {
+    const candidates = pickAllSettingsBundles(raw, void 0, true, true);
+    const bundles = /* @__PURE__ */ new Map();
+    const appIds = [];
+    let missingAppId = 0;
+    const duplicated = [];
+    const guestIds = /* @__PURE__ */ new Set();
+    const previews = /* @__PURE__ */ new Set();
+    const fetchedTimes = [];
+    for (const bundle of candidates) {
+      const text = String(bundle?.appId ?? "").trim();
+      const appId = /^\d+$/.test(text) ? Number(text) : NaN;
+      if (!Number.isSafeInteger(appId) || appId <= 0) {
+        missingAppId += 1;
+        continue;
+      }
+      if (bundles.has(appId)) {
+        if (!duplicated.includes(appId)) duplicated.push(appId);
+      } else appIds.push(appId);
+      bundles.set(appId, bundle);
+    }
+    for (const appId of appIds) {
+      const bundle = bundles.get(appId);
+      guestIds.add(String(bundle?.guestId ?? "").trim());
+      previews.add(bundle?.preview === true);
+      const time = Date.parse(String(bundle?.fetchedAt ?? ""));
+      if (Number.isFinite(time)) fetchedTimes.push(time);
+    }
+    if (!appIds.length) {
+      throw new Error("設定JSONにアプリIDのある設定が見つかりません。設定取得で保存した JSON または ZIP か確認してください");
+    }
+    const warnings = [];
+    if (missingAppId) warnings.push(`アプリIDの無い設定 ${missingAppId}件は読み込めませんでした`);
+    if (duplicated.length) warnings.push(`同じアプリIDが複数あったため後の設定を使用しました（App ${duplicated.slice(0, 5).join(", ")}${duplicated.length > 5 ? ` ほか ${duplicated.length - 5} 件` : ""}）`);
+    const withoutFields = appIds.filter((appId) => !hasOwn2(bundles.get(appId)?.sections, "fieldSettings"));
+    if (withoutFields.length) {
+      warnings.push(`${withoutFields.length}アプリの設定にフィールド設定が含まれていないため、それらは「取得失敗」として図に出ます（App ${withoutFields.slice(0, 5).join(", ")}${withoutFields.length > 5 ? " ほか" : ""}）`);
+    }
+    const guestId = guestIds.size === 1 ? [...guestIds][0] : "";
+    const preview = previews.size === 1 && previews.has(true);
+    const spaceText = guestIds.size > 1 ? "通常空間・ゲストスペースが混在" : guestId ? `ゲストスペース ${guestId}` : "通常空間";
+    const envText = previews.size > 1 ? "本番・プレビューが混在" : preview ? "プレビュー" : "本番";
+    const sorted = fetchedTimes.slice().sort((a, b) => a - b);
+    return {
+      bundles,
+      appIds,
+      fileName: String(fileName || ""),
+      fetchedAtFrom: sorted.length ? new Date(sorted[0]).toISOString() : "",
+      fetchedAtTo: sorted.length ? new Date(sorted[sorted.length - 1]).toISOString() : "",
+      guestId,
+      preview,
+      connectionText: `${spaceText} / ${envText}`,
+      warnings
+    };
+  }
+  function buildErModelFromOfflineSource(source, rawAppId) {
+    const appId = Number(rawAppId);
+    const bundle = source.bundles.get(appId);
+    if (!bundle) return null;
+    const sections = bundle.sections && typeof bundle.sections === "object" ? bundle.sections : {};
+    const missing = (key) => {
+      if (hasOwn2(sections, key)) return void 0;
+      const label = ER_OFFLINE_SECTIONS.find(([k]) => k === key)?.[1] || key;
+      return `読み込んだ設定JSONに${label}が含まれていません`;
+    };
+    const sourceGuestId = String(bundle.guestId ?? "").trim();
+    const fieldsMissing = missing("fieldSettings");
+    if (fieldsMissing) {
+      return buildFailedErAppModel(appId, new Error(`${fieldsMissing}（設定取得で「フィールド設定」を含めて保存してください）`), {
+        appInfoResponse: sections.appInfo,
+        sourceGuestId
+      });
+    }
+    try {
+      return buildErAppModel({
+        appId,
+        fieldsResponse: sections.fieldSettings,
+        appInfoResponse: sections.appInfo,
+        actionsResponse: sections.actionSettings,
+        appInfoError: missing("appInfo"),
+        actionsError: missing("actionSettings"),
+        sourceGuestId
+      });
+    } catch (e) {
+      return buildFailedErAppModel(appId, e, { appInfoResponse: sections.appInfo, sourceGuestId });
+    }
+  }
+  function listOfflineSpaceApps(source, spaceId) {
+    const id = String(spaceId || "").trim();
+    if (!id) return [];
+    return source.appIds.map((appId) => ({ appId, info: source.bundles.get(appId)?.sections?.appInfo })).filter(({ info }) => info && typeof info === "object" && String(info.spaceId ?? "") === id).map(({ appId, info }) => ({ appId: String(appId), name: typeof info.name === "string" ? info.name : "" }));
+  }
+  function describeOfflineFetchedAt(source, format) {
+    if (!source.fetchedAtFrom) return "取得日時不明";
+    const from = format(new Date(source.fetchedAtFrom));
+    const to = source.fetchedAtTo ? format(new Date(source.fetchedAtTo)) : from;
+    return from === to ? from : `${from}〜${to}`;
+  }
+
   // src/tabs/er.ts
   var ER_DEFAULTS = {
     maxFields: 220,
@@ -10196,12 +10382,19 @@ ${ctx.mainScript}
     const cache = /* @__PURE__ */ new Map();
     let reverseLookupIndex = null;
     const concurrency = resolveCrawlConcurrency(options);
-    const sleepMs = options?.sleepMs || ER_DEFAULTS.sleepMs;
+    const offline = options?.offlineSource || null;
+    const sleepMs = offline ? 0 : options?.sleepMs || ER_DEFAULTS.sleepMs;
+    const loadSchema = (appId) => {
+      if (!offline) return getSchema(appId, options, cache);
+      const key = Number(appId);
+      if (!cache.has(key)) cache.set(key, buildErModelFromOfflineSource(offline, key));
+      return Promise.resolve(cache.get(key));
+    };
     const seeds = [...new Set((Array.isArray(startIds) ? startIds : [startIds]).map((v) => Number(v)).filter((v) => Number.isFinite(v) && v > 0))];
     const apps = [];
     if (options?.includeReverseLookup) {
-      progressUi.update(3, "逆引き探索用に全アプリを走査中...");
-      const allApps = await fetchAllApps2(options);
+      progressUi.update(3, offline ? "逆引き探索用に読み込んだアプリを走査中..." : "逆引き探索用に全アプリを走査中...");
+      const allApps = offline ? offline.appIds.map((appId) => ({ appId })) : await fetchAllApps2(options);
       reverseLookupIndex = /* @__PURE__ */ new Map();
       const incomplete = [];
       options.reverseScan = { total: allApps.length, incomplete };
@@ -10210,9 +10403,10 @@ ${ctx.mainScript}
       const scan = await runOrdered(
         scanIds,
         concurrency,
-        Math.max(10, Math.floor(sleepMs / 4)),
-        (appId) => getSchema(appId, options, cache),
+        offline ? 0 : Math.max(10, Math.floor(sleepMs / 4)),
+        (appId) => loadSchema(appId),
         (appId, schema, i) => {
+          if (!schema) return;
           const relationIssues = (schema.issues || []).filter((issue) => issue.scope !== "metadata");
           if (schema.status === "failed" || schema.ok === false || relationIssues.length) {
             incomplete.push({ appId, status: schema.status, message: (relationIssues[0] || schema.issues?.[0])?.message || "" });
@@ -10249,8 +10443,9 @@ ${ctx.mainScript}
         level,
         concurrency,
         sleepMs,
-        (item) => getSchema(item.id, options, cache),
+        (item) => loadSchema(item.id),
         (item, a, i) => {
+          if (!a) return;
           const { id, depth } = item;
           a.depth = depth;
           apps.push(a);
@@ -10294,7 +10489,8 @@ ${ctx.mainScript}
       const reason = String(app?.issues?.[0]?.message || app?.issues?.[0]?.code || "原因不明").replace(/[。．.\s]+$/, "");
       return `起点アプリ ${id}${name}を取得できませんでした: ${reason}`;
     });
-    throw new Error(`ER図を作成できませんでした。${targets.join(" / ")}。アプリIDと閲覧権限を確認してください`);
+    const hint = options?.offlineSource ? "設定取得で「フィールド設定」を含めて保存した設定JSONか確認してください" : "アプリIDと閲覧権限を確認してください";
+    throw new Error(`ER図を作成できませんでした。${targets.join(" / ")}。${hint}`);
   };
   function formatErGeneratedAt(date) {
     const p = (n) => String(n).padStart(2, "0");
@@ -10326,8 +10522,12 @@ ${ctx.mainScript}
     });
     const data = safeJsonForScript(serializedApps);
     const reverseScanNote = describeReverseScan(options);
-    const generatedAt = options.generatedAt ? new Date(options.generatedAt) : /* @__PURE__ */ new Date();
-    const sourceHost = String(options.source?.host || (typeof location !== "undefined" && location && location.host ? location.host : ""));
+    const offline = options.offlineSource || null;
+    const offlineFrom = offline?.fetchedAtFrom ? new Date(offline.fetchedAtFrom) : null;
+    const generatedAt = offlineFrom || (options.generatedAt ? new Date(options.generatedAt) : /* @__PURE__ */ new Date());
+    const sourceHost = offline ? "" : String(options.source?.host || (typeof location !== "undefined" && location && location.host ? location.host : ""));
+    const offlineFetchedText = offline ? describeOfflineFetchedAt(offline, formatErGeneratedAt) : "";
+    const sourceLabel = offline ? `設定JSONから作成（${offlineFetchedText} 取得）` : "";
     const startAppIdList = (Array.isArray(options.startAppIds) ? options.startAppIds : [options.startAppId || ""]).map((v) => String(v)).filter(Boolean);
     const diagramOptions = safeJsonForScript({
       startAppId: options.startAppId || "",
@@ -10344,7 +10544,9 @@ ${ctx.mainScript}
       sourcePreview: !!options.source?.preview,
       sourceHost,
       generatedAt: generatedAt.toISOString(),
-      reverseScanNote
+      reverseScanNote,
+      // 設定JSONから作った図だけ「設定JSONから作成（取得日時）」を持つ（印刷・出力の見出しに出す）
+      ...sourceLabel ? { sourceLabel } : {}
     });
     const dependencyAnalysis = analyzeErDependencies(safeApps);
     const dependencyAnalysisData = safeJsonForScript(dependencyAnalysis);
@@ -10362,11 +10564,12 @@ ${ctx.mainScript}
     const spaceAppCount = erSpaceId ? safeApps.filter((app) => spaceAppIdSet.has(String(app?.id)) || String(app?.spaceId || "") === erSpaceId).length : 0;
     const densityLabel = densityLabelMap[options.fieldDensity || ER_DEFAULTS.fieldDensity] || String(options.fieldDensity || ER_DEFAULTS.fieldDensity || "-");
     const target = describeErTarget(safeApps, startAppIdList);
-    const connectionText = describeErConnection(options, sourceHost);
+    const connectionText = offline ? offline.connectionText : describeErConnection(options, sourceHost);
     const conditions = [
       ["起点", summarizeErStartIds(startAppIdList)],
+      ...offline ? [["取得元", `設定JSON${offline.fileName ? `「${offline.fileName}」` : ""}（${offline.appIds.length}アプリ。kintone には問い合わせていません）`]] : [],
       ["接続先", connectionText],
-      ["取得日時", formatErGeneratedAt(generatedAt)],
+      ["取得日時", offline ? offlineFetchedText : formatErGeneratedAt(generatedAt)],
       ["探索の深さ", options.maxDepth ? String(options.maxDepth) : "無制限"],
       ["逆引き探索", options.includeReverseLookup ? "ON" : "OFF"],
       ["サブテーブル", options.includeSubtableFields ? "ON" : "OFF"],
@@ -10390,6 +10593,7 @@ ${ctx.mainScript}
       targetText: target.text,
       targetTitle: target.title,
       generatedText: formatErGeneratedAt(generatedAt),
+      ...sourceLabel ? { sourceText: sourceLabel } : {},
       connectionText,
       libraryScripts: buildErLibraryScripts(),
       appCount: safeApps.length,
@@ -10491,13 +10695,31 @@ ${ctx.mainScript}
     const appId = normalizeIdInputText(opts.appId || "").trim();
     const spaceId = normalizeIdInputText(opts.spaceId || "").trim();
     const options = buildErCrawlOptions(opts);
-    await applySpaceToErOptions(opts, options, setStatus);
-    if (!options.startAppIds.length) throw new Error("対象アプリが見つかりませんでした");
+    const offline = opts?.offlineSource || null;
+    if (offline) {
+      options.offlineSource = offline;
+      options.source = { guestId: offline.guestId, preview: offline.preview };
+      await applySpaceToErOptions(spaceId ? { ...opts, spaceApps: listOfflineSpaceApps(offline, spaceId) } : opts, options, setStatus);
+    } else {
+      await applySpaceToErOptions(opts, options, setStatus);
+    }
+    if (!options.startAppIds.length) throw new Error(offline ? "起点にするアプリがありません。起点アプリIDか、読み込んだ設定にあるスペースIDを入れてください" : "対象アプリが見つかりませんでした");
+    if (offline) {
+      const missing = options.startAppIds.filter((id) => !offline.bundles.has(Number(id)));
+      if (missing.length) {
+        throw new Error(`起点アプリ ${missing.slice(0, 5).join(", ")}${missing.length > 5 ? ` ほか ${missing.length - 5} 件` : ""} は、読み込んだ設定JSONにありません。起点アプリIDを確かめるか、そのアプリを含む設定JSONを読み込んでください`);
+      }
+    }
     return options;
   }
   function erFilenameSuffix(opts, options) {
     const guestId = options?.source?.guestId || "";
-    return `${guestId ? `guest${guestId}_` : ""}${opts?.preview ? "プレビュー" : "本番"}`;
+    const preview = options?.offlineSource ? !!options.source?.preview : !!opts?.preview;
+    return `${guestId ? `guest${guestId}_` : ""}${preview ? "プレビュー" : "本番"}`;
+  }
+  function offlineNote(options) {
+    const offline = options?.offlineSource || null;
+    return offline ? `。設定JSON${offline.fileName ? `「${offline.fileName}」` : ""}から作成（kintone には問い合わせていません）` : "";
   }
   var isFailedErApp = (app) => app?.status === "failed" || app?.ok === false;
   function summarizeCrawl(apps, options) {
@@ -10542,7 +10764,7 @@ ${ctx.mainScript}
       popup.location.href = url;
       progressUi.close();
       const summary = summarizeCrawl(apps, options);
-      setStatus(summary.note ? `ER図を生成しました: ${apps.length}アプリ${summary.note}` : `ER図の生成完了: ${apps.length}アプリを別タブ表示しました`, summary.tone);
+      setStatus(summary.note ? `ER図を生成しました: ${apps.length}アプリ${summary.note}${offlineNote(options)}` : `ER図の生成完了: ${apps.length}アプリを別タブ表示しました${offlineNote(options)}`, summary.tone);
       setTimeout(() => URL.revokeObjectURL(url), 60 * 1e3);
     } catch (e) {
       try {
@@ -10575,7 +10797,7 @@ ${ctx.mainScript}
       );
       progressUi.close();
       const summary = summarizeCrawl(apps, options);
-      setStatus(summary.note ? `ER図HTMLを保存しました: ${apps.length}アプリ${summary.note}` : `ER図HTMLを保存しました (${apps.length}アプリ)`, summary.tone);
+      setStatus(summary.note ? `ER図HTMLを保存しました: ${apps.length}アプリ${summary.note}${offlineNote(options)}` : `ER図HTMLを保存しました (${apps.length}アプリ)${offlineNote(options)}`, summary.tone);
     } catch (e) {
       if (isCancelStop(e)) progressUi.dismiss();
       else progressUi.error(e.message || String(e));
@@ -10623,7 +10845,11 @@ ${ctx.mainScript}
       usedProgress = !fromBundles;
       if (usedProgress) progressUi.update(94, "Markdown仕様書データ生成中...");
       const analysis = analyzeErDependencies(apps);
-      const markdown = buildErMarkdownSpec(apps, analysis, { generatedAt: opts?.generatedAt });
+      const offline = options.offlineSource || null;
+      const markdown = buildErMarkdownSpec(apps, analysis, {
+        generatedAt: opts?.generatedAt,
+        ...offline ? { sourceNote: `設定JSON${offline.fileName ? `「${offline.fileName}」` : ""}から作成（${describeOfflineFetchedAt(offline, (d) => d.toLocaleString("ja-JP"))} 取得。kintone には問い合わせていません）` } : {}
+      });
       const baseName = options.startAppIds[0] || appId || (spaceId ? `space${spaceId}` : String(apps[0]?.id || "er"));
       const suffix = erFilenameSuffix(opts, options);
       if (opts?.download !== false) downloadText(
@@ -10633,7 +10859,7 @@ ${ctx.mainScript}
       );
       if (usedProgress) progressUi.close();
       const summary = summarizeCrawl(apps, options);
-      setStatus(summary.note ? `ER図仕様書を保存しました: ${apps.length}アプリ${summary.note}` : `ER図仕様書を保存しました (${apps.length}アプリ)`, summary.tone);
+      setStatus(summary.note ? `ER図仕様書を保存しました: ${apps.length}アプリ${summary.note}${offlineNote(options)}` : `ER図仕様書を保存しました (${apps.length}アプリ)${offlineNote(options)}`, summary.tone);
       return { apps, analysis, markdown };
     } catch (e) {
       if (usedProgress) {
@@ -10662,7 +10888,7 @@ ${ctx.mainScript}
       );
       if (usedProgress) progressUi.close();
       const summary = summarizeCrawl(apps, options);
-      setStatus(summary.note ? `ER図Mermaidを保存しました: ${apps.length}アプリ${summary.note}` : `ER図Mermaidを保存しました (${apps.length}アプリ)`, summary.tone);
+      setStatus(summary.note ? `ER図Mermaidを保存しました: ${apps.length}アプリ${summary.note}${offlineNote(options)}` : `ER図Mermaidを保存しました (${apps.length}アプリ)${offlineNote(options)}`, summary.tone);
       return { apps, mermaid };
     } catch (e) {
       if (usedProgress) {
@@ -10691,7 +10917,7 @@ ${ctx.mainScript}
       );
       if (usedProgress) progressUi.close();
       const summary = summarizeCrawl(apps, options);
-      setStatus(summary.note ? `ER図リレーション一覧CSVを保存しました: ${apps.length}アプリ${summary.note}` : `ER図リレーション一覧CSVを保存しました (${apps.length}アプリ)`, summary.tone);
+      setStatus(summary.note ? `ER図リレーション一覧CSVを保存しました: ${apps.length}アプリ${summary.note}${offlineNote(options)}` : `ER図リレーション一覧CSVを保存しました (${apps.length}アプリ)${offlineNote(options)}`, summary.tone);
       return { apps, csv };
     } catch (e) {
       if (usedProgress) {
@@ -11017,6 +11243,37 @@ ${ctx.mainScript}
     return details;
   }
 
+  // src/archive/crc32.ts
+  var crcTable = null;
+  function getCrcTable() {
+    if (crcTable) return crcTable;
+    const table = new Uint32Array(256);
+    for (let i = 0; i < 256; i += 1) {
+      let value = i;
+      for (let bit = 0; bit < 8; bit += 1) {
+        value = value & 1 ? 3988292384 ^ value >>> 1 : value >>> 1;
+      }
+      table[i] = value >>> 0;
+    }
+    crcTable = table;
+    return table;
+  }
+  var CRC32_INITIAL = 4294967295;
+  function crc32Update(state3, bytes) {
+    const table = getCrcTable();
+    let crc = state3;
+    for (let i = 0; i < bytes.length; i += 1) {
+      crc = table[(crc ^ bytes[i]) & 255] ^ crc >>> 8;
+    }
+    return crc >>> 0;
+  }
+  function crc32Finish(state3) {
+    return (state3 ^ 4294967295) >>> 0;
+  }
+  function crc32(bytes) {
+    return crc32Finish(crc32Update(CRC32_INITIAL, bytes));
+  }
+
   // src/archive/lite-zip.ts
   var LITE_ZIP_MAX_ENTRIES = 65535;
   var LITE_ZIP_MAX_BYTES = 4294967294;
@@ -11063,6 +11320,139 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
     return ["対象アプリ", connectionSummary(text, guest, environment)];
   }
 
+  // src/archive/zip-read.ts
+  var SIG_END = 101010256;
+  var SIG_CENTRAL = 33639248;
+  var SIG_LOCAL = 67324752;
+  var DEFAULT_MAX_TOTAL = 512 * 1024 * 1024;
+  function looksLikeZip(bytes) {
+    return bytes.length >= 4 && bytes[0] === 80 && bytes[1] === 75 && (bytes[2] === 3 && bytes[3] === 4 || bytes[2] === 5 && bytes[3] === 6);
+  }
+  async function inflateRaw(bytes, expectedSize) {
+    if (typeof DecompressionStream !== "function") throw new Error("このブラウザは ZIP の展開（deflate-raw）に対応していません。設定JSONを読み込んでください");
+    const reader = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw")).getReader();
+    const chunks = [];
+    let length = 0;
+    for (; ; ) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > expectedSize) {
+        await reader.cancel().catch(() => {
+        });
+        return null;
+      }
+      chunks.push(value);
+    }
+    const out = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) {
+      out.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return out;
+  }
+  async function readZipEntries(bytes, options = {}) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const u16 = (offset) => view.getUint16(offset, true);
+    const u32 = (offset) => view.getUint32(offset, true);
+    let end = -1;
+    for (let pos2 = bytes.length - 22; pos2 >= Math.max(0, bytes.length - 22 - 65535); pos2 -= 1) {
+      if (u32(pos2) === SIG_END) {
+        end = pos2;
+        break;
+      }
+    }
+    if (end < 0) throw new Error("ZIP の終端が見つかりません（ZIP ファイルではないか、壊れています）");
+    const count = u16(end + 10);
+    const centralOffset = u32(end + 16);
+    if (count === 65535 || centralOffset === 4294967295) throw new Error("ZIP64 形式の ZIP には対応していません");
+    if (count > (options.maxEntries ?? 65535)) throw new Error(`ZIP のファイル数（${count}）が多すぎます`);
+    const decoder = new TextDecoder("utf-8");
+    const maxTotal = options.maxTotalBytes ?? DEFAULT_MAX_TOTAL;
+    const entries = [];
+    let total = 0;
+    let pos = centralOffset;
+    for (let i = 0; i < count; i += 1) {
+      if (pos + 46 > bytes.length || u32(pos) !== SIG_CENTRAL) throw new Error("ZIP の中央ディレクトリが壊れています");
+      const flags = u16(pos + 8);
+      const method = u16(pos + 10);
+      const crc = u32(pos + 16);
+      const compressedSize = u32(pos + 20);
+      const size = u32(pos + 24);
+      const nameLength = u16(pos + 28);
+      const extraLength = u16(pos + 30);
+      const commentLength = u16(pos + 32);
+      const localOffset = u32(pos + 42);
+      const name = decoder.decode(bytes.subarray(pos + 46, pos + 46 + nameLength));
+      pos += 46 + nameLength + extraLength + commentLength;
+      if (name.endsWith("/")) {
+        entries.push({ name, data: new Uint8Array(0) });
+        continue;
+      }
+      if (options.include && !options.include(name)) continue;
+      if (flags & 1) throw new Error(`暗号化された ZIP には対応していません（${name}）`);
+      if (method !== 0 && method !== 8) throw new Error(`未対応の圧縮方式です（${name}・方式 ${method}）`);
+      total += size;
+      if (total > maxTotal) throw new Error("ZIP の展開後の大きさが上限を超えます");
+      if (localOffset + 30 > bytes.length || u32(localOffset) !== SIG_LOCAL) throw new Error(`ZIP のファイル「${name}」の位置が壊れています`);
+      const dataStart = localOffset + 30 + u16(localOffset + 26) + u16(localOffset + 28);
+      if (dataStart + compressedSize > bytes.length) throw new Error(`ZIP のファイル「${name}」が途中で切れています`);
+      const raw = bytes.subarray(dataStart, dataStart + compressedSize);
+      const data = method === 8 ? await inflateRaw(raw, size) : raw.slice();
+      if (!data || data.length !== size || crc32(data) !== crc) throw new Error(`ZIP のファイル「${name}」の内容が壊れています（大きさ・CRC が一致しません）`);
+      entries.push({ name, data });
+    }
+    return entries;
+  }
+
+  // src/settingsZipImport.ts
+  var isBundle = (value) => !!value && typeof value === "object" && !Array.isArray(value) && !!value.sections && typeof value.sections === "object";
+  async function readSettingsZip(bytes) {
+    const entries = await readZipEntries(bytes, { include: (name) => /\.json$/i.test(name) });
+    const decoder = new TextDecoder("utf-8");
+    const jsonByName = new Map(entries.filter((entry) => !entry.name.endsWith("/")).map((entry) => [entry.name, entry.data]));
+    const parse = (name) => {
+      try {
+        return JSON.parse(decoder.decode(jsonByName.get(name)));
+      } catch {
+        throw new Error(`ZIP 内の「${name}」を JSON として読み込めません`);
+      }
+    };
+    const warnings = [];
+    const bundles = [];
+    const files = [];
+    const manifest = jsonByName.has("manifest.json") ? parse("manifest.json") : null;
+    const listed = Array.isArray(manifest?.apps) ? manifest.apps.map((app) => String(app?.file || "")).filter(Boolean) : [];
+    if (listed.length) {
+      const missing = [];
+      for (const name of listed) {
+        if (!jsonByName.has(name)) {
+          missing.push(name);
+          continue;
+        }
+        const bundle = parse(name);
+        if (!isBundle(bundle)) {
+          missing.push(name);
+          continue;
+        }
+        bundles.push(bundle);
+        files.push(name);
+      }
+      if (missing.length) warnings.push(`manifest.json にある ${missing.length} 件の設定JSONを ZIP から読み込めませんでした（${missing.slice(0, 3).join("、")}${missing.length > 3 ? " ほか" : ""}）`);
+    } else {
+      for (const name of [...jsonByName.keys()].filter((key) => key !== "manifest.json").sort()) {
+        const value = parse(name);
+        if (isBundle(value)) {
+          bundles.push(value);
+          files.push(name);
+        }
+      }
+    }
+    if (!bundles.length) throw new Error("ZIP 内に設定JSONが見つかりません。設定取得の「設定をZIPで保存」で保存した ZIP か確認してください");
+    return { raw: { bundles }, files, warnings };
+  }
+
   // src/entries/er-lite-ui.ts
   function mountErLitePanel() {
     const panel = createLitePanel({
@@ -11077,6 +11467,12 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
     const appInp = makeInput({ placeholder: "アプリID（複数はカンマ区切り）", value: DEFAULT_APP_ID || "", width: "wide", idInput: true });
     const guestInp = makeInput({ placeholder: "ゲストID（任意）", value: DEFAULT_GUEST_ID, width: "guest", idInput: true });
     cardMain.body.appendChild(makeRow([appInp, guestInp], { label: "起点ID" }));
+    const offlineBadge = document.createElement("div");
+    offlineBadge.className = "kus-lp__pill kus-lp__pill--ok";
+    offlineBadge.setAttribute("data-er-offline", "");
+    offlineBadge.style.overflowWrap = "anywhere";
+    offlineBadge.hidden = true;
+    cardMain.body.appendChild(offlineBadge);
     cardMain.body.appendChild(createAppSearchControl(panel, {
       guestEl: guestInp,
       targets: [{
@@ -11173,7 +11569,8 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
       footer: (selected, total) => `スペース #${pickerSpaceId} のアプリ ${total}件中 ${selected}件を起点にします。${selected ? "" : "1件以上選ぶか、起点IDを入力してください。"}`
     });
     let spaceAppsCache = null;
-    const spaceCacheKey = () => `${normalizeIdInputText(spaceInp.value).trim()}|${normalizeIdInputText(guestInp.value).trim()}`;
+    let offlineSource = null;
+    const spaceCacheKey = () => `${offlineSource ? `json:${offlineSource.fileName}|` : ""}${normalizeIdInputText(spaceInp.value).trim()}|${normalizeIdInputText(guestInp.value).trim()}`;
     function renderSpacePicker(spaceId, apps) {
       pickerSpaceId = spaceId;
       spacePicker.setItems(apps.map((a) => ({ value: String(a.appId), label: a.name || `アプリ ${a.appId}`, sub: `#${a.appId}`, checked: true })));
@@ -11190,12 +11587,15 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
       let apps;
       if (spaceAppsCache && spaceAppsCache.key === key) {
         apps = spaceAppsCache.apps;
+      } else if (offlineSource) {
+        apps = listOfflineSpaceApps(offlineSource, spaceId);
+        spaceAppsCache = { key, apps };
       } else {
         apps = await fetchAppsInSpace(spaceId, normalizeIdInputText(guestInp.value).trim());
         spaceAppsCache = { key, apps };
       }
       renderSpacePicker(spaceId, apps);
-      panel.setStatus(`スペース ${spaceId} のアプリ ${apps.length}件を読み込みました。起点にするアプリを選択してください`, "info");
+      panel.setStatus(`スペース ${spaceId} のアプリ ${apps.length}件を${offlineSource ? "読み込んだ設定JSONから探しました" : "読み込みました"}。起点にするアプリを選択してください`, "info");
     }
     spaceLoadBtn.addEventListener("click", () => liteRun(panel, "スペース内アプリを取得中…", loadSpaceApps));
     details.body.appendChild(makeRow(extra, { label: "追加起点" }));
@@ -11210,6 +11610,67 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
       return normalizeIdInputText(value || "").split(/[\s,，]+/).map((v) => v.trim()).filter(Boolean);
     }
     panel.body.insertBefore(details.card, panel.status);
+    const importCard = makeCard({ title: "設定JSON・ZIP から作る（任意）", soft: true });
+    importCard.body.appendChild(makeNote("「設定取得」で保存した設定JSON（「設定をZIPで保存」の ZIP も可）を読み込むと、kintone に問い合わせず、ファイルにあるアプリの設定（フィールド・ルックアップ・関連レコード一覧・アクション）から図を作ります。読み込んだ中に無い参照先は「未取得の参照先」として出ます。読み込むと、起点を読み込んだすべてのアプリにします（起点・探索の深さ・逆引きはあとから変えられます）。", "help"));
+    const importFile = document.createElement("input");
+    importFile.type = "file";
+    importFile.accept = ".json,.zip,application/json,application/zip";
+    importFile.className = "kus-lp__file";
+    importFile.setAttribute("aria-label", "設定JSON・ZIP を読み込む");
+    const clearImportBtn = makeButton("読込解除", "ghost");
+    const importStatus = document.createElement("span");
+    importStatus.className = "kus-lp__pill";
+    importStatus.style.overflowWrap = "anywhere";
+    importStatus.setAttribute("data-import-status", "empty");
+    importStatus.textContent = "設定JSON: 未読込";
+    importCard.body.appendChild(makeRow(importFile, { label: "設定JSON" }));
+    importCard.body.appendChild(makeRow([clearImportBtn, importStatus]));
+    panel.body.insertBefore(importCard.card, panel.status);
+    function syncOfflineState() {
+      const loaded = offlineSource;
+      importStatus.className = loaded ? "kus-lp__pill kus-lp__pill--ok" : "kus-lp__pill";
+      importStatus.setAttribute("data-import-status", loaded ? "loaded" : "empty");
+      importStatus.textContent = loaded ? `読込中: ${loaded.fileName}（${loaded.appIds.length}アプリ）` : "設定JSON: 未読込";
+      offlineBadge.hidden = !loaded;
+      offlineBadge.textContent = loaded ? `設定JSON「${loaded.fileName}」の ${loaded.appIds.length}アプリから作ります（kintone に問い合わせません）` : "";
+      prevCb.checkbox.disabled = !!loaded;
+      prevCb.label.title = loaded ? "設定JSONから作るときは、読み込んだ設定の取得環境のとおりになります" : "";
+      spacePicker.clear();
+      importCard.card.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    importFile.addEventListener("change", () => {
+      void liteRun(panel, "設定JSONを読み込み中…", async () => {
+        const file = importFile.files?.[0];
+        if (!file) return;
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        let raw;
+        const warnings = [];
+        if (looksLikeZip(bytes)) {
+          const zip = await readSettingsZip(bytes);
+          raw = zip.raw;
+          warnings.push(...zip.warnings);
+        } else {
+          try {
+            raw = JSON.parse(new TextDecoder("utf-8").decode(bytes));
+          } catch {
+            throw new Error("設定JSONとして読み込めません。設定取得で保存した JSON または ZIP か確認してください");
+          }
+        }
+        const loaded = buildErOfflineSource(raw, file.name);
+        warnings.push(...loaded.warnings);
+        offlineSource = loaded;
+        appInp.value = loaded.appIds.join(", ");
+        appInp.dispatchEvent(new Event("input", { bubbles: true }));
+        panel.setStatus(`設定JSON「${file.name}」から${loaded.appIds.length}アプリの設定を読み込みました。起点を読み込んだ${loaded.appIds.length}アプリにしました（それまでの起点は置き換えました）。kintone には問い合わせずに図を作ります${warnings.length ? `。注意: ${warnings.join("。")}` : ""}`, warnings.length ? "warn" : "ok");
+      }).then(() => syncOfflineState());
+    });
+    clearImportBtn.addEventListener("click", () => {
+      const wasLoaded = !!offlineSource;
+      offlineSource = null;
+      importFile.value = "";
+      syncOfflineState();
+      panel.setStatus(wasLoaded ? "設定JSONの読込を解除しました。kintone から設定を読み取って図を作ります" : "読み込んでいる設定JSONはありません", "info");
+    });
     function source() {
       const spaceId = normalizeIdInputText(spaceInp.value).trim();
       const cacheHit = !!(spaceAppsCache && spaceAppsCache.key === spaceCacheKey());
@@ -11228,7 +11689,8 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
         extraAppIds: parseAppIds(extra.value),
         spaceId,
         spaceApps: cacheHit ? spaceAppsCache.apps : void 0,
-        spaceSelectedAppIds: selectedIds ?? void 0
+        spaceSelectedAppIds: selectedIds ?? void 0,
+        offlineSource: offlineSource || void 0
       };
     }
     bOpen.addEventListener("click", () => liteRun(panel, "ER 図を生成中…", async () => {
@@ -11264,8 +11726,10 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
     guestInp.setAttribute("aria-label", "ゲストスペースID");
     const erSummary = () => [
       // 起点が複数のときは件数と先頭 20 件までを示す（全アプリを起点にしても確認画面が数千行にならない）
-      ["起点", recordTargetSummary(appInp.value, guestInp.value)[1]],
-      ["参照環境", prevCb.checkbox.checked ? "プレビュー環境を参照" : "本番環境"],
+      ["起点", recordTargetSummary(appInp.value, guestInp.value, offlineSource ? "設定JSON" : prevCb.checkbox.checked ? "プレビュー" : "本番")[1]],
+      // 取得元は、設定JSONから作るときだけ示す（kintone から読むときの確認画面は今までどおり）
+      ...offlineSource ? [["取得元", `読み込んだ設定JSON「${offlineSource.fileName}」（${offlineSource.appIds.length}アプリ）。kintone には問い合わせません`]] : [],
+      ["参照環境", offlineSource ? `設定JSONのとおり（${offlineSource.connectionText}）` : prevCb.checkbox.checked ? "プレビュー環境を参照" : "本番環境"],
       ["追加起点", extra.value.trim() || "なし"],
       ["スペース", (() => {
         const spaceId = spaceInp.value.trim();
@@ -11275,14 +11739,14 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
       })()],
       ["探索の深さ", !depthInp.value.trim() || Number(depthInp.value) === 0 ? "無制限（関連アプリを最後まで探索します）" : depthInp.value.trim()],
       ["表示", (layoutSel.selectedOptions[0]?.textContent || "") + " / " + (densitySel.selectedOptions[0]?.textContent || "")],
-      ["逆引き", reverseCb.checkbox.checked ? "逆引きあり（テナント内のアプリを走査するため時間がかかる場合があります）" : "なし"],
+      ["逆引き", reverseCb.checkbox.checked ? offlineSource ? "逆引きあり（読み込んだアプリの中から探します）" : "逆引きあり（テナント内のアプリを走査するため時間がかかる場合があります）" : "なし"],
       ...parseAppIds(appInp.value).length >= 50 ? [["起点が多い場合", `${parseAppIds(appInp.value).length}アプリを起点に、設定を数アプリずつ並行して読み取ります。数百アプリを超えると数分かかり、図やHTMLも大きくなります。途中で「中止」できます。`]] : []
     ];
     const erProblem = () => validateErOptions(source());
     installLiteWorkflow(panel, {
       setup: [cardMain.card, presetCard.card],
-      advanced: [details.card],
-      advancedCopy: "追加起点・スペースID・レイアウト・表示密度・探索の深さ・サブテーブル・逆引きを変えるときはこちら。",
+      advanced: [details.card, importCard.card],
+      advancedCopy: "追加起点・スペースID・レイアウト・表示密度・探索の深さ・サブテーブル・逆引きを変える、設定JSON・ZIP から作るときはこちら。",
       actions: [
         { id: "open", label: "ER図を開く", description: "関連アプリの設定を読み取り、アプリ同士のつながりを別画面の図で表示します。", button: bOpen, validate: erProblem, summary: erSummary },
         { id: "save", label: "ER図をHTMLで保存", description: "選んだ条件のER図を、共有できるHTMLファイルとして保存します。", button: bSave, validate: erProblem, summary: erSummary },

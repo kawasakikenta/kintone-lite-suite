@@ -538,7 +538,7 @@ COMPOSITE_ARRAY_RULES のパス正規表現
 | プレビュー反映（計画・事前検査・適用・結果・JS/CSS 転送・未公開の変更・順次反映） | `src/reflect/standalonePlan.ts`、`standalonePreflight.ts`、`applyOutcome.ts`、`changeSummary.ts`、`customizeFiles.ts`、`targetPending.ts`、`rolloutQueue.ts`、`planReport.ts`、`src/tabs/reflect-standalone.ts` | `tests/reflect/*.test.ts`（22 ファイル）、`run-reflect-lite-dom.cjs` |
 | フィールド追加・JS/CSS 設定（revision ガード） | `src/tabs/field-standalone.ts`、`jsconfig-standalone.ts` | `tests/field/*.test.ts`、`tests/jsconfig/*.test.ts` |
 | 設計書（Excel / Markdown / AI 向け） | `src/tabs/design*.ts`、`src/design/snapshot.ts`、`ai-markdown.ts` | `tests/design/*.test.ts`（11 ファイル） |
-| ER 図・構造分析 | `src/tabs/er.ts`、`er-model.ts`、`er-analysis.ts`、`er-standalone.ts`、`er-viewer/`（図の HTML の画面） | `tests/er-*.test.ts`、`run-er-diagram-compare.cjs`、`er-explore.cjs` |
+| ER 図・構造分析 | `src/tabs/er.ts`、`er-model.ts`、`er-analysis.ts`、`er-standalone.ts`、`er-offline.ts`（設定JSON・ZIP から作る）、`er-viewer/`（図の HTML の画面） | `tests/er-*.test.ts`、`run-er-diagram-compare.cjs`、`er-explore.cjs` |
 | レコード系（クエリ・CSV・品質・ひな形） | `src/tabs/record*.ts`、`src/kintone-query.ts` | `tests/record/*.test.ts`（14 ファイル）、`run-record-metadata-dom.cjs`、`run-record-quality-dom.cjs` |
 | 共通パネル・ワークフロー・アプリ検索 | `src/entries/litePanelTheme.ts`、`liteWorkflow.ts`、`appSearchControl.ts` | `run-lite-shared-dom.cjs`、`run-lite-workflows-dom.cjs` |
 | ビルド・エントリ定義・ストレージ禁止検査 | `build.js`、`src/featureDefs.mjs`、`scripts/check-no-browser-storage.cjs` | CI `verify`（`npm run check` ＋ `git diff --exit-code`） |

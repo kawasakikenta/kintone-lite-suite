@@ -13,12 +13,14 @@
 //   - 表のビュー（アプリ一覧・関連一覧）、印刷の資料、配色（OS の設定・切り替え・コントラスト）。
 //   - 以前の版で保存した編集状態（er-edit-state-v1.json・このリポジトリの以前の版で保存した er-edit-state-v1-lite.json）を
 //     新しい版の図で開き直したときの復元と、保存し直し。
+//   - 設定取得の ZIP（合成 kintone の設定から作る）を読み込んで、kintone に問い合わせずに図を作る。
 //   - 出力（PNG・Mermaid・draw.io・PlantUML・SQL DDL・JSON・Markdown・CSV 3 種）の中身。
 //   - 320〜1440px のはみ出し（スマホ幅の表・メニュー・引き出し）、キーボード操作。
 //
 // 画面と出力は .iter-shots/er-explore/ に保存する。失敗した検査は最後に一覧し、1 件でもあれば失敗にする。
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const zlib = require('node:zlib');
 const path = require('node:path');
 const { chromium } = require('playwright');
 const { buildFixture } = require('./er-explore-fixture.cjs');
@@ -142,6 +144,59 @@ async function launch() {
 }
 
 // ---------------------------------------------------------------------------
+// 設定取得の保存形式（設定JSON・ZIP）を、合成 kintone の設定から作る
+// ---------------------------------------------------------------------------
+// 設定取得は応答のキーを並べ替えて保存する（normalizeSettingsSection）。同じように並べ替え、項目と関連の並びが kintone の応答と違う設定にする
+const sortKeys = (value) => (Array.isArray(value) ? value.map(sortKeys)
+  : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, sortKeys(value[key])])) : value);
+function settingsBundles(fixture, appIds, fetchedAt) {
+  return appIds.map((id) => {
+    const app = fixture.apps[id];
+    return {
+      appId: app.id, guestId: '', preview: false, fetchedAt, meta: { sectionRevisions: {} },
+      sections: {
+        appInfo: { appId: app.id, code: '', name: app.name, description: app.description, spaceId: app.spaceId, threadId: null },
+        fieldSettings: app.failFields ? { _fetchError: app.failFields } : sortKeys({ properties: app.fields }),
+        actionSettings: sortKeys({ actions: app.actions })
+      }
+    };
+  });
+}
+// 圧縮なし（STORE）の ZIP。設定取得の「設定をZIPで保存」と同じく manifest.json とアプリごとの設定 JSON を入れる
+function storedZip(files) {
+  const locals = [];
+  const centrals = [];
+  let offset = 0;
+  for (const file of files) {
+    const name = Buffer.from(file.name, 'utf8');
+    const data = Buffer.from(file.data, 'utf8');
+    const crc = zlib.crc32(data);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(0x0800, 6);
+    local.writeUInt32LE(crc, 14); local.writeUInt32LE(data.length, 18); local.writeUInt32LE(data.length, 22); local.writeUInt16LE(name.length, 26);
+    locals.push(local, name, data);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(20, 4); central.writeUInt16LE(20, 6); central.writeUInt16LE(0x0800, 8);
+    central.writeUInt32LE(crc, 16); central.writeUInt32LE(data.length, 20); central.writeUInt32LE(data.length, 24); central.writeUInt16LE(name.length, 28);
+    central.writeUInt32LE(offset, 42);
+    centrals.push(central, name);
+    offset += 30 + name.length + data.length;
+  }
+  const directory = Buffer.concat(centrals);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(files.length, 8); end.writeUInt16LE(files.length, 10);
+  end.writeUInt32LE(directory.length, 12); end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, directory, end]);
+}
+function writeSettingsZip(fixture, appIds, fetchedAt, file) {
+  const bundles = settingsBundles(fixture, appIds, fetchedAt);
+  const entries = bundles.map((bundle) => ({ name: `${bundle.sections.appInfo.name.slice(0, 20)}(${bundle.appId})_本番.json`, data: JSON.stringify(bundle) }));
+  const manifest = { apps: entries.map((entry, i) => ({ appId: bundles[i].appId, file: entry.name })) };
+  fs.writeFileSync(file, storedZip([{ name: 'manifest.json', data: JSON.stringify(manifest) }, ...entries]));
+  return file;
+}
+
+// ---------------------------------------------------------------------------
 // 生成（パネルの操作）
 // ---------------------------------------------------------------------------
 const setValue = (locator, value) => locator.evaluate((element, v) => {
@@ -164,6 +219,11 @@ async function generateHtml(browser, fixture, spec) {
   await page.addScriptTag({ content: fs.readFileSync(TOOL_FILE, 'utf8') });
   const root = page.locator('#kus-er-lite');
   await root.waitFor({ state: 'visible', timeout: 15000 });
+  if (spec.settingsFile) {
+    // 設定JSON・ZIP は詳細設定のポップアップにある。読み込むと起点が読み込んだ全アプリになり、kintone に問い合わせずに作る
+    await page.locator('input[type=file][aria-label="設定JSON・ZIP を読み込む"]').setInputFiles(spec.settingsFile);
+    await page.waitForFunction(() => document.querySelector('[data-import-status="loaded"]'), null, { timeout: 15000 });
+  }
   await root.locator('.kus-lp__row').filter({ hasText: '起点ID' }).first().locator('input').first().fill(spec.ids.join(','));
   await setValue(root.locator('select').filter({ has: page.locator('option[value="dagre"]') }).first(), spec.layout || 'dagre');
   await setValue(root.locator('select').filter({ has: page.locator('option[value="full"]') }).first(), spec.density || 'standard');
@@ -175,6 +235,8 @@ async function generateHtml(browser, fixture, spec) {
   await root.getByRole('radio', { name: 'ER図をHTMLで保存', exact: true }).check();
   await root.getByRole('button', { name: '内容を確認する', exact: true }).click();
   const downloadPromise = page.waitForEvent('download', { timeout: spec.cancelAfterMs ? 3000 : 120000 });
+  const callsBefore = await page.evaluate(() => window.__ER_CALLS__.length);
+  const loadStatus = spec.settingsFile ? String(await root.locator('[data-er-offline]').innerText().catch(() => '')) : '';
   const started = Date.now();
   await root.getByRole('button', { name: 'ER図をHTMLで保存', exact: true }).click();
   if (spec.cancelAfterMs) {
@@ -194,8 +256,9 @@ async function generateHtml(browser, fixture, spec) {
   const elapsedMs = Date.now() - started;
   const status = String(await root.locator('.kus-lp__status').first().innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
   const peak = await page.evaluate(() => window.__ER_STATE__.peak);
+  const requests = await page.evaluate((before) => window.__ER_CALLS__.length - before, callsBefore);
   await context.close();
-  return { file, elapsedMs, status, errors, peakRequests: peak, html: fs.readFileSync(file, 'utf8') };
+  return { file, elapsedMs, status, errors, peakRequests: peak, requests, loadStatus, html: fs.readFileSync(file, 'utf8') };
 }
 
 // ---------------------------------------------------------------------------
@@ -279,7 +342,9 @@ async function main() {
     const specs = [
       { name: 'business', ids: ['113'], depth: 0, latency: 15 },
       { name: 'all', ids: allIds, depth: 0 },
-      { name: 'depth1', ids: ['113'], depth: 1 }
+      { name: 'depth1', ids: ['113'], depth: 1 },
+      // 設定取得の ZIP から作る。商品マスタ(104)・社員マスタ(111) の設定は入れない（未取得の参照先になる）
+      { name: 'offline', ids: ['113'], depth: 0, settingsFile: writeSettingsZip(fixture, allIds.filter((id) => id !== '104' && id !== '111'), '2026-11-20T01:39:00.000Z', path.join(OUT, '設定一括取得_合成.zip')) }
     ];
     for (const spec of specs) {
       if (!shouldRun('generate') && !shouldRun(spec.name) && only) { /* 後続の検査が使う図は常に作る */ }
@@ -305,6 +370,35 @@ async function main() {
       assert.match(generated.depth1.status, /9アプリ/);
       assert.deepEqual(generated.depth1.errors, []);
       return generated.depth1.status;
+    });
+    await check('generate: 設定取得の ZIP から作る図は kintone に問い合わせず、見出しに「設定JSONから作成」を出す', async () => {
+      const g = generated.offline;
+      assert.match(g.loadStatus, /設定JSON「設定一括取得_合成\.zip」の 37アプリから作ります（kintone に問い合わせません）/);
+      assert.equal(g.requests, 0, `設定JSONから作るのに kintone へ ${g.requests} 件問い合わせました`);
+      assert.match(g.status, /ER図HTMLを保存しました.*設定JSON「設定一括取得_合成\.zip」から作成（kintone には問い合わせていません）/);
+      assert.deepEqual(g.errors, []);
+      const meta = g.html.match(/<span class="brand-meta" title="設定JSONから作成[^"]*">([^<]*)<\/span>/)[1];
+      assert.match(meta, /^設定JSONから作成（2026\/11\/2\d \d\d:\d\d 取得） · 通常空間 \/ 本番$/);
+      assert.ok(!g.html.includes('mock.cybozu.com'), '設定JSONから作った図に、いま開いている kintone のホストを出しています');
+      const viewer = await openViewer(browser, g.file);
+      const state = await viewer.page.evaluate(() => ({
+        apps: APPS.length,
+        ghosts: cy.nodes('[?isGhost]').map((n) => n.data('targetAppId')).map(String).sort(),
+        failed: APPS.filter((a) => a.ok === false).map((a) => a.id),
+        print: (() => { const meta = buildPrintDocHtml(); return /取得元<\/dt><dd>設定JSONから作成/.test(meta); })()
+      }));
+      const problems = [...viewer.errors, ...viewer.blocked];
+      await viewer.page.screenshot({ path: path.join(OUT, 'offline.png'), animations: 'disabled' });
+      await viewer.context.close();
+      assert.deepEqual(problems, []);
+      // kintone から辿った図と同じアプリ数から、読み込まなかった 2 アプリを除いた数。読み込まなかったアプリは「未取得の参照先」になる
+      const businessAppList = JSON.parse(generated.business.html.match(/const APPS = (.*);\n/)[1]);
+      const businessApps = businessAppList.length;
+      assert.ok(state.ghosts.includes('104') && state.ghosts.includes('111'), `未取得の参照先: ${state.ghosts.join(',')}`);
+      assert.ok(state.apps < businessApps, `アプリ数 ${state.apps}（kintone から辿った図 ${businessApps}）`);
+      assert.deepEqual(state.failed, businessAppList.filter((a) => a.ok === false).map((a) => a.id), '取得に失敗したセクションは、kintone から辿った図と同じく取得失敗のアプリとして出す');
+      assert.equal(state.print, true, '印刷の見出しに取得元を出していません');
+      return `${state.apps}アプリ・未取得の参照先 ${state.ghosts.length}・問い合わせ ${g.requests} 件`;
     });
     await check('generate: 外部の通信なしで描画できる自己完結の HTML', async () => {
       for (const [name, g] of Object.entries(generated)) {

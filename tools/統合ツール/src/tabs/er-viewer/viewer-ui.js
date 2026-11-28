@@ -1455,6 +1455,7 @@ function buildPrintDocHtml(){
   const startNames=startIds.slice(0,8).map(id=>{const a=findApp(id);return a?a.name+"（App "+id+"）":"App "+id;});
   const meta=[
     ["対象（起点）",startNames.join("、")+(startIds.length>8?" ほか "+(startIds.length-8)+" 件":"")||"-"],
+    ...(ER_OPTIONS.sourceLabel?[["取得元",ER_OPTIONS.sourceLabel]]:[]),
     ["取得日時",ER_OPTIONS.generatedAt?new Date(ER_OPTIONS.generatedAt).toLocaleString("ja-JP"):"-"],
     ["印刷日時",new Date().toLocaleString("ja-JP")],
     ["接続先",printConnectionText()],

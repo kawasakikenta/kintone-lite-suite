@@ -149,6 +149,7 @@ tools/統合ツール/
 │       ├── jsconfig-standalone.ts         # JS/CSS設定
 │       ├── design-standalone.ts           # 設計書
 │       ├── er-standalone.ts               # ER図（図の HTML の生成は er.ts）
+│       ├── er-offline.ts                  # ER図を設定JSON・ZIP から作る（kintone に問い合わせない）
 │       ├── er-viewer/                     # ER図の HTML の画面（page.ts が骨組み、viewer.css と viewer-*.js を文字列で埋め込む）
 │       ├── process-standalone.ts          # プロセス図
 │       ├── settings-export-standalone.ts  # 設定一括取得

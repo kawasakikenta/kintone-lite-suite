@@ -10,6 +10,7 @@ import { analyzeErDependencies } from './er-analysis.js';
 import { buildErLibraryScripts, escapeInlineScriptSource } from './er-libraries.js';
 import { buildErAppModel, buildFailedErAppModel, ER_FIELD_TYPE_LABELS, ER_MD_MERMAID_MAX_CHARS } from './er-model.js';
 import { ER_VIEWER_SCRIPT, renderErViewerPage } from './er-viewer/page.js';
+import { buildErModelFromOfflineSource, describeOfflineFetchedAt, type ErOfflineSource } from './er-offline.js';
 
 const ER_DEFAULTS = {
   maxFields: 220,
@@ -246,21 +247,31 @@ export const crawl = async (startIds, options) => {
   const cache = new Map();
   let reverseLookupIndex = null;
   const concurrency = resolveCrawlConcurrency(options);
-  const sleepMs = options?.sleepMs || ER_DEFAULTS.sleepMs;
+  // 設定JSONから作るとき（options.offlineSource）は kintone に問い合わせず、読み込んだ設定からモデルを作る。
+  // 読み込んでいないアプリは null になり、図には入れない（関連の参照先は「未取得の参照先」になる）。
+  const offline: ErOfflineSource | null = options?.offlineSource || null;
+  const sleepMs = offline ? 0 : (options?.sleepMs || ER_DEFAULTS.sleepMs);
+  const loadSchema = (appId: number): Promise<any> => {
+    if (!offline) return getSchema(appId, options, cache);
+    const key = Number(appId);
+    if (!cache.has(key)) cache.set(key, buildErModelFromOfflineSource(offline, key));
+    return Promise.resolve(cache.get(key));
+  };
   // 数値化した上で Set デデュープ（"010" と "10" のような表記揺れでも二重取得しない）
   const seeds = [...new Set((Array.isArray(startIds) ? startIds : [startIds]).map((v) => Number(v)).filter((v) => Number.isFinite(v) && v > 0))];
   const apps = [];
   if (options?.includeReverseLookup) {
-    progressUi.update(3, '逆引き探索用に全アプリを走査中...');
-    const allApps = await fetchAllApps(options);
+    progressUi.update(3, offline ? '逆引き探索用に読み込んだアプリを走査中...' : '逆引き探索用に全アプリを走査中...');
+    const allApps = offline ? offline.appIds.map((appId) => ({ appId })) : await fetchAllApps(options);
     reverseLookupIndex = new Map();
     const incomplete: Array<{ appId: number; status: string; message: string }> = [];
     options.reverseScan = { total: allApps.length, incomplete };
     const scanIds = [...new Set(allApps.map((entry) => Number(entry?.appId)).filter((appId) => appId > 0))];
     const skipped = allApps.length - scanIds.length;
-    const scan = await runOrdered(scanIds, concurrency, Math.max(10, Math.floor(sleepMs / 4)),
-      (appId) => getSchema(appId, options, cache),
+    const scan = await runOrdered(scanIds, concurrency, offline ? 0 : Math.max(10, Math.floor(sleepMs / 4)),
+      (appId) => loadSchema(appId),
       (appId, schema, i) => {
+        if (!schema) return;
         const relationIssues = (schema.issues || []).filter((issue) => issue.scope !== 'metadata');
         if (schema.status === 'failed' || schema.ok === false || relationIssues.length) {
           incomplete.push({ appId, status: schema.status, message: (relationIssues[0] || schema.issues?.[0])?.message || '' });
@@ -295,8 +306,9 @@ export const crawl = async (startIds, options) => {
     };
     let levelCommitted = 0;
     const levelRun = await runOrdered(level, concurrency, sleepMs,
-      (item) => getSchema(item.id, options, cache),
+      (item) => loadSchema(item.id),
       (item, a, i) => {
+        if (!a) return;
         const { id, depth } = item;
         a.depth = depth;
         apps.push(a);
@@ -346,7 +358,10 @@ export const assertErAnalysed = (apps: any[], options: any = {}): void => {
     const reason = String(app?.issues?.[0]?.message || app?.issues?.[0]?.code || '原因不明').replace(/[。．.\s]+$/, '');
     return `起点アプリ ${id}${name}を取得できませんでした: ${reason}`;
   });
-  throw new Error(`ER図を作成できませんでした。${targets.join(' / ')}。アプリIDと閲覧権限を確認してください`);
+  const hint = options?.offlineSource
+    ? '設定取得で「フィールド設定」を含めて保存した設定JSONか確認してください'
+    : 'アプリIDと閲覧権限を確認してください';
+  throw new Error(`ER図を作成できませんでした。${targets.join(' / ')}。${hint}`);
 };
 
 /** 取得日時の表示（例: 2026/11/28 10:39）。 */
@@ -386,9 +401,14 @@ export const buildHTML = (apps, options: any = {}) => {
   });
   const data = safeJsonForScript(serializedApps);
   const reverseScanNote = describeReverseScan(options);
-  const generatedAt = options.generatedAt ? new Date(options.generatedAt) : new Date();
+  // 設定JSONから作ったときは、取得日時に読み込んだ設定の取得日時を使い、いま開いている kintone のホストは出さない
+  const offline: ErOfflineSource | null = options.offlineSource || null;
+  const offlineFrom = offline?.fetchedAtFrom ? new Date(offline.fetchedAtFrom) : null;
+  const generatedAt = offlineFrom || (options.generatedAt ? new Date(options.generatedAt) : new Date());
   // 接続先のホスト。kintone の画面で作るときだけ分かる（単体テストなどでは空）
-  const sourceHost = String(options.source?.host || (typeof location !== 'undefined' && location && location.host ? location.host : ''));
+  const sourceHost = offline ? '' : String(options.source?.host || (typeof location !== 'undefined' && location && location.host ? location.host : ''));
+  const offlineFetchedText = offline ? describeOfflineFetchedAt(offline, formatErGeneratedAt) : '';
+  const sourceLabel = offline ? `設定JSONから作成（${offlineFetchedText} 取得）` : '';
   const startAppIdList = (Array.isArray(options.startAppIds) ? options.startAppIds : [options.startAppId || '']).map((v) => String(v)).filter(Boolean);
   const diagramOptions = safeJsonForScript({
     startAppId: options.startAppId || '',
@@ -405,7 +425,9 @@ export const buildHTML = (apps, options: any = {}) => {
     sourcePreview: !!options.source?.preview,
     sourceHost,
     generatedAt: generatedAt.toISOString(),
-    reverseScanNote
+    reverseScanNote,
+    // 設定JSONから作った図だけ「設定JSONから作成（取得日時）」を持つ（印刷・出力の見出しに出す）
+    ...(sourceLabel ? { sourceLabel } : {})
   });
   const dependencyAnalysis = analyzeErDependencies(safeApps);
   const dependencyAnalysisData = safeJsonForScript(dependencyAnalysis);
@@ -425,11 +447,12 @@ export const buildHTML = (apps, options: any = {}) => {
     : 0;
   const densityLabel = densityLabelMap[options.fieldDensity || ER_DEFAULTS.fieldDensity] || String(options.fieldDensity || ER_DEFAULTS.fieldDensity || '-');
   const target = describeErTarget(safeApps, startAppIdList);
-  const connectionText = describeErConnection(options, sourceHost);
+  const connectionText = offline ? offline.connectionText : describeErConnection(options, sourceHost);
   const conditions: Array<[string, string]> = [
     ['起点', summarizeErStartIds(startAppIdList)],
+    ...(offline ? [['取得元', `設定JSON${offline.fileName ? `「${offline.fileName}」` : ''}（${offline.appIds.length}アプリ。kintone には問い合わせていません）`] as [string, string]] : []),
     ['接続先', connectionText],
-    ['取得日時', formatErGeneratedAt(generatedAt)],
+    ['取得日時', offline ? offlineFetchedText : formatErGeneratedAt(generatedAt)],
     ['探索の深さ', options.maxDepth ? String(options.maxDepth) : '無制限'],
     ['逆引き探索', options.includeReverseLookup ? 'ON' : 'OFF'],
     ['サブテーブル', options.includeSubtableFields ? 'ON' : 'OFF'],
@@ -453,6 +476,7 @@ export const buildHTML = (apps, options: any = {}) => {
     targetText: target.text,
     targetTitle: target.title,
     generatedText: formatErGeneratedAt(generatedAt),
+    ...(sourceLabel ? { sourceText: sourceLabel } : {}),
     connectionText,
     libraryScripts: buildErLibraryScripts(),
     appCount: safeApps.length,
