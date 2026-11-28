@@ -10427,6 +10427,13 @@ ${ER_VIEWER_CSS}
     ["actionSettings", "アクション設定"]
   ];
   var hasOwn2 = (record, key) => !!record && typeof record === "object" && Object.prototype.hasOwnProperty.call(record, key);
+  function offlineGuestId(bundle, appId) {
+    const text = normalizeIdInputText(bundle?.guestId ?? "").trim();
+    if (text && !/^\d+$/.test(text)) {
+      throw new Error(`設定JSONのゲストスペースIDが半角数字ではありません（App ${appId}: ${text.slice(0, 40)}）。設定取得で保存した JSON または ZIP か確認してください`);
+    }
+    return text;
+  }
   function buildErOfflineSource(raw, fileName = "") {
     const candidates = pickAllSettingsBundles(raw, void 0, true, true);
     const bundles = /* @__PURE__ */ new Map();
@@ -10450,7 +10457,7 @@ ${ER_VIEWER_CSS}
     }
     for (const appId of appIds) {
       const bundle = bundles.get(appId);
-      guestIds.add(String(bundle?.guestId ?? "").trim());
+      guestIds.add(offlineGuestId(bundle, appId));
       previews.add(bundle?.preview === true);
       const time = Date.parse(String(bundle?.fetchedAt ?? ""));
       if (Number.isFinite(time)) fetchedTimes.push(time);
@@ -10492,7 +10499,7 @@ ${ER_VIEWER_CSS}
       const label = ER_OFFLINE_SECTIONS.find(([k]) => k === key)?.[1] || key;
       return `読み込んだ設定JSONに${label}が含まれていません`;
     };
-    const sourceGuestId = String(bundle.guestId ?? "").trim();
+    const sourceGuestId = offlineGuestId(bundle, appId);
     const fieldsMissing = missing("fieldSettings");
     if (fieldsMissing) {
       return buildFailedErAppModel(appId, new Error(`${fieldsMissing}（設定取得で「フィールド設定」を含めて保存してください）`), {

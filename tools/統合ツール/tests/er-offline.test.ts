@@ -194,6 +194,24 @@ describe('ER図: 設定JSON・ZIP から作る', () => {
     expect(api).not.toHaveBeenCalled();
   });
 
+  it('設定のゲストスペースIDは数字だけを受け付ける（接続先の表示・ファイル名・図の Markdown に別の文字を入れない）', async () => {
+    const fields = { fieldSettings: { properties: {} } };
+    for (const guestId of ['![x](https://evil.example/p.png)', '5/../1', '5#', ' 5a', '<b>5</b>']) {
+      expect(() => buildErOfflineSource({ apps: [{ appId: '1', guestId, sections: fields }] }, 'g.json'), guestId)
+        .toThrow(/ゲストスペースIDが半角数字ではありません（App 1/);
+    }
+    // 数字・全角数字・数値・空は今までどおり読む（全角は半角にそろえる）
+    expect(buildErOfflineSource({ apps: [{ appId: '1', guestId: '５', sections: fields }] }).guestId).toBe('5');
+    expect(buildErOfflineSource({ apps: [{ appId: '1', guestId: 12, sections: fields }] }).connectionText).toBe('ゲストスペース 12 / 本番');
+    expect(buildErOfflineSource({ apps: [{ appId: '1', guestId: null, sections: fields }] }).guestId).toBe('');
+    // 図の HTML の接続先・取得条件にも、ほかの文字は入らない
+    const source = buildErOfflineSource({ apps: [{ appId: '1', guestId: '５', sections: { ...fields, appInfo: { appId: '1', name: 'A' } } }] }, 'g.json');
+    await runExportERDiagramHtmlStandalone({ appId: '1', offlineSource: source }, vi.fn());
+    const html = String(vi.mocked(downloadText).mock.calls.at(-1)![1]);
+    expect(html).toContain('"sourceGuestId":"5"');
+    expect(String(vi.mocked(downloadText).mock.calls.at(-1)![0])).toContain('guest5_');
+  });
+
   it('スペースIDは、読み込んだ設定のアプリ情報から探す', async () => {
     const api = installKintone();
     const saved = await exportSettingsJson(['1', '2', '3', '4']);
