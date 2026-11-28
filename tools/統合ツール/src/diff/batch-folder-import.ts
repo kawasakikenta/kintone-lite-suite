@@ -61,6 +61,28 @@ export interface DiffBatchFolderImportResult {
   manifestFileCount: number;
 }
 
+/** 1 回の選択（フォルダまたは ZIP）で読み込める上限。 */
+export const DIFF_BATCH_FOLDER_LIMITS = Object.freeze({
+  /** 全ファイル数（JSON 以外を含む） */
+  maxFiles: 2000,
+  /** JSON ファイル数（manifest.json を含む） */
+  maxJsonFiles: 500,
+  /** JSON の合計の大きさ（バイト） */
+  maxJsonBytes: 128 * 1024 * 1024
+});
+
+/**
+ * 件数・大きさが上限を超えるときの、利用者向けの理由を返す（超えなければ空文字）。
+ * label は「選択したフォルダ」など、何を選んだかを表す語。
+ */
+export function diffBatchFolderLimitIssue(counts: { files: number; jsonFiles: number; jsonBytes: number }, label: string): string {
+  if (counts.files > DIFF_BATCH_FOLDER_LIMITS.maxFiles || counts.jsonFiles > DIFF_BATCH_FOLDER_LIMITS.maxJsonFiles) {
+    return `${label}のファイル数が多すぎます（全体2,000件、JSON 500件まで）`;
+  }
+  if (counts.jsonBytes > DIFF_BATCH_FOLDER_LIMITS.maxJsonBytes) return `${label}のJSON合計サイズが128MBを超えています`;
+  return '';
+}
+
 export type DiffBatchFolderMatchKind = 'app-name' | 'app-id' | 'unpaired';
 
 export interface DiffBatchFolderMatchedPair {
