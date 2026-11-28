@@ -34,7 +34,8 @@ async function main() {
         if (method !== 'GET') {
           // 結果メッセージの確認用: writeMode が立っているときだけ、App 8 への書き込みを失敗させて他は成功させる
           if (!window.writeMode) throw new Error('書き込みは許可しないテストです');
-          if (window.writeMode === 'partial' && params.app === '8') throw new Error('権限がありません');
+          // kintone の拒否はエラー応答（code・id）を持つ。それが無い失敗は「書き込まれたか確認できない」と示すため、実際の形にする
+          if (window.writeMode === 'partial' && params.app === '8') throw Object.assign(new Error('権限がありません'), { code: 'CB_NO02', id: 'req-partial' });
           return {};
         }
         if (window.fail) throw new Error('権限不足のサンプル');

@@ -18,6 +18,11 @@ export interface ApplySectionOutcome {
   stopped?: boolean;
   /** 失敗した項目で、その前に書き込みが済んだ操作がある（項目の途中で止まった。反映先プレビューに一部が残る）。 */
   partiallyWritten?: boolean;
+  /**
+   * 書き込みの応答が届かず、反映されたか分からない項目（status は ng のまま。失敗ではなく「反映されたか不明」と表示し、失敗に数えない）。
+   * 反映されていた可能性があるため、反映先プレビューは変わったものとして扱う。
+   */
+  unconfirmed?: boolean;
 }
 
 interface ErrorHintRule {
@@ -101,33 +106,48 @@ export function collectRetrySectionKeys(sections: ApplySectionOutcome[]): string
  */
 export function summarizeApplyOutcome(sections: ApplySectionOutcome[]): {
   ok: number;
-  /** 失敗した項目（中止で途中停止した項目は含めない） */
+  /** 失敗した項目（中止で途中停止した項目・反映されたか分からない項目は含めない） */
   ng: number;
   /** 中止で途中停止した項目 */
   stopped: number;
+  /** 書き込みの応答が届かず、反映されたか分からない項目 */
+  unconfirmed: number;
   pending: number;
   skip: number;
 } {
-  const out = { ok: 0, ng: 0, stopped: 0, pending: 0, skip: 0 };
+  const out = { ok: 0, ng: 0, stopped: 0, unconfirmed: 0, pending: 0, skip: 0 };
   for (const s of sections || []) {
     if (s.status === 'ok') out.ok += 1;
-    else if (s.status === 'ng') out[s.stopped ? 'stopped' : 'ng'] += 1;
+    else if (s.status === 'ng') out[s.stopped ? 'stopped' : s.unconfirmed ? 'unconfirmed' : 'ng'] += 1;
     else if (s.status === 'pending') out.pending += 1;
     else out.skip += 1;
   }
   return out;
 }
 
-/** 反映先プレビューへの書き込みの状況。none: 1 件も書き込めていない（プレビューは変わっていない）/ partial: 一部だけ書き込まれた / all: 書き込みが終わった。 */
-export type PreviewWriteState = 'none' | 'partial' | 'all';
+/** 項目の結果の呼び名（成功・失敗・途中で停止・反映されたか不明・変更なし・未実行）。記録や一覧の文に使う。 */
+export function applySectionStatusText(section: Pick<ApplySectionOutcome, 'status' | 'stopped' | 'unconfirmed'> | undefined): string {
+  if (!section || section.status === 'pending') return '未実行';
+  if (section.status === 'ok') return '成功';
+  if (section.status === 'skip') return '変更なし';
+  if (section.stopped) return '途中で停止';
+  return section.unconfirmed ? '反映されたか不明' : '失敗';
+}
+
+/**
+ * 反映先プレビューへの書き込みの状況。none: 1 件も書き込めていない（プレビューは変わっていない）/ partial: 一部だけ書き込まれた /
+ * all: 書き込みが終わった / unknown: 確かに書き込めた項目は無いが、反映されたか分からない書き込みがある（プレビューが変わったか分からない）。
+ */
+export type PreviewWriteState = 'none' | 'partial' | 'all' | 'unknown';
 
 /**
  * 項目ごとの結果から、反映先プレビューへの書き込みの状況を求める。
  * 書き込めたのは、成功した項目と、失敗・中止で止まる前に書き込みが済んだ操作がある項目。失敗・未実行が残っていれば partial か none。
+ * 反映されたか分からない項目があり、ほかに書き込めた項目が無ければ unknown。
  */
 export function previewWriteState(sections: readonly ApplySectionOutcome[]): PreviewWriteState {
   const list = sections || [];
   const written = list.some((section) => section.status === 'ok' || (section.status === 'ng' && (section.stopped === true || section.partiallyWritten === true)));
-  if (!written) return 'none';
+  if (!written) return list.some((section) => section.status === 'ng' && section.unconfirmed === true) ? 'unknown' : 'none';
   return list.some((section) => section.status === 'ng' || section.status === 'pending') ? 'partial' : 'all';
 }

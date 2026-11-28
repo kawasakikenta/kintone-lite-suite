@@ -367,11 +367,19 @@ export interface SourceResultMessage { text: string; tone: 'ok' | 'warn' | 'err'
 /** 実行後のステータス文（文言ガイドの規則: 結果の動詞で終える。部分成功は成功数・失敗数・理由の順。中止は未実行の数）。 */
 export function describeSourceResult(input: SourceResultInput): SourceResultMessage {
   const counts = summarizeApplyOutcome([...input.sections]);
-  const total = counts.ok + counts.ng + counts.stopped + counts.pending + counts.skip;
+  const total = counts.ok + counts.ng + counts.stopped + counts.unconfirmed + counts.pending + counts.skip;
   const written = counts.ok;
   if (input.cancelled) {
     return {
       text: `中止しました（${written}/${total} 項目を反映先プレビューへ反映${counts.stopped ? `、${counts.stopped} 項目は途中で停止` : ''}${counts.ng ? `、${counts.ng} 項目は失敗` : ''}、残り ${counts.pending} 項目は未実行）。書き込み済みの分は反映先プレビューに残っています。本番へは反映していません。`,
+      tone: 'warn'
+    };
+  }
+  if (counts.unconfirmed) {
+    // 書き込みの応答が届かず、反映されたか分からない項目がある。失敗と言い切らず、確かめ方を示す。
+    const unknown = input.sections.find((section) => section.status === 'ng' && !section.stopped && section.unconfirmed);
+    return {
+      text: `${total} 項目中 ${written} 項目を反映先プレビューへ反映しました。反映されたか分からない項目が ${counts.unconfirmed} 項目あります${unknown ? `（${unknown.label}）` : ''}${counts.ng ? `。失敗 ${counts.ng} 項目` : ''}${counts.pending ? `、未実行 ${counts.pending} 項目` : ''}。本番へは反映していません。差分を抽出し直して、反映先プレビューの状態を確認してください。`,
       tone: 'warn'
     };
   }

@@ -2852,7 +2852,7 @@ ${base}`
       const message = String(e?.message || e || "不明なエラー");
       const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
       const [first, ...rest] = lines.length ? lines : [message];
-      if (e?.partialSuccess === true) {
+      if (e?.partialSuccess === true || e?.writeUnconfirmed === true) {
         const logNote = rest.length ? /[）)]$/.test(first) ? "。詳細は下のログを確認してください" : "（詳細は下のログ）" : "";
         panel.setStatus(`${first}${logNote}`, "warn");
         if (rest.length) panel.setResult(lines.join("\n"));
@@ -3297,6 +3297,95 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     return { refresh, show };
   }
 
+  // src/settingsWrite.ts
+  var DEFAULT_ATTEMPTS = 3;
+  var RETRY_BASE_DELAY_MS = 500;
+  var RETRY_MAX_DELAY_MS = 3e3;
+  var KINTONE_ERROR_CODE = /^[A-Z][A-Z0-9]*_[A-Z]{2}\d{2}$/;
+  function isKintoneRejection(error) {
+    for (let current = error, depth = 0; current && typeof current === "object" && depth < 5; current = current.original, depth++) {
+      if (current.id || current.errors && typeof current.errors === "object") return true;
+      if (KINTONE_ERROR_CODE.test(String(current.code ?? ""))) return true;
+    }
+    return false;
+  }
+  function isTransientWriteFailure(method, error) {
+    for (let current = error, depth = 0; current && depth < 5; current = current.original, depth++) {
+      if (isRetriableMutation(method, current)) return true;
+    }
+    return false;
+  }
+  var SettingsWriteUnconfirmedError = class extends Error {
+    constructor(message, sentRevision, currentRevision, cause) {
+      super(message);
+      this.sentRevision = sentRevision;
+      this.currentRevision = currentRevision;
+      this.cause = cause;
+      __publicField(this, "writeUnconfirmed", true);
+      /** プレビュー反映の書き込みの連鎖を止める（次の書き込みに使う revision を決められない） */
+      __publicField(this, "stopReflection", true);
+      this.name = "SettingsWriteUnconfirmedError";
+    }
+  };
+  function isSettingsWriteUnconfirmed(error) {
+    for (let current = error, depth = 0; current && typeof current === "object" && depth < 5; current = current.original, depth++) {
+      if (current.writeUnconfirmed === true) return true;
+    }
+    return false;
+  }
+  var firstLine = (error) => String(error?.message ?? error ?? "").split("\n").map((line) => line.trim()).find(Boolean) || "不明なエラー";
+  async function writeSettingsWithRevision(method, prefix, path, body, options) {
+    assertAllowsMutatingRestCall(prefix, path, method);
+    const send = () => (method === "POST" ? apiPost : apiPut)(prefix, path, body, 1);
+    const sent = String(body?.revision ?? "");
+    if (!/^\d+$/.test(sent)) return send();
+    const attempts = Math.max(1, Number.isFinite(options.attempts) ? Number(options.attempts) : DEFAULT_ATTEMPTS);
+    const readRevision = options.readRevision || (async () => pickRevision(await apiGet(prefix, path, { app: body.app })));
+    const { subject, howToCheck } = options;
+    const unconfirmed = (detail, current, cause) => new SettingsWriteUnconfirmedError(
+      `${subject}の書き込みは、${detail}反映されたか分かりません。${howToCheck}${cause ? `
+（原因: ${firstLine(cause)}）` : ""}`,
+      sent,
+      current,
+      cause
+    );
+    let resent = false;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await send();
+      } catch (error) {
+        if (isRunCancelledError(error)) throw error;
+        if (isKintoneRejection(error)) {
+          if (resent && isRevisionConflictError(error)) {
+            throw unconfirmed(`応答が届かなかったため送り直したところ、その間に設定の更新番号（revision）が ${sent} から進んでいました。先に送った分が遅れて反映されたか、ほかの更新が入ったかのどちらかで、`, "", null);
+          }
+          throw error;
+        }
+        let current = "";
+        try {
+          current = await readRevision();
+        } catch (readError) {
+          if (isRunCancelledError(readError)) throw unconfirmed("応答が届かず、確かめる前に中止したため、", "", error);
+          throw unconfirmed(`応答が届かず、反映先の設定も読み取れなかったため（${firstLine(readError)}）、`, "", error);
+        }
+        if (!/^\d+$/.test(current)) throw unconfirmed("応答が届かず、反映先の設定の更新番号（revision）も確かめられなかったため、", "", error);
+        if (current !== sent) {
+          throw unconfirmed(`応答が届かなかったため、設定の更新番号（revision）を読み直したところ ${sent} から ${current} に進んでいました。この書き込みが反映されたか、ほかの更新が入ったかのどちらかで、`, current, error);
+        }
+        if (attempt + 1 < attempts && isTransientWriteFailure(method, error)) {
+          await sleepUnlessCancelled(computeRetryDelayMs(attempt, RETRY_BASE_DELAY_MS, RETRY_MAX_DELAY_MS));
+          resent = true;
+          continue;
+        }
+        if (error && typeof error === "object" && typeof error.message === "string") {
+          error.message += `
+反映先の設定の更新番号（revision）は ${sent} のままで、この書き込みは反映されていません。`;
+        }
+        throw error;
+      }
+    }
+  }
+
   // src/tabs/run-cancel-summary.ts
   var CancelReportError = class extends Error {
     constructor(done, total, details = []) {
@@ -3573,7 +3662,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   function withPartialNotice(error, notice) {
     const wrapped = new Error(`${notice}
 ${error?.message != null ? String(error.message) : String(error)}`);
-    for (const key of ["revisionConflict", "original", "code", "id", "__apiDiag", "stack"]) {
+    for (const key of ["revisionConflict", "writeUnconfirmed", "original", "code", "id", "__apiDiag", "stack"]) {
       if (error && error[key] !== void 0) wrapped[key] = error[key];
     }
     return wrapped;
@@ -3814,6 +3903,8 @@ ${logs.join("\n")}` : baseMessage;
   }
   var FIELD_CODE_CONFLICT_MESSAGE = (conflicts) => `反映後のフィールドコードが既存のフィールドと重複するため、何も反映せずに中止しました: ${conflicts.join("、")}`;
   var FIELD_REVISION_MISSING_MESSAGE = "反映先のフィールド設定の revision を確認できないため反映を中止しました。最新の設定を取得し直してください";
+  var FIELD_ADD_UNCONFIRMED_CHECK = "以降の書き込みはしていません。kintone で反映先アプリのフォームの設定を開き、追加するフィールドがあるか確認してから再実行してください。";
+  var FIELD_UPDATE_UNCONFIRMED_CHECK = "kintone で反映先アプリのフォームの設定を開き、更新するフィールドが反映元の内容になっているか確認してください。";
   async function writeFieldPlan(ctx, setStatus) {
     const { prefix, tgtApp, plan, logs } = ctx;
     let revision = ctx.revision;
@@ -3823,7 +3914,7 @@ ${logs.join("\n")}` : baseMessage;
     if (addCount) {
       setStatus(`フィールド追加中... (${addCount}件)`);
       try {
-        const res = await apiPost(prefix, "/app/form/fields.json", withRevision({ app: tgtApp, properties: plan.adds }));
+        const res = await writeSettingsWithRevision("POST", prefix, "/app/form/fields.json", withRevision({ app: tgtApp, properties: plan.adds }), { subject: "フィールド追加", howToCheck: FIELD_ADD_UNCONFIRMED_CHECK });
         const nextRevision = pickRevision(res);
         if (!/^\d+$/.test(nextRevision)) {
           logs.push(`OK フィールド追加 ${addCount}件 (revision 不明)`);
@@ -3836,7 +3927,9 @@ ${logs.join("\n")}` : baseMessage;
           logs.push(`未実行（中止） フィールド追加 ${addCount}件${updateCount ? ` / フィールド更新 ${updateCount}件` : ""}`);
           throw createCancelReport(0, addCount + updateCount, logs);
         }
-        if (!logs.some((l) => l.startsWith("OK フィールド追加"))) {
+        if (isSettingsWriteUnconfirmed(e)) {
+          logs.push(`不明 フィールド追加 ${addCount}件（反映されたか分かりません）${updateCount ? ` / 未実行 フィールド更新 ${updateCount}件` : ""}`);
+        } else if (!logs.some((l) => l.startsWith("OK フィールド追加"))) {
           logs.push(`NG フィールド追加 ${addCount}件`);
         }
         throw attachLogsToError(decorateRevisionConflict(e, "フィールド追加"), logs);
@@ -3845,7 +3938,7 @@ ${logs.join("\n")}` : baseMessage;
     if (updateCount) {
       setStatus(`フィールド更新中... (${updateCount}件)`);
       try {
-        const res = await apiPut(prefix, "/app/form/fields.json", withRevision({ app: tgtApp, properties: plan.updates }));
+        const res = await writeSettingsWithRevision("PUT", prefix, "/app/form/fields.json", withRevision({ app: tgtApp, properties: plan.updates }), { subject: "フィールド更新", howToCheck: FIELD_UPDATE_UNCONFIRMED_CHECK });
         const nextRevision = pickRevision(res);
         if (!/^\d+$/.test(nextRevision)) {
           logs.push(`OK フィールド更新 ${updateCount}件 (revision 不明)`);
@@ -3858,11 +3951,14 @@ ${logs.join("\n")}` : baseMessage;
           logs.push(`未実行（中止） フィールド更新 ${updateCount}件${addCount ? "（追加 " + addCount + "件は反映済み）" : ""}`);
           throw createCancelReport(addCount, addCount + updateCount, logs);
         }
-        if (!logs.some((l) => l.startsWith("OK フィールド更新"))) {
+        const unconfirmed = isSettingsWriteUnconfirmed(e);
+        if (unconfirmed) {
+          logs.push(`不明 フィールド更新 ${updateCount}件（反映されたか分かりません）${addCount ? "（追加 " + addCount + "件は反映済み）" : ""}`);
+        } else if (!logs.some((l) => l.startsWith("OK フィールド更新"))) {
           logs.push(`NG フィールド更新 ${updateCount}件${addCount ? "（追加 " + addCount + "件は反映済み）" : ""}`);
         }
         let failure = decorateRevisionConflict(e, "フィールド更新");
-        if (addCount) failure = withPartialNotice(failure, `フィールド追加 ${addCount}件は反映済みですが、フィールド更新 ${updateCount}件は反映されませんでした。`);
+        if (addCount) failure = withPartialNotice(failure, unconfirmed ? `フィールド追加 ${addCount}件は反映済みです。フィールド更新 ${updateCount}件は反映されたか分かりません。` : `フィールド追加 ${addCount}件は反映済みですが、フィールド更新 ${updateCount}件は反映されませんでした。`);
         throw logs.some((l) => l.startsWith("OK ")) ? attachLogsToError(failure, logs) : failure;
       }
     }
@@ -3897,6 +3993,7 @@ ${logs.join("\n")}` : baseMessage;
     unchanged: "スキップ（変更なし）",
     failed: "失敗",
     conflict: "競合",
+    unconfirmed: "反映されたか不明",
     "not-run": "未実行（中止）"
   };
   function fieldMultiLabel(t) {
@@ -3933,10 +4030,10 @@ ${logs.join("\n")}` : baseMessage;
   }
   function singleLineMessage(error) {
     const message = error instanceof Error ? error.message : String(error?.message ?? error ?? "エラーが発生しました");
-    return message.split("\n").map((line) => line.trim()).filter((line) => line && !line.startsWith("NG ") && !line.startsWith("[API]")).join(" / ");
+    return message.split("\n").map((line) => line.trim()).filter((line) => line && !line.startsWith("NG ") && !line.startsWith("不明 ") && !line.startsWith("[API]")).join(" / ");
   }
   function countByStatus(results) {
-    const counts = { success: 0, unchanged: 0, failed: 0, conflict: 0, "not-run": 0 };
+    const counts = { success: 0, unchanged: 0, failed: 0, conflict: 0, unconfirmed: 0, "not-run": 0 };
     for (const r of results) counts[r.status] += 1;
     return counts;
   }
@@ -3977,9 +4074,10 @@ ${logs.join("\n")}` : baseMessage;
       const detail = r.status === "success" ? describePlanCounts(r) : r.status === "unchanged" ? `スキップ ${r.skip}` : "";
       return `[${FIELD_MULTI_STATUS_LABEL[r.status]}] ${fieldMultiLabel(r)}${detail ? `: ${detail}` : ""}${r.message ? `${detail ? " / " : ": "}${r.message}` : ""}`;
     });
-    const problems = results.filter((r) => r.status === "failed" || r.status === "conflict");
+    const problems = results.filter((r) => r.status === "failed" || r.status === "conflict" || r.status === "unconfirmed");
     const parts = [];
     if (counts.unchanged) parts.push(`変更なし ${counts.unchanged} 件`);
+    if (counts.unconfirmed) parts.push(`反映されたか分からない ${counts.unconfirmed} 件`);
     if (counts.conflict) parts.push(`競合 ${counts.conflict} 件`);
     if (counts.failed) parts.push(`失敗 ${counts.failed} 件`);
     if (counts["not-run"]) parts.push(`未実行（中止） ${counts["not-run"]} 件`);
@@ -3991,14 +4089,14 @@ ${logs.join("\n")}` : baseMessage;
       headline = `フィールド反映をキャンセルしました（何も書き込んでいません。${total} 件の反映先のうち ${counts.failed + counts.conflict} 件は事前確認に失敗）`;
       tone = "info";
     } else if (flags.cancelled) {
-      const done = counts.success + counts.unchanged + counts.failed + counts.conflict;
+      const done = counts.success + counts.unchanged + counts.failed + counts.conflict + counts.unconfirmed;
       headline = `中止しました（${done}/${total} 件を処理、残り ${counts["not-run"]} 件は未実行）。成功 ${counts.success} 件${parts.filter((p) => !p.startsWith("未実行")).length ? `、${parts.filter((p) => !p.startsWith("未実行")).join("、")}` : ""}。反映済みの分は取り消していません${firstProblem}`;
       tone = "warn";
     } else if (!counts.success && !problems.length && !counts["not-run"]) {
       headline = `反映する変更がありませんでした（${total} 件すべて変更なし）`;
       tone = "info";
     } else if (!counts.success && problems.length) {
-      headline = `${total} 件のうち反映できたアプリはありません。${parts.join("、")}${firstProblem}`;
+      headline = `${total} 件のうち${counts.unconfirmed ? "反映を確かめられた" : "反映できた"}アプリはありません。${parts.join("、")}${firstProblem}`;
       tone = "err";
     } else {
       headline = `${total} 件中 ${counts.success} 件を反映しました（追加 ${totals.add} / 更新 ${totals.update}）${parts.length ? `。${parts.join("、")}` : ""}${firstProblem}`;
@@ -4071,6 +4169,9 @@ ${logs.join("\n")}` : baseMessage;
           cancelled = true;
           const applied = isCancelReportError(e) ? e.done : 0;
           markNotRun(entry, applied ? `追加 ${applied}件は反映済みですが、残りは中止したため反映していません` : "中止したため反映していません");
+        } else if (isSettingsWriteUnconfirmed(e)) {
+          entry.status = "unconfirmed";
+          entry.message = singleLineMessage(e);
         } else if (e?.revisionConflict || isRevisionConflictError(e)) {
           entry.status = "conflict";
           entry.message = `取得後に別の更新が入ったため上書きせず中止しました（revision 競合）${logs.some((l) => l.startsWith("OK ")) ? `。${logs.filter((l) => l.startsWith("OK ")).join("、")}` : ""}`;

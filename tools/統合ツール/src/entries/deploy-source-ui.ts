@@ -1282,7 +1282,7 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
   function progressRowsFromResult(result: SourceDeployResult): ApplyProgressRow[] {
     return result.apply.sections.map((section) => ({
       sectionKey: section.sectionKey, label: section.label, status: section.status as ApplyProgressStatus,
-      ...(section.message ? { message: section.message } : {}), ...(section.stopped ? { stopped: true } : {})
+      ...(section.message ? { message: section.message } : {}), ...(section.stopped ? { stopped: true } : {}), ...(section.unconfirmed ? { unconfirmed: true } : {})
     }));
   }
 
@@ -1541,7 +1541,7 @@ export function createSourceFlow(panel: LitePanelHandle): SourceFlow {
             sections: run.map((section) => {
               const row = rows.find((candidate) => candidate.sectionKey === section.sectionKey);
               const status = row?.status === 'ok' || row?.status === 'skip' || row?.status === 'ng' ? row.status : row?.status === 'running' ? 'ng' : 'pending';
-              return { sectionKey: section.sectionKey, label: section.label, status, message: status === 'ng' ? (row?.message || `処理が中断されました。反映先プレビューの状態を確認してください。（${reason}）`) : status === 'pending' ? '実行前に処理が止まりました。' : row?.message, ...(row?.stopped ? { stopped: true } : {}) };
+              return { sectionKey: section.sectionKey, label: section.label, status, message: status === 'ng' ? (row?.message || `処理が中断されました。反映先プレビューの状態を確認してください。（${reason}）`) : status === 'pending' ? '実行前に処理が止まりました。' : row?.message, ...(row?.stopped ? { stopped: true } : {}), ...(row?.unconfirmed ? { unconfirmed: true } : {}) };
             })
           },
           deploySkipped: goal === 'production' ? `実行中にエラーが発生したため、本番の状態をアプリの設定画面で確認してください。（${reason}）` : undefined
