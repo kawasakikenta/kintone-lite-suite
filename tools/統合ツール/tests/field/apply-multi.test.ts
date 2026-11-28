@@ -54,7 +54,7 @@ describe('field apply to many targets', () => {
       ['/k/v1/preview', '/app/form/fields.json', '13', '130']
     ]);
     expect(apiPut).not.toHaveBeenCalled();
-    expect(report.counts).toEqual({ success: 3, unchanged: 0, failed: 0, conflict: 0, 'not-run': 0 });
+    expect(report.counts).toEqual({ success: 3, unchanged: 0, failed: 0, conflict: 0, unconfirmed: 0, 'not-run': 0 });
     expect(report.totals).toEqual({ add: 3, update: 0, skip: 0 });
     expect(report.tone).toBe('ok');
     expect(report.headline).toContain('3 件中 3 件を反映しました');
@@ -110,7 +110,8 @@ describe('field apply to many targets', () => {
     const report = await run();
 
     expect(report.results.map((r) => r.status)).toEqual(['failed', 'success', 'success']);
-    expect(report.results[0]).toMatchObject({ phase: 'apply', message: 'サーバーエラー' });
+    // kintone の応答が無い失敗は、読み直して revision が変わっていない（反映されていない）ことを確かめて失敗にする
+    expect(report.results[0]).toMatchObject({ phase: 'apply', message: 'サーバーエラー / 反映先の設定の更新番号（revision）は 110 のままで、この書き込みは反映されていません。' });
     expect(report.tone).toBe('warn');
   });
 

@@ -7,6 +7,7 @@
 //   - フィールド: 種類の変更・コードの重複・存在しないフィールドを参照する計算式やルックアップのコピー先・選択肢に無い初期値はエラー。
 //   - JS/CSS: 別のアプリの fileKey は使えない。アップロード直後の fileKey は 1 回だけ使える。
 //   - ファイル本体は GET /k/v1/file.json?fileKey=、アップロードは POST /k/v1/file.json（ゲストスペースは /k/guest/N/v1/…）。
+//   - 応答が届かない書き込み（loseWrites）: kintone では反映したのに通信エラー・502 で応答が失われる（commit: true）、または反映する前に失われる。
 
 function installSyntheticKintone(config) {
   const clone = value => JSON.parse(JSON.stringify(value));
@@ -17,7 +18,9 @@ function installSyntheticKintone(config) {
     seq: 0, latency: config.latency ?? 4, calls: [], writes: [], uploads: [], fileFetches: [], violations: [], downloads: [],
     files: clone(config.files || {}), fileOwner: clone(config.fileOwner || {}), uploadKeys: new Set(), consumedKeys: {}, apps: {},
     failUpload: config.failUpload || {}, failUploadNth: config.failUploadNth || [], failFileGet: config.failFileGet || {}, holdUploads: false, uploadResolvers: [], heldUploads: 0,
-    bumpOnGet: null, failWrites: config.failWrites || {}, holdWrites: false, writeResolvers: [], heldWrites: 0
+    bumpOnGet: null, failWrites: config.failWrites || {}, holdWrites: false, writeResolvers: [], heldWrites: 0,
+    // { '<ゲスト>/<アプリ><パス>' または '<パス>': { commit, kind: 'network' | 'bad-gateway', method?, times? } }
+    loseWrites: config.loseWrites || {}
   };
   const kerr = (code, message, extra = {}) => Object.assign(new Error(message), { code, id: `req-${S.seq}`, ...extra });
   const invalid = (path, message) => kerr('CB_VA01', '入力内容が正しくありません。', { errors: { [path]: { messages: [message] } } });
@@ -193,9 +196,16 @@ function installSyntheticKintone(config) {
       const fail = error => { record.rejected = true; record.error = `${error.code}: ${error.message}`; return error; };
       const injected = S.failWrites[`${record.appKey}${p}`] || S.failWrites[p];
       if (injected) throw fail(kerr(injected.code, injected.message));
+      // 応答が届かない書き込み。kintone.api は kintone のエラー応答（id・code）の無い失敗として返す。
+      const loseRule = S.loseWrites[`${record.appKey}${p}`] || S.loseWrites[p];
+      const lose = loseRule && (!loseRule.method || loseRule.method === method) && (loseRule.times === undefined || loseRule.times > 0) ? loseRule : null;
+      if (lose && lose.times !== undefined) lose.times -= 1;
+      const lostError = () => (lose.kind === 'bad-gateway' ? Object.assign(new Error('Bad Gateway'), { status: 502 }) : Object.assign(new Error('Network Error'), { code: 'NETWORK' }));
+      if (lose && !lose.commit) { record.rejected = true; record.lost = 'before-commit'; record.error = 'lost before commit'; throw lostError(); }
       if (params.revision !== undefined && String(params.revision) !== '-1' && String(params.revision) !== String(app.previewRev)) throw fail(kerr('GAIA_CO02', '指定したrevisionは最新ではありません。他のユーザーによってアプリの設定が更新されています。'));
       try { if (p === '/app/form/fields.json') writeFields(app, method, params); else writeCustomize(app, params); } catch (error) { throw fail(error); }
       app.previewRev += 1;
+      if (lose) { record.lost = 'after-commit'; throw lostError(); }
       return { revision: String(app.previewRev) };
     }
     throw violation(`想定外の書き込み: ${method} ${url}`);

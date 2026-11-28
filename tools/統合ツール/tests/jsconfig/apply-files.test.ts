@@ -281,7 +281,7 @@ describe('apply JS/CSS with FILE entries to many preview targets', () => {
     // 各反映先の書き込みの直前にアップロードする（書き込み前の確認で何もアップロードしない）
     const order = calls.filter(c => c.method === 'POST' || c.method === 'PUT').map(c => c.method + (c.body.app || ''));
     expect(order).toEqual(['POST', 'PUT5', 'POST', 'PUT6', 'POST', 'PUT7']);
-    expect(res.counts).toEqual({ total: 3, success: 3, failed: 0, conflict: 0, notExecuted: 0 });
+    expect(res.counts).toEqual({ total: 3, success: 3, failed: 0, conflict: 0, unconfirmed: 0, notExecuted: 0 });
     expect(res.results[0].files).toEqual({ uploaded: 1, reused: 0, kept: 0 });
   });
 

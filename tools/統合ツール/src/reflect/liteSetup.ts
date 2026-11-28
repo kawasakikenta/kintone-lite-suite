@@ -217,11 +217,15 @@ export function canResolveByIncludingFieldSettings(missing: readonly MissingFiel
 // 反映結果: セクション別の表示
 // =============================================================================
 
-export interface ApplySectionDisplay { icon: string; text: '成功' | '失敗' | '途中で停止' | '変更なし' | '未実行'; tone: 'ok' | 'ng' | 'skip' | 'pending' }
+export interface ApplySectionDisplay { icon: string; text: '成功' | '失敗' | '途中で停止' | '反映されたか不明' | '変更なし' | '未実行'; tone: 'ok' | 'ng' | 'skip' | 'pending' }
 
-/** stopped は、利用者の「中止」で途中で止まった項目（失敗ではなく「途中で停止」と示す）。 */
-export function describeApplySectionStatus(status: string, stopped = false): ApplySectionDisplay {
+/**
+ * stopped は、利用者の「中止」で途中で止まった項目（失敗ではなく「途中で停止」と示す）。
+ * unconfirmed は、書き込みの応答が届かず反映されたか分からない項目（成功とも失敗とも言わず、注意の色で「反映されたか不明」と示す）。
+ */
+export function describeApplySectionStatus(status: string, stopped = false, unconfirmed = false): ApplySectionDisplay {
   if (status === 'ng' && stopped) return { icon: '■', text: '途中で停止', tone: 'ng' };
+  if (status === 'ng' && unconfirmed) return { icon: '?', text: '反映されたか不明', tone: 'pending' };
   if (status === 'ok') return { icon: '✓', text: '成功', tone: 'ok' };
   if (status === 'ng') return { icon: '✕', text: '失敗', tone: 'ng' };
   if (status === 'skip') return { icon: '－', text: '変更なし', tone: 'skip' };
@@ -239,7 +243,12 @@ export function normalizeApplySections(sections: unknown): ApplySectionOutcome[]
     const label = typeof raw.label === 'string' ? raw.label : '';
     if (!sectionKey && !label) continue;
     const status = raw.status === 'ok' || raw.status === 'ng' || raw.status === 'skip' || raw.status === 'pending' ? raw.status : 'pending';
-    out.push({ sectionKey, label, status, ...(typeof raw.message === 'string' && raw.message ? { message: raw.message } : {}), ...(status === 'ng' && raw.stopped === true ? { stopped: true } : {}) });
+    out.push({
+      sectionKey, label, status,
+      ...(typeof raw.message === 'string' && raw.message ? { message: raw.message } : {}),
+      ...(status === 'ng' && raw.stopped === true ? { stopped: true } : {}),
+      ...(status === 'ng' && raw.unconfirmed === true ? { unconfirmed: true } : {})
+    });
   }
   return out;
 }

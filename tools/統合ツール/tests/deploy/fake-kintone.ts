@@ -32,6 +32,8 @@ export interface FakeOptions {
   onPost?: (call: FakeCall, apps: Record<string, FakeApp>) => void;
   /** プレビューの設定の書き込み（PUT / POST）を受け付ける直前に呼ばれる（途中で別の更新が入る再現に使う）。例外を投げると書き込みを拒否する */
   onWrite?: (call: FakeCall, apps: Record<string, FakeApp>) => void;
+  /** プレビューの設定の書き込みを反映した直後に呼ばれる。例外を投げると、反映したのに応答が届かなかった書き込みを再現できる */
+  afterWrite?: (call: FakeCall, apps: Record<string, FakeApp>) => void;
 }
 
 interface Deployment { ids: string[]; revert: boolean; polls: number; done: boolean; result: Record<string, string> }
@@ -142,6 +144,7 @@ export function createFakeKintone(apps: Record<string, FakeApp>, options: FakeOp
       }
       writeSection(app, endpointToKey.get(path)!, method, params);
       app.previewRevision = String(Number(app.previewRevision) + 1);
+      options.afterWrite?.(call, apps);
       return { revision: app.previewRevision };
     }
     throw new Error(`Unexpected write: ${method} ${url}`);
