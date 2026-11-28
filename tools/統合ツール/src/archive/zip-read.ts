@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * ZIP の読み取り（DOM 非依存。通信しない）。設定取得が保存した ZIP を、設計書作成の「設定JSON読込」で読むために使う。
+ * ZIP の読み取り（DOM 非依存。通信しない）。設定取得が保存した ZIP を、設計書作成・ER図の「設定JSON読込」と、差分比較のフォルダ・ZIP取込で読むために使う。
  * - 中央ディレクトリから各エントリを読み、STORE（0）と DEFLATE（8）に対応する（DEFLATE は `DecompressionStream('deflate-raw')`）。
  * - 暗号化・ZIP64・分割 ZIP は扱わない（設定取得の ZIP は使わない）。
  * - 展開後の大きさと件数に上限を設け、CRC-32 で内容を確かめる。各ファイルは中央ディレクトリに書かれた大きさを超えて展開しない。
@@ -63,8 +63,27 @@ async function inflateRaw(bytes: Uint8Array, expectedSize: number): Promise<Uint
   return out;
 }
 
-/** ZIP のエントリを読み出す。壊れた ZIP・未対応の形式・上限超えは、利用者向けの理由を付けて例外にする。 */
-export async function readZipEntries(bytes: Uint8Array, options: ZipReadOptions = {}): Promise<ZipReadEntry[]> {
+/** 中央ディレクトリに書かれた 1 エントリの情報（展開はしない）。 */
+export interface ZipDirectoryEntry {
+  /** ZIP 内のパス（UTF-8。フォルダは末尾が「/」） */
+  name: string;
+  /** フォルダのエントリか（名前の末尾が「/」） */
+  directory: boolean;
+  /** 中央ディレクトリに書かれた展開後の大きさ（偽っていることがある。展開するときに確かめる） */
+  size: number;
+  /** 中央ディレクトリに書かれた圧縮後の大きさ */
+  compressedSize: number;
+}
+
+interface ZipCentralEntry extends ZipDirectoryEntry {
+  flags: number;
+  method: number;
+  crc: number;
+  localOffset: number;
+}
+
+/** 終端レコードと中央ディレクトリを読む（展開しない）。壊れた ZIP・ZIP64 は例外にする。 */
+function readCentralDirectory(bytes: Uint8Array, maxEntries = 0xffff): ZipCentralEntry[] {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const u16 = (offset: number) => view.getUint16(offset, true);
   const u32 = (offset: number) => view.getUint32(offset, true);
@@ -77,26 +96,50 @@ export async function readZipEntries(bytes: Uint8Array, options: ZipReadOptions 
   const count = u16(end + 10);
   const centralOffset = u32(end + 16);
   if (count === 0xffff || centralOffset === 0xffffffff) throw new Error('ZIP64 形式の ZIP には対応していません');
-  if (count > (options.maxEntries ?? 0xffff)) throw new Error(`ZIP のファイル数（${count}）が多すぎます`);
+  if (count > maxEntries) throw new Error(`ZIP のファイル数（${count}）が多すぎます`);
   const decoder = new TextDecoder('utf-8');
-  const maxTotal = options.maxTotalBytes ?? DEFAULT_MAX_TOTAL;
-  const entries: ZipReadEntry[] = [];
-  let total = 0;
+  const entries: ZipCentralEntry[] = [];
   let pos = centralOffset;
   for (let i = 0; i < count; i += 1) {
     if (pos + 46 > bytes.length || u32(pos) !== SIG_CENTRAL) throw new Error('ZIP の中央ディレクトリが壊れています');
-    const flags = u16(pos + 8);
-    const method = u16(pos + 10);
-    const crc = u32(pos + 16);
-    const compressedSize = u32(pos + 20);
-    const size = u32(pos + 24);
     const nameLength = u16(pos + 28);
     const extraLength = u16(pos + 30);
     const commentLength = u16(pos + 32);
-    const localOffset = u32(pos + 42);
     const name = decoder.decode(bytes.subarray(pos + 46, pos + 46 + nameLength));
+    entries.push({
+      name,
+      directory: name.endsWith('/'),
+      flags: u16(pos + 8),
+      method: u16(pos + 10),
+      crc: u32(pos + 16),
+      compressedSize: u32(pos + 20),
+      size: u32(pos + 24),
+      localOffset: u32(pos + 42)
+    });
     pos += 46 + nameLength + extraLength + commentLength;
-    if (name.endsWith('/')) { entries.push({ name, data: new Uint8Array(0) }); continue; }
+  }
+  return entries;
+}
+
+/**
+ * ZIP のエントリの一覧を、中央ディレクトリから読む（展開しない）。
+ * 件数・大きさの上限を、展開する前に確かめるために使う。壊れた ZIP・ZIP64 は readZipEntries と同じ理由で例外にする。
+ */
+export function listZipEntries(bytes: Uint8Array): ZipDirectoryEntry[] {
+  return readCentralDirectory(bytes).map(({ name, directory, size, compressedSize }) => ({ name, directory, size, compressedSize }));
+}
+
+/** ZIP のエントリを読み出す。壊れた ZIP・未対応の形式・上限超えは、利用者向けの理由を付けて例外にする。 */
+export async function readZipEntries(bytes: Uint8Array, options: ZipReadOptions = {}): Promise<ZipReadEntry[]> {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const u16 = (offset: number) => view.getUint16(offset, true);
+  const u32 = (offset: number) => view.getUint32(offset, true);
+  const central = readCentralDirectory(bytes, options.maxEntries);
+  const maxTotal = options.maxTotalBytes ?? DEFAULT_MAX_TOTAL;
+  const entries: ZipReadEntry[] = [];
+  let total = 0;
+  for (const { name, directory, flags, method, crc, compressedSize, size, localOffset } of central) {
+    if (directory) { entries.push({ name, data: new Uint8Array(0) }); continue; }
     if (options.include && !options.include(name)) continue;
     if (flags & 0x1) throw new Error(`暗号化された ZIP には対応していません（${name}）`);
     if (method !== 0 && method !== 8) throw new Error(`未対応の圧縮方式です（${name}・方式 ${method}）`);
