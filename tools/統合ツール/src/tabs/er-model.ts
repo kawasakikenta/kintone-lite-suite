@@ -870,8 +870,9 @@ function countErConnectedComponents(apps: any[]): number {
   return count;
 }
 
+/** Markdown の表・見出しに入れる文字列。HTML のタグ・表の区切りに加え、リンク・画像の記法（`[`）も働かないよう逃がす。 */
 function erMdEsc(s: unknown): string {
-  return String(s == null ? '' : s).replace(/[\\|<>]/g, '\\$&').replace(/[\r\n]+/g, ' ').trim();
+  return String(s == null ? '' : s).replace(/[\\|<>[]/g, '\\$&').replace(/[\r\n]+/g, ' ').trim();
 }
 
 function erRelationKeyConditionDetail(r: any): string {

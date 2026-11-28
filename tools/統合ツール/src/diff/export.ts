@@ -1376,20 +1376,24 @@ function mdLookupLabel(map, value) {
 
 function mdEsc(value) {
   // `<` はHTMLタグとして解釈・実行されないよう `&lt;`、`*` は式（単価*数量*税率 など）が強調表示に化けないよう `\*` にする。
+  // `[` は、設定の文字列のリンク・画像の記法（`![](https://…)`・`[名前](javascript:…)`）が働かないよう `\[` にする。
   // 改行の `<br>` は最後に付けるため、ここで作った `<` は escape されない。
   return decodeHtmlEntities(value)
     .replace(/\\/g, '\\\\')
     .replace(/\|/g, '\\|')
     .replace(/\*/g, '\\*')
+    .replace(/\[/g, '\\[')
     .replace(/</g, '&lt;')
     .replace(/\r?\n/g, '<br>');
 }
 
-/** 表のセル以外（箇条書き・見出し・引用）に入れる文字列を1行にし、HTML・強調として解釈されないようにする。 */
+/** 表のセル以外（箇条書き・見出し・引用）に入れる文字列を1行にし、HTML・強調・リンク・画像として解釈されないようにする。 */
 function mdLine(value) {
   return decodeHtmlEntities(value)
     .replace(/\s*\r?\n\s*/g, ' ')
+    .replace(/\\/g, '\\\\')
     .replace(/\*/g, '\\*')
+    .replace(/\[/g, '\\[')
     .replace(/</g, '&lt;')
     .trim();
 }
@@ -2421,7 +2425,7 @@ export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions =
       lines.push(`（取得失敗: ${mdLine(plan.detail)}）`);
       if (!includeRawJson) lines.push('', '（原文JSONは rawJson:false のため省略されています）');
     } else if (plan.mode === 'partial') {
-      lines.push(`（部分取得: ${plan.detail}）`);
+      lines.push(`（部分取得: ${mdLine(plan.detail)}）`);
       if (renderer) {
         try { rendered = renderer(sec, sections, renderContext) || ''; } catch { rendered = ''; }
         if (rendered.trim()) lines.push('', rendered);
@@ -3807,7 +3811,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     const limit = maxLen || 200;
     let s = String(v == null ? '' : v);
     if (s.length > limit) s = s.slice(0, limit) + '…';
-    return s.replace(/\\|/g, '\\\\|').replace(/\\r?\\n/g, '<br>');
+    // 値の HTML のタグ・リンクと画像の記法（[）が働かないよう逃がす（バックスラッシュを先に逃がす）
+    return s.replace(/\\\\/g, '\\\\\\\\').replace(/\\|/g, '\\\\|').replace(/\\[/g, '\\\\[').replace(/</g, '&lt;').replace(/\\r?\\n/g, '<br>');
   }
 
   function copyVisibleRowsAsMarkdown() {

@@ -4590,7 +4590,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   function buildJsConfigBatchIndexMarkdown(manifest) {
     const apps = Array.isArray(manifest?.apps) ? manifest.apps : [];
     const exportedAt = manifest?.exportedAt || manifest?.generatedAt || "-";
-    const cell = (v) => String(v ?? "-").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+    const cell = (v) => String(v ?? "-").replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\[/g, "\\[").replace(/</g, "&lt;").replace(/\r?\n/g, " ");
     const lines = [
       "# JS/CSS設定 一括取得 INDEX",
       "",

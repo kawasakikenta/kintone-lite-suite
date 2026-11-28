@@ -155,4 +155,13 @@ describe('ER図 Standalone Direct Export (Markdown / Mermaid / CSV with imported
     expect(setStatus).toHaveBeenLastCalledWith('ER図リレーション一覧CSVを保存しました (2アプリ)', false);
 
   });
+
+  it('設定JSONの guestId は、仕様書・Mermaid・CSV のどこにも入らない（この経路は接続先に設定の値を使わず、通信もしない）', async () => {
+    const hostile = sampleBundles.map((bundle) => ({ ...bundle, guestId: '![x](https://evil.example/p.png)' }));
+    const md = await runExportERMarkdownStandalone({ importedBundles: hostile, download: false }, vi.fn());
+    const mmd = await runExportERMermaidStandalone({ importedBundles: hostile, download: false }, vi.fn());
+    const csv = await runExportERRelationsCsvStandalone({ importedBundles: hostile, download: false }, vi.fn());
+    for (const text of [md.markdown, mmd.mermaid, csv.csv]) expect(text).not.toContain('evil.example');
+    expect(md.markdown).toContain('見積管理');
+  });
 });
