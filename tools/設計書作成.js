@@ -14145,16 +14145,20 @@ ${body}`;
     return { headers: ["セクション", "キー", "件数"], rows };
   }
   function designSectionPlan(sec, snapshotSection, hasRenderer) {
-    const fetchError = sec._fetchError ? String(sec._fetchError) : null;
+    const fetchError = sec._fetchError ? mdUserFacingError(sec._fetchError) : null;
     if (sec._fetchError && !mdSectionHasData(sec)) return { fetchError, mode: "none", detail: "" };
-    if (snapshotSection?.status === "fetch-error" && !sec._fetchError) return { fetchError, mode: "fetch-error", detail: snapshotSection.detail };
-    if (snapshotSection?.status === "partial") return { fetchError, mode: "partial", detail: snapshotSection.detail };
+    if (snapshotSection?.status === "fetch-error" && !sec._fetchError) return { fetchError, mode: "fetch-error", detail: mdUserFacingError(snapshotSection.detail) };
+    if (snapshotSection?.status === "partial") return { fetchError, mode: "partial", detail: mdUserFacingError(snapshotSection.detail) };
     if (snapshotSection?.status === "empty") return { fetchError, mode: "empty", detail: "" };
     if (!hasRenderer) return { fetchError, mode: "unsupported", detail: "" };
     return { fetchError, mode: "render", detail: "" };
   }
   function hasDesignSectionRenderer(key) {
     return Object.prototype.hasOwnProperty.call(MD_SECTION_RENDERERS, key);
+  }
+  function mdUserFacingError(value) {
+    const raw = String(value ?? "");
+    return withoutApiContextLines(raw) || raw;
   }
   function mdFetchedAt(value) {
     const raw = String(value ?? "").trim();
@@ -14202,7 +14206,7 @@ ${body}`;
         row.key,
         row.status,
         row.count == null ? "不明" : String(row.count),
-        row.detail
+        mdUserFacingError(row.detail)
       ])
     };
   }
