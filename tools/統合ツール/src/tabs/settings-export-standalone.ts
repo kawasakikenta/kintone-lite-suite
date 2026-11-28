@@ -368,7 +368,7 @@ export function settingsExportRetryApps(rows: SettingsExportRowSummary[]): Setti
 
 export function renderSettingsExportSummaryHtml(rows: SettingsExportRowSummary[], scopes: string[], notes: string[] = []) {
   const labels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k).join(', ');
-  const noteHtml = notes.map((text) => `<div style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#fffbeb;color:#78350f">${esc(text)}</div>`).join('');
+  const noteHtml = notes.map((text) => `<div style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-size:12.5px;background:#fffbeb;color:#78350f">${esc(text)}</div>`).join('');
   const body = rows
     .map(
       (r) => `<tr>
@@ -385,9 +385,9 @@ export function renderSettingsExportSummaryHtml(rows: SettingsExportRowSummary[]
     )
     .join('');
   return `
-    <div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">対象セクション: ${esc(labels || '-')}</div>
+    <div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:12.5px;background:#f8fafc">対象セクション: ${esc(labels || '-')}</div>
     ${noteHtml}
-    <table style="width:100%;font-size:11px;border-collapse:collapse">
+    <table style="width:100%;font-size:12.5px;border-collapse:collapse">
       <thead><tr><th scope="col" style="text-align:left;padding:4px">アプリID</th><th scope="col">アプリ名</th><th scope="col">ゲスト</th><th scope="col">取得OK</th><th scope="col">取得NG</th><th scope="col">メモ</th></tr></thead>
       <tbody>${body || '<tr><td colspan="6">結果なし</td></tr>'}</tbody>
     </table>

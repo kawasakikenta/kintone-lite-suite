@@ -1984,7 +1984,7 @@
 .kus-lp__hero-main{min-width:0;flex:1}
 .kus-lp__hero-actions{display:flex;align-items:center;gap:6px;flex-shrink:0;cursor:auto}
 /* 狭い画面では経過時間の文字を隠し（スピナーは残す）ボタンを詰めて、タイトルが 1 文字ずつ折り返すのを防ぐ */
-@media(max-width:560px){.kus-lp__elapsed{font-size:0;gap:0}.kus-lp__hero-actions{gap:4px}.kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{padding:6px 8px;font-size:12px}.kus-lp__toggle{min-width:30px}}
+@media(max-width:560px){.kus-lp__elapsed{font-size:0;gap:0}.kus-lp__hero-actions{gap:4px}.kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{padding:6px 8px;font-size:12.5px}.kus-lp__toggle{min-width:30px}}
 .kus-lp__elapsed{
   font-size:12.5px;font-weight:600;color:rgba(255,255,255,.9);white-space:nowrap;
   font-variant-numeric:tabular-nums;display:inline-flex;align-items:center;gap:5px;
@@ -4485,7 +4485,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   }
   function renderSettingsExportSummaryHtml(rows, scopes, notes = []) {
     const labels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k).join(", ");
-    const noteHtml = notes.map((text) => `<div style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#fffbeb;color:#78350f">${esc(text)}</div>`).join("");
+    const noteHtml = notes.map((text) => `<div style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-size:12.5px;background:#fffbeb;color:#78350f">${esc(text)}</div>`).join("");
     const body = rows.map(
       (r) => `<tr>
     <td>${esc(r.appId)}</td>
@@ -4497,9 +4497,9 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   </tr>${r.contents ? `<tr data-settings-contents="${esc(r.appId)}"><td colspan="6" style="padding:0 4px 6px;color:#334155;border-bottom:1px solid #e2e8f0">内容: ${esc(r.contents)}</td></tr>` : ""}`
     ).join("");
     return `
-    <div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">対象セクション: ${esc(labels || "-")}</div>
+    <div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:12.5px;background:#f8fafc">対象セクション: ${esc(labels || "-")}</div>
     ${noteHtml}
-    <table style="width:100%;font-size:11px;border-collapse:collapse">
+    <table style="width:100%;font-size:12.5px;border-collapse:collapse">
       <thead><tr><th scope="col" style="text-align:left;padding:4px">アプリID</th><th scope="col">アプリ名</th><th scope="col">ゲスト</th><th scope="col">取得OK</th><th scope="col">取得NG</th><th scope="col">メモ</th></tr></thead>
       <tbody>${body || '<tr><td colspan="6">結果なし</td></tr>'}</tbody>
     </table>
@@ -4823,7 +4823,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
 .kus-as__name{color:var(--c-text);word-break:break-all}
 .kus-as__meta{margin-top:3px;color:var(--c-text-2);font-size:12.5px;line-height:1.5}
 .kus-as__assign{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
-.kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:12px}
+.kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:12.5px}
 .kus-as__assign .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
 .kus-as__bulk{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--c-border);background:var(--c-surface)}
 .kus-as__bulk .kus-lp__btn{padding:4px 10px;font-size:12.5px}

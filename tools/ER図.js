@@ -1225,7 +1225,7 @@
 .kus-lp__hero-main{min-width:0;flex:1}
 .kus-lp__hero-actions{display:flex;align-items:center;gap:6px;flex-shrink:0;cursor:auto}
 /* 狭い画面では経過時間の文字を隠し（スピナーは残す）ボタンを詰めて、タイトルが 1 文字ずつ折り返すのを防ぐ */
-@media(max-width:560px){.kus-lp__elapsed{font-size:0;gap:0}.kus-lp__hero-actions{gap:4px}.kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{padding:6px 8px;font-size:12px}.kus-lp__toggle{min-width:30px}}
+@media(max-width:560px){.kus-lp__elapsed{font-size:0;gap:0}.kus-lp__hero-actions{gap:4px}.kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{padding:6px 8px;font-size:12.5px}.kus-lp__toggle{min-width:30px}}
 .kus-lp__elapsed{
   font-size:12.5px;font-weight:600;color:rgba(255,255,255,.9);white-space:nowrap;
   font-variant-numeric:tabular-nums;display:inline-flex;align-items:center;gap:5px;
@@ -10240,7 +10240,7 @@ ${ctx.mainScript}
       <div style="background:#333;height:8px;border-radius:4px;overflow:hidden;">
         <div id="_eb" style="width:0%;height:100%;background:linear-gradient(90deg,#00d4ff,#7b61ff);transition:width .3s;border-radius:4px;"></div>
       </div>
-      <div id="_em" style="font-size:12px;margin-top:8px;color:#aaa;">準備中...</div>`;
+      <div id="_em" style="font-size:12.5px;margin-top:8px;color:#aaa;">準備中...</div>`;
         (doc.body || doc.documentElement).appendChild(el);
         bar = el.querySelector("#_eb");
         msg = el.querySelector("#_em");
@@ -10952,7 +10952,7 @@ ${ctx.mainScript}
 .kus-as__name{color:var(--c-text);word-break:break-all}
 .kus-as__meta{margin-top:3px;color:var(--c-text-2);font-size:12.5px;line-height:1.5}
 .kus-as__assign{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
-.kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:12px}
+.kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:12.5px}
 .kus-as__assign .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
 .kus-as__bulk{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--c-border);background:var(--c-surface)}
 .kus-as__bulk .kus-lp__btn{padding:4px 10px;font-size:12.5px}

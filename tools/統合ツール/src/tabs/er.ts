@@ -67,7 +67,7 @@ const progressUi = (() => {
       <div style="background:#333;height:8px;border-radius:4px;overflow:hidden;">
         <div id="_eb" style="width:0%;height:100%;background:linear-gradient(90deg,#00d4ff,#7b61ff);transition:width .3s;border-radius:4px;"></div>
       </div>
-      <div id="_em" style="font-size:12px;margin-top:8px;color:#aaa;">準備中...</div>`;
+      <div id="_em" style="font-size:12.5px;margin-top:8px;color:#aaa;">準備中...</div>`;
       (doc.body || doc.documentElement).appendChild(el);
       bar = el.querySelector("#_eb"); msg = el.querySelector("#_em");
       if (bar) bar.style.background = "linear-gradient(90deg,#00d4ff,#7b61ff)";

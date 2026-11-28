@@ -171,7 +171,15 @@ async function main() {
         await tool.button('内容を確認する').click();
         const confirm = await tool.stage(1).innerText();
         await tool.button(action).click();
-        if (dialog) { await page.waitForTimeout(300); await tool.button('エクスポート').click(); }
+        if (dialog) {
+          await page.waitForTimeout(300);
+          // シートを選ぶ画面も、パネルと同じく文字は 12.5px 以上
+          const small = await page.evaluate(() => [...document.querySelector('#kex-export').closest('[role=dialog]').querySelectorAll('*')]
+            .filter(el => [...el.childNodes].some(n => n.nodeType === 3 && n.textContent.trim()) && parseFloat(getComputedStyle(el).fontSize) < 12.5)
+            .map(el => `${getComputedStyle(el).fontSize} ${el.textContent.trim().slice(0, 12)}`).slice(0, 5));
+          assert.deepEqual(small, [], 'Excel のシートを選ぶ画面に 12.5px 未満の文字がある');
+          await tool.button('エクスポート').click();
+        }
         await tool.idle();
         const status = await tool.status();
         await tool.button('対象・条件を変更').click();
@@ -320,6 +328,10 @@ async function main() {
     await settings.shot('settings-zip-result-320');
     await settings.page.setViewportSize(viewport);
     assert.ok(measured.page <= measured.width + 1 && measured.table <= 1, `結果表: 320px で横にはみ出さない ${JSON.stringify(measured)}`);
+    const smallText = await settings.page.evaluate(() => [...document.querySelectorAll('.kus-lp__panel-html *')]
+      .filter(el => [...el.childNodes].some(n => n.nodeType === 3 && n.textContent.trim()) && parseFloat(getComputedStyle(el).fontSize) < 12.5)
+      .map(el => `${getComputedStyle(el).fontSize} ${el.tagName}`).slice(0, 3));
+    assert.deepEqual(smallText, [], '結果表: 文字は 12.5px 以上（パネルの補足の下限）');
   }
   const zipFile = (await settings.files()).find(file => file.name.endsWith('.zip'));
   const settingsZip = readZip(zipFile.buffer);
