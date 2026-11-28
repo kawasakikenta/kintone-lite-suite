@@ -114,7 +114,7 @@ async function makeBundle(entry) {
         if (args.path === 'settings-export') contents += '\nexport function renderSettingsExportSearchResultsHtml(){ return ""; }';
         if (args.path === 'jsconfig') contents += '\nexport function runExportJsConfigStandalone(text, app, status){window.__workflowFixture.calls.push({name:"runExportJsConfigStandalone",input:text});status("JSON保存完了");}';
         if (args.path === 'record') contents += `
-          export function parseRecordAppIds(value){const ids=String(value).split(/[\\s,、]+/).filter(Boolean);if(ids.some(id=>!/^\\d+$/.test(id)))throw new Error('アプリIDは数値で指定してください。');return [...new Set(ids)];}
+          export function parseRecordAppIds(value){const ids=String(value).split(/[\\s,、，]+/).filter(Boolean);if(ids.some(id=>!/^\\d+$/.test(id)))throw new Error('アプリIDは数値で指定してください。');return [...new Set(ids)];}
           export async function runRecordAppBatchStandalone(value, fn, status){for(const id of parseRecordAppIds(value))await fn(id);status('全アプリの処理が完了しました。');}
         `;
         return { contents, loader: 'js', resolveDir: TOOL };
@@ -207,6 +207,14 @@ async function main() {
           await button('内容を確認する').click();
           assert.match(await stage(1).innerText(), /追加起点[\s\S]*303, 404/, 'ER図: 詳細設定の入力を確認画面に反映する');
           await button('対象・条件を変更').click();
+          // 起点が 50 以上のときの注意は、どの区切り（「,」「、」「，」・空白）でも出す
+          for (const separator of [', ', '、', '，', ' ']) {
+            await appId.fill(Array.from({ length: 60 }, (_, i) => String(1000 + i)).join(separator));
+            await button('内容を確認する').click();
+            assert.match(await stage(1).innerText(), /起点\s*60アプリ[\s\S]*起点が多い場合\s*60アプリを起点に/, 'ER図: 起点 60 件の件数と注意（区切り ' + JSON.stringify(separator) + '）');
+            await button('対象・条件を変更').click();
+          }
+          await appId.fill('202');
           // 狭い画面でもポップアップが画面内に収まる
           for (const [width, height] of [[390, 844], [320, 640]]) {
             await page.setViewportSize({ width, height });

@@ -44,7 +44,7 @@ const CSS = `
 .kus-wf-action{padding:12px;border:1px solid #cbd5e1;border-radius:10px;background:white;cursor:pointer;display:grid;grid-template-columns:18px 1fr;gap:8px;font-size:13px;min-width:0;align-items:start}
 .kus-wf-action:has(input:checked){border-color:#60a5fa;background:#eff6ff}
 .kus-wf-action strong{display:block;color:#0f172a}
-.kus-wf-action small{display:block;margin-top:3px;color:#64748b;line-height:1.5}
+.kus-wf-action small{display:block;margin-top:3px;color:#64748b;font-size:12.5px;line-height:1.5}
 .kus-wf-action em{display:inline-block;font-size:12.5px;font-style:normal;color:#9a3412;margin-top:5px}
 .kus-wf-action--more{grid-template-columns:1fr;text-align:left;font-family:inherit;color:#1d4ed8;border-style:dashed}
 .kus-wf-action--more[aria-pressed=true]{border-style:solid;border-color:#60a5fa;background:#eff6ff}

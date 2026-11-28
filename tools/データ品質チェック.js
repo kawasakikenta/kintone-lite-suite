@@ -1112,7 +1112,15 @@
     let finished = false;
     try {
       while (true) {
-        const resp = await apiGet(prefix, "/records/cursor.json", { id: cursorId }, { timeoutMs: 0 });
+        let resp;
+        try {
+          resp = await apiGet(prefix, "/records/cursor.json", { id: cursorId }, { timeoutMs: 0, retries: 1 });
+        } catch (error) {
+          if (isRunCancelledError(error)) throw error;
+          const message = error?.message || String(error);
+          throw new Error(`レコードの取得（cursor）が途中で失敗しました。取りこぼしを防ぐため自動では送り直しません。もう一度実行してください。
+${message}`);
+        }
         if (!Array.isArray(resp?.records)) {
           throw new Error("cursor 取得の応答形式が不正です（records がありません）");
         }
@@ -1334,8 +1342,8 @@
   color:var(--c-text);
   animation:kus-lp-fade-in .18s ease-out;
 }
-/* ドラッグ移動中は文字選択とアニメーションを止める */
-.kus-lp--dragging{user-select:none;animation:none;transition:none}
+/* ドラッグ移動中は文字選択と遷移を止める。animation は触らない（none から戻すと、開いたときのフェードインがドラッグのたびにやり直される） */
+.kus-lp--dragging{user-select:none;transition:none}
 .kus-lp--dragging .kus-lp__hero{cursor:grabbing}
 /* 最小化: ヒーローだけ残して本文を畳む（kintone 画面を確認しやすくする） */
 .kus-lp--collapsed .kus-lp__body{display:none!important}
@@ -1379,7 +1387,7 @@
 .kus-lp__badge-row{margin-top:8px;display:flex;flex-wrap:wrap;gap:5px}
 .kus-lp__badge{
   display:inline-flex;align-items:center;gap:4px;
-  font-size:12px;font-weight:700;letter-spacing:.02em;
+  font-size:12.5px;font-weight:700;letter-spacing:.02em;
   background:rgba(255,255,255,.22);padding:3px 9px;border-radius:999px;color:#fff;
 }
 /* 影響範囲のバッジ: 読み取り専用（緑）/ プレビューへ書き込み（橙）/ 本番データを変更（赤） */
@@ -1666,7 +1674,7 @@
 .kus-lp__apptable td{padding:5px 8px;border-bottom:1px solid var(--c-border);vertical-align:middle}
 .kus-lp__apptable tbody tr:last-child td{border-bottom:none}
 .kus-lp__apptable .kus-lp__input{width:100%;box-sizing:border-box}
-.kus-lp__apptable-name{min-height:1.35em;margin-top:3px;color:var(--c-muted);font-size:12px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kus-lp__apptable-name{min-height:1.35em;margin-top:3px;color:var(--c-muted);font-size:12.5px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kus-lp__apptable-name:not(.kus-lp__apptable-name--empty)::before{content:'アプリ名: ';color:var(--c-text-2);font-weight:600}
 .kus-lp__apptable-no{width:36px;padding-left:4px;padding-right:4px;text-align:center;color:var(--c-muted);font-size:12.5px;font-variant-numeric:tabular-nums}
 .kus-lp__apptable-acts-h{width:136px}
@@ -2952,7 +2960,7 @@
 .kus-as__table tr:last-child td{border-bottom:none}
 .kus-as__id{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--c-text-2);white-space:nowrap}
 .kus-as__name{color:var(--c-text);word-break:break-all}
-.kus-as__meta{margin-top:3px;color:var(--c-text-2);font-size:12px;line-height:1.5}
+.kus-as__meta{margin-top:3px;color:var(--c-text-2);font-size:12.5px;line-height:1.5}
 .kus-as__assign{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
 .kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:12px}
 .kus-as__assign .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
@@ -3289,7 +3297,7 @@
 .kus-wf-action{padding:12px;border:1px solid #cbd5e1;border-radius:10px;background:white;cursor:pointer;display:grid;grid-template-columns:18px 1fr;gap:8px;font-size:13px;min-width:0;align-items:start}
 .kus-wf-action:has(input:checked){border-color:#60a5fa;background:#eff6ff}
 .kus-wf-action strong{display:block;color:#0f172a}
-.kus-wf-action small{display:block;margin-top:3px;color:#64748b;line-height:1.5}
+.kus-wf-action small{display:block;margin-top:3px;color:#64748b;font-size:12.5px;line-height:1.5}
 .kus-wf-action em{display:inline-block;font-size:12.5px;font-style:normal;color:#9a3412;margin-top:5px}
 .kus-wf-action--more{grid-template-columns:1fr;text-align:left;font-family:inherit;color:#1d4ed8;border-style:dashed}
 .kus-wf-action--more[aria-pressed=true]{border-style:solid;border-color:#60a5fa;background:#eff6ff}

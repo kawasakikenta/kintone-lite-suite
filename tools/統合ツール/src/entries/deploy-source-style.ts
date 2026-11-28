@@ -23,7 +23,7 @@ ${P} .kus-dp-nav--five{grid-template-columns:repeat(5,minmax(0,1fr))}
 ${P} .kus-ds-route{display:grid;grid-template-columns:minmax(0,1fr) 40px minmax(0,1fr);align-items:stretch;gap:10px}
 ${P} .kus-ds-endpoint{padding:13px;border:1px solid #e2e8f0;border-radius:13px;background:#f8fafc;min-width:0}
 ${P} .kus-ds-endpoint--target{background:#fff7ed;border-color:#fed7aa}
-${P} .kus-ds-endpoint__eyebrow{margin-bottom:8px;font-size:12px;font-weight:800;letter-spacing:.08em;color:#64748b}
+${P} .kus-ds-endpoint__eyebrow{margin-bottom:8px;font-size:12.5px;font-weight:800;letter-spacing:.08em;color:#64748b}
 ${P} .kus-ds-endpoint--target .kus-ds-endpoint__eyebrow{color:#c2410c}
 ${P} .kus-ds-endpoint__note{font-size:12.5px;color:#9a3412;margin-bottom:8px}
 ${P} .kus-ds-endpoint .kus-lp__select{width:100%;margin-bottom:8px;min-width:0}
