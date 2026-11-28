@@ -519,8 +519,10 @@ function issueSections(ctx: DiffMarkdownContext): string[] {
   const issueIncomplete = fetchIssues.length > 0 || partialIssues.length > 0;
   const sameOnlyOmission = Number(truncation?.droppedSame || 0) > 0 && !actualIncomplete && !issueIncomplete;
   lines.push('## 完全性・注意事項');
+  // comparisonComplete は比較全体（取得失敗・本文未検証・走査の打ち切りのどれも無い）、
+  // actualDiffComplete は実差分の走査が上限で打ち切られなかったか（比較できたセクションの中での完全性）。
   lines.push(`- comparisonComplete: ${actualIncomplete || issueIncomplete ? 'false' : 'true'}`);
-  lines.push(`- actualDiffComplete: ${actualIncomplete || issueIncomplete ? 'false' : 'true'}`);
+  lines.push(`- actualDiffComplete: ${actualIncomplete ? 'false' : 'true'}`);
   lines.push(`- 取得失敗: ${fetchIssues.length}件`);
   lines.push(`- 本文未検証・部分取得: ${partialIssues.length}件`);
   lines.push(`- matchingNotice: ${((ctx.matchingNotices?.items || []).length + Number(ctx.matchingNotices?.omitted || 0))}件`);

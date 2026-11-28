@@ -736,6 +736,19 @@
     if (side === "both") return "両方";
     return String(side || "-");
   }
+  function describeAclEntity(entity) {
+    if (!entity || typeof entity !== "object") return "";
+    const code = String(entity.code || "").trim();
+    const type = String(entity.type || "").trim();
+    if (!code) return type ? `(${type})` : "";
+    return type ? `${code} (${type})` : code;
+  }
+  function describeNotificationTargets(targets) {
+    if (!Array.isArray(targets) || !targets.length) return "";
+    const first = describeAclEntity(targets[0]?.entity || targets[0]);
+    if (!first) return "";
+    return `通知先: ${first}${targets.length > 1 ? ` 他${targets.length - 1}件` : ""}`;
+  }
   function getPreviewStateLabel(preview) {
     return preview ? "プレビュー" : "本番";
   }
@@ -3284,13 +3297,6 @@
     }
     return out;
   }
-  function aclEntityLabel(entity) {
-    if (!entity || typeof entity !== "object") return "";
-    const code = String(entity.code || "").trim();
-    const type = String(entity.type || "").trim();
-    if (!code) return type ? `(${type})` : "";
-    return type ? `${code} (${type})` : code;
-  }
   function enumerateNamedMap(obj, basePath, kind, kindLabel) {
     if (!obj || typeof obj !== "object" || Array.isArray(obj)) return [];
     return Object.keys(obj).map((name) => ({
@@ -3310,7 +3316,7 @@
       const keyField = options.keyField;
       if (item && typeof item === "object") {
         if (kind === "aclEntry" || kind === "recordAclEntry") {
-          label = aclEntityLabel(item.entity);
+          label = describeAclEntity(item.entity);
           code = String(item.entity?.code || "");
         } else if (kind === "fieldAclEntry") {
           label = String(item.code || "");
@@ -3331,14 +3337,13 @@
           else if (t === "SUBTABLE" && item.code) label = `テーブル「${item.code}」`;
           else label = `行 #${idx + 1} (${t || "ROW"})`;
           code = String(item.code || "");
-        } else if (kind === "notification" || kind === "perRecordNotification" || kind === "reminderNotification") {
-          label = String(item.name || item.title || "").trim();
-          if (!label && Array.isArray(item.recipients) && item.recipients.length) {
-            const first = item.recipients[0];
-            const rc = first?.entity?.code || first?.code || "";
-            label = rc ? `${rc}${item.recipients.length > 1 ? " 他" : ""}` : "";
-          }
-          code = String(item.name || "");
+        } else if (kind === "notification") {
+          label = describeAclEntity(item.entity);
+          code = String(item.entity?.code || "");
+        } else if (kind === "perRecordNotification" || kind === "reminderNotification") {
+          const title = String(item.title || "").trim();
+          label = title || describeNotificationTargets(item.targets);
+          code = title;
         } else if (keyField) {
           label = String(item[keyField] || "");
           code = label;
@@ -3371,7 +3376,7 @@
         return out;
       }
       case "actionSettings":
-        return enumerateArray(payload.actions, `${sectionKey}.actions`, "appAction", "アクション", { keyField: "name" });
+        return Array.isArray(payload.actions) ? enumerateArray(payload.actions, `${sectionKey}.actions`, "appAction", "アクション", { keyField: "name" }) : enumerateNamedMap(payload.actions, `${sectionKey}.actions`, "appAction", "アクション");
       case "appAcl":
         return enumerateArray(payload.rights, `${sectionKey}.rights`, "aclEntry", "権限エントリー");
       case "recordPermissions":
@@ -4925,37 +4930,33 @@
       code: "エンティティコード",
       type: "エンティティ種別"
     },
+    // kintone の通知 API の項目（一般通知: entity・includeSubs・recordAdded など、
+    // レコード条件通知: filterCond・title・targets、リマインダー通知: timing・filterCond・title・targets）
     notifications: {
-      recipients: "宛先",
       includeSubs: "配下を含む",
-      appAdmin: "アプリ管理者",
-      onUserAccess: "アクセス権変更通知",
       notifyToCommenter: "コメント通知",
       code: "エンティティコード",
       type: "エンティティ種別",
       entity: "エンティティ"
     },
     perRecordNotifications: {
-      name: "通知名",
       filterCond: "通知対象条件",
       title: "タイトル",
-      body: "本文",
-      recipients: "宛先",
+      targets: "通知先",
       includeSubs: "配下を含む",
       code: "エンティティコード",
       type: "エンティティ種別",
       entity: "エンティティ"
     },
     reminderNotifications: {
-      name: "通知名",
       timing: "タイミング",
       filterCond: "通知対象条件",
       title: "タイトル",
-      body: "本文",
-      recipients: "宛先",
-      daysLater: "日数後",
-      hoursLater: "時間後",
-      baseDate: "基準日"
+      targets: "通知先",
+      includeSubs: "配下を含む",
+      code: "エンティティコード",
+      type: "エンティティ種別",
+      entity: "エンティティ"
     },
     categories: {
       enable: "カテゴリ管理 有効/無効",
@@ -5030,6 +5031,13 @@
       revision: "リビジョン"
     }
   };
+  var REMINDER_TIMING_LABELS = {
+    code: "通知タイミングの基準フィールド",
+    daysLater: "基準日からの日数",
+    hoursLater: "基準日時からの時間",
+    minutesLater: "基準日時からの分",
+    time: "通知する時刻"
+  };
   var ENTITY_KIND_LABELS = {
     view: "ビュー",
     report: "グラフ",
@@ -5050,13 +5058,6 @@
   };
   function getSectionPropLabel(sectionKey, leaf) {
     return ownLookup(ownLookup(SECTION_PROP_LABELS, sectionKey), leaf) || "";
-  }
-  function describeAclEntity(entity) {
-    if (!entity || typeof entity !== "object") return "";
-    const code = String(entity.code || "").trim();
-    const type = String(entity.type || "").trim();
-    if (!code) return type ? `(${type})` : "";
-    return type ? `${code} (${type})` : code;
   }
   function extractEntityContext(row, fieldLabelOf) {
     const sectionKey = String(row?.sectionKey || "");
@@ -5144,18 +5145,12 @@
       case "reminderNotifications": {
         if (tokens[1] === "notifications" && typeof tokens[2] === "number") {
           const obj = payload && typeof payload === "object" ? payload : {};
-          let label = String(obj.name || obj.title || "").trim();
-          if (!label && obj.entity && typeof obj.entity === "object") {
+          const isRoot = tokens.length === 3;
+          let label = isRoot ? String(obj.title || "").trim() : "";
+          if (!label && isRoot && obj.entity && typeof obj.entity === "object") {
             label = describeAclEntity(obj.entity);
           }
-          if (!label) {
-            const recipients = obj.recipients;
-            if (Array.isArray(recipients) && recipients.length) {
-              const first = recipients[0];
-              const code = first?.entity?.code || first?.code || "";
-              label = code ? `${code}${recipients.length > 1 ? " 他" : ""}` : "";
-            }
-          }
+          if (!label && isRoot) label = describeNotificationTargets(obj.targets);
           if (!label && row?.arrayKey === "name" && row?.arrayKeyValue != null) {
             label = String(row.arrayKeyValue);
           }
@@ -5167,7 +5162,8 @@
           }
           if (!label) label = `通知 #${tokens[2] + 1}`;
           const kind = sectionKey === "perRecordNotifications" ? "perRecordNotification" : sectionKey === "reminderNotifications" ? "reminderNotification" : "notification";
-          return { entityKind: kind, entityLabel: label, entityCode: String(obj.name || ""), propLabel };
+          const notificationProp = sectionKey === "reminderNotifications" && tokens[3] === "timing" ? ownLookup(REMINDER_TIMING_LABELS, leaf) || propLabel : propLabel;
+          return { entityKind: kind, entityLabel: label, entityCode: isRoot ? String(obj.title || "") : "", propLabel: notificationProp };
         }
         return empty;
       }
@@ -20776,7 +20772,7 @@ ${fence}`;
     const sameOnlyOmission = Number(truncation?.droppedSame || 0) > 0 && !actualIncomplete && !issueIncomplete;
     lines.push("## 完全性・注意事項");
     lines.push(`- comparisonComplete: ${actualIncomplete || issueIncomplete ? "false" : "true"}`);
-    lines.push(`- actualDiffComplete: ${actualIncomplete || issueIncomplete ? "false" : "true"}`);
+    lines.push(`- actualDiffComplete: ${actualIncomplete ? "false" : "true"}`);
     lines.push(`- 取得失敗: ${fetchIssues.length}件`);
     lines.push(`- 本文未検証・部分取得: ${partialIssues.length}件`);
     lines.push(`- matchingNotice: ${(ctx.matchingNotices?.items || []).length + Number(ctx.matchingNotices?.omitted || 0)}件`);

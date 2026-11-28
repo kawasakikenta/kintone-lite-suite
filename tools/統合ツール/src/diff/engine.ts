@@ -2,7 +2,7 @@
 
 import { SECTION_DEFS, META_KEYS, DIFF_NORMALIZATION_PRESETS, DEFAULT_IGNORE_KEYS, DiffNormalizationPreset } from '../constants.js';
 import { state, ui } from '../state.js';
-import { deepClone, setOwnValue, stableStringify } from '../utils.js';
+import { deepClone, describeAclEntity, describeNotificationTargets, setOwnValue, stableStringify } from '../utils.js';
 import type { DiffRow, DiffFetchIssue } from './types.js';
 import { isPluginConfigOmittedMarker } from '../pluginConfigMarker.js';
 
@@ -2194,14 +2194,6 @@ function tokenizeForExpansion(path: string | null | undefined): Array<string | n
   return out;
 }
 
-function aclEntityLabel(entity) {
-  if (!entity || typeof entity !== 'object') return '';
-  const code = String(entity.code || '').trim();
-  const type = String(entity.type || '').trim();
-  if (!code) return type ? `(${type})` : '';
-  return type ? `${code} (${type})` : code;
-}
-
 interface EntityChildSpec {
   path: string;
   payload: any;
@@ -2231,7 +2223,7 @@ function enumerateArray(arr, basePath, kind, kindLabel, options: { keyField?: st
     const keyField = options.keyField;
     if (item && typeof item === 'object') {
       if (kind === 'aclEntry' || kind === 'recordAclEntry') {
-        label = aclEntityLabel(item.entity);
+        label = describeAclEntity(item.entity);
         code = String(item.entity?.code || '');
       } else if (kind === 'fieldAclEntry') {
         label = String(item.code || '');
@@ -2252,14 +2244,15 @@ function enumerateArray(arr, basePath, kind, kindLabel, options: { keyField?: st
         else if (t === 'SUBTABLE' && item.code) label = `テーブル「${item.code}」`;
         else label = `行 #${idx + 1} (${t || 'ROW'})`;
         code = String(item.code || '');
-      } else if (kind === 'notification' || kind === 'perRecordNotification' || kind === 'reminderNotification') {
-        label = String(item.name || item.title || '').trim();
-        if (!label && Array.isArray(item.recipients) && item.recipients.length) {
-          const first = item.recipients[0];
-          const rc = first?.entity?.code || first?.code || '';
-          label = rc ? `${rc}${item.recipients.length > 1 ? ' 他' : ''}` : '';
-        }
-        code = String(item.name || '');
+      } else if (kind === 'notification') {
+        // 一般通知は宛先（entity）が識別子。名前・タイトルは持たない。
+        label = describeAclEntity(item.entity);
+        code = String(item.entity?.code || '');
+      } else if (kind === 'perRecordNotification' || kind === 'reminderNotification') {
+        // レコード条件通知・リマインダー通知はタイトル。無題なら通知先で示す。
+        const title = String(item.title || '').trim();
+        label = title || describeNotificationTargets(item.targets);
+        code = title;
       } else if (keyField) {
         label = String(item[keyField] || '');
         code = label;
@@ -2293,7 +2286,10 @@ function computeSectionWideEntityChildren(sectionKey: string, payload: any): Ent
       return out;
     }
     case 'actionSettings':
-      return enumerateArray(payload.actions, `${sectionKey}.actions`, 'appAction', 'アクション', { keyField: 'name' });
+      // kintone の応答はアクション名をキーにしたオブジェクト。アクションを配列で持つ設定JSONも受け付ける。
+      return Array.isArray(payload.actions)
+        ? enumerateArray(payload.actions, `${sectionKey}.actions`, 'appAction', 'アクション', { keyField: 'name' })
+        : enumerateNamedMap(payload.actions, `${sectionKey}.actions`, 'appAction', 'アクション');
     case 'appAcl':
       return enumerateArray(payload.rights, `${sectionKey}.rights`, 'aclEntry', '権限エントリー');
     case 'recordPermissions':

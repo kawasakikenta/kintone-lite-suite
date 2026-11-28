@@ -214,6 +214,33 @@ describe('diff/markdown export', () => {
     expect(incomplete.markdown).toContain('`partial`');
   });
 
+  it('actualDiffComplete は実差分の走査の打ち切りだけを示し、取得失敗は comparisonComplete だけに出す', () => {
+    const flags = (markdown: string) => ({
+      comparison: /^- comparisonComplete: (true|false)$/m.exec(markdown)?.[1],
+      actual: /^- actualDiffComplete: (true|false)$/m.exec(markdown)?.[1]
+    });
+    const fetchFailedOnly = buildDiffMarkdownExport(baseContext({
+      rows: [],
+      fetchIssues: [{ sectionKey: 'viewSettings', side: 'target', targetError: '権限がありません' }]
+    }));
+    expect(flags(fetchFailedOnly.markdown)).toEqual({ comparison: 'false', actual: 'true' });
+
+    const partialOnly = buildDiffMarkdownExport(baseContext({
+      rows: [],
+      partialIssues: [{ sectionKey: 'customizeSettings', side: 'source', message: 'JS本文を省略' }]
+    }));
+    expect(flags(partialOnly.markdown)).toEqual({ comparison: 'false', actual: 'true' });
+
+    const truncated = buildDiffMarkdownExport(baseContext({
+      rows: [],
+      truncation: { truncated: true, diffLimit: 1000, sections: [{ sectionKey: 'fieldSettings', scanStatus: 'partial', omittedDiffCount: null }] }
+    }));
+    expect(flags(truncated.markdown)).toEqual({ comparison: 'false', actual: 'false' });
+
+    const complete = buildDiffMarkdownExport(baseContext({ rows: [] }));
+    expect(flags(complete.markdown)).toEqual({ comparison: 'true', actual: 'true' });
+  });
+
   it('does not duplicate sensitive same-only values', () => {
     const { markdown } = buildDiffMarkdownExport(baseContext({
       rows: [{

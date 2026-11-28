@@ -6,7 +6,7 @@ import {
   DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS
 } from '../constants.js';
 import { state } from '../state.js';
-import { setOwnValue, stableStringify } from '../utils.js';
+import { describeAclEntity, describeNotificationTargets, setOwnValue, stableStringify } from '../utils.js';
 import { FIELD_SETTING_LABELS, labelOfProp, ownLookup, stateRenameName } from './label-dict.js';
 
 // utils.js と同一ロジック。IIFE バンドルで utils からの import が欠落した場合でも動作するようローカル定義する。
@@ -954,20 +954,21 @@ const SECTION_PROP_LABELS: Record<string, Record<string, string>> = {
     deletable: '削除', includeSubs: '配下を含む', entity: 'エンティティ',
     code: 'エンティティコード', type: 'エンティティ種別'
   },
+  // kintone の通知 API の項目（一般通知: entity・includeSubs・recordAdded など、
+  // レコード条件通知: filterCond・title・targets、リマインダー通知: timing・filterCond・title・targets）
   notifications: {
-    recipients: '宛先', includeSubs: '配下を含む', appAdmin: 'アプリ管理者',
-    onUserAccess: 'アクセス権変更通知', notifyToCommenter: 'コメント通知',
+    includeSubs: '配下を含む', notifyToCommenter: 'コメント通知',
     code: 'エンティティコード', type: 'エンティティ種別', entity: 'エンティティ'
   },
   perRecordNotifications: {
-    name: '通知名', filterCond: '通知対象条件', title: 'タイトル', body: '本文',
-    recipients: '宛先', includeSubs: '配下を含む', code: 'エンティティコード',
+    filterCond: '通知対象条件', title: 'タイトル', targets: '通知先',
+    includeSubs: '配下を含む', code: 'エンティティコード',
     type: 'エンティティ種別', entity: 'エンティティ'
   },
   reminderNotifications: {
-    name: '通知名', timing: 'タイミング', filterCond: '通知対象条件',
-    title: 'タイトル', body: '本文', recipients: '宛先',
-    daysLater: '日数後', hoursLater: '時間後', baseDate: '基準日'
+    timing: 'タイミング', filterCond: '通知対象条件', title: 'タイトル', targets: '通知先',
+    includeSubs: '配下を含む', code: 'エンティティコード',
+    type: 'エンティティ種別', entity: 'エンティティ'
   },
   categories: {
     enable: 'カテゴリ管理 有効/無効', name: 'カテゴリ名', index: '表示順',
@@ -1008,6 +1009,15 @@ const SECTION_PROP_LABELS: Record<string, Record<string, string>> = {
   }
 };
 
+/** リマインダー通知の通知タイミング（timing）の項目。kintone の設定画面の言葉にそろえる。 */
+const REMINDER_TIMING_LABELS: Record<string, string> = {
+  code: '通知タイミングの基準フィールド',
+  daysLater: '基準日からの日数',
+  hoursLater: '基準日時からの時間',
+  minutesLater: '基準日時からの分',
+  time: '通知する時刻'
+};
+
 const ENTITY_KIND_LABELS: Record<string, string> = {
   view: 'ビュー',
   report: 'グラフ',
@@ -1030,14 +1040,6 @@ const ENTITY_KIND_LABELS: Record<string, string> = {
 
 function getSectionPropLabel(sectionKey: string, leaf: string): string {
   return ownLookup(ownLookup(SECTION_PROP_LABELS, sectionKey), leaf) || '';
-}
-
-function describeAclEntity(entity: any): string {
-  if (!entity || typeof entity !== 'object') return '';
-  const code = String(entity.code || '').trim();
-  const type = String(entity.type || '').trim();
-  if (!code) return type ? `(${type})` : '';
-  return type ? `${code} (${type})` : code;
 }
 
 export interface DiffEntityContext {
@@ -1153,19 +1155,15 @@ export function extractEntityContext(row: any, fieldLabelOf?: FieldLabelResolver
     case 'reminderNotifications': {
       if (tokens[1] === 'notifications' && typeof tokens[2] === 'number') {
         const obj = (payload && typeof payload === 'object') ? payload as any : {};
-        let label = String(obj.name || obj.title || '').trim();
-        if (!label && obj.entity && typeof obj.entity === 'object') {
+        // 行の値が通知そのもの（通知の追加・削除）のときだけ、値から見出しを作る。
+        const isRoot = tokens.length === 3;
+        let label = isRoot ? String(obj.title || '').trim() : '';
+        if (!label && isRoot && obj.entity && typeof obj.entity === 'object') {
           // 一般通知：宛先エンティティが識別子
           label = describeAclEntity(obj.entity);
         }
-        if (!label) {
-          const recipients = obj.recipients;
-          if (Array.isArray(recipients) && recipients.length) {
-            const first = recipients[0];
-            const code = first?.entity?.code || first?.code || '';
-            label = code ? `${code}${recipients.length > 1 ? ' 他' : ''}` : '';
-          }
-        }
+        // レコード条件通知・リマインダー通知の無題の通知は、通知先で示す
+        if (!label && isRoot) label = describeNotificationTargets(obj.targets);
         if (!label && row?.arrayKey === 'name' && row?.arrayKeyValue != null) {
           label = String(row.arrayKeyValue);
         }
@@ -1179,7 +1177,11 @@ export function extractEntityContext(row: any, fieldLabelOf?: FieldLabelResolver
         const kind = sectionKey === 'perRecordNotifications'
           ? 'perRecordNotification'
           : (sectionKey === 'reminderNotifications' ? 'reminderNotification' : 'notification');
-        return { entityKind: kind, entityLabel: label, entityCode: String(obj.name || ''), propLabel };
+        // リマインダーの timing の code は基準の日付・日時フィールド（通知先のエンティティのコードと同じ名前の項目）。
+        const notificationProp = sectionKey === 'reminderNotifications' && tokens[3] === 'timing'
+          ? (ownLookup(REMINDER_TIMING_LABELS, leaf) || propLabel)
+          : propLabel;
+        return { entityKind: kind, entityLabel: label, entityCode: isRoot ? String(obj.title || '') : '', propLabel: notificationProp };
       }
       return empty;
     }

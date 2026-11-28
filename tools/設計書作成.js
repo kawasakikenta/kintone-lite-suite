@@ -17588,7 +17588,6 @@ ${fence}`;
       },
       ensureArray: (v) => Array.isArray(v) ? v : [],
       safeJoin: (arr, sep = "、") => Array.isArray(arr) ? arr.filter((v) => v !== "" && v != null).join(sep) : "",
-      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       clampColumnWidth: (width) => Math.max(CONFIG.MIN_COL_WIDTH, Math.min(CONFIG.MAX_COL_WIDTH, Number.isFinite(Number(width)) ? Number(width) : CONFIG.DEFAULT_COL_WIDTH)),
       calculateCellWidth: (text) => {
         if (!text) return CONFIG.MIN_COL_WIDTH;
@@ -17950,8 +17949,9 @@ ${fence}`;
           return await fn();
         } catch (e) {
           lastErr = e;
-          if (isRunCancelledError(e) || i === max - 1) throw e;
-          await UtilsX.sleep(CONFIG.RETRY_DELAY * (i + 1));
+          if (isRunCancelledError(e) || i === max - 1 || !isRetriableApiError(e)) throw e;
+          await sleepUnlessCancelled(CONFIG.RETRY_DELAY * (i + 1));
+          throwIfCancelled();
         }
       }
       throw lastErr;

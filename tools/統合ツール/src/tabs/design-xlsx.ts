@@ -4,8 +4,8 @@ import { TOOL_ID, SECTION_DEFS } from '../constants.js';
 import { buildDesignSnapshot } from '../design/snapshot.js';
 import { getToolDocument } from '../ui/dialog.js';
 import { showToast, stripHtmlToText, extractAppNameFromBundle, flattenCategories } from '../utils.js';
-import { isCancelRequested, isRunCancelledError, raceWithCancel, requestCancel, RUN_CANCELLED_MESSAGE, throwIfCancelled } from '../runControl.js';
-import { API_GET_TIMEOUT_MS } from '../api.js';
+import { isCancelRequested, isRunCancelledError, raceWithCancel, requestCancel, RUN_CANCELLED_MESSAGE, sleepUnlessCancelled, throwIfCancelled } from '../runControl.js';
+import { API_GET_TIMEOUT_MS, isRetriableApiError } from '../api.js';
 import { loadJSZipLite } from '../jszipLoader.js';
 import { loadSheetLib as importSheetLib } from './sheetLib.js';
 
@@ -674,7 +674,6 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     safeGet: (obj: any, path: string, def: any = ''): any => { try { if (!obj || typeof obj !== 'object') return def; const v = path.split('.').reduce((o: any, k: string) => (o && o[k] !== undefined ? o[k] : undefined), obj); return v === undefined ? def : v; } catch (e) { return def; } },
     ensureArray: v => Array.isArray(v) ? v : [],
     safeJoin: (arr, sep = '、') => Array.isArray(arr) ? arr.filter(v => v !== '' && v != null).join(sep) : '',
-    sleep: ms => new Promise(r => setTimeout(r, ms)),
     clampColumnWidth: width => Math.max(CONFIG.MIN_COL_WIDTH, Math.min(CONFIG.MAX_COL_WIDTH, Number.isFinite(Number(width)) ? Number(width) : CONFIG.DEFAULT_COL_WIDTH)),
     calculateCellWidth: text => { if (!text) return CONFIG.MIN_COL_WIDTH; const str = String(text); let width = 0; for (const line of str.split('\n')) { let lw = 0; for (const ch of line) lw += /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF\uFF00-\uFFEF]/.test(ch) ? 2 : 1; if (lw > width) width = lw; } return UtilsX.clampColumnWidth(width + 2); },
     colToA1: (n) => { let s = ''; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = (n - 1) / 26 | 0; } return s; },
@@ -959,11 +958,19 @@ export async function runAdvancedDesignExporter(params: any = {}) {
 
   const loadSheetLib = loadSheetLibOnce;
 
+  // 再試行するのは、時間を置けば成功し得る失敗（応答待ちの超過・通信失敗・429・5xx など）だけ。
+  // 権限が無い・アプリが無いなどは何度やっても同じなので、差分比較・設定取得（api.ts の apiGet）と同じ基準ですぐ失敗にする。
   async function retry<T>(fn: () => Promise<T>, max = CONFIG.MAX_RETRIES): Promise<T> {
     let lastErr: any;
     for (let i = 0; i < max; i++) {
       try { return await fn(); }
-      catch (e) { lastErr = e; if (isRunCancelledError(e) || i === max - 1) throw e; await UtilsX.sleep(CONFIG.RETRY_DELAY * (i + 1)); }
+      catch (e) {
+        lastErr = e;
+        if (isRunCancelledError(e) || i === max - 1 || !isRetriableApiError(e)) throw e;
+        // 待っている間に「中止」されたら、待ち終わるのを待たずに止める。
+        await sleepUnlessCancelled(CONFIG.RETRY_DELAY * (i + 1));
+        throwIfCancelled();
+      }
     }
     throw lastErr;
   }
