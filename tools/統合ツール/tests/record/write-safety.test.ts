@@ -97,7 +97,8 @@ describe('a chunk whose response never arrived is reported as unconfirmed', () =
     expect(isUnconfirmedWriteFailure(new Error('Request timeout'))).toBe(true);
     expect(isUnconfirmedWriteFailure(new Error('Failed to fetch'))).toBe(true);
     expect(isUnconfirmedWriteFailure(Object.assign(new Error('Bad Gateway'), { status: 502 }))).toBe(true);
-    expect(isUnconfirmedWriteFailure(new Error('権限がありません'))).toBe(false);
+    // kintone の拒否はエラー応答（code・id）を持つ。形の分からない失敗は、書き込まれたか確認できないものとして扱う（lost-response-shape.test.ts）
+    expect(isUnconfirmedWriteFailure({ code: 'CB_NO02', message: '権限がありません' })).toBe(false);
     expect(isUnconfirmedWriteFailure(null)).toBe(false);
   });
 
