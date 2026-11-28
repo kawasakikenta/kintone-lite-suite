@@ -172,7 +172,7 @@ function customizeFilesNote(files: AppCustomizeFiles | null): string {
 
 function parseAppIdList(text) {
   const tokens = String(text || '')
-    .split(/[\s,、]+/)
+    .split(/[\s,、，]+/)
     .map((s) => s.trim())
     .filter(Boolean);
   const out = [];

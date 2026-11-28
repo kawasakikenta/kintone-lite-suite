@@ -3056,7 +3056,7 @@
     function distributeAppTokens(entry) {
       const raw = entry.app.value;
       const guestVal = entry.guest.value.trim();
-      if (!/[,、\s]/.test(raw)) {
+      if (!/[,、，\s]/.test(raw)) {
         const parsed = parseAppToken(raw, guestVal);
         if (parsed.appId !== raw || parsed.guestId !== guestVal) {
           entry.app.value = parsed.appId;
@@ -3066,7 +3066,7 @@
         }
         return false;
       }
-      const tokens = raw.split(/[,、\s]+/).map((t) => t.trim()).filter(Boolean);
+      const tokens = raw.split(/[,、，\s]+/).map((t) => t.trim()).filter(Boolean);
       if (tokens.length <= 1) {
         const parsed = parseAppToken(tokens[0] || "", guestVal);
         if (entry.app.value !== parsed.appId || entry.guest.value.trim() !== parsed.guestId) {
@@ -3166,7 +3166,7 @@
       app.addEventListener("paste", (ev) => {
         const text = ev.clipboardData?.getData("text") || "";
         const hasUrl = Boolean(extractAppIdFromInput(text.trim())) && !/^\d+$/.test(text.trim());
-        if (!/[,、\s]/.test(text) && !hasUrl) return;
+        if (!/[,、，\s]/.test(text) && !hasUrl) return;
         ev.preventDefault();
         const start = app.selectionStart ?? app.value.length;
         const end = app.selectionEnd ?? start;
@@ -4271,7 +4271,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     return `JS/CSSファイル ${files.files.length}件中 ${files.saved}件を保存。失敗 ${files.failed}件（${first.name || "(名称不明)"}: ${first.error}）`;
   }
   function parseAppIdList(text) {
-    const tokens = String(text || "").split(/[\s,、]+/).map((s) => s.trim()).filter(Boolean);
+    const tokens = String(text || "").split(/[\s,、，]+/).map((s) => s.trim()).filter(Boolean);
     const out = [];
     const seen = /* @__PURE__ */ new Set();
     for (const tk of tokens) {

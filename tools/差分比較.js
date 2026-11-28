@@ -22191,13 +22191,13 @@ ${fence}`;
     return "";
   }
   function mergePastedTargetAppIds(current, selectionStart, selectionEnd, pasted) {
-    const tokens = String(pasted || "").split(/[,、\s]+/).filter(Boolean);
+    const tokens = String(pasted || "").split(/[,、，\s]+/).filter(Boolean);
     if (tokens.length <= 1) return { merged: current, splits: false };
     const value = String(current || "");
     const start = Math.min(Math.max(0, selectionStart ?? value.length), value.length);
     const end = Math.min(Math.max(start, selectionEnd ?? start), value.length);
-    const before = value.slice(0, start).replace(/[,、\s]+$/, "").trim();
-    const after = value.slice(end).replace(/^[,、\s]+/, "").trim();
+    const before = value.slice(0, start).replace(/[,、，\s]+$/, "").trim();
+    const after = value.slice(end).replace(/^[,、，\s]+/, "").trim();
     return { merged: [before, tokens.join(","), after].filter(Boolean).join(","), splits: true };
   }
   var SCOPE_OPTS = buildLiteDiffScopeOptions();
@@ -23629,8 +23629,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       const distribute = () => {
         if (adoptDiffAppReference(entry.app, entry.guest, "比較先", () => setTargetName(entry, ""))) return;
         const raw = entry.app.value;
-        if (!/[,、\s]/.test(raw)) return;
-        const tokens = raw.split(/[,、\s]+/).map((t) => t.trim()).filter(Boolean);
+        if (!/[,、，\s]/.test(raw)) return;
+        const tokens = raw.split(/[,、，\s]+/).map((t) => t.trim()).filter(Boolean);
         if (tokens.length <= 1) {
           entry.app.value = tokens[0] || "";
           setTargetName(entry, "");
@@ -24070,7 +24070,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       first.source.guest.value = srcGuest.value.trim();
       first.source.preview.checkbox.checked = srcPrev.checkbox.checked;
       setPairEndpointName(first.source, sourceAppName);
-      first.target.app.value = tgtApp.value.trim().split(/[,、\s]+/)[0] || "";
+      first.target.app.value = tgtApp.value.trim().split(/[,、，\s]+/)[0] || "";
       first.target.guest.value = tgtGuest.value.trim();
       first.target.preview.checkbox.checked = tgtPrev.checkbox.checked;
       setPairEndpointName(first.target, targetRows[0]?.appName || "");
@@ -24556,7 +24556,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       pairBulkTextarea.value.split(/\r?\n/).forEach((rawLine, index) => {
         if (!rawLine.trim()) return;
         const line = rawLine.replace(/\r$/, "");
-        const columns = (line.includes("	") ? line.split("	") : line.split(/[,、]/)).map((value) => value.trim());
+        const columns = (line.includes("	") ? line.split("	") : line.split(/[,、，]/)).map((value) => value.trim());
         if (columns.length === 2) parsed.push({ source: { appId: columns[0] }, target: { appId: columns[1] } });
         else if (columns.length === 4) parsed.push({ source: { appId: columns[0], guestId: columns[1] }, target: { appId: columns[2], guestId: columns[3] } });
         else invalidLines.push(index + 1);

@@ -1640,7 +1640,7 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
   function distributeAppTokens(entry: AppTableRowEntry): boolean {
     const raw = entry.app.value;
     const guestVal = entry.guest.value.trim();
-    if (!/[,、\s]/.test(raw)) {
+    if (!/[,、，\s]/.test(raw)) {
       const parsed = parseAppToken(raw, guestVal);
       if (parsed.appId !== raw || parsed.guestId !== guestVal) {
         entry.app.value = parsed.appId;
@@ -1650,7 +1650,7 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
       }
       return false;
     }
-    const tokens = raw.split(/[,、\s]+/).map((t) => t.trim()).filter(Boolean);
+    const tokens = raw.split(/[,、，\s]+/).map((t) => t.trim()).filter(Boolean);
     if (tokens.length <= 1) {
       // 区切り文字だけ / 末尾カンマなどは正規化（先頭トークンのみ残す）
       const parsed = parseAppToken(tokens[0] || '', guestVal);
@@ -1744,13 +1744,13 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     delBtn.addEventListener('click', () => removeRow(entry));
     app.addEventListener('input', () => { if (entry.appName) setAppName(entry, ''); emitChange(); });
     guest.addEventListener('input', emitChange);
-    // カンマ（,／、）・空白・改行区切りで複数アプリIDをまとめて入力したら自動で行へ分割する。
+    // カンマ（,／、／，）・空白・改行区切りで複数アプリIDをまとめて入力したら自動で行へ分割する。
     // 入力途中の誤分割を避けるため、確定（change/blur）時とペースト時にのみ分割する。
     app.addEventListener('change', () => { if (distributeAppTokens(entry)) emitChange(); });
     app.addEventListener('paste', (ev: ClipboardEvent) => {
       const text = ev.clipboardData?.getData('text') || '';
       const hasUrl = Boolean(extractAppIdFromInput(text.trim())) && !/^\d+$/.test(text.trim());
-      if (!/[,、\s]/.test(text) && !hasUrl) return;
+      if (!/[,、，\s]/.test(text) && !hasUrl) return;
       ev.preventDefault();
       const start = app.selectionStart ?? app.value.length;
       const end = app.selectionEnd ?? start;

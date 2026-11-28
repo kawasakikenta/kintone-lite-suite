@@ -422,7 +422,7 @@ export async function runBatchDesignExportXlsxZipStandalone(
   } else {
     const guestId = String(source.guestId || '').trim();
     const appIds = String(source.appIdsText || '')
-      .split(/[\s,、]+/)
+      .split(/[\s,、，]+/)
       .map((s) => s.trim())
       .filter(Boolean);
     const validationError = validateDesignExportTargets(appIds.map((appId) => ({ appId, guestId })));
@@ -630,7 +630,7 @@ export async function runBatchDesignExportMdZipStandalone(
   } else {
     const guestId = String(source?.guestId || '').trim();
     const appIds = String(source?.appIdsText || '')
-      .split(/[\s,、]+/)
+      .split(/[\s,、，]+/)
       .map((s) => s.trim())
       .filter(Boolean);
     const validationError = validateDesignExportTargets(appIds.map((appId) => ({ appId, guestId })));
