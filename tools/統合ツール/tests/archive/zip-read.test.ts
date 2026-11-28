@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { LiteZip } from '../../src/archive/lite-zip';
-import { looksLikeZip, readZipEntries } from '../../src/archive/zip-read';
+import { listZipEntries, looksLikeZip, readZipEntries } from '../../src/archive/zip-read';
 
 const bytesOf = async (blob: Blob) => new Uint8Array(await blob.arrayBuffer());
 const text = (data: Uint8Array) => new TextDecoder().decode(data);
@@ -39,5 +39,25 @@ describe('readZipEntries', () => {
     broken[at] = 'z'.charCodeAt(0);
     await expect(readZipEntries(broken)).rejects.toThrow('「a.json」の内容が壊れています');
     await expect(readZipEntries(bytes, { maxTotalBytes: 5 })).rejects.toThrow('上限を超えます');
+    await expect(readZipEntries(bytes, { maxEntries: 0 })).rejects.toThrow('ZIP のファイル数（1）が多すぎます');
+  });
+});
+
+describe('listZipEntries', () => {
+  it('中央ディレクトリから名前・大きさ・フォルダかを、展開せずに並びどおり返す', async () => {
+    const zip = new LiteZip();
+    zip.file('manifest.json', '{"apps":[]}');
+    zip.folder('apps')!.file('a.json', 'x'.repeat(1000));
+    zip.file('b.js', '');
+    const bytes = await bytesOf(await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' }));
+    const listed = listZipEntries(bytes);
+    expect(listed.map((entry) => [entry.name, entry.directory, entry.size])).toEqual([
+      ['manifest.json', false, 11],
+      ['apps/', true, 0],
+      ['apps/a.json', false, 1000],
+      ['b.js', false, 0]
+    ]);
+    expect(listed[2].compressedSize).toBeLessThan(1000);
+    expect(() => listZipEntries(new TextEncoder().encode('{}'))).toThrow('ZIP の終端が見つかりません');
   });
 });

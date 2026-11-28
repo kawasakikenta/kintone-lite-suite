@@ -3642,8 +3642,15 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     }
     return props;
   }
+  var POSITIVE_APP_ID = /^[1-9]\d*$/;
+  function lookupMapIdLabel(value) {
+    if (value == null) return "（空）";
+    if (typeof value === "string" || typeof value === "number") return normalizeIdInputText(value).trim() || "（空）";
+    const text = JSON.stringify(value) ?? String(value);
+    return text.length > 40 ? `${text.slice(0, 40)}…` : text;
+  }
   function parseLookupMapInput(text) {
-    const raw = String(text ?? "").trim();
+    const raw = String(text ?? "").replace(/，/g, ",").trim();
     const out = {};
     if (!raw) return out;
     let parsed;
@@ -3656,9 +3663,15 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       throw new Error('Lookup AppID 変換 JSON は {"旧AppID":"新AppID"} 形式で入力してください');
     }
     for (const [k, v] of Object.entries(parsed)) {
-      const from = String(k).trim();
-      const to = String(v ?? "").trim();
-      if (from && to) out[from] = to;
+      const from = normalizeIdInputText(k).trim();
+      const to = typeof v === "string" || typeof v === "number" ? normalizeIdInputText(v).trim() : "";
+      if (!POSITIVE_APP_ID.test(from) || !POSITIVE_APP_ID.test(to)) {
+        throw new Error(`参照先変換のアプリIDには正の整数を指定してください（「${lookupMapIdLabel(k)}」→「${lookupMapIdLabel(v)}」）`);
+      }
+      if (hasOwn(out, from) && out[from] !== to) {
+        throw new Error(`参照先変換で旧アプリID ${from} が複数の変換先（${out[from]}、${to}）に指定されています`);
+      }
+      out[from] = to;
     }
     return out;
   }

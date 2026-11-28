@@ -68,11 +68,14 @@ import {
 } from '../diff/batch-comparison.js';
 import {
   autoMatchDiffBatchFolderBundles,
+  diffBatchFolderLimitIssue,
   parseDiffBatchFolderImport,
+  type DiffBatchFolderImportFile,
   type DiffBatchFolderImportedBundle,
   type DiffBatchFolderImportResult,
   type DiffBatchFolderMatchKind
 } from '../diff/batch-folder-import.js';
+import { DIFF_BATCH_ZIP_MAX_BYTES, DIFF_BATCH_ZIP_TOO_LARGE_MESSAGE, readDiffBatchZipFiles } from '../diff/batch-zip-import.js';
 
 // 取得定義を単一の正とし、新しい設定 API が UI だけから漏れるのを防ぐ。
 // 初期状態では全設定を選び、未選択の設定を「差分なし」と誤解しないようにする。
@@ -2402,7 +2405,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   addPairBtn.dataset.kusDlPairAdd = '';
   addPairBtn.addEventListener('click', () => {
     if (pairFolderModeActive()) {
-      panel.setStatus('フォルダ比較中は対応確認表からペアを作成してください。手入力へ戻す場合は両フォルダを解除してください', 'warn');
+      panel.setStatus('フォルダ比較中は対応確認表からペアを作成してください。手入力へ戻す場合は両側の読込を解除してください', 'warn');
       return;
     }
     const entry = addPairRow({}, true);
@@ -2419,8 +2422,13 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   pairToolbar.append(addPairBtn, pairClearImportBtn);
 
   type PairFolderSide = 'source' | 'target';
+  /** 何から読み込んだか（展開したフォルダ、または設定取得の ZIP）。読み方・安全策はどちらも同じ。 */
+  type PairFolderSourceKind = 'folder' | 'zip';
   interface PairFolderState {
     folderName: string;
+    kind: PairFolderSourceKind;
+    /** ZIP のときだけ: ファイル名・大きさ・更新日時（比較元と比較先に同じ ZIP を選んだかを見る） */
+    fingerprint?: string;
     result: DiffBatchFolderImportResult;
   }
   interface PairFolderDraftRow {
@@ -2438,14 +2446,19 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   let pairFolderApplied = false;
   let pairFolderIgnoreUnusedTargets = false;
   const pairFolderActiveLoads: Record<PairFolderSide, number> = { source: 0, target: 0 };
+  /** 読み込み中の表示に使う、最後に選んだもの（フォルダか ZIP か） */
+  const pairFolderLoadingKind: Record<PairFolderSide, PairFolderSourceKind> = { source: 'folder', target: 'folder' };
   const pairFolderLoadActive = () => pairFolderActiveLoads.source > 0 || pairFolderActiveLoads.target > 0;
+  const pairFolderSideLabel = (side: PairFolderSide) => side === 'source' ? '比較元' : '比較先';
+  const pairFolderSideLongLabel = (side: PairFolderSide) => side === 'source' ? '比較元（変更前）' : '比較先（変更後）';
+  const pairFolderKindLabel = (kind: PairFolderSourceKind) => kind === 'zip' ? 'ZIP' : 'フォルダ';
 
   const pairFolder = document.createElement('section');
   pairFolder.className = 'kus-dl-pair-folder';
   pairFolder.setAttribute('aria-labelledby', 'kus-dl-pair-folder-title');
   const pairFolderHead = document.createElement('div');
   pairFolderHead.className = 'kus-dl-pair-folder__head';
-  pairFolderHead.innerHTML = '<strong id="kus-dl-pair-folder-title">設定フォルダからペアを作成</strong><span>設定一括取得ZIPを展開したフォルダなどを、変更前・変更後の両側で選びます。対応を確認して反映すると現在のペア表を置き換え、比較には設定JSONだけを使います（kintone からは取得しません）。</span>';
+  pairFolderHead.innerHTML = '<strong id="kus-dl-pair-folder-title">設定フォルダからペアを作成</strong><span>設定取得の「設定をZIPで保存」で保存したZIP（展開したフォルダでも可）を、変更前・変更後の両側で選びます。対応を確認して反映すると現在のペア表を置き換え、比較には設定JSONだけを使います（kintone からは取得しません）。</span>';
   const pairFolderGrid = document.createElement('div');
   pairFolderGrid.className = 'kus-dl-pair-folder__grid';
 
@@ -2454,16 +2467,19 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     box.className = `kus-dl-pair-folder__side kus-dl-pair-folder__side--${side}`;
     const title = document.createElement('strong');
     title.id = `kus-dl-pair-folder-${side}-title`;
-    title.textContent = side === 'source' ? '比較元（変更前）フォルダ' : '比較先（変更後）フォルダ';
+    title.textContent = `${pairFolderSideLongLabel(side)}フォルダ・ZIP`;
     box.setAttribute('aria-labelledby', title.id);
     const actions = document.createElement('div');
     actions.className = 'kus-dl-pair-folder__actions';
     const select = makeButton('フォルダを選択', 'sub', { icon: '↑' });
     select.dataset.kusDlPairFolderSelect = side;
-    select.setAttribute('aria-label', `${side === 'source' ? '比較元（変更前）' : '比較先（変更後）'}フォルダを選択`);
+    select.setAttribute('aria-label', `${pairFolderSideLongLabel(side)}フォルダを選択`);
+    const zipSelect = makeButton('ZIPを選択', 'sub', { icon: '↑' });
+    zipSelect.dataset.kusDlPairZipSelect = side;
+    zipSelect.setAttribute('aria-label', `${pairFolderSideLongLabel(side)}ZIPを選択`);
     const clear = makeButton('解除', 'ghost');
     clear.dataset.kusDlPairFolderClear = side;
-    clear.setAttribute('aria-label', `${side === 'source' ? '比較元（変更前）' : '比較先（変更後）'}フォルダの読込を解除`);
+    clear.setAttribute('aria-label', `${pairFolderSideLongLabel(side)}フォルダの読込を解除`);
     clear.disabled = true;
     const summary = document.createElement('p');
     summary.className = 'kus-dl-pair-folder__summary';
@@ -2479,9 +2495,16 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     input.setAttribute('directory', '');
     input.setAttribute('aria-label', `${side === 'source' ? '比較元' : '比較先'}設定フォルダ`);
     input.dataset.kusDlPairFolderInput = side;
-    actions.append(select, clear);
-    box.append(title, actions, summary, input);
-    return { box, select, clear, summary, input };
+    // 設定取得の ZIP をそのまま読む（展開したフォルダを選んだときと同じに読む）
+    const zipInput = document.createElement('input');
+    zipInput.type = 'file';
+    zipInput.accept = '.zip,application/zip,application/x-zip-compressed';
+    zipInput.hidden = true;
+    zipInput.setAttribute('aria-label', `${pairFolderSideLabel(side)}設定ZIP`);
+    zipInput.dataset.kusDlPairZipInput = side;
+    actions.append(select, zipSelect, clear);
+    box.append(title, actions, summary, input, zipInput);
+    return { box, select, zipSelect, clear, summary, input, zipInput };
   };
   const sourceFolderUi = makePairFolderSide('source');
   const targetFolderUi = makePairFolderSide('target');
@@ -2549,9 +2572,9 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       ui.box.setAttribute('aria-busy', loading ? 'true' : 'false');
       ui.clear.disabled = !state || loading;
       ui.clear.textContent = resetsPairTable ? '解除して表を初期化' : '解除';
-      ui.clear.setAttribute('aria-label', `${side === 'source' ? '比較元（変更前）' : '比較先（変更後）'}フォルダの読込を解除${resetsPairTable ? 'してペア表を初期化' : ''}`);
+      ui.clear.setAttribute('aria-label', `${pairFolderSideLongLabel(side)}${pairFolderKindLabel(state?.kind || 'folder')}の読込を解除${resetsPairTable ? 'してペア表を初期化' : ''}`);
       ui.summary.textContent = loading
-        ? `${state ? `${state.folderName} — ` : ''}新しいフォルダを読み込み中…`
+        ? `${state ? `${state.folderName} — ` : ''}新しい${pairFolderKindLabel(pairFolderLoadingKind[side])}を読み込み中…`
         : state
         ? `${state.folderName} — ${state.result.bundles.length}アプリ / JSON ${state.result.jsonFileCount}ファイル${state.result.ignoredFileCount ? ` / JSON以外 ${state.result.ignoredFileCount}件を除外` : ''}`
         : '未選択';
@@ -2567,7 +2590,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     pairFolderMapping.hidden = !ready;
     if (!ready) {
       pairFolderMappingTable.innerHTML = '';
-      pairFolderReview.textContent = '比較元と比較先の両フォルダを選択してください';
+      pairFolderReview.textContent = '比較元と比較先の両方で、フォルダかZIPを選択してください';
       pairFolderApplyBtn.disabled = true;
       return;
     }
@@ -2694,6 +2717,40 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     return path.includes('/') ? path.split('/')[0] : (path || '選択フォルダ');
   };
 
+  /**
+   * 読み込んだファイル（フォルダ・ZIP のどちらでも同じ形）を解析し、その側の選択として採用する。
+   * 1 件でも問題があれば、前の選択とペア表を変えずに止める。
+   */
+  const adoptPairFolderImport = (
+    side: PairFolderSide,
+    kind: PairFolderSourceKind,
+    name: string,
+    entries: readonly DiffBatchFolderImportFile[],
+    invalidatedBeforeLoad: boolean,
+    fingerprint = ''
+  ) => {
+    const label = `${pairFolderSideLabel(side)}${pairFolderKindLabel(kind)}`;
+    const parsed = parseDiffBatchFolderImport(entries, { side });
+    if (parsed.issues.length) {
+      const shown = parsed.issues.slice(0, 3).map((issue) => issue.message).join(' / ');
+      throw new Error(`${label}を取り込めません: ${shown}${parsed.issues.length > 3 ? `（ほか ${parsed.issues.length - 3}件）` : ''}`);
+    }
+    if (!parsed.bundles.length) throw new Error(`選択した${pairFolderKindLabel(kind)}にアプリ設定JSONがありません`);
+    if (parsed.bundles.length > MAX_PAIR_ROWS) throw new Error(`${kind === 'zip' ? '1つのZIP' : '1フォルダ'}から取り込めるアプリは ${MAX_PAIR_ROWS}件までです`);
+    pairFolderStates[side] = { folderName: name, kind, ...(fingerprint ? { fingerprint } : {}), result: parsed };
+    pairFolderDraftDirty = true;
+    updatePairFolderSummaries();
+    resetPairFolderDraft();
+    refreshPairFolderControlState();
+    const invalidated = invalidateResultAfterPairConditionChange() || invalidatedBeforeLoad;
+    // 同じ ZIP を両側に選ぶと、すべてのペアが「差分なし」になる。止めはしないが、取り違えを疑えるように知らせる。
+    const sameZip = !!fingerprint && pairFolderStates[side === 'source' ? 'target' : 'source']?.fingerprint === fingerprint;
+    const next = sameZip
+      ? '比較元と比較先が同じZIP（名前・大きさ・更新日時が同じ）です。取り違えていないか確かめてください'
+      : pairFolderStates.source && pairFolderStates.target ? '対応付けを確認してペア表へ反映してください' : '反対側のフォルダかZIPも選択してください';
+    panel.setStatus(`${label}から ${parsed.bundles.length}アプリを読み込みました。${next}${invalidated ? '。前回の結果は無効です' : ''}`, invalidated || sameZip ? 'warn' : 'ok');
+  };
+
   const loadPairFolder = async (side: PairFolderSide, input: HTMLInputElement, invalidatedBeforeLoad: boolean) => {
     const generation = ++pairFolderLoadGeneration[side];
     const files = Array.from(input.files || []);
@@ -2701,10 +2758,10 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     input.value = '';
     const jsonFiles = files.filter((file) => /\.json$/i.test(file.name));
     const totalJsonBytes = jsonFiles.reduce((sum, file) => sum + Number(file.size || 0), 0);
-    if (files.length > 2000 || jsonFiles.length > 500) throw new Error('選択したフォルダのファイル数が多すぎます（全体2,000件、JSON 500件まで）');
-    if (totalJsonBytes > 128 * 1024 * 1024) throw new Error('選択したフォルダのJSON合計サイズが128MBを超えています');
-    const entries: Array<{ name: string; relativePath: string; text: string }> = [];
-    const sideLabel = side === 'source' ? '比較元' : '比較先';
+    const limitIssue = diffBatchFolderLimitIssue({ files: files.length, jsonFiles: jsonFiles.length, jsonBytes: totalJsonBytes }, '選択したフォルダ');
+    if (limitIssue) throw new Error(limitIssue);
+    const entries: DiffBatchFolderImportFile[] = [];
+    const sideLabel = pairFolderSideLabel(side);
     let jsonRead = 0;
     try {
       // 1ファイルずつ読み、ファイルの合間で「中止」を確認する（途中まで読んだ内容は破棄する）。
@@ -2728,20 +2785,81 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       throw error;
     }
     if (generation !== pairFolderLoadGeneration[side]) return;
-    const parsed = parseDiffBatchFolderImport(entries, { side });
-    if (parsed.issues.length) {
-      const shown = parsed.issues.slice(0, 3).map((issue) => issue.message).join(' / ');
-      throw new Error(`${side === 'source' ? '比較元' : '比較先'}フォルダを取り込めません: ${shown}${parsed.issues.length > 3 ? `（ほか ${parsed.issues.length - 3}件）` : ''}`);
+    adoptPairFolderImport(side, 'folder', rootFolderName(files), entries, invalidatedBeforeLoad);
+  };
+
+  /** 設定取得の ZIP を、展開したフォルダを選んだときと同じファイルの並びにして読む（diff/batch-zip-import.ts）。 */
+  const loadPairZip = async (side: PairFolderSide, input: HTMLInputElement, invalidatedBeforeLoad: boolean) => {
+    const generation = ++pairFolderLoadGeneration[side];
+    const file = input.files?.[0];
+    if (!file) throw new Error('ZIPファイルが選択されていません');
+    input.value = '';
+    const sideLabel = pairFolderSideLabel(side);
+    // 読み込みの合間で「中止」を確かめる（途中まで読んだ内容は使わない）
+    const stopIfCancelled = () => {
+      if (!isCancelRequested()) return;
+      const error: any = new Error(`中止しました。${sideLabel}ZIPの読み込みを止めました。${pairFolderStates[side] ? '選択は前の状態のままです' : 'ZIPは未選択のままです'}`);
+      error.cancelReport = true;
+      throw error;
+    };
+    try {
+      // ZIP 全体をメモリへ読むので、読む前に大きさを確かめる
+      if (Number(file.size || 0) > DIFF_BATCH_ZIP_MAX_BYTES) throw new Error(DIFF_BATCH_ZIP_TOO_LARGE_MESSAGE);
+      stopIfCancelled();
+      let bytes: Uint8Array;
+      try {
+        bytes = new Uint8Array(await file.arrayBuffer());
+      } catch {
+        throw new Error(`${sideLabel}ZIP「${file.name}」を読み取れませんでした。ファイルを選び直してください`);
+      }
+      if (generation !== pairFolderLoadGeneration[side]) return;
+      stopIfCancelled();
+      const zip = await readDiffBatchZipFiles(bytes, file.name);
+      if (generation !== pairFolderLoadGeneration[side]) return;
+      stopIfCancelled();
+      adoptPairFolderImport(side, 'zip', file.name, zip.files, invalidatedBeforeLoad, [file.name, file.size, file.lastModified].join('/'));
+    } catch (error) {
+      if (generation !== pairFolderLoadGeneration[side]) return;
+      if ((error as any)?.cancelReport === true) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      // ZIP の読み取り自体の失敗（壊れた ZIP など）は、どちらの ZIP かを先頭に付ける
+      throw new Error(message.startsWith(`${sideLabel}ZIP`) ? message : `${sideLabel}ZIPを取り込めません: ${message}`);
     }
-    if (!parsed.bundles.length) throw new Error('選択したフォルダにアプリ設定JSONがありません');
-    if (parsed.bundles.length > MAX_PAIR_ROWS) throw new Error(`1フォルダから取り込めるアプリは ${MAX_PAIR_ROWS}件までです`);
-    pairFolderStates[side] = { folderName: rootFolderName(files), result: parsed };
+  };
+
+  /** フォルダ・ZIP の読み込みを始める（読み込み中は比較・保存を止め、前回の結果を無効にする）。 */
+  const startPairFolderLoad = (
+    side: PairFolderSide,
+    kind: PairFolderSourceKind,
+    load: (invalidatedBeforeLoad: boolean) => Promise<void>
+  ) => {
+    pairFolderAlert.hidden = true;
+    pairFolderAlert.textContent = '';
+    const invalidatedBeforeLoad = invalidateResultAfterPairConditionChange();
     pairFolderDraftDirty = true;
+    pairFolderApplied = false;
+    pairFolderActiveLoads[side] += 1;
+    pairFolderLoadingKind[side] = kind;
     updatePairFolderSummaries();
-    resetPairFolderDraft();
+    renderPairFolderMapping();
     refreshPairFolderControlState();
-    const invalidated = invalidateResultAfterPairConditionChange() || invalidatedBeforeLoad;
-    panel.setStatus(`${side === 'source' ? '比較元' : '比較先'}フォルダから ${parsed.bundles.length}アプリを読み込みました。${pairFolderStates.source && pairFolderStates.target ? '対応付けを確認してペア表へ反映してください' : '反対側のフォルダも選択してください'}${invalidated ? '。前回の結果は無効です' : ''}`, invalidated ? 'warn' : 'ok');
+    void liteRun(panel, `${pairFolderSideLabel(side)}${pairFolderKindLabel(kind)}を読み込み中…`, async () => {
+      try {
+        await load(invalidatedBeforeLoad);
+      } catch (error) {
+        // 中止は失敗ではないので、赤い警告枠は出さずステータスだけで伝える。
+        if ((error as any)?.cancelReport !== true) {
+          pairFolderAlert.textContent = error instanceof Error ? error.message : String(error);
+          pairFolderAlert.hidden = false;
+        }
+        throw error;
+      } finally {
+        pairFolderActiveLoads[side] = Math.max(0, pairFolderActiveLoads[side] - 1);
+        updatePairFolderSummaries();
+        renderPairFolderMapping();
+        refreshPairFolderControlState();
+      }
+    });
   };
 
   ([['source', sourceFolderUi], ['target', targetFolderUi]] as const).forEach(([side, ui]) => {
@@ -2752,44 +2870,35 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       }
       ui.input.click();
     });
+    ui.zipSelect.addEventListener('click', () => {
+      if (multiXlsxExportActive) {
+        panel.setStatus('Excelの生成が完了してからZIPを選択してください', 'warn');
+        return;
+      }
+      ui.zipInput.click();
+    });
     ui.input.addEventListener('change', () => {
       if (!ui.input.files?.length) {
         ui.input.value = '';
         panel.setStatus('選択したフォルダにファイルがありません', 'warn');
         return;
       }
-      pairFolderAlert.hidden = true;
-      pairFolderAlert.textContent = '';
-      const invalidatedBeforeLoad = invalidateResultAfterPairConditionChange();
-      pairFolderDraftDirty = true;
-      pairFolderApplied = false;
-      pairFolderActiveLoads[side] += 1;
-      updatePairFolderSummaries();
-      renderPairFolderMapping();
-      refreshPairFolderControlState();
-      void liteRun(panel, `${side === 'source' ? '比較元' : '比較先'}フォルダを読み込み中…`, async () => {
-        try {
-          await loadPairFolder(side, ui.input, invalidatedBeforeLoad);
-        } catch (error) {
-          // 中止は失敗ではないので、赤い警告枠は出さずステータスだけで伝える。
-          if ((error as any)?.cancelReport !== true) {
-            pairFolderAlert.textContent = error instanceof Error ? error.message : String(error);
-            pairFolderAlert.hidden = false;
-          }
-          throw error;
-        } finally {
-          pairFolderActiveLoads[side] = Math.max(0, pairFolderActiveLoads[side] - 1);
-          updatePairFolderSummaries();
-          renderPairFolderMapping();
-          refreshPairFolderControlState();
-        }
-      });
+      startPairFolderLoad(side, 'folder', (invalidatedBeforeLoad) => loadPairFolder(side, ui.input, invalidatedBeforeLoad));
+    });
+    ui.zipInput.addEventListener('change', () => {
+      if (!ui.zipInput.files?.length) {
+        ui.zipInput.value = '';
+        return;
+      }
+      startPairFolderLoad(side, 'zip', (invalidatedBeforeLoad) => loadPairZip(side, ui.zipInput, invalidatedBeforeLoad));
     });
     ui.clear.addEventListener('click', () => {
       const resetAppliedPairs = pairFolderApplied || pairRows.some((entry) => entry.source.folderBundle || entry.target.folderBundle);
+      const clearedKind = pairFolderStates[side]?.kind || 'folder';
       pairFolderLoadGeneration[side] += 1;
       pairFolderStates[side] = null;
       ui.input.value = '';
+      ui.zipInput.value = '';
       pairFolderAlert.hidden = true;
       pairFolderAlert.textContent = '';
       if (resetAppliedPairs) clearPairRowsForFolderReset();
@@ -2799,7 +2908,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       resetPairFolderDraft();
       refreshPairFolderControlState();
       const invalidated = invalidateResultAfterPairConditionChange();
-      panel.setStatus(`${side === 'source' ? '比較元' : '比較先'}フォルダの読込を解除しました${resetAppliedPairs ? '。フォルダ由来のペア表を初期化しました' : ''}${invalidated ? '。前回の結果は無効です' : ''}`, invalidated || resetAppliedPairs ? 'warn' : 'info');
+      panel.setStatus(`${pairFolderSideLabel(side)}${pairFolderKindLabel(clearedKind)}の読込を解除しました${resetAppliedPairs ? '。フォルダ由来のペア表を初期化しました' : ''}${invalidated ? '。前回の結果は無効です' : ''}`, invalidated || resetAppliedPairs ? 'warn' : 'info');
     });
   });
 
@@ -2939,7 +3048,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   pairBulk.appendChild(pairBulkBody);
   pairBulkApply.addEventListener('click', () => {
     if (pairFolderModeActive()) {
-      panel.setStatus('フォルダ比較中は表の一括貼り付けを使用できません。両フォルダを解除すると手入力へ戻ります', 'warn');
+      panel.setStatus('フォルダ比較中は表の一括貼り付けを使用できません。両側の読込を解除すると手入力へ戻ります', 'warn');
       return;
     }
     const parsed: Array<{ source: Partial<DiffBatchEndpoint>; target: Partial<DiffBatchEndpoint> }> = [];
@@ -3018,7 +3127,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       } }
     ]
   });
-  pairEditor.append(pairIntro, pairFolder, pairList, pairToolbar, pairBulk, pairAppSearch, makeNote('手入力したペアは kintone から設定を取得し、フォルダから作成したペアは設定JSONだけを使います。1対1比較用の設定JSONを読み込んだままのときは、「設定JSON読込を解除」を押してください。'));
+  pairEditor.append(pairIntro, pairFolder, pairList, pairToolbar, pairBulk, pairAppSearch, makeNote('手入力したペアは kintone から設定を取得し、フォルダ・ZIPから作成したペアは設定JSONだけを使います。1対1比較用の設定JSONを読み込んだままのときは、「設定JSON読込を解除」を押してください。'));
   cardApp.body.appendChild(pairEditor);
   panel.body.insertBefore(cardApp.card, panel.status);
 
@@ -4542,7 +4651,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     const folderMode = pairFolderModeActive();
     if (folderMode) {
       if (!pairFolderStates.source || !pairFolderStates.target) {
-        panel.setStatus('フォルダ比較では比較元と比較先の両フォルダを選択してください。片側だけをAPIで補うことはありません', 'warn');
+        panel.setStatus('フォルダ比較では比較元と比較先の両方で、フォルダかZIPを選択してください。片側だけをAPIで補うことはありません', 'warn');
         (pairFolderStates.source ? targetFolderUi.select : sourceFolderUi.select).focus();
         return;
       }

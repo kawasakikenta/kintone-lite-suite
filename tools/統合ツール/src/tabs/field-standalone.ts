@@ -1,7 +1,7 @@
 'use strict';
 
 import { SYSTEM_FIELD_TYPES } from '../constants.js';
-import { deepClone, kusConfirm, summarizeList } from '../utils.js';
+import { deepClone, kusConfirm, normalizeIdInputText, summarizeList } from '../utils.js';
 import { apiGet, buildApiPrefix, decorateRevisionConflict, isRevisionConflictError, pickRevision } from '../api.js';
 import { isSettingsWriteUnconfirmed, writeSettingsWithRevision } from '../settingsWrite.js';
 import { isCancelRequested, isRunCancelledError } from '../runControl.js';
@@ -108,8 +108,25 @@ export function parseFieldJsonInput(text: unknown): Record<string, any> {
   return props;
 }
 
+const POSITIVE_APP_ID = /^[1-9]\d*$/;
+
+/** 参照先変換のアプリIDを理由の文に出すときの書き方。空は「（空）」、文字列・数値以外は JSON の書き方で示す。 */
+function lookupMapIdLabel(value: unknown): string {
+  if (value == null) return '（空）';
+  if (typeof value === 'string' || typeof value === 'number') return normalizeIdInputText(value).trim() || '（空）';
+  const text = JSON.stringify(value) ?? String(value);
+  return text.length > 40 ? `${text.slice(0, 40)}…` : text;
+}
+
+/**
+ * 参照先変換（ルックアップ・関連レコード一覧の参照先アプリIDの付け替え）の JSON を読む。
+ * キーと値は全角数字を半角にしてから（normalizeIdInputText）、正の整数かを確かめる。
+ * 正の整数でないもの（空・数字でない・0 や 0 始まり・文字列と数値以外）があれば、反映の前に理由を示して止める
+ * （黙って捨てたりそのまま使ったりすると、参照先が変換されないまま反映先へ書き込まれるため）。
+ */
 export function parseLookupMapInput(text: unknown): Record<string, string> {
-  const raw = String(text ?? '').trim();
+  // 全角カンマは JSON の区切りとしても読めるよう、解析の前に半角にする（キー・値の全角数字は 1 つずつ半角にする）
+  const raw = String(text ?? '').replace(/，/g, ',').trim();
   const out: Record<string, string> = {};
   if (!raw) return out;
   let parsed: any;
@@ -121,10 +138,17 @@ export function parseLookupMapInput(text: unknown): Record<string, string> {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('Lookup AppID 変換 JSON は {"旧AppID":"新AppID"} 形式で入力してください');
   }
-  for (const [k, v] of Object.entries(parsed) as Array<[string, any]>) {
-    const from = String(k).trim();
-    const to = String(v ?? '').trim();
-    if (from && to) out[from] = to;
+  for (const [k, v] of Object.entries(parsed) as Array<[string, unknown]>) {
+    const from = normalizeIdInputText(k).trim();
+    const to = typeof v === 'string' || typeof v === 'number' ? normalizeIdInputText(v).trim() : '';
+    if (!POSITIVE_APP_ID.test(from) || !POSITIVE_APP_ID.test(to)) {
+      throw new Error(`参照先変換のアプリIDには正の整数を指定してください（「${lookupMapIdLabel(k)}」→「${lookupMapIdLabel(v)}」）`);
+    }
+    // 全角と半角で同じ旧アプリIDを書いたときは 1 つにまとめる。変換先が違えばどちらを使うか決められないので止める
+    if (hasOwn(out, from) && out[from] !== to) {
+      throw new Error(`参照先変換で旧アプリID ${from} が複数の変換先（${out[from]}、${to}）に指定されています`);
+    }
+    out[from] = to;
   }
   return out;
 }

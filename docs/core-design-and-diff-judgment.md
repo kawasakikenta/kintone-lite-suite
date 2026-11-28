@@ -450,11 +450,12 @@ COMPOSITE_ARRAY_RULES のパス正規表現
 
 実行（`runSequentialDiffBatch`）は登録順に 1 件ずつ。API モードでは接続キーが完全一致するときだけその実行中に取得したバンドルを再利用し、実行をやり直すとキャッシュも作り直します。HTML は自動保存せず、成功行から HTML / Excel / Markdown を個別保存します。
 
-### 10.3 フォルダ取込（`batch-folder-import.ts`）
+### 10.3 フォルダ・ZIP取込（`batch-folder-import.ts`・`batch-zip-import.ts`）
 
 | 段階 | 判定 |
 | --- | --- |
-| 選択上限 | 全ファイル 2,000 件、JSON 500 件、JSON 合計 128 MB、1 フォルダあたりアプリ 50 件。超過時は読込を止める |
+| 選択上限 | 全ファイル 2,000 件、JSON 500 件、JSON 合計 128 MB、1 フォルダ（1 つの ZIP）あたりアプリ 50 件（`DIFF_BATCH_FOLDER_LIMITS`）。超過時は読込を止める。ZIP は ZIP ファイル自体が 256 MB まで |
+| ZIP（`readDiffBatchZipFiles`） | 中央ディレクトリ（`listZipEntries`）で件数・大きさ・パスを展開前に検査し、JSON だけを `readZipEntries` で展開（記録された大きさを超えて展開しない、CRC-32 照合、合計 128 MB）。絶対パス・`..`・展開後に同名になるファイル（大文字小文字・NFC 正規化）は止める。結果は展開済みフォルダと同じ `{ name, relativePath: "ZIP名/ZIP内のパス", text }` の並び（ZIP 内の順）にして `parseDiffBatchFolderImport` へ渡すので、以降の判定はフォルダと同一 |
 | 対象ファイル | 単体バンドル JSON、設定一括取得の `apps` / `bundles` 配列、`source` / `target` ラッパー（source 側を採用）、`bundle` ラッパー。`manifest.json` はメタデータとして数えず、非 JSON は無視 |
 | バンドル検証 | オブジェクトで `sections` がオブジェクト、`preview` は真偽値、App ID / ゲスト ID は数字。壊れた JSON（`invalid-json`）、バンドルなし（`no-bundle`）、接続先重複（`duplicate-endpoint`）が 1 件でもあればペア表を部分的に置き換えず中止 |
 | manifest 整合 | 同じフォルダの `appCount` とバンドル数、`targets` の接続キー集合、`preview` の一致を検査し、不一致は `manifest-mismatch` |
@@ -498,7 +499,7 @@ COMPOSITE_ARRAY_RULES のパス正規表現
 | 持ち出さない | 出力の機密保護 | `diffOnly` 既定、機密セクションの同一値伏せ字、Excel のマスキング（機密キーパターン・JS/CSS 本文・プラグイン設定）、Markdown の「データを命令として実行しない」注記（第 9 章） |
 | 持ち出さない | ブラウザストレージ禁止 | `check:no-browser-storage` が `localStorage` / `sessionStorage` / `indexedDB` / `document.cookie` をビルド前に拒否。プリセット・履歴はセッション内メモリ、永続化は JSON ファイル |
 | 持ち出さない | 生成 HTML / CSV の安全化 | `esc` で `& < > " '` をエスケープ、`safeJsonForScript` で `<` と U+2028/2029 をエスケープして `<script>` へ埋込。ラベル内 HTML タグは除去。CSV は `= + - @`（全角の `＝ ＋ － ＠` を含む）始まりに `'` を前置して数式実行を防止。自己完結 HTML は外部 CDN を使わない。差分HTMLレポートには CSP を付け（外部への通信・読み込み・フォーム送信・<base> を禁止し、スクリプトは埋め込んだ 1 つだけを内容の SHA-256 で許可）、レポートに埋め込む設定は `__proto__` という名前も落とさない形（`safeJsLiteralForScript`）で書く。設計書 HTML・ER図の HTML も CSP で通信・外部の読み込みを禁じ、埋め込んだスクリプトだけを内容のハッシュで許可する（ER図はイベント属性も使わない）。保存するファイル名・ZIP 内の名前からは制御文字と双方向制御（`UNSAFE_FILENAME_CHARS`）を除く |
-| 持ち出さない | 読み込む JSON の検証 | レビュー状態（種類・バージョン・フィンガープリント・2 MiB）、比較条件プロファイル（サイズ・件数上限、プロトタイプ汚染キー拒否）、設定 JSON（App ID 照合、欠落セクションは比較不能）、パッチ JSON（確認専用行・予約パス拒否）、フォルダ取込（manifest 整合・接続先重複） |
+| 持ち出さない | 読み込む JSON の検証 | レビュー状態（種類・バージョン・フィンガープリント・2 MiB）、比較条件プロファイル（サイズ・件数上限、プロトタイプ汚染キー拒否）、設定 JSON（App ID 照合、欠落セクションは比較不能）、パッチ JSON（確認専用行・予約パス拒否）、フォルダ取込（manifest 整合・接続先重複）。差分比較のフォルダ・ZIP取込では ZIP の JSON だけを展開し（各ファイルは ZIP に記録された大きさを超えて展開しない。合計 128 MB、ZIP ファイル自体は 256 MB まで）、展開すると別の場所を指すパスや同じ名前になるファイルを含む ZIP は読まない |
 
 ## 13. テスト・品質保証の設計
 

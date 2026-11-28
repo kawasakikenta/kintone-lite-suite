@@ -11714,7 +11714,7 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
     }
     return out;
   }
-  async function readZipEntries(bytes, options = {}) {
+  function readCentralDirectory(bytes, maxEntries = 65535) {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const u16 = (offset) => view.getUint16(offset, true);
     const u32 = (offset) => view.getUint32(offset, true);
@@ -11729,26 +11729,40 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
     const count = u16(end + 10);
     const centralOffset = u32(end + 16);
     if (count === 65535 || centralOffset === 4294967295) throw new Error("ZIP64 形式の ZIP には対応していません");
-    if (count > (options.maxEntries ?? 65535)) throw new Error(`ZIP のファイル数（${count}）が多すぎます`);
+    if (count > maxEntries) throw new Error(`ZIP のファイル数（${count}）が多すぎます`);
     const decoder = new TextDecoder("utf-8");
-    const maxTotal = options.maxTotalBytes ?? DEFAULT_MAX_TOTAL;
     const entries = [];
-    let total = 0;
     let pos = centralOffset;
     for (let i = 0; i < count; i += 1) {
       if (pos + 46 > bytes.length || u32(pos) !== SIG_CENTRAL) throw new Error("ZIP の中央ディレクトリが壊れています");
-      const flags = u16(pos + 8);
-      const method = u16(pos + 10);
-      const crc = u32(pos + 16);
-      const compressedSize = u32(pos + 20);
-      const size = u32(pos + 24);
       const nameLength = u16(pos + 28);
       const extraLength = u16(pos + 30);
       const commentLength = u16(pos + 32);
-      const localOffset = u32(pos + 42);
       const name = decoder.decode(bytes.subarray(pos + 46, pos + 46 + nameLength));
+      entries.push({
+        name,
+        directory: name.endsWith("/"),
+        flags: u16(pos + 8),
+        method: u16(pos + 10),
+        crc: u32(pos + 16),
+        compressedSize: u32(pos + 20),
+        size: u32(pos + 24),
+        localOffset: u32(pos + 42)
+      });
       pos += 46 + nameLength + extraLength + commentLength;
-      if (name.endsWith("/")) {
+    }
+    return entries;
+  }
+  async function readZipEntries(bytes, options = {}) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const u16 = (offset) => view.getUint16(offset, true);
+    const u32 = (offset) => view.getUint32(offset, true);
+    const central = readCentralDirectory(bytes, options.maxEntries);
+    const maxTotal = options.maxTotalBytes ?? DEFAULT_MAX_TOTAL;
+    const entries = [];
+    let total = 0;
+    for (const { name, directory, flags, method, crc, compressedSize, size, localOffset } of central) {
+      if (directory) {
         entries.push({ name, data: new Uint8Array(0) });
         continue;
       }

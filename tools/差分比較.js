@@ -21980,6 +21980,21 @@ ${fence}`;
   }
 
   // src/diff/batch-folder-import.ts
+  var DIFF_BATCH_FOLDER_LIMITS = Object.freeze({
+    /** 全ファイル数（JSON 以外を含む） */
+    maxFiles: 2e3,
+    /** JSON ファイル数（manifest.json を含む） */
+    maxJsonFiles: 500,
+    /** JSON の合計の大きさ（バイト） */
+    maxJsonBytes: 128 * 1024 * 1024
+  });
+  function diffBatchFolderLimitIssue(counts, label) {
+    if (counts.files > DIFF_BATCH_FOLDER_LIMITS.maxFiles || counts.jsonFiles > DIFF_BATCH_FOLDER_LIMITS.maxJsonFiles) {
+      return `${label}のファイル数が多すぎます（全体2,000件、JSON 500件まで）`;
+    }
+    if (counts.jsonBytes > DIFF_BATCH_FOLDER_LIMITS.maxJsonBytes) return `${label}のJSON合計サイズが128MBを超えています`;
+    return "";
+  }
   function normalizedFileName(file) {
     return String(file?.name || "").trim();
   }
@@ -22359,6 +22374,196 @@ ${fence}`;
       ignoredFileCount,
       manifestFileCount
     };
+  }
+
+  // src/archive/crc32.ts
+  var crcTable2 = null;
+  function getCrcTable() {
+    if (crcTable2) return crcTable2;
+    const table = new Uint32Array(256);
+    for (let i = 0; i < 256; i += 1) {
+      let value = i;
+      for (let bit = 0; bit < 8; bit += 1) {
+        value = value & 1 ? 3988292384 ^ value >>> 1 : value >>> 1;
+      }
+      table[i] = value >>> 0;
+    }
+    crcTable2 = table;
+    return table;
+  }
+  var CRC32_INITIAL = 4294967295;
+  function crc32Update(state3, bytes) {
+    const table = getCrcTable();
+    let crc = state3;
+    for (let i = 0; i < bytes.length; i += 1) {
+      crc = table[(crc ^ bytes[i]) & 255] ^ crc >>> 8;
+    }
+    return crc >>> 0;
+  }
+  function crc32Finish(state3) {
+    return (state3 ^ 4294967295) >>> 0;
+  }
+  function crc322(bytes) {
+    return crc32Finish(crc32Update(CRC32_INITIAL, bytes));
+  }
+
+  // src/archive/zip-read.ts
+  var SIG_END = 101010256;
+  var SIG_CENTRAL = 33639248;
+  var SIG_LOCAL = 67324752;
+  var DEFAULT_MAX_TOTAL = 512 * 1024 * 1024;
+  function looksLikeZip(bytes) {
+    return bytes.length >= 4 && bytes[0] === 80 && bytes[1] === 75 && (bytes[2] === 3 && bytes[3] === 4 || bytes[2] === 5 && bytes[3] === 6);
+  }
+  async function inflateRaw(bytes, expectedSize) {
+    if (typeof DecompressionStream !== "function") throw new Error("このブラウザは ZIP の展開（deflate-raw）に対応していません。設定JSONを読み込んでください");
+    const reader = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw")).getReader();
+    const chunks = [];
+    let length = 0;
+    for (; ; ) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > expectedSize) {
+        await reader.cancel().catch(() => {
+        });
+        return null;
+      }
+      chunks.push(value);
+    }
+    const out = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) {
+      out.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return out;
+  }
+  function readCentralDirectory(bytes, maxEntries = 65535) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const u16 = (offset) => view.getUint16(offset, true);
+    const u32 = (offset) => view.getUint32(offset, true);
+    let end = -1;
+    for (let pos2 = bytes.length - 22; pos2 >= Math.max(0, bytes.length - 22 - 65535); pos2 -= 1) {
+      if (u32(pos2) === SIG_END) {
+        end = pos2;
+        break;
+      }
+    }
+    if (end < 0) throw new Error("ZIP の終端が見つかりません（ZIP ファイルではないか、壊れています）");
+    const count = u16(end + 10);
+    const centralOffset = u32(end + 16);
+    if (count === 65535 || centralOffset === 4294967295) throw new Error("ZIP64 形式の ZIP には対応していません");
+    if (count > maxEntries) throw new Error(`ZIP のファイル数（${count}）が多すぎます`);
+    const decoder = new TextDecoder("utf-8");
+    const entries = [];
+    let pos = centralOffset;
+    for (let i = 0; i < count; i += 1) {
+      if (pos + 46 > bytes.length || u32(pos) !== SIG_CENTRAL) throw new Error("ZIP の中央ディレクトリが壊れています");
+      const nameLength = u16(pos + 28);
+      const extraLength = u16(pos + 30);
+      const commentLength = u16(pos + 32);
+      const name = decoder.decode(bytes.subarray(pos + 46, pos + 46 + nameLength));
+      entries.push({
+        name,
+        directory: name.endsWith("/"),
+        flags: u16(pos + 8),
+        method: u16(pos + 10),
+        crc: u32(pos + 16),
+        compressedSize: u32(pos + 20),
+        size: u32(pos + 24),
+        localOffset: u32(pos + 42)
+      });
+      pos += 46 + nameLength + extraLength + commentLength;
+    }
+    return entries;
+  }
+  function listZipEntries(bytes) {
+    return readCentralDirectory(bytes).map(({ name, directory, size, compressedSize }) => ({ name, directory, size, compressedSize }));
+  }
+  async function readZipEntries(bytes, options = {}) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const u16 = (offset) => view.getUint16(offset, true);
+    const u32 = (offset) => view.getUint32(offset, true);
+    const central = readCentralDirectory(bytes, options.maxEntries);
+    const maxTotal = options.maxTotalBytes ?? DEFAULT_MAX_TOTAL;
+    const entries = [];
+    let total = 0;
+    for (const { name, directory, flags, method, crc, compressedSize, size, localOffset } of central) {
+      if (directory) {
+        entries.push({ name, data: new Uint8Array(0) });
+        continue;
+      }
+      if (options.include && !options.include(name)) continue;
+      if (flags & 1) throw new Error(`暗号化された ZIP には対応していません（${name}）`);
+      if (method !== 0 && method !== 8) throw new Error(`未対応の圧縮方式です（${name}・方式 ${method}）`);
+      total += size;
+      if (total > maxTotal) throw new Error("ZIP の展開後の大きさが上限を超えます");
+      if (localOffset + 30 > bytes.length || u32(localOffset) !== SIG_LOCAL) throw new Error(`ZIP のファイル「${name}」の位置が壊れています`);
+      const dataStart = localOffset + 30 + u16(localOffset + 26) + u16(localOffset + 28);
+      if (dataStart + compressedSize > bytes.length) throw new Error(`ZIP のファイル「${name}」が途中で切れています`);
+      const raw = bytes.subarray(dataStart, dataStart + compressedSize);
+      const data = method === 8 ? await inflateRaw(raw, size) : raw.slice();
+      if (!data || data.length !== size || crc322(data) !== crc) throw new Error(`ZIP のファイル「${name}」の内容が壊れています（大きさ・CRC が一致しません）`);
+      entries.push({ name, data });
+    }
+    return entries;
+  }
+
+  // src/diff/batch-zip-import.ts
+  var DIFF_BATCH_ZIP_MAX_BYTES = 256 * 1024 * 1024;
+  var DIFF_BATCH_ZIP_TOO_LARGE_MESSAGE = "ZIPファイルが256MBを超えています。JS/CSSファイルを含めずに保存したZIPか、展開したフォルダを選んでください";
+  var isJsonName = (name) => /\.json$/i.test(name);
+  function entryPath(name) {
+    return String(name || "").replace(/\\/g, "/");
+  }
+  function entryBaseName(path) {
+    const pieces = path.split("/");
+    return pieces[pieces.length - 1] || "";
+  }
+  function isUnsafeEntryPath(path) {
+    if (/^[a-zA-Z]:/.test(path)) return true;
+    return path.split("/").some((segment) => segment === "" || segment === "." || segment === "..");
+  }
+  async function readDiffBatchZipFiles(bytes, zipName) {
+    if (bytes.byteLength > DIFF_BATCH_ZIP_MAX_BYTES) throw new Error(DIFF_BATCH_ZIP_TOO_LARGE_MESSAGE);
+    if (!looksLikeZip(bytes)) throw new Error("ZIPファイルとして読み込めません。設定取得の「設定をZIPで保存」で保存したZIPを選んでください");
+    const listing = listZipEntries(bytes).filter((entry) => !entry.directory && !entryPath(entry.name).endsWith("/"));
+    const seen = /* @__PURE__ */ new Map();
+    for (const entry of listing) {
+      const path = entryPath(entry.name);
+      if (isUnsafeEntryPath(path)) throw new Error(`ZIP内のパス「${entry.name}」は展開すると別の場所を指すため、このZIPは読み込めません`);
+      const key = path.normalize("NFC").toLowerCase();
+      const previous = seen.get(key);
+      if (previous !== void 0) {
+        throw new Error(`ZIP内に同じ名前のファイルがあります（${previous}、${entry.name}）。展開すると片方が上書きされるため、このZIPは読み込めません`);
+      }
+      seen.set(key, entry.name);
+    }
+    const jsonEntries = listing.filter((entry) => isJsonName(entry.name));
+    const limitIssue = diffBatchFolderLimitIssue({
+      files: listing.length,
+      jsonFiles: jsonEntries.length,
+      jsonBytes: jsonEntries.reduce((sum, entry) => sum + entry.size, 0)
+    }, "選択したZIP");
+    if (limitIssue) throw new Error(limitIssue);
+    const extracted = await readZipEntries(bytes, {
+      include: isJsonName,
+      maxTotalBytes: DIFF_BATCH_FOLDER_LIMITS.maxJsonBytes
+    });
+    const dataByName = new Map(extracted.filter((entry) => !entry.name.endsWith("/")).map((entry) => [entry.name, entry.data]));
+    const decoder = new TextDecoder("utf-8");
+    const root2 = String(zipName || "").trim() || "選択したZIP";
+    const files = listing.map((entry) => {
+      const path = entryPath(entry.name);
+      const data = isJsonName(entry.name) ? dataByName.get(entry.name) : void 0;
+      return {
+        name: entryBaseName(path),
+        relativePath: `${root2}/${path}`,
+        text: data ? decoder.decode(data) : ""
+      };
+    });
+    return { files, fileCount: listing.length, jsonFileCount: jsonEntries.length };
   }
 
   // src/entries/diff-lite-ui.ts
@@ -24311,7 +24516,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     addPairBtn.dataset.kusDlPairAdd = "";
     addPairBtn.addEventListener("click", () => {
       if (pairFolderModeActive()) {
-        panel.setStatus("フォルダ比較中は対応確認表からペアを作成してください。手入力へ戻す場合は両フォルダを解除してください", "warn");
+        panel.setStatus("フォルダ比較中は対応確認表からペアを作成してください。手入力へ戻す場合は両側の読込を解除してください", "warn");
         return;
       }
       const entry = addPairRow({}, true);
@@ -24333,13 +24538,17 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     let pairFolderApplied = false;
     let pairFolderIgnoreUnusedTargets = false;
     const pairFolderActiveLoads = { source: 0, target: 0 };
+    const pairFolderLoadingKind = { source: "folder", target: "folder" };
     const pairFolderLoadActive = () => pairFolderActiveLoads.source > 0 || pairFolderActiveLoads.target > 0;
+    const pairFolderSideLabel = (side) => side === "source" ? "比較元" : "比較先";
+    const pairFolderSideLongLabel = (side) => side === "source" ? "比較元（変更前）" : "比較先（変更後）";
+    const pairFolderKindLabel = (kind) => kind === "zip" ? "ZIP" : "フォルダ";
     const pairFolder = document.createElement("section");
     pairFolder.className = "kus-dl-pair-folder";
     pairFolder.setAttribute("aria-labelledby", "kus-dl-pair-folder-title");
     const pairFolderHead = document.createElement("div");
     pairFolderHead.className = "kus-dl-pair-folder__head";
-    pairFolderHead.innerHTML = '<strong id="kus-dl-pair-folder-title">設定フォルダからペアを作成</strong><span>設定一括取得ZIPを展開したフォルダなどを、変更前・変更後の両側で選びます。対応を確認して反映すると現在のペア表を置き換え、比較には設定JSONだけを使います（kintone からは取得しません）。</span>';
+    pairFolderHead.innerHTML = '<strong id="kus-dl-pair-folder-title">設定フォルダからペアを作成</strong><span>設定取得の「設定をZIPで保存」で保存したZIP（展開したフォルダでも可）を、変更前・変更後の両側で選びます。対応を確認して反映すると現在のペア表を置き換え、比較には設定JSONだけを使います（kintone からは取得しません）。</span>';
     const pairFolderGrid = document.createElement("div");
     pairFolderGrid.className = "kus-dl-pair-folder__grid";
     const makePairFolderSide = (side) => {
@@ -24347,16 +24556,19 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       box.className = `kus-dl-pair-folder__side kus-dl-pair-folder__side--${side}`;
       const title = document.createElement("strong");
       title.id = `kus-dl-pair-folder-${side}-title`;
-      title.textContent = side === "source" ? "比較元（変更前）フォルダ" : "比較先（変更後）フォルダ";
+      title.textContent = `${pairFolderSideLongLabel(side)}フォルダ・ZIP`;
       box.setAttribute("aria-labelledby", title.id);
       const actions = document.createElement("div");
       actions.className = "kus-dl-pair-folder__actions";
       const select = makeButton("フォルダを選択", "sub", { icon: "↑" });
       select.dataset.kusDlPairFolderSelect = side;
-      select.setAttribute("aria-label", `${side === "source" ? "比較元（変更前）" : "比較先（変更後）"}フォルダを選択`);
+      select.setAttribute("aria-label", `${pairFolderSideLongLabel(side)}フォルダを選択`);
+      const zipSelect = makeButton("ZIPを選択", "sub", { icon: "↑" });
+      zipSelect.dataset.kusDlPairZipSelect = side;
+      zipSelect.setAttribute("aria-label", `${pairFolderSideLongLabel(side)}ZIPを選択`);
       const clear = makeButton("解除", "ghost");
       clear.dataset.kusDlPairFolderClear = side;
-      clear.setAttribute("aria-label", `${side === "source" ? "比較元（変更前）" : "比較先（変更後）"}フォルダの読込を解除`);
+      clear.setAttribute("aria-label", `${pairFolderSideLongLabel(side)}フォルダの読込を解除`);
       clear.disabled = true;
       const summary = document.createElement("p");
       summary.className = "kus-dl-pair-folder__summary";
@@ -24372,9 +24584,15 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       input.setAttribute("directory", "");
       input.setAttribute("aria-label", `${side === "source" ? "比較元" : "比較先"}設定フォルダ`);
       input.dataset.kusDlPairFolderInput = side;
-      actions.append(select, clear);
-      box.append(title, actions, summary, input);
-      return { box, select, clear, summary, input };
+      const zipInput = document.createElement("input");
+      zipInput.type = "file";
+      zipInput.accept = ".zip,application/zip,application/x-zip-compressed";
+      zipInput.hidden = true;
+      zipInput.setAttribute("aria-label", `${pairFolderSideLabel(side)}設定ZIP`);
+      zipInput.dataset.kusDlPairZipInput = side;
+      actions.append(select, zipSelect, clear);
+      box.append(title, actions, summary, input, zipInput);
+      return { box, select, zipSelect, clear, summary, input, zipInput };
     };
     const sourceFolderUi = makePairFolderSide("source");
     const targetFolderUi = makePairFolderSide("target");
@@ -24430,8 +24648,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         ui3.box.setAttribute("aria-busy", loading ? "true" : "false");
         ui3.clear.disabled = !state3 || loading;
         ui3.clear.textContent = resetsPairTable ? "解除して表を初期化" : "解除";
-        ui3.clear.setAttribute("aria-label", `${side === "source" ? "比較元（変更前）" : "比較先（変更後）"}フォルダの読込を解除${resetsPairTable ? "してペア表を初期化" : ""}`);
-        ui3.summary.textContent = loading ? `${state3 ? `${state3.folderName} — ` : ""}新しいフォルダを読み込み中…` : state3 ? `${state3.folderName} — ${state3.result.bundles.length}アプリ / JSON ${state3.result.jsonFileCount}ファイル${state3.result.ignoredFileCount ? ` / JSON以外 ${state3.result.ignoredFileCount}件を除外` : ""}` : "未選択";
+        ui3.clear.setAttribute("aria-label", `${pairFolderSideLongLabel(side)}${pairFolderKindLabel(state3?.kind || "folder")}の読込を解除${resetsPairTable ? "してペア表を初期化" : ""}`);
+        ui3.summary.textContent = loading ? `${state3 ? `${state3.folderName} — ` : ""}新しい${pairFolderKindLabel(pairFolderLoadingKind[side])}を読み込み中…` : state3 ? `${state3.folderName} — ${state3.result.bundles.length}アプリ / JSON ${state3.result.jsonFileCount}ファイル${state3.result.ignoredFileCount ? ` / JSON以外 ${state3.result.ignoredFileCount}件を除外` : ""}` : "未選択";
       };
       update("source", sourceFolderUi);
       update("target", targetFolderUi);
@@ -24443,7 +24661,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       pairFolderMapping.hidden = !ready;
       if (!ready) {
         pairFolderMappingTable.innerHTML = "";
-        pairFolderReview.textContent = "比較元と比較先の両フォルダを選択してください";
+        pairFolderReview.textContent = "比較元と比較先の両方で、フォルダかZIPを選択してください";
         pairFolderApplyBtn.disabled = true;
         return;
       }
@@ -24544,6 +24762,25 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       const path = String(files[0]?.webkitRelativePath || files[0]?.name || "").replace(/\\/g, "/");
       return path.includes("/") ? path.split("/")[0] : path || "選択フォルダ";
     };
+    const adoptPairFolderImport = (side, kind, name, entries, invalidatedBeforeLoad, fingerprint = "") => {
+      const label = `${pairFolderSideLabel(side)}${pairFolderKindLabel(kind)}`;
+      const parsed = parseDiffBatchFolderImport(entries, { side });
+      if (parsed.issues.length) {
+        const shown = parsed.issues.slice(0, 3).map((issue) => issue.message).join(" / ");
+        throw new Error(`${label}を取り込めません: ${shown}${parsed.issues.length > 3 ? `（ほか ${parsed.issues.length - 3}件）` : ""}`);
+      }
+      if (!parsed.bundles.length) throw new Error(`選択した${pairFolderKindLabel(kind)}にアプリ設定JSONがありません`);
+      if (parsed.bundles.length > MAX_PAIR_ROWS) throw new Error(`${kind === "zip" ? "1つのZIP" : "1フォルダ"}から取り込めるアプリは ${MAX_PAIR_ROWS}件までです`);
+      pairFolderStates[side] = { folderName: name, kind, ...fingerprint ? { fingerprint } : {}, result: parsed };
+      pairFolderDraftDirty = true;
+      updatePairFolderSummaries();
+      resetPairFolderDraft();
+      refreshPairFolderControlState();
+      const invalidated = invalidateResultAfterPairConditionChange() || invalidatedBeforeLoad;
+      const sameZip = !!fingerprint && pairFolderStates[side === "source" ? "target" : "source"]?.fingerprint === fingerprint;
+      const next = sameZip ? "比較元と比較先が同じZIP（名前・大きさ・更新日時が同じ）です。取り違えていないか確かめてください" : pairFolderStates.source && pairFolderStates.target ? "対応付けを確認してペア表へ反映してください" : "反対側のフォルダかZIPも選択してください";
+      panel.setStatus(`${label}から ${parsed.bundles.length}アプリを読み込みました。${next}${invalidated ? "。前回の結果は無効です" : ""}`, invalidated || sameZip ? "warn" : "ok");
+    };
     const loadPairFolder = async (side, input, invalidatedBeforeLoad) => {
       const generation = ++pairFolderLoadGeneration[side];
       const files = Array.from(input.files || []);
@@ -24551,10 +24788,10 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       input.value = "";
       const jsonFiles = files.filter((file) => /\.json$/i.test(file.name));
       const totalJsonBytes = jsonFiles.reduce((sum, file) => sum + Number(file.size || 0), 0);
-      if (files.length > 2e3 || jsonFiles.length > 500) throw new Error("選択したフォルダのファイル数が多すぎます（全体2,000件、JSON 500件まで）");
-      if (totalJsonBytes > 128 * 1024 * 1024) throw new Error("選択したフォルダのJSON合計サイズが128MBを超えています");
+      const limitIssue = diffBatchFolderLimitIssue({ files: files.length, jsonFiles: jsonFiles.length, jsonBytes: totalJsonBytes }, "選択したフォルダ");
+      if (limitIssue) throw new Error(limitIssue);
       const entries = [];
-      const sideLabel = side === "source" ? "比較元" : "比較先";
+      const sideLabel = pairFolderSideLabel(side);
       let jsonRead = 0;
       try {
         for (const file of files) {
@@ -24577,20 +24814,69 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         throw error;
       }
       if (generation !== pairFolderLoadGeneration[side]) return;
-      const parsed = parseDiffBatchFolderImport(entries, { side });
-      if (parsed.issues.length) {
-        const shown = parsed.issues.slice(0, 3).map((issue) => issue.message).join(" / ");
-        throw new Error(`${side === "source" ? "比較元" : "比較先"}フォルダを取り込めません: ${shown}${parsed.issues.length > 3 ? `（ほか ${parsed.issues.length - 3}件）` : ""}`);
+      adoptPairFolderImport(side, "folder", rootFolderName(files), entries, invalidatedBeforeLoad);
+    };
+    const loadPairZip = async (side, input, invalidatedBeforeLoad) => {
+      const generation = ++pairFolderLoadGeneration[side];
+      const file = input.files?.[0];
+      if (!file) throw new Error("ZIPファイルが選択されていません");
+      input.value = "";
+      const sideLabel = pairFolderSideLabel(side);
+      const stopIfCancelled = () => {
+        if (!isCancelRequested()) return;
+        const error = new Error(`中止しました。${sideLabel}ZIPの読み込みを止めました。${pairFolderStates[side] ? "選択は前の状態のままです" : "ZIPは未選択のままです"}`);
+        error.cancelReport = true;
+        throw error;
+      };
+      try {
+        if (Number(file.size || 0) > DIFF_BATCH_ZIP_MAX_BYTES) throw new Error(DIFF_BATCH_ZIP_TOO_LARGE_MESSAGE);
+        stopIfCancelled();
+        let bytes;
+        try {
+          bytes = new Uint8Array(await file.arrayBuffer());
+        } catch {
+          throw new Error(`${sideLabel}ZIP「${file.name}」を読み取れませんでした。ファイルを選び直してください`);
+        }
+        if (generation !== pairFolderLoadGeneration[side]) return;
+        stopIfCancelled();
+        const zip = await readDiffBatchZipFiles(bytes, file.name);
+        if (generation !== pairFolderLoadGeneration[side]) return;
+        stopIfCancelled();
+        adoptPairFolderImport(side, "zip", file.name, zip.files, invalidatedBeforeLoad, [file.name, file.size, file.lastModified].join("/"));
+      } catch (error) {
+        if (generation !== pairFolderLoadGeneration[side]) return;
+        if (error?.cancelReport === true) throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(message.startsWith(`${sideLabel}ZIP`) ? message : `${sideLabel}ZIPを取り込めません: ${message}`);
       }
-      if (!parsed.bundles.length) throw new Error("選択したフォルダにアプリ設定JSONがありません");
-      if (parsed.bundles.length > MAX_PAIR_ROWS) throw new Error(`1フォルダから取り込めるアプリは ${MAX_PAIR_ROWS}件までです`);
-      pairFolderStates[side] = { folderName: rootFolderName(files), result: parsed };
+    };
+    const startPairFolderLoad = (side, kind, load) => {
+      pairFolderAlert.hidden = true;
+      pairFolderAlert.textContent = "";
+      const invalidatedBeforeLoad = invalidateResultAfterPairConditionChange();
       pairFolderDraftDirty = true;
+      pairFolderApplied = false;
+      pairFolderActiveLoads[side] += 1;
+      pairFolderLoadingKind[side] = kind;
       updatePairFolderSummaries();
-      resetPairFolderDraft();
+      renderPairFolderMapping();
       refreshPairFolderControlState();
-      const invalidated = invalidateResultAfterPairConditionChange() || invalidatedBeforeLoad;
-      panel.setStatus(`${side === "source" ? "比較元" : "比較先"}フォルダから ${parsed.bundles.length}アプリを読み込みました。${pairFolderStates.source && pairFolderStates.target ? "対応付けを確認してペア表へ反映してください" : "反対側のフォルダも選択してください"}${invalidated ? "。前回の結果は無効です" : ""}`, invalidated ? "warn" : "ok");
+      void liteRun(panel, `${pairFolderSideLabel(side)}${pairFolderKindLabel(kind)}を読み込み中…`, async () => {
+        try {
+          await load(invalidatedBeforeLoad);
+        } catch (error) {
+          if (error?.cancelReport !== true) {
+            pairFolderAlert.textContent = error instanceof Error ? error.message : String(error);
+            pairFolderAlert.hidden = false;
+          }
+          throw error;
+        } finally {
+          pairFolderActiveLoads[side] = Math.max(0, pairFolderActiveLoads[side] - 1);
+          updatePairFolderSummaries();
+          renderPairFolderMapping();
+          refreshPairFolderControlState();
+        }
+      });
     };
     [["source", sourceFolderUi], ["target", targetFolderUi]].forEach(([side, ui3]) => {
       ui3.select.addEventListener("click", () => {
@@ -24600,43 +24886,35 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         }
         ui3.input.click();
       });
+      ui3.zipSelect.addEventListener("click", () => {
+        if (multiXlsxExportActive) {
+          panel.setStatus("Excelの生成が完了してからZIPを選択してください", "warn");
+          return;
+        }
+        ui3.zipInput.click();
+      });
       ui3.input.addEventListener("change", () => {
         if (!ui3.input.files?.length) {
           ui3.input.value = "";
           panel.setStatus("選択したフォルダにファイルがありません", "warn");
           return;
         }
-        pairFolderAlert.hidden = true;
-        pairFolderAlert.textContent = "";
-        const invalidatedBeforeLoad = invalidateResultAfterPairConditionChange();
-        pairFolderDraftDirty = true;
-        pairFolderApplied = false;
-        pairFolderActiveLoads[side] += 1;
-        updatePairFolderSummaries();
-        renderPairFolderMapping();
-        refreshPairFolderControlState();
-        void liteRun(panel, `${side === "source" ? "比較元" : "比較先"}フォルダを読み込み中…`, async () => {
-          try {
-            await loadPairFolder(side, ui3.input, invalidatedBeforeLoad);
-          } catch (error) {
-            if (error?.cancelReport !== true) {
-              pairFolderAlert.textContent = error instanceof Error ? error.message : String(error);
-              pairFolderAlert.hidden = false;
-            }
-            throw error;
-          } finally {
-            pairFolderActiveLoads[side] = Math.max(0, pairFolderActiveLoads[side] - 1);
-            updatePairFolderSummaries();
-            renderPairFolderMapping();
-            refreshPairFolderControlState();
-          }
-        });
+        startPairFolderLoad(side, "folder", (invalidatedBeforeLoad) => loadPairFolder(side, ui3.input, invalidatedBeforeLoad));
+      });
+      ui3.zipInput.addEventListener("change", () => {
+        if (!ui3.zipInput.files?.length) {
+          ui3.zipInput.value = "";
+          return;
+        }
+        startPairFolderLoad(side, "zip", (invalidatedBeforeLoad) => loadPairZip(side, ui3.zipInput, invalidatedBeforeLoad));
       });
       ui3.clear.addEventListener("click", () => {
         const resetAppliedPairs = pairFolderApplied || pairRows.some((entry) => entry.source.folderBundle || entry.target.folderBundle);
+        const clearedKind = pairFolderStates[side]?.kind || "folder";
         pairFolderLoadGeneration[side] += 1;
         pairFolderStates[side] = null;
         ui3.input.value = "";
+        ui3.zipInput.value = "";
         pairFolderAlert.hidden = true;
         pairFolderAlert.textContent = "";
         if (resetAppliedPairs) clearPairRowsForFolderReset();
@@ -24646,7 +24924,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         resetPairFolderDraft();
         refreshPairFolderControlState();
         const invalidated = invalidateResultAfterPairConditionChange();
-        panel.setStatus(`${side === "source" ? "比較元" : "比較先"}フォルダの読込を解除しました${resetAppliedPairs ? "。フォルダ由来のペア表を初期化しました" : ""}${invalidated ? "。前回の結果は無効です" : ""}`, invalidated || resetAppliedPairs ? "warn" : "info");
+        panel.setStatus(`${pairFolderSideLabel(side)}${pairFolderKindLabel(clearedKind)}の読込を解除しました${resetAppliedPairs ? "。フォルダ由来のペア表を初期化しました" : ""}${invalidated ? "。前回の結果は無効です" : ""}`, invalidated || resetAppliedPairs ? "warn" : "info");
       });
     });
     const focusPairFolderMappingControl = (selector) => {
@@ -24779,7 +25057,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     pairBulk.appendChild(pairBulkBody);
     pairBulkApply.addEventListener("click", () => {
       if (pairFolderModeActive()) {
-        panel.setStatus("フォルダ比較中は表の一括貼り付けを使用できません。両フォルダを解除すると手入力へ戻ります", "warn");
+        panel.setStatus("フォルダ比較中は表の一括貼り付けを使用できません。両側の読込を解除すると手入力へ戻ります", "warn");
         return;
       }
       const parsed = [];
@@ -24852,7 +25130,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
         } }
       ]
     });
-    pairEditor.append(pairIntro, pairFolder, pairList, pairToolbar, pairBulk, pairAppSearch, makeNote("手入力したペアは kintone から設定を取得し、フォルダから作成したペアは設定JSONだけを使います。1対1比較用の設定JSONを読み込んだままのときは、「設定JSON読込を解除」を押してください。"));
+    pairEditor.append(pairIntro, pairFolder, pairList, pairToolbar, pairBulk, pairAppSearch, makeNote("手入力したペアは kintone から設定を取得し、フォルダ・ZIPから作成したペアは設定JSONだけを使います。1対1比較用の設定JSONを読み込んだままのときは、「設定JSON読込を解除」を押してください。"));
     cardApp.body.appendChild(pairEditor);
     panel.body.insertBefore(cardApp.card, panel.status);
     const detailsDialog = makeDialog({ title: "詳細設定", id: "kus-dl-details-dialog" });
@@ -26309,7 +26587,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       const folderMode = pairFolderModeActive();
       if (folderMode) {
         if (!pairFolderStates.source || !pairFolderStates.target) {
-          panel.setStatus("フォルダ比較では比較元と比較先の両フォルダを選択してください。片側だけをAPIで補うことはありません", "warn");
+          panel.setStatus("フォルダ比較では比較元と比較先の両方で、フォルダかZIPを選択してください。片側だけをAPIで補うことはありません", "warn");
           (pairFolderStates.source ? targetFolderUi.select : sourceFolderUi.select).focus();
           return;
         }

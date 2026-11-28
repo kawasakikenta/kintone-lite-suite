@@ -31,7 +31,10 @@ describe('parseFieldJsonInput', () => {
   });
 
   it('parses lookup maps and rejects malformed input', () => {
-    expect(parseLookupMapInput(' {"10":" 20 ", "": "x", "30": ""} ')).toEqual({ '10': '20' });
+    expect(parseLookupMapInput(' {"10":" 20 "} ')).toEqual({ '10': '20' });
+    // 空のキー・空の値は黙って捨てず、理由を示して止める（tests/field/lookup-map-input.test.ts）
+    expect(() => parseLookupMapInput(' {"10":" 20 ", "": "x"} ')).toThrow(/正の整数/);
+    expect(() => parseLookupMapInput(' {"10":" 20 ", "30": ""} ')).toThrow(/正の整数/);
     expect(parseLookupMapInput('')).toEqual({});
     expect(() => parseLookupMapInput('[1]')).toThrow(/形式/);
   });
