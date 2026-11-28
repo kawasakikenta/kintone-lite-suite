@@ -1497,12 +1497,33 @@ function mdRenderAppSettings(sec: any) {
   return mdTable(['項目', '値'], rows);
 }
 
-function mdFieldNotes(f: any): string {
+/** 設計書 Markdown の描画に使う、設定の外から渡された情報。 */
+interface MdRenderContext {
+  /** 参照先アプリの名前。キーは `${appId}::${guestId}` または appId。 */
+  appNames?: Record<string, string>;
+  guestId?: string;
+}
+
+/**
+ * 参照先アプリ（ルックアップ・関連レコード一覧・アクションの連携先）を「名前（App ID）」で示す。名前が分からなければ「App ID」。
+ * 表のセルに入れる値（エスケープは mdTable が行う）。
+ */
+function mdAppRef(ref: any, ctx: MdRenderContext = {}): string {
+  const id = ref?.app != null && ref.app !== '' ? String(ref.app) : '';
+  if (!id) return ref?.code ? `コード ${ref.code}` : '参照先不明';
+  const names = ctx.appNames || {};
+  const guest = String(ctx.guestId || '');
+  const own = (key: string) => (Object.prototype.hasOwnProperty.call(names, key) ? String(names[key] || '').replace(/\s*[\r\n]+\s*/g, ' ').trim() : '');
+  const name = (guest && own(`${id}::${guest}`)) || own(id);
+  return name ? `${name}（App ${id}）` : `App ${id}`;
+}
+
+function mdFieldNotes(f: any, ctx: MdRenderContext = {}): string {
   if (!f || typeof f !== 'object') return '';
   const notes: string[] = [];
   const lookup = f.lookup;
   if (lookup && typeof lookup === 'object') {
-    const app = lookup.relatedApp?.app ? `App ${lookup.relatedApp.app}` : (lookup.relatedApp?.code ? `コード ${lookup.relatedApp.code}` : '参照先不明');
+    const app = mdAppRef(lookup.relatedApp, ctx);
     const key = lookup.relatedKeyField ? ` キー \`${lookup.relatedKeyField}\`` : '';
     const mappingList = Array.isArray(lookup.fieldMappings) ? lookup.fieldMappings : [];
     // コピー先 ← コピー元（参照先アプリのフィールド）を、件数だけでなく読める形で出す
@@ -1511,7 +1532,7 @@ function mdFieldNotes(f: any): string {
   }
   const ref = f.referenceTable;
   if (ref && typeof ref === 'object') {
-    const app = ref.relatedApp?.app ? `App ${ref.relatedApp.app}` : (ref.relatedApp?.code ? `コード ${ref.relatedApp.code}` : '参照先不明');
+    const app = mdAppRef(ref.relatedApp, ctx);
     const cond = ref.condition?.field && ref.condition?.relatedField ? ` 条件 \`${ref.condition.field}\` = \`${ref.condition.relatedField}\`` : '';
     const shownList = Array.isArray(ref.displayFields) ? ref.displayFields : [];
     notes.push(`関連レコード: ${app}${cond}${shownList.length ? ` / 表示 ${shownList.length}項目（${shownList.map((code: any) => `\`${code}\``).join('、')}）` : ''}${ref.size ? ` / ${ref.size}件表示` : ''}`);
@@ -1534,7 +1555,7 @@ function mdFieldNotes(f: any): string {
   return notes.join(' / ');
 }
 
-function mdRenderFieldSettings(sec: any) {
+function mdRenderFieldSettings(sec: any, _sections?: any, ctx: MdRenderContext = {}) {
   const props = sec?.properties || ({} as any);
   const rows: any[][] = [];
   const subtables: any[] = [];
@@ -1548,7 +1569,7 @@ function mdRenderFieldSettings(sec: any) {
       f.unique ? '○' : '',
       mdFormatDefaultValue(f.defaultValue),
       mdFieldOptions(f.options) || (f.expression ? `式: ${f.expression}` : ''),
-      mdFieldNotes(f)
+      mdFieldNotes(f, ctx)
     ]);
     if (f.type === 'SUBTABLE' && f.fields) {
       subtables.push(f);
@@ -1574,7 +1595,7 @@ function mdRenderFieldSettings(sec: any) {
       f.required ? '○' : '',
       mdFormatDefaultValue(f.defaultValue),
       mdFieldOptions(f.options) || (f.expression ? `式: ${f.expression}` : ''),
-      mdFieldNotes(f)
+      mdFieldNotes(f, ctx)
     ]);
     subRows.sort((a, b) => String(a[0]).localeCompare(String(b[0])));
     parts.push(mdTable(['コード', 'フィールド名', '種別', '必須', '初期値', '選択肢/式', '参照先/制約'], subRows));
@@ -1748,13 +1769,13 @@ function mdRenderCustomizeSettings(sec) {
   return parts.join('\n').trimEnd();
 }
 
-function mdRenderActionSettings(sec) {
+function mdRenderActionSettings(sec, _sections?: any, ctx: MdRenderContext = {}) {
   const actions = sec?.actions || [];
   const list = Array.isArray(actions) ? actions : Object.values(actions);
   const rows = list.map((a) => [
     a.name || '',
     a.index ?? '',
-    a.destApp ? (a.destApp.code || a.destApp.app || '') : '',
+    a.destApp ? (a.destApp.app != null && a.destApp.app !== '' ? mdAppRef(a.destApp, ctx) : (a.destApp.code || '')) : '',
     Array.isArray(a.entities) && a.entities.length ? mdEntityList(a.entities) : 'すべてのユーザー',
     String((a.mappings || []).length),
     // コピー元 → コピー先（レコードの URL は srcType が RECORD_URL でコピー元のフィールドが無い）
@@ -2019,11 +2040,17 @@ export interface BundleToMarkdownOptions {
   rawJson?: boolean;
   /** 先頭の表に取得日時の行を出す。差分比較では毎回異なる値がノイズになるため false にできる。既定 true */
   fetchedAt?: boolean;
+  /**
+   * 参照先アプリ（ルックアップ・関連レコード一覧・アクションの連携先）の名前。キーは `${appId}::${guestId}` または appId。
+   * 設定には参照先の名前が含まれないため、呼び出し側が分かる分だけ渡す。無ければ App ID だけを出す。
+   */
+  appNames?: Record<string, string>;
 }
 
 export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions = {}) {
   const includeRawJson = options.rawJson !== false;
   const sections = bundle?.sections || ({} as any);
+  const renderContext: MdRenderContext = { appNames: options.appNames || {}, guestId: String(bundle?.guestId ?? '') };
   const designSnapshot = buildDesignSnapshot(bundle);
   const snapshotByKey = new Map(designSnapshot.sections.map((row) => [row.key, row]));
   const appName = decodeHtmlEntities(sections.appSettings?.name || '');
@@ -2124,7 +2151,7 @@ export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions =
     } else if (snapshotSection?.status === 'partial') {
       lines.push(`（部分取得: ${snapshotSection.detail}）`);
       if (renderer) {
-        try { rendered = renderer(sec, sections) || ''; } catch { rendered = ''; }
+        try { rendered = renderer(sec, sections, renderContext) || ''; } catch { rendered = ''; }
         if (rendered.trim()) lines.push('', rendered);
       }
       if (!includeRawJson) lines.push('', '（原文JSONは rawJson:false のため省略されています）');
@@ -2134,7 +2161,7 @@ export function bundleToMarkdown(bundle: any, options: BundleToMarkdownOptions =
       lines.push('（整形表示は未対応です。設定データは下の原文を参照してください）');
       if (!includeRawJson) lines.push('', '（原文JSONは rawJson:false のため省略されています）');
     } else {
-      try { rendered = renderer(sec, sections) || ''; } catch { rendered = ''; }
+      try { rendered = renderer(sec, sections, renderContext) || ''; } catch { rendered = ''; }
       if (rendered.trim()) {
         lines.push(rendered);
       } else {

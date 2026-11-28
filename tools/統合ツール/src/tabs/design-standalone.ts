@@ -3,7 +3,7 @@
 import { CUSTOMIZE_BODY_SENSITIVE_NOTE, PLUGIN_CONFIG_INCLUDED_NOTE, SECTION_DEFS } from '../constants.js';
 import { state } from '../state.js';
 import { downloadText, downloadBlob, buildExportFilename, appLabelFromBundle, copyTextToClipboard, extractAppNameFromBundle, sanitizeFilenamePart } from '../utils.js';
-import { fetchBundle } from '../api.js';
+import { apiGet, buildApiPrefix, fetchBundle } from '../api.js';
 import { loadJSZipLite } from '../jszipLoader.js';
 import { pickSettingsBundle } from '../settingsBundleImport.js';
 import { bundleToMarkdown } from '../diff/export.js';
@@ -11,7 +11,7 @@ import { buildDesignAiMarkdown } from '../design/ai-markdown.js';
 import { buildDesignSnapshot } from '../design/snapshot.js';
 import { stripSensitiveSupplements } from '../design/sanitize.js';
 import { runAdvancedDesignExporter, runBatchDesignExportXlsxZip, type BatchDesignExportInfo, type DesignExporterCompletionSummary } from './design-xlsx.js';
-import { isCancelRequested } from '../runControl.js';
+import { isCancelRequested, isRunCancelledError } from '../runControl.js';
 import { createCancelReport, isCancelStop } from './run-cancel-summary.js';
 
 interface DesignSourceInput {
@@ -20,6 +20,8 @@ interface DesignSourceInput {
   preview?: boolean;
   rawSettings?: boolean;
   importedBundle?: any;
+  /** 読み込んだ設定JSONにあるアプリの名前（参照先アプリの名前に使う）。キーは `${appId}::${guestId}` と appId。 */
+  appNameLookup?: Record<string, string>;
 }
 
 /** 設計書 Lite の対象指定を API／出力処理の前に検証する。 */
@@ -183,8 +185,89 @@ function designMarkdownOf(bundle: any, options?: Parameters<typeof bundleToMarkd
   return bundleToMarkdown(stripSensitiveSupplements(bundle).bundle, options);
 }
 
-function designBundleExportMarkdown(kind: 'md' | 'ai-md', bundle: any): string {
-  return kind === 'ai-md' ? buildDesignAiMarkdown(bundle) : designMarkdownOf(bundle);
+/** 設定（フィールド・テーブル内のフィールドのルックアップと関連レコード一覧、アクションの連携先）が参照しているアプリのID。 */
+export function collectReferencedAppIds(bundle: any): string[] {
+  const ids = new Set<string>();
+  const add = (ref: any) => {
+    const id = String(ref?.app ?? '').trim();
+    if (/^\d+$/.test(id)) ids.add(id);
+  };
+  const visit = (field: any) => {
+    if (!field || typeof field !== 'object') return;
+    add(field.lookup?.relatedApp);
+    add(field.referenceTable?.relatedApp);
+  };
+  const properties = bundle?.sections?.fieldSettings?.properties;
+  if (properties && typeof properties === 'object') {
+    for (const field of Object.values(properties) as any[]) {
+      visit(field);
+      if (field?.type === 'SUBTABLE' && field.fields && typeof field.fields === 'object') {
+        for (const child of Object.values(field.fields)) visit(child);
+      }
+    }
+  }
+  const actions = bundle?.sections?.actionSettings?.actions;
+  const list = Array.isArray(actions) ? actions : (actions && typeof actions === 'object' ? Object.values(actions) : []);
+  for (const action of list as any[]) add(action?.destApp);
+  return [...ids];
+}
+
+/** 同時に読む参照先アプリの数（設計書 Excel の取得と同じ）。 */
+const REFERENCED_APP_NAME_CONCURRENCY = 4;
+
+/**
+ * 設計書 Markdown に出す、参照先アプリの名前（キーは `${appId}::${guestId}` と appId）。
+ * 読み込んだ設定JSONの名前（known）を先に使い、kintone から取得したアプリ（live）だけ、足りない名前を
+ * 参照先アプリの情報（GET app.json。読み取りのみ）から読む。読めないアプリ（権限が無い・削除済みなど）は
+ * 名前を入れず、設計書には App ID だけを出す。cache は一括出力でアプリをまたいで同じアプリを読み直さないためのもの。
+ */
+export async function resolveReferencedAppNames(
+  bundle: any,
+  opts: { known?: Record<string, string>; live: boolean; guestId?: string; cache?: Map<string, string | null> }
+): Promise<Record<string, string>> {
+  const guestId = String(opts.guestId ?? bundle?.guestId ?? '').trim();
+  const known = opts.known || {};
+  const own = (key: string) => (Object.prototype.hasOwnProperty.call(known, key) ? String(known[key] || '').trim() : '');
+  const names: Record<string, string> = {};
+  const put = (id: string, name: string) => {
+    if (!name) return;
+    if (guestId) names[`${id}::${guestId}`] = name;
+    names[id] = name;
+  };
+  const selfId = String(bundle?.appId ?? '').trim();
+  const selfName = extractAppNameFromBundle(bundle);
+  const missing: string[] = [];
+  for (const id of collectReferencedAppIds(bundle)) {
+    const name = (guestId && own(`${id}::${guestId}`)) || own(id) || (id === selfId ? selfName : '');
+    if (name) { put(id, name); continue; }
+    const cacheKey = `${id}::${guestId}`;
+    if (opts.cache?.has(cacheKey)) { put(id, opts.cache.get(cacheKey) || ''); continue; }
+    missing.push(id);
+  }
+  // 設定JSONから作るときは kintone に問い合わせない（別の環境の同じ番号のアプリを読まないため）。
+  if (!opts.live || !missing.length) return names;
+  const prefix = buildApiPrefix(guestId, false);
+  for (let start = 0; start < missing.length; start += REFERENCED_APP_NAME_CONCURRENCY) {
+    await Promise.all(missing.slice(start, start + REFERENCED_APP_NAME_CONCURRENCY).map(async (id) => {
+      let name = '';
+      try {
+        const info = await apiGet(prefix, '/app.json', { id });
+        name = String(info?.name || '').trim();
+      } catch (error) {
+        // 利用者の中止はそのまま伝える。読めない参照先は App ID だけで出す。
+        if (isRunCancelledError(error)) throw error;
+      }
+      opts.cache?.set(`${id}::${guestId}`, name || null);
+      put(id, name);
+    }));
+  }
+  return names;
+}
+
+/** 単一出力の設計書 Markdown。参照先アプリの名前は、設定JSONから作るときは読み込んだJSONの名前だけを使う。 */
+async function designMarkdownWithReferenceNames(bundle: any, source: DesignSourceInput | undefined): Promise<string> {
+  const appNames = await resolveReferencedAppNames(bundle, { known: source?.appNameLookup, live: !source?.importedBundle, guestId: String(source?.guestId || '') });
+  return designMarkdownOf(bundle, { appNames });
 }
 
 /**
@@ -217,7 +300,8 @@ export async function runDesignExportStandalone(kind, source, setStatus) {
     downloadText(buildExportFilename('設計書', 'json', { appLabel }), JSON.stringify(bundle, null, 2), 'application/json');
   } else {
     const baseLabel = kind === 'ai-md' ? '設計書_AI向けMarkdown' : '設計書';
-    downloadText(buildExportFilename(baseLabel, 'md', { appLabel }), designBundleExportMarkdown(kind, bundle), 'text/markdown');
+    const markdown = kind === 'ai-md' ? buildDesignAiMarkdown(bundle) : await designMarkdownWithReferenceNames(bundle, source);
+    downloadText(buildExportFilename(baseLabel, 'md', { appLabel }), markdown, 'text/markdown');
   }
   // 取得失敗の警告は完了メッセージで上書きされないよう、エラー色のまま残す
   const note = failedSectionNote(failedSectionLabels(bundle));
@@ -233,7 +317,7 @@ export async function runDesignCopyMdStandalone(source, setStatus) {
   const bundle = await resolveDesignBundle(source, 'source', setStatus, '', false, false);
   state.lastSourceBundle = bundle;
 
-  const md = designMarkdownOf(bundle);
+  const md = await designMarkdownWithReferenceNames(bundle, source);
   if (!(await copyTextToClipboard(md))) {
     throw new Error('クリップボードへのコピーに失敗しました。ブラウザのクリップボード権限を確認するか、Markdown 保存を使ってください');
   }
@@ -338,7 +422,7 @@ export async function runBatchDesignExportXlsxZipStandalone(
   } else {
     const guestId = String(source.guestId || '').trim();
     const appIds = String(source.appIdsText || '')
-      .split(/[\s,、]+/)
+      .split(/[\s,、，]+/)
       .map((s) => s.trim())
       .filter(Boolean);
     const validationError = validateDesignExportTargets(appIds.map((appId) => ({ appId, guestId })));
@@ -523,6 +607,8 @@ export async function runBatchDesignExportMdZipStandalone(
     guestId?: string;
     format?: BatchDesignMdExportFormat;
     preview?: boolean;
+    /** 読み込んだ設定JSONにあるアプリの名前（参照先アプリの名前に使う）。対象のアプリの設定JSONの名前は自動で加える。 */
+    appNameLookup?: Record<string, string>;
   },
   setStatus: (msg: string, err?: boolean) => void
 ): Promise<BatchDesignMdZipResult> {
@@ -544,7 +630,7 @@ export async function runBatchDesignExportMdZipStandalone(
   } else {
     const guestId = String(source?.guestId || '').trim();
     const appIds = String(source?.appIdsText || '')
-      .split(/[\s,、]+/)
+      .split(/[\s,、，]+/)
       .map((s) => s.trim())
       .filter(Boolean);
     const validationError = validateDesignExportTargets(appIds.map((appId) => ({ appId, guestId })));
@@ -566,6 +652,15 @@ export async function runBatchDesignExportMdZipStandalone(
   for (const t of targets) {
     appIdCounts.set(t.appId, (appIdCounts.get(t.appId) || 0) + 1);
   }
+  // 参照先アプリの名前: 読み込んだ設定JSONの名前を使い、kintone から読んだ名前はアプリをまたいで使い回す。
+  const knownAppNames: Record<string, string> = { ...(source.appNameLookup || {}) };
+  for (const t of targets) {
+    const name = t.bundle ? extractAppNameFromBundle(t.bundle) : '';
+    if (!name) continue;
+    if (t.guestId) knownAppNames[`${t.appId}::${t.guestId}`] = name;
+    if (!knownAppNames[t.appId]) knownAppNames[t.appId] = name;
+  }
+  const referencedAppNameCache = new Map<string, string | null>();
 
   const importedCount = targets.filter((t) => t.bundle).length;
   setStatus(`設計書Markdown ZIP出力を開始（${targets.length}件${importedCount ? ` / うち設定JSON ${importedCount}件` : ''}）...`);
@@ -661,7 +756,8 @@ export async function runBatchDesignExportMdZipStandalone(
 
       if (format === 'md' || format === 'both') {
         mdFile = uniqueMdZipEntryName(usedFilenames, `${guestPrefix}設計書_${appLabel}.md`);
-        zip.file(mdFile, designMarkdownOf(mdBundle));
+        const appNames = await resolveReferencedAppNames(mdBundle, { known: knownAppNames, live: !target.bundle, guestId: target.guestId, cache: referencedAppNameCache });
+        zip.file(mdFile, designMarkdownOf(mdBundle, { appNames }));
         files.push(mdFile);
       }
       if (format === 'ai-md' || format === 'both') {
