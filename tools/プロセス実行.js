@@ -736,6 +736,14 @@
     new RegExp(`^fieldsettings\\.properties${ENTITY_PATH_SEGMENT}(?:\\.fields${ENTITY_PATH_SEGMENT})?\\.options${ENTITY_PATH_SEGMENT}$`)
   ];
 
+  // src/kintone-enums.ts
+  var PROCESS_ASSIGNEE_TYPE_JP = {
+    ONE: "候補から作業者を1人選ぶ",
+    ANY: "候補のうち誰か1人が作業する",
+    ANYONE: "候補のうち誰か1人が作業する",
+    ALL: "候補の全員が作業する"
+  };
+
   // src/runControl.ts
   var RUN_CANCELLED_MESSAGE = "利用者の操作で中止しました";
   var RunCancelledError = class extends Error {
@@ -3559,8 +3567,12 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       if (type === "CREATOR") return "作成者";
       return `${code || type || "未設定"}${sub}`;
     });
-    const mode = assignee.type === "ALL" ? "全員" : assignee.type === "ANY" ? "誰でも" : "1人";
-    return `作業者(${mode}): ${labels.join(", ")}`;
+    const mode = assigneeTypeLabel(assignee.type);
+    return `作業者${mode ? `（${mode}）` : ""}: ${labels.join(", ")}`;
+  }
+  function assigneeTypeLabel(type) {
+    const key = String(type ?? "").trim().toUpperCase();
+    return Object.prototype.hasOwnProperty.call(PROCESS_ASSIGNEE_TYPE_JP, key) ? PROCESS_ASSIGNEE_TYPE_JP[key] : key;
   }
   function describeSimActionCondition(action) {
     if (!action) return "";
@@ -4094,13 +4106,10 @@ ${source.replace(/\r\n/g, "\n").replace(/\n+$/, "")}
   function formatAssigneeTypeLabel(stateDef) {
     const assignee = stateDef?.assignee;
     if (!assignee || typeof assignee !== "object") return "未設定";
-    const entities = Array.isArray(assignee.entities) ? assignee.entities : [];
     const t = String(assignee.type || "").toUpperCase();
-    if (!entities.length && !t) return "未設定";
-    if (t === "ALL") return "全員 (ALL)";
-    if (t === "ANY") return "誰でも (ANY)";
-    if (t === "ONE") return "1人 (ONE)";
-    return t || "未設定";
+    if (!t) return "未設定";
+    const label = assigneeTypeLabel(t);
+    return label !== t ? `${label} (${t})` : t;
   }
   function formatInitialAssigneesList(stateDef) {
     const assignee = stateDef?.assignee;

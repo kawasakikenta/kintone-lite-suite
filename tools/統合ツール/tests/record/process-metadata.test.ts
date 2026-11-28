@@ -37,6 +37,17 @@ describe('process action metadata', () => {
     expect(await runLoadStatusActionsStandalone({ appId: '7' }, vi.fn())).toMatchObject({ enabled: false, actions: [], statusFieldCode: '' });
     expect(apiGet).toHaveBeenCalledTimes(1);
   });
+  // プロセス管理の作業者・実行者の CREATOR は、アプリではなくレコードの作成者（kintone の画面の「作成者」）
+  it('describes the CREATOR entity as the record creator, not the app creator', () => {
+    const [action] = readProcessActionChoices({
+      actions: [{ name: '差し戻し', from: '確認中', to: '新規', type: 'SECONDARY', executableUser: { entities: [{ entity: { type: 'CREATOR', code: null }, includeSubs: false }] } }],
+      states: { 新規: { assignee: { type: 'ONE', entities: [{ entity: { type: 'CREATOR', code: null }, includeSubs: false }] } } }
+    });
+    const text = describeProcessAction(action);
+    expect(text).toContain('実行者: 作成者');
+    expect(text).toContain('次の作業者: 候補から1人を選択 / 作成者');
+    expect(text).not.toContain('アプリ作成者');
+  });
   it('rejects incomplete action responses rather than using an empty condition', () => {
     expect(() => readProcessActionChoices({ actions: null })).toThrow(/不正/);
     expect(() => readProcessActionChoices({ actions: [{ name: '不足' }] })).toThrow(/不正/);

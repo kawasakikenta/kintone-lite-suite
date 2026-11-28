@@ -7,6 +7,7 @@ import { isCancelRequested } from '../runControl.js';
 import { createCancelReport, formatCancelledHeadline, isCancelStop } from './run-cancel-summary.js';
 import { uniqueZipEntryName } from './record-query.js';
 import { loadMermaidScript, MERMAID_LOAD_FAILURE_MESSAGE } from './mermaid-loader.js';
+import { PROCESS_ASSIGNEE_TYPE_JP } from '../kintone-enums.js';
 
 // Mermaid は固定版を検証付き（SRI）で読み込む。読み込み先・ハッシュ・失敗時の文言は mermaid-loader.ts。
 export { MERMAID_LOAD_FAILURE_MESSAGE };
@@ -230,8 +231,17 @@ export function describeStateAssignee(stateDef: any): string {
     if (type === 'CREATOR') return '作成者';
     return `${code || type || '未設定'}${sub}`;
   });
-  const mode = assignee.type === 'ALL' ? '全員' : assignee.type === 'ANY' ? '誰でも' : '1人';
-  return `作業者(${mode}): ${labels.join(', ')}`;
+  const mode = assigneeTypeLabel(assignee.type);
+  return `作業者${mode ? `（${mode}）` : ''}: ${labels.join(', ')}`;
+}
+
+/**
+ * 作業者の選び方（assignee.type）を kintone の意味で言う（ONE＝候補から作業者を選ぶ、ANY＝候補の誰か1人が作業する、ALL＝候補の全員が作業する）。
+ * 言葉はほかのツールと同じ kintone-enums.ts のもの。知らない値はそのまま返す。
+ */
+function assigneeTypeLabel(type: unknown): string {
+  const key = String(type ?? '').trim().toUpperCase();
+  return Object.prototype.hasOwnProperty.call(PROCESS_ASSIGNEE_TYPE_JP, key) ? PROCESS_ASSIGNEE_TYPE_JP[key] : key;
 }
 
 export function describeSimActionCondition(action: any): string {
@@ -928,13 +938,10 @@ function sortStateEntries(states: any): Array<{ name: string; index: number | st
 function formatAssigneeTypeLabel(stateDef: any): string {
   const assignee = stateDef?.assignee;
   if (!assignee || typeof assignee !== 'object') return '未設定';
-  const entities = Array.isArray(assignee.entities) ? assignee.entities : [];
   const t = String(assignee.type || '').toUpperCase();
-  if (!entities.length && !t) return '未設定';
-  if (t === 'ALL') return '全員 (ALL)';
-  if (t === 'ANY') return '誰でも (ANY)';
-  if (t === 'ONE') return '1人 (ONE)';
-  return t || '未設定';
+  if (!t) return '未設定';
+  const label = assigneeTypeLabel(t);
+  return label !== t ? `${label} (${t})` : t;
 }
 
 function formatInitialAssigneesList(stateDef: any): string {
