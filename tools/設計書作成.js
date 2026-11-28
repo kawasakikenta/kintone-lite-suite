@@ -20868,10 +20868,29 @@ ${detail}`);
   function looksLikeZip(bytes) {
     return bytes.length >= 4 && bytes[0] === 80 && bytes[1] === 75 && (bytes[2] === 3 && bytes[3] === 4 || bytes[2] === 5 && bytes[3] === 6);
   }
-  async function inflateRaw(bytes) {
+  async function inflateRaw(bytes, expectedSize) {
     if (typeof DecompressionStream !== "function") throw new Error("このブラウザは ZIP の展開（deflate-raw）に対応していません。設定JSONを読み込んでください");
-    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
-    return new Uint8Array(await new Response(stream).arrayBuffer());
+    const reader = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw")).getReader();
+    const chunks = [];
+    let length = 0;
+    for (; ; ) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > expectedSize) {
+        await reader.cancel().catch(() => {
+        });
+        return null;
+      }
+      chunks.push(value);
+    }
+    const out = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) {
+      out.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return out;
   }
   async function readZipEntries(bytes, options = {}) {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -20920,8 +20939,8 @@ ${detail}`);
       const dataStart = localOffset + 30 + u16(localOffset + 26) + u16(localOffset + 28);
       if (dataStart + compressedSize > bytes.length) throw new Error(`ZIP のファイル「${name}」が途中で切れています`);
       const raw = bytes.subarray(dataStart, dataStart + compressedSize);
-      const data = method === 8 ? await inflateRaw(raw) : raw.slice();
-      if (data.length !== size || crc32(data) !== crc) throw new Error(`ZIP のファイル「${name}」の内容が壊れています（大きさ・CRC が一致しません）`);
+      const data = method === 8 ? await inflateRaw(raw, size) : raw.slice();
+      if (!data || data.length !== size || crc32(data) !== crc) throw new Error(`ZIP のファイル「${name}」の内容が壊れています（大きさ・CRC が一致しません）`);
       entries.push({ name, data });
     }
     return entries;
