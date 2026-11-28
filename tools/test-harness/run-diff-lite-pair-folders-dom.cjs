@@ -441,14 +441,15 @@ function resultTable(page) {
   return page.getByRole('table', { name: 'ペア一括比較の結果（登録順）', exact: true });
 }
 
-async function inspectStoredZipDownload(page, downloadIndex) {
-  return page.evaluate(async (index) => {
+async function inspectStoredZipDownload(page, downloadIndex, options = {}) {
+  return page.evaluate(async ({ index, withFirstEntryText }) => {
     const blob = window.__folderDownloadBlobs[index];
     if (!(blob instanceof Blob)) throw new Error(`ダウンロード ${index + 1} のBlobが見つかりません`);
     const bytes = new Uint8Array(await blob.arrayBuffer());
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const decoder = new TextDecoder('utf-8');
     const entries = [];
+    let firstEntryText = '';
     let offset = 0;
     while (offset + 4 <= bytes.length && view.getUint32(offset, true) === 0x04034b50) {
       const method = view.getUint16(offset + 8, true);
@@ -463,15 +464,17 @@ async function inspectStoredZipDownload(page, downloadIndex) {
         size,
         prefix: Array.from(bytes.slice(dataStart, dataStart + 4))
       });
+      if (withFirstEntryText && entries.length === 1) firstEntryText = decoder.decode(bytes.slice(dataStart, dataStart + size));
       offset = dataStart + size;
     }
     return {
       filename: window.__folderProbe.downloadNames[index] || '',
       type: blob.type,
       size: blob.size,
-      entries
+      entries,
+      ...(withFirstEntryText ? { firstEntryText } : {})
     };
-  }, downloadIndex);
+  }, { index: downloadIndex, withFirstEntryText: !!options.withFirstEntryText });
 }
 
 async function runFolderComparison(page, pageErrors) {
@@ -562,6 +565,15 @@ async function verifyExports(page) {
   assert.match(artifacts[2].text, /A-old/, '選択した1件目のMarkdownに変更前スナップショット値がありません');
   assert.match(artifacts[2].text, /B-new/, '選択した1件目のMarkdownに変更後スナップショット値がありません');
   assert.doesNotMatch(artifacts[2].text, /B-old|C-new/, '別ペアのキャッシュが1件目のMarkdownへ混入しました');
+  // 比較結果ID: フォルダ由来のペアの行から保存した HTML・Excel・Markdown は同じ値
+  const resultIds = {
+    html: (/data-result-id="([0-9a-f]{64})"/.exec(artifacts[0].text) || [])[1] || '',
+    xlsx: (/完全な値: ([0-9a-f]{64})/.exec(artifacts[1].text) || [])[1] || '',
+    md: (/^- resultId: `([0-9a-f]{64})`/m.exec(artifacts[2].text) || [])[1] || ''
+  };
+  assert.match(resultIds.html, /^[0-9a-f]{64}$/, 'フォルダ比較のHTMLに比較結果IDがありません');
+  assert.deepEqual(resultIds, { html: resultIds.html, xlsx: resultIds.html, md: resultIds.html },
+    'フォルダ比較の1件目のHTML・Excel・Markdownで比較結果IDが違います');
   await page.waitForTimeout(400);
   const downloadsBeforeBulk = await page.evaluate(() => window.__folderProbe.downloadCount);
   await page.locator('[data-kus-dl-multi-xlsx-all]').evaluate((button) => {
@@ -572,7 +584,12 @@ async function verifyExports(page) {
   await page.waitForTimeout(500);
   assert.equal(await page.evaluate(() => window.__folderProbe.downloadCount), downloadsBeforeBulk + 1,
     'フォルダ比較の一括Excel二重クリックでZIPが重複ダウンロードされました');
-  const bulkZip = await inspectStoredZipDownload(page, downloadsBeforeBulk);
+  const bulkZip = await inspectStoredZipDownload(page, downloadsBeforeBulk, { withFirstEntryText: true });
+  // 一括比較結果（000_一括比較結果.xlsx）の「比較結果ID」列に、1件目の行から保存したファイルと同じ値の先頭12桁がある
+  const bulkSummaryText = bulkZip.firstEntryText;
+  delete bulkZip.firstEntryText;
+  assert.ok(bulkSummaryText.includes('比較結果ID') && bulkSummaryText.includes(resultIds.html.slice(0, 12)),
+    '一括比較結果に1件目の比較結果ID（先頭12桁）がありません');
   assert.match(bulkZip.filename, /\.zip$/i, 'フォルダ比較の一括Excelダウンロード名がZIPではありません');
   assert.match(bulkZip.type, /zip/i, 'フォルダ比較の一括Excel MIME typeがZIPではありません');
   assert.equal(bulkZip.entries.length, EXPECTED_PAIRS.length + 1,

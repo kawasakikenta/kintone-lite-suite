@@ -334,6 +334,29 @@ function compileWildcardMatcher(token: string): WildcardMatcher {
   return { test: (value: string) => matchWildcard(token, String(value)) };
 }
 
+/** 無視ルールの入力を 1 規則ずつに分ける。 */
+function splitIgnoreRuleText(text): string[] {
+  return String(text || '')
+    // 空白はビュー名・カテゴリ名など正規のパス構成要素になり得る。
+    // 区切りはUIで案内している改行・カンマ・セミコロンに限定する。
+    .split(/[\n\r,、，;；]+/)
+    .map(trimIgnoreToken)
+    .filter(Boolean);
+}
+
+/**
+ * 無視ルールの入力を、同じ働きをする入力どうしが同じ値になる形にする（比較結果の識別子の入力）。
+ * 区切り・前後の空白・並び・重複、完全パス以外の大小文字の違いは、比較の結果を変えないので消す。
+ */
+export function canonicalIgnoreRules(text): string[] {
+  const rules = new Set<string>();
+  for (const rawToken of splitIgnoreRuleText(text)) {
+    const exactPath = decodeExactIgnorePathRule(rawToken);
+    rules.add(exactPath ? `exact:${exactPath}` : `rule:${normalizeIgnoreToken(rawToken)}`);
+  }
+  return [...rules].sort();
+}
+
 export function parseIgnoreRules(text) {
   const keySet = new Set(DEFAULT_IGNORE_KEYS);
   // 利用者が入力したキー名だけ。プラグイン設定のような利用者データの中では、既定のメタ情報キーを使わずこちらで判定する。
@@ -342,12 +365,7 @@ export function parseIgnoreRules(text) {
   const exactPathSet = new Set<string>();
   const keyPatterns: WildcardMatcher[] = [];
   const pathPatterns: WildcardMatcher[] = [];
-  String(text || '')
-    // 空白はビュー名・カテゴリ名など正規のパス構成要素になり得る。
-    // 区切りはUIで案内している改行・カンマ・セミコロンに限定する。
-    .split(/[\n\r,、，;；]+/)
-    .map(trimIgnoreToken)
-    .filter(Boolean)
+  splitIgnoreRuleText(text)
     .forEach((rawToken) => {
       const exactPath = decodeExactIgnorePathRule(rawToken);
       if (exactPath) {

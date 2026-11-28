@@ -21,6 +21,15 @@ import { FIELD_SETTING_LABELS } from './label-dict.js';
 import { decodeRow } from './path-decoder.js';
 import { expandSubtableRowsForDisplay, hasIncompleteActualDiffTruncation } from './engine.js';
 import {
+  DIFF_RESULT_ID_DESCRIPTION,
+  DIFF_RESULT_ID_LABEL,
+  DIFF_RESULT_ID_MATCH_NOTE,
+  DIFF_RESULT_ID_VALUE_NOTE,
+  formatDiffResultIdText,
+  resolveDiffResultIdForExport,
+  type DiffResultId
+} from './result-id.js';
+import {
   AGGREGATION_TYPE_JP,
   ALIGN_JP,
   APP_THEME_JP,
@@ -159,6 +168,10 @@ export interface DiffXlsxContext {
   filename?: string;
   generatedAt?: string;
   comparedAt?: string | number;
+  /** 全件の比較結果から計算した比較結果ID（result-id.ts）。無ければ全件の出力のときだけ rows から計算する。 */
+  resultId?: DiffResultId | null;
+  /** 絞り込んだ出力で、比較結果ID を計算するための全件の行（値の明細は rows だけを収録する）。 */
+  allRows?: DiffXlsxRow[];
 }
 
 export interface DiffXlsxFieldDetail {
@@ -1371,7 +1384,8 @@ function buildSummarySheet(
     ['使い方', fieldCount
       ? '①「変更対象一覧」で対象を絞る　②「フィールド差分要約・詳細」で変更内容を確認　③「差分一覧」で確認状況と対応判断を入力　※パスは技術明細シートにのみ掲載'
       : '①「変更対象一覧」で対象を絞る　②「差分一覧」で変更前後を確認　③黄色い4列に確認状況・対応判断・担当者・コメントを入力　※パスは技術明細シートにのみ掲載', '', rows.length ? '③ レビュー入力へ' : ''],
-    ['レポート識別子 (reportFingerprint)', reportFingerprint, '', '']
+    // レポート識別子は HTML のレビュー状態との照合用（出力範囲ごとに変わる）。比較結果ID は全件の比較結果の照合用。
+    ['レポート識別子 (reportFingerprint)', reportFingerprint, DIFF_RESULT_ID_LABEL, formatDiffResultIdText(xlsxResultId(ctx), { filtered: ctx.exportMode === 'filtered' })]
   ];
   const guideTitleRow = sheetRows.length;
   sheetRows.push(['シート案内', '', '', '']);
@@ -1501,7 +1515,11 @@ function buildSummarySheet(
   cellStyles[overviewRow.fieldStatus] = ['info', fieldStatusIncomplete ? 'kpiDanger' : 'kpiGood'];
   if (fieldLinkTarget) cellStyles[overviewRow.fieldStatus][3] = 'hyperlink';
   if (rows.length) cellStyles[overviewRow.usage][3] = 'hyperlink';
-  cellStyles[overviewRow.reportFingerprint] = ['info', 'normal'];
+  cellStyles[overviewRow.reportFingerprint] = ['info', 'normal', 'info', 'normal'];
+  rowHeights[overviewRow.reportFingerprint] = readableDiffRowHeight([
+    { value: sheetRows[overviewRow.reportFingerprint][1], width: 54 },
+    { value: sheetRows[overviewRow.reportFingerprint][3], width: 54 }
+  ], 120);
   for (const index of warningRows) cellStyles[index][0] = 'warning';
   const merges = [
     'A1:D1', 'A2:D2', `A${overviewRow.guideBand + 1}:D${overviewRow.guideBand + 1}`, `A${overviewRow.comparisonTitle + 1}:D${overviewRow.comparisonTitle + 1}`,
@@ -4719,6 +4737,11 @@ interface CustomerSummarySheetAvailability {
   hasFeatureSheets: boolean;
 }
 
+/** このブックに載せる比較結果ID（全件の比較結果のもの。絞り込んだ出力でも同じ値）。 */
+function xlsxResultId(ctx: DiffXlsxContext): DiffResultId | null {
+  return resolveDiffResultIdForExport(ctx);
+}
+
 function buildCustomerSummarySheet(
   ctx: DiffXlsxContext,
   items: CustomerDiffItem[],
@@ -4749,7 +4772,8 @@ function buildCustomerSummarySheet(
     [`${counts.actual}件`, '', `${counts.added}件`, `${counts.removed}件`, `${counts.contentChanged}件`, `${counts.moved}件`],
     ['比較範囲', '', '', '', '', ''],
     ['比較した設定領域', customerScopeLabel(comparedScopes), '', '', '', ''],
-    ['比較日時', customerDateTime(ctx.comparedAt), '', '', '', '']
+    ['比較日時', customerDateTime(ctx.comparedAt), '', '', '', ''],
+    [DIFF_RESULT_ID_LABEL, formatDiffResultIdText(xlsxResultId(ctx), { filtered }), '', '', '', '']
   ];
   const resultTitleRow = 2;
   const metricLabelRow = 3;
@@ -4757,6 +4781,7 @@ function buildCustomerSummarySheet(
   const scopeTitleRow = 5;
   const scopeRow = 6;
   const comparedAtRow = 7;
+  const resultIdRow = 8;
   const sensitiveLabels = customerSensitiveSheetLabels(items);
   const sensitiveNoteRow = sensitiveLabels.length ? rows.length : -1;
   if (sensitiveNoteRow >= 0) {
@@ -4835,6 +4860,8 @@ function buildCustomerSummarySheet(
   cellStyles[scopeRow][1] = 'info';
   cellStyles[comparedAtRow][0] = 'summaryLabel';
   cellStyles[comparedAtRow][1] = 'info';
+  cellStyles[resultIdRow][0] = 'summaryLabel';
+  cellStyles[resultIdRow][1] = 'info';
   if (sensitiveNoteRow >= 0) {
     cellStyles[sensitiveNoteRow][0] = 'summaryLabel';
     cellStyles[sensitiveNoteRow][1] = 'warning';
@@ -4897,7 +4924,7 @@ function buildCustomerSummarySheet(
       if (index === resultTitleRow || index === scopeTitleRow) return 30;
       if (index === metricLabelRow) return 26;
       if (index === metricValueRow) return 38;
-      if (index === scopeRow || index === comparedAtRow) {
+      if (index === scopeRow || index === comparedAtRow || index === resultIdRow) {
         return readableDiffRowHeight([{ value: row[1], width: 72 }], 58);
       }
       if (index === sensitiveNoteRow) return readableDiffRowHeight([{ value: row[1], width: 72 }], 58);
@@ -4923,6 +4950,7 @@ function buildCustomerSummarySheet(
       `A${scopeTitleRow + 1}:F${scopeTitleRow + 1}`,
       `B${scopeRow + 1}:F${scopeRow + 1}`,
       `B${comparedAtRow + 1}:F${comparedAtRow + 1}`,
+      `B${resultIdRow + 1}:F${resultIdRow + 1}`,
       ...(sensitiveNoteRow >= 0 ? [`B${sensitiveNoteRow + 1}:F${sensitiveNoteRow + 1}`] : []),
       ...(fullAppNameRow >= 0 ? [`B${fullAppNameRow + 1}:F${fullAppNameRow + 1}`] : []),
       ...(redundantNoteRow >= 0 ? [`B${redundantNoteRow + 1}:F${redundantNoteRow + 1}`] : []),
@@ -5661,6 +5689,10 @@ function buildCustomerGuideSections(
         {
           label: '比較概要',
           text: '比較元・比較先のアプリ名、比較日時、比較した設定領域、変更対象の件数（追加・削除・変更・並び順変更）と、機能別の差分明細件数をまとめた表紙です。'
+        },
+        {
+          label: DIFF_RESULT_ID_LABEL,
+          text: `比較概要の「${DIFF_RESULT_ID_LABEL}」は、同じ比較から出たファイルかを照合する値です。${DIFF_RESULT_ID_MATCH_NOTE}${DIFF_RESULT_ID_DESCRIPTION}${DIFF_RESULT_ID_VALUE_NOTE}`
         },
         {
           label: '確認できなかった範囲',

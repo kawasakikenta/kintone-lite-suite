@@ -391,6 +391,7 @@ COMPOSITE_ARRAY_RULES のパス正規表現
 | ラベル内 HTML | `stringifyRowValueForDiff` が `layoutSettings` 配下と `.label` 文字列の HTML タグを除去。JS/CSS 本文（`file._body`）は文字列のまま行差分をかける |
 | 収録上限 | `DIFF_HTML_MAX_EXPORT_ROWS` = 2,000（表示専用展開後）。優先順は 実差分 → 表示専用行 → 同一行。省略件数を不完全警告に載せる |
 | 内容識別子 | `contentIdentifier` = `SHA256-` ＋ SHA-256 の先頭 16 桁（64 ビット）を大文字で。`docs/diff-comparison-logic.md` §13.1 も同じ値（64 ビット）に修正済み |
+| 比較結果ID | `result-id.ts` の `computeDiffResultId`。比較元・比較先の App ID / ゲスト ID / 環境、比較条件（セクション・`canonicalIgnoreRules` で正規化した無視ルール・有効な正規化）、取得の状態（取得失敗のセクションと側、本文未検証のファイル、実差分の部分走査・未走査）、全件の実差分行（セクションキー・パス・種類・移動位置・左右の値）を、型を区別しキーを並べ替えた決定的な文字列にして SHA-256（16 進 64 桁、短い表示は先頭 12 桁）。行・無視ルールは並べ替えてから入れ、生成日時・表示名・エラー本文・同一行は入れない。画面の比較結果（1対1・1対多の比較先ごと・ペアごと。フォルダ・ZIP のペアも同じ）ごとに `diffResultIdOf` で 1 回だけ計算し、HTML・Excel・Markdown の context に `resultId` として渡す（絞り込み出力も全件の値）。HTML から作る反映 JSON には入れない |
 | 反映 JSON の可否 | `canBuildReflectJson` = `withCompared` かつ 不完全警告が 0 件（実差分の打ち切り、取得失敗、本文未検証、HTML 収録上限のいずれもなし）かつ プロセス状態改名が 0 件（収録行の改名通知数と、バンドルから直接 `detectProcessStateRenames` した件数の大きい方）。同一証跡だけの省略では無効にしない。生成される JSON は比較元の値を比較先へ送る方向（変更前→変更後で比較したときはロールバック方向） |
 | レビュー状態 JSON | `kind: 'kintone-diff-review-state'`、`version: 1`、上限 2 MiB（ファイルサイズと文字数の両方）、`reportFingerprint`（比較元・比較先の App ID / ゲスト ID / 環境と行内容から生成）が一致しないと読込拒否。行キーは `review-v1-{内容ハッシュ}-{出現順}` で、行の追加削除でずれない |
 | 能動的 HTML | インライン JS を含むが外部通信と kintone API 実行はしない。フィンガープリントは照合用で改ざん防止の署名ではない |
@@ -533,6 +534,7 @@ COMPOSITE_ARRAY_RULES のパス正規表現
 | フォルダ解析・manifest 整合・自動対応 | `src/diff/batch-folder-import.ts` | `tests/diff/batch-folder-import.test.ts` |
 | 自己完結 HTML・変更の要点・レビュー状態・反映 JSON | `src/diff/export.ts` | `tests/diff/html-export.test.ts`、`run-diff-lite-compare.cjs` |
 | 機密値の伏せ字・マスク・内容識別子 | `src/diff/export-safety.ts` | `tests/diff/export-safety.test.ts` |
+| 比較結果ID | `src/diff/result-id.ts` | `tests/diff/result-id.test.ts` |
 | Excel（顧客用 / 社内用）と自前 XLSX ビルダー・一括 ZIP | `src/diff/xlsx-export.ts`、`xlsx-builder.ts`、`xlsx-batch-export.ts`、`src/archive/stored-zip.ts` | `tests/diff/xlsx-export.test.ts`、`xlsx-builder.test.ts`、`xlsx-batch-export.test.ts`、`tests/archive/stored-zip.test.ts` |
 | AI 向け Markdown | `src/diff/markdown-export.ts` | `tests/diff/markdown-export.test.ts` |
 | 比較条件プロファイル | `src/diff/comparison-profile.ts` | `tests/diff/comparison-profile.test.ts` |

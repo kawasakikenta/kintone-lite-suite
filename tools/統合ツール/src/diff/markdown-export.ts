@@ -15,6 +15,15 @@ import { buildFieldLabelResolver, extractFieldPathInfo, fieldSettingIdentity, to
 import { contentIdentifier, isSensitiveSameDiffRow, SENSITIVE_DIFF_SECTION_KEYS } from './export-safety.js';
 import { decodeRow } from './path-decoder.js';
 import { labelOfProp } from './label-dict.js';
+import {
+  DIFF_RESULT_ID_DESCRIPTION,
+  DIFF_RESULT_ID_FILTERED_NOTE,
+  DIFF_RESULT_ID_MATCH_NOTE,
+  DIFF_RESULT_ID_UNAVAILABLE,
+  DIFF_RESULT_ID_VALUE_NOTE,
+  resolveDiffResultIdForExport,
+  type DiffResultId
+} from './result-id.js';
 
 /**
  * Markdown 出力は UI の DiffCache に依存しない。比較結果を保存した後に
@@ -126,6 +135,8 @@ export interface DiffMarkdownContext {
   generatedAt?: string;
   comparedAt?: string | number;
   filename?: string;
+  /** 全件の比較結果から計算した比較結果ID（result-id.ts）。無ければ全件の行（allRows・全件出力の rows）から計算する。 */
+  resultId?: DiffResultId | null;
 }
 
 export interface DiffMarkdownExport {
@@ -658,6 +669,24 @@ function sensitiveDiffSectionKeys(rows: DiffMarkdownRow[]): string[] {
   return [...new Set(keys)];
 }
 
+/** この Markdown に載せる比較結果ID（全件の比較結果のもの）。 */
+function markdownResultId(ctx: DiffMarkdownContext): DiffResultId | null {
+  return resolveDiffResultIdForExport(ctx);
+}
+
+function resultIdLines(ctx: DiffMarkdownContext, exportMode: string): string[] {
+  const id = markdownResultId(ctx);
+  return [
+    '## 比較結果の識別子',
+    id ? `- resultId: ${markdownCode(id.full)}` : `- resultId: ${markdownInline(DIFF_RESULT_ID_UNAVAILABLE)}`,
+    ...(id ? [`- resultIdShort: ${markdownCode(id.short)}`, `- resultIdVersion: ${id.version}`] : []),
+    `- resultIdScope: ${markdownCode('all')}（全件の比較結果。exportRange とは別）`,
+    `- 説明: ${markdownInline(`${DIFF_RESULT_ID_MATCH_NOTE}${DIFF_RESULT_ID_DESCRIPTION}${DIFF_RESULT_ID_VALUE_NOTE}`)}`,
+    ...(exportMode === 'filtered' ? [`- 注意: ${markdownInline(DIFF_RESULT_ID_FILTERED_NOTE)}`] : []),
+    ''
+  ];
+}
+
 function incompleteForContext(ctx: DiffMarkdownContext): boolean {
   return hasActualDiffTruncation(ctx.truncation)
     || (ctx.fetchIssues || []).length > 0
@@ -704,6 +733,7 @@ export function buildDiffMarkdownExport(ctx: DiffMarkdownContext = {}): DiffMark
     '- 判定の根拠: added=比較先（AFTER）のみ、removed=比較元（BEFORE）のみ、changed=両側にあり内容が異なる、moved=順序が異なる（件数は相互排他的）',
     '- businessImpact: 未判定（この出力は差分の事実を収録し、業務影響・反映要否を自動推定しない）',
     '',
+    ...resultIdLines(ctx, exportMode),
     '## 比較方向（source-before → target-after）',
     ...endpointBlock('BEFORE / 比較元（変更前）', ctx.sourceBundle, '比較元'),
     ...endpointBlock('AFTER / 比較先（変更後）', ctx.targetBundle, '比較先'),
@@ -758,6 +788,12 @@ export function buildDiffMarkdownExport(ctx: DiffMarkdownContext = {}): DiffMark
     suffix: 'AI'
   });
   return { filename, markdown: `${lines.join('\n').replace(/\n{3,}/g, '\n\n')}\n` };
+}
+
+/** 一括インデックスの「比較結果ID」列（先頭 12 桁。完全な値は個別ファイルにある）。 */
+function batchResultIdCell(ctx: DiffMarkdownContext): string {
+  const id = markdownResultId(ctx);
+  return id ? markdownCode(id.short) : '-';
 }
 
 function cleanMarkdownEntryToken(value: unknown, maxLength = 40): string {
@@ -822,7 +858,7 @@ export function buildDiffMarkdownBatchExport(
       // 生成に失敗した比較もインデックスに行を残し、件数（totalPairs）と一覧の行数をそろえる
       const failure = failures[failures.length - 1];
       indexRows.push(
-        `| ${index + 1} | ${markdownTableCell(item.label || `比較 ${index + 1}`)} | ${markdownTableCell(endpointName(ctx.sourceBundle, '比較元'))} | ${markdownTableCell(endpointName(ctx.targetBundle, '比較先'))} | \`export-failed\` | ${markdownTableCell(`生成失敗: ${failure?.error || '原因不明'}`)} | - | - | （未作成） |`
+        `| ${index + 1} | ${markdownTableCell(item.label || `比較 ${index + 1}`)} | ${markdownTableCell(endpointName(ctx.sourceBundle, '比較元'))} | ${markdownTableCell(endpointName(ctx.targetBundle, '比較先'))} | \`export-failed\` | ${markdownTableCell(`生成失敗: ${failure?.error || '原因不明'}`)} | - | - | （未作成） | - |`
       );
       return;
     }
@@ -849,7 +885,7 @@ export function buildDiffMarkdownBatchExport(
     const stateLabel = incomplete ? '要確認（一部未取得）' : (counts.actual > 0 ? '差分あり' : '差分なし');
     const breakdown = `追加 ${counts.added} / 削除 ${counts.removed} / 変更 ${counts.changed} / 移動 ${counts.moved}`;
     indexRows.push(
-      `| ${index + 1} | ${markdownTableCell(item.label || `比較 ${index + 1}`)} | ${markdownTableCell(endpointName(ctx.sourceBundle, '比較元'))} | ${markdownTableCell(endpointName(ctx.targetBundle, '比較先'))} | \`${concl.code}\` | ${stateLabel} | ${counts.actual} | ${breakdown} | \`${entryName}\` |`
+      `| ${index + 1} | ${markdownTableCell(item.label || `比較 ${index + 1}`)} | ${markdownTableCell(endpointName(ctx.sourceBundle, '比較元'))} | ${markdownTableCell(endpointName(ctx.targetBundle, '比較先'))} | \`${concl.code}\` | ${stateLabel} | ${counts.actual} | ${breakdown} | \`${entryName}\` | ${batchResultIdCell(ctx)} |`
     );
   });
 
@@ -867,8 +903,8 @@ export function buildDiffMarkdownBatchExport(
     '',
     '## 比較結果一覧',
     '',
-    '| No. | 比較ラベル | 比較元（変更前） | 比較先（変更後） | 結論 | 状態 | 実差分数 | 内訳（追加/削除/変更/移動） | 個別ファイル |',
-    '| ---: | --- | --- | --- | --- | --- | ---: | --- | --- |',
+    '| No. | 比較ラベル | 比較元（変更前） | 比較先（変更後） | 結論 | 状態 | 実差分数 | 内訳（追加/削除/変更/移動） | 個別ファイル | 比較結果ID（先頭12桁） |',
+    '| ---: | --- | --- | --- | --- | --- | ---: | --- | --- | --- |',
     ...indexRows,
     '',
     '---',

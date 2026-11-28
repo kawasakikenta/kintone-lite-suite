@@ -342,6 +342,7 @@ async function readPanel(page) {
       completeness: verdict?.getAttribute('data-kus-dl-completeness') || '',
       verdict: norm(verdict?.textContent),
       overviewText: norm(overview?.textContent),
+      resultId: overview?.querySelector('[data-kus-dl-result-id]')?.getAttribute('data-kus-dl-result-id') || '',
       metrics, total, sections, alerts, rows
     };
     setMode(originalMode);
@@ -395,6 +396,7 @@ function parseMarkdown(text) {
     rowsTotal: count('rowsTotal'), realDiffs: count('realDiffs'), added: count('added'), removed: count('removed'), changed: count('changed'), moved: count('moved'),
     complete: (/^- comparisonComplete: (true|false)/m.exec(text) || [])[1] === 'true',
     fetchFailures: count('取得失敗'),
+    resultId: (/^- resultId: `([0-9a-f]{64})`/m.exec(text) || [])[1] || '',
     blocks,
     bySection: blocks.reduce((acc, block) => { acc[block.sectionKey] = (acc[block.sectionKey] || 0) + 1; return acc; }, {}),
     text
@@ -403,7 +405,12 @@ function parseMarkdown(text) {
 
 function parseHtmlReport(source) {
   const text = htmlToText(source);
-  return { text, reviewCount: Number((/未確認レビューを開始（(\d+)件）/.exec(text) || [])[1] ?? NaN), complete: /比較対象の取得と差分検出は完了しています/.test(text) };
+  return {
+    text,
+    reviewCount: Number((/未確認レビューを開始（(\d+)件）/.exec(text) || [])[1] ?? NaN),
+    complete: /比較対象の取得と差分検出は完了しています/.test(text),
+    resultId: (/data-result-id="([0-9a-f]{64})"/.exec(source) || [])[1] || ''
+  };
 }
 
 function readXlsxSummary(file) {
@@ -419,6 +426,7 @@ function readXlsxSummary(file) {
     targetCount: Number(String(targets[0] || '').replace(/\D/g, '')) || 0,
     targetListCount: Math.max(0, (sheets['変更対象一覧'] || []).length - 2),
     hasUnverifiedSheet: names.includes('確認できなかった範囲'),
+    resultId: (/完全な値: ([0-9a-f]{64})/.exec(overview.map((row) => row.join(' ')).join(' ')) || [])[1] || '',
     overviewText: overview.map((row) => row.join(' ')).join('\n')
   };
 }
@@ -440,6 +448,9 @@ function checkOutputsAgree(name, panel, saved) {
   assert.equal(xlsx.hasUnverifiedSheet, panel.completeness === 'incomplete', `${name}: 「確認できなかった範囲」シートの有無が、画面の完全性（${panel.completeness}）と合っていません`);
   assert.equal(md.complete, panel.completeness === 'complete', `${name}: Markdown の comparisonComplete が画面の完全性と合っていません`);
   assert.equal(html.complete, panel.completeness === 'complete', `${name}: HTML の完全性の表示が画面と合っていません`);
+  // 比較結果ID: 同じ比較から保存した画面・HTML・Excel・Markdown は同じ値
+  assert.match(panel.resultId, /^[0-9a-f]{64}$/, `${name}: 画面に比較結果ID がありません`);
+  assert.deepEqual({ html: html.resultId, xlsx: xlsx.resultId, md: md.resultId }, { html: panel.resultId, xlsx: panel.resultId, md: panel.resultId }, `${name}: 比較結果ID が出力ごとに違います`);
   return { md, html, xlsx };
 }
 
@@ -563,6 +574,7 @@ scenario('baseline: 業務アプリの全セクション（1対1）', async () =
   assert.ok(copied.includes(`結果: 差分が ${panel.total} 件見つかりました。追加 ${panel.metrics.added} / 削除 ${panel.metrics.removed} / 内容変更 ${panel.metrics.changed}`), `要約の件数が画面と違います: ${copied}`);
   assert.match(copied, /\n取得: 問題なし\n/);
   assert.match(copied, /\nセクション別: .*フィールド設定 \d+件/);
+  assert.ok(copied.includes(`\n比較結果ID: ${panel.resultId.slice(0, 12)}（完全な値: ${panel.resultId}）\n`), `要約に画面と同じ比較結果ID がありません: ${copied}`);
   assert.ok(!copied.includes('tok_') && copied.split('\n').length <= 12, `要約に値が入っているか、長すぎます: ${copied}`);
   const copyStatus = await page.locator('#kus-diff-lite').evaluate((rootElement) => [...rootElement.querySelectorAll('[data-tone]')].map((element) => element.textContent).join('\n'));
   assert.match(copyStatus, /結果の要約をクリップボードにコピーしました/, '要約をコピーしたことをステータスに示していません');
@@ -577,6 +589,19 @@ scenario('baseline: 業務アプリの全セクション（1対1）', async () =
     await page.locator('.kus-dl-overview__actions').screenshot({ path: path.join(shotsDir(), 'baseline-overview-copy-320.png') });
     await page.setViewportSize(viewport);
     assert.ok(fits && box && box.x >= 0 && box.x + box.width <= 321 && box.height >= 32, `320px で「結果の要約をコピー」がはみ出すか押しにくい: ${JSON.stringify(box)}`);
+  }
+  {
+    // 比較結果ID（64 桁）は狭い画面でも折り返し、はみ出さない
+    const viewport = page.viewportSize();
+    await page.setViewportSize({ width: 390, height: viewport.height });
+    const idBlock = page.locator('[data-kus-dl-result-id]');
+    await idBlock.scrollIntoViewIfNeeded();
+    const box = await idBlock.boundingBox();
+    const fits = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
+    await idBlock.screenshot({ path: path.join(shotsDir(), 'baseline-result-id-390.png') });
+    await page.setViewportSize(viewport);
+    await page.locator('[data-kus-dl-result-id]').screenshot({ path: path.join(shotsDir(), 'baseline-result-id-1440.png') });
+    assert.ok(fits && box && box.x >= 0 && box.x + box.width <= 391, `390px で比較結果ID がはみ出しています: ${JSON.stringify(box)}`);
   }
   ok('baseline: 「結果の要約をコピー」は比較方向・件数・セクション別の件数を、画面と同じ数で数行にする（値は含めない）');
   assert.deepEqual(errors, [], `ページのエラー: ${errors.join(' / ')}`);
@@ -1005,9 +1030,16 @@ scenario('multi-memory: 1対多の結果を保持したときのメモリ', asyn
   assert.deepEqual(rowsOf(multiFile), rowsOf(singleSaved.xlsx.file), '1対多の行から保存した Excel が、1対1の結果と違います（保持量を減らした影響）');
   const mdBlocks = (file) => parseMarkdown(fs.readFileSync(file, 'utf8')).blocks.map((block) => block.text.replace(/stableId: `d\d+`/g, ''));
   assert.deepEqual(mdBlocks(multiMd), mdBlocks(singleSaved.md.file), '1対多の行から保存した Markdown が、1対1の結果と違います');
-  const htmlCount = parseHtmlReport(fs.readFileSync(multiHtml, 'utf8')).reviewCount;
-  assert.equal(htmlCount, singlePanel.total, '1対多の行から保存した HTML の件数が違います');
-  ok('multi-memory: 保持を減らしても、行から保存した Excel・Markdown・HTML は 1対1 の結果と同じ');
+  const multiHtmlReport = parseHtmlReport(fs.readFileSync(multiHtml, 'utf8'));
+  assert.equal(multiHtmlReport.reviewCount, singlePanel.total, '1対多の行から保存した HTML の件数が違います');
+  // 比較結果ID: 1対多の行から保存したファイルも、同じ組を 1対1 で比べた結果と同じ値
+  assert.match(singlePanel.resultId, /^[0-9a-f]{64}$/, '1対1 の画面に比較結果ID がありません');
+  assert.deepEqual({
+    html: multiHtmlReport.resultId,
+    xlsx: readXlsxSummary(multiFile).resultId,
+    md: parseMarkdown(fs.readFileSync(multiMd, 'utf8')).resultId
+  }, { html: singlePanel.resultId, xlsx: singlePanel.resultId, md: singlePanel.resultId }, '1対多の行から保存したファイルの比較結果ID が、1対1 の結果と違います');
+  ok('multi-memory: 保持を減らしても、行から保存した Excel・Markdown・HTML は 1対1 の結果と同じ（比較結果ID も同じ）');
 }, { scale: false });
 
 let memoryBrowserInstance;
