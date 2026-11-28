@@ -9,6 +9,7 @@
 
 import { buildErAppModel, buildFailedErAppModel, type ErAppModel } from './er-model.js';
 import { pickAllSettingsBundles } from '../settingsBundleImport.js';
+import { normalizeIdInputText } from '../utils.js';
 
 export interface ErOfflineSource {
   /** 読み込んだアプリの設定（App ID → 設定。同じ App ID が複数あるときは後のもの） */
@@ -39,6 +40,18 @@ const ER_OFFLINE_SECTIONS: Array<[key: string, label: string]> = [
 const hasOwn = (record: unknown, key: string): boolean =>
   !!record && typeof record === 'object' && Object.prototype.hasOwnProperty.call(record, key);
 
+/**
+ * 設定のゲストスペースID（入力欄と同じく全角数字は半角にする）。数字でなければ止める。
+ * 設定JSONの値は入力欄を通らないため、ここで確かめないと、接続先の表示・保存するファイル名・図の Markdown などに別の文字が入る。
+ */
+function offlineGuestId(bundle: any, appId: number): string {
+  const text = normalizeIdInputText(bundle?.guestId ?? '').trim();
+  if (text && !/^\d+$/.test(text)) {
+    throw new Error(`設定JSONのゲストスペースIDが半角数字ではありません（App ${appId}: ${text.slice(0, 40)}）。設定取得で保存した JSON または ZIP か確認してください`);
+  }
+  return text;
+}
+
 /** 設定JSON（`apps` 配列・単体・`bundles`・差分比較の `{ source, target }` の比較元）・設定取得の ZIP を読んだ値から、ER図の読み込み元を作る。 */
 export function buildErOfflineSource(raw: unknown, fileName = ''): ErOfflineSource {
   const candidates = pickAllSettingsBundles(raw, undefined, true, true);
@@ -59,7 +72,7 @@ export function buildErOfflineSource(raw: unknown, fileName = ''): ErOfflineSour
   }
   for (const appId of appIds) {
     const bundle = bundles.get(appId);
-    guestIds.add(String(bundle?.guestId ?? '').trim());
+    guestIds.add(offlineGuestId(bundle, appId));
     previews.add(bundle?.preview === true);
     const time = Date.parse(String(bundle?.fetchedAt ?? ''));
     if (Number.isFinite(time)) fetchedTimes.push(time);
@@ -106,7 +119,7 @@ export function buildErModelFromOfflineSource(source: ErOfflineSource, rawAppId:
     const label = ER_OFFLINE_SECTIONS.find(([k]) => k === key)?.[1] || key;
     return `読み込んだ設定JSONに${label}が含まれていません`;
   };
-  const sourceGuestId = String(bundle.guestId ?? '').trim();
+  const sourceGuestId = offlineGuestId(bundle, appId);
   const fieldsMissing = missing('fieldSettings');
   if (fieldsMissing) {
     return buildFailedErAppModel(appId, new Error(`${fieldsMissing}（設定取得で「フィールド設定」を含めて保存してください）`), {

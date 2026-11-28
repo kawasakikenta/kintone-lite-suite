@@ -680,7 +680,8 @@ function showCSVRelations(){
 }
 
 // ─── Markdown spec ───
-function mdEsc(s){return String(s==null?"":s).replace(/[\\|<>]/g,"\\$&").replace(/\n/g," ");}
+// HTML のタグ・表の区切りに加え、名前の中のリンク・画像の記法（[）も働かないよう逃がす
+function mdEsc(s){return String(s==null?"":s).replace(/[\\|<>[]/g,"\\$&").replace(/\n/g," ");}
 function showMarkdown(){
   recomputeErAnalysis();
   const lines=[];

@@ -544,6 +544,7 @@ function escapeOverviewCell(value: unknown): string {
   return String(value ?? '')
     .replace(/\\/g, '\\\\')
     .replace(/\|/g, '\\|')
+    .replace(/\[/g, '\\[')
     .replace(/</g, '&lt;')
     .replace(/\s*[\r\n]+\s*/g, ' ')
     .trim();
