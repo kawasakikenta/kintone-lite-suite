@@ -1281,6 +1281,11 @@ async function main() {
           appOverrides: { 101: { name: '<img src=x onerror="window.__PWNED__=1">', color: 'red;background:url(https://evil.example/x)' } },
           notes: [{ text: '<script>window.__PWNED__=2</script>', color: '#fef08a', x: 0, y: 0 }],
           customApps: [{ id: -1, name: '"><svg onload="window.__PWNED__=3">', fields: [{ code: 'x', label: '<b onmouseover=alert(1)>x</b>', type: 'SINGLE_LINE_TEXT' }] }],
+          // 取り込んだ名前が、詳細・表・構造チェック・印刷・ツールチップのどこで出ても要素にならないことを、目印の属性（data-xss）で確かめる
+          customFields: [{ appId: 113, field: { code: '<b data-xss=1>c</b>', label: '<i data-xss=2>項目</i>', type: 'SINGLE_LINE_TEXT' } }],
+          customRelations: [{ fromAppId: 113, rel: { toApp: -1, kind: 'LOOKUP', fromLabel: '<u data-xss=3>線</u>' } }],
+          fieldOverrides: { [`113::${businessRelations[0].fromPath || businessRelations[0].from}`]: { label: '<s data-xss=4>名前</s>' } },
+          relationOverrides: { e_113_0: { fromLabel: '<q data-xss=5>関連</q>' } },
           view: { positions: { a113: { x: 'NaN', y: 0 } }, scope: { mode: 'around', roots: ['javascript:alert(1)'], depth: 9 } }
         };
         // JSON の自身のキーとして __proto__ を持たせる（オブジェクトの書き方では入らないため、文字列で足す）
@@ -1299,7 +1304,24 @@ async function main() {
           polluted: ({}).polluted,
           name101: findApp(101).name,
           accent: cy.getElementById('a101').data('accent'),
-          injected: document.querySelectorAll('img[src="x"], svg[onload], [onerror], [onmouseover], [onload]').length,
+          injected: (() => {
+            // 取り込んだアプリ・項目・関連線が出る画面をすべて描く
+            const custom = APPS.find((app) => app.isCustom);
+            const count = () => document.querySelectorAll('img[src="x"], svg[onload], [onerror], [onmouseover], [onload], [data-xss]').length;
+            let total = count();
+            for (const app of [findApp(101), findApp(113), custom]) { renderAppDetail(app); total += count(); }
+            cy.edges().forEach((edge) => { if (edge.source().id() === 'a113') { renderEdgeDetail(edge); total += count(); edge.emit('mouseover'); total += count(); edge.emit('mouseout'); } });
+            ['a101', 'a113', 'a' + custom.id].forEach((id) => { cy.getElementById(id).emit('mouseover'); total += count(); cy.getElementById(id).emit('mouseout'); });
+            setView('apps'); total += count();
+            setView('relations'); total += count();
+            setView('diagram');
+            toggleAnalysisPanel(true); renderAnalysisPanel(); total += count(); toggleAnalysisPanel(false);
+            document.getElementById('print-doc').innerHTML = buildPrintDocHtml(); total += count(); document.getElementById('print-doc').innerHTML = '';
+            openCmd(); filterCmd('<'); total += count(); filterCmd(''); total += count(); closeCmd();
+            return total;
+          })(),
+          customName: APPS.find((app) => app.isCustom).name,
+          imported: [findApp(113).allFields.some((f) => f.label === '<i data-xss=2>項目</i>'), findApp(113).relations.some((r) => r.fromLabel === '<u data-xss=3>線</u>'), findApp(113).relations[0].fromLabel === '<q data-xss=5>関連</q>'],
           listText: document.getElementById('app-list').textContent
         }));
         const problems = [...viewer.errors, ...viewer.blocked];
@@ -1310,6 +1332,8 @@ async function main() {
         assert.equal(state.polluted, undefined);
         assert.equal(state.name101, '<img src=x onerror="window.__PWNED__=1">', '名前は文字として取り込む');
         assert.equal(state.accent, '', '色の形でない値を使っています');
+        assert.deepEqual(state.imported, [true, true, true], '検査に使う名前を取り込めていません');
+        assert.equal(state.customName, '"><svg onload="window.__PWNED__=3">');
         assert.equal(state.injected, 0, '取り込んだ名前が要素になっています');
         assert.ok(state.listText.includes('<img src=x onerror="window.__PWNED__=1">'));
         assert.match(result.modal, /形が正しくないため読まなかった値: \d+ 件/);

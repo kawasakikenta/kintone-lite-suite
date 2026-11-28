@@ -9,6 +9,9 @@
 const ER_IMPORT_MAX_BYTES=64*1024*1024;
 // 1 種類あたりに読む件数の上限（壊れたファイル・巨大なファイルで固まらないようにする）
 const ER_IMPORT_LIMIT=20000;
+// 図に要素を足す編集（手動で追加したアプリ・項目・関連線、メモ）は、1 件ごとにカードの画像や線を作るため、さらに少ない上限で読む
+// （画面で 1 つずつ足すものなので、ふつうの編集済みHTMLはこの数に届かない。上限を超えた分は読まず、件数を結果に示す）
+const ER_IMPORT_ELEMENT_LIMITS={customApps:1000,customFields:5000,customRelations:5000,notes:2000};
 const ER_IMPORT_TEXT_MAX=2000;
 const ER_IMPORT_NAME_MAX=200;
 const ER_IMPORT_KINDS=["LOOKUP","REF","ACTION"];
@@ -167,18 +170,22 @@ function sanitizeImportedEditState(raw){
     appOverrides:[],fieldOverrides:[],relationOverrides:[],notes:[],
     positions:[],scope:null,scopePositions:[],
     removedNodes:[],removedEdges:[],pinnedNodes:[],hiddenFields:[],
-    invalid:0
+    invalid:0,
+    // 上限（ER_IMPORT_ELEMENT_LIMITS）を超えたため読まなかった、図に要素を足す編集の件数
+    overLimit:0
   };
   importList(state.customApps).forEach(app=>{
     const id=importAppId(app&&app.id);
     const name=importText(app&&app.name,ER_IMPORT_NAME_MAX).trim();
     if(id===null||id>=0||!name){ out.invalid+=1; return; }
+    if(out.customApps.length>=ER_IMPORT_ELEMENT_LIMITS.customApps){ out.overLimit+=1; return; }
     out.customApps.push({id,name,fields:importList(app.fields).slice(0,500).map(importField).filter(Boolean)});
   });
   importList(state.customFields).forEach(item=>{
     const appId=importAppId(item&&item.appId);
     const field=importField(item&&item.field);
     if(appId===null||!field){ out.invalid+=1; return; }
+    if(out.customFields.length>=ER_IMPORT_ELEMENT_LIMITS.customFields){ out.overLimit+=1; return; }
     out.customFields.push({appId,field});
   });
   importList(state.customRelations).forEach(item=>{
@@ -189,6 +196,7 @@ function sanitizeImportedEditState(raw){
     if(fromAppId===null||toApp===null||!kind){ out.invalid+=1; return; }
     const label=importText(rel.fromLabel,ER_IMPORT_NAME_MAX).trim()||importText(rel.fromDisplay,ER_IMPORT_NAME_MAX).trim()
       ||(kind==="LOOKUP"?"ルックアップ":(kind==="REF"?"関連":"アクション"))+"(手動)";
+    if(out.customRelations.length>=ER_IMPORT_ELEMENT_LIMITS.customRelations){ out.overLimit+=1; return; }
     out.customRelations.push({fromAppId,toApp,kind,label});
   });
   importKeys(state.appOverrides).forEach(key=>{
@@ -221,6 +229,7 @@ function sanitizeImportedEditState(raw){
     const text=importText(note&&note.text,ER_IMPORT_TEXT_MAX).trim();
     const pos=importPoint(note);
     if(!text||!pos){ out.invalid+=1; return; }
+    if(out.notes.length>=ER_IMPORT_ELEMENT_LIMITS.notes){ out.overLimit+=1; return; }
     out.notes.push({text,color:importColor(note.color)||"#fef08a",x:pos.x,y:pos.y});
   });
   out.positions=importPositionMap(view.positions);
@@ -340,15 +349,20 @@ function applyImportedEditState(clean,fileApps){
   };
 
   // 1. 手動で追加したアプリ（同じ名前の手動のアプリが今の図にあれば、それに対応させる）
+  // 名前の対応と番号の最大は先に 1 回だけ求める（1 件ごとに全アプリを数え直さない）
+  const customAppByName=new Map();
+  APPS.forEach(a=>{ if(a.isCustom&&!customAppByName.has(a.name)) customAppByName.set(a.name,a); });
+  const customAppSeqBase=clean.customApps.length?maxManualNumber(APPS.filter(a=>a.isCustom).map(a=>"m"+(-a.id)),"m"):0;
   clean.customApps.forEach(raw=>{
-    const same=APPS.find(a=>a.isCustom&&a.name===raw.name);
+    const same=customAppByName.get(raw.name);
     if(same){ appIdMap.set(raw.id,same.id); importedCount(existing,"apps"); return; }
-    customAppSeq=Math.max(customAppSeq,maxManualNumber(APPS.filter(a=>a.isCustom).map(a=>"m"+(-a.id)),"m"))+1;
+    customAppSeq=Math.max(customAppSeq,customAppSeqBase)+1;
     const id=-customAppSeq;
     const fields=raw.fields.map(f=>Object.assign({},f));
     const app={id,name:raw.name,fields,totalFieldCount:fields.length,relations:[],ok:true,depth:0,isCustom:true,
       requiredCount:fields.filter(f=>f.required).length,lookupCount:0,refCount:0};
     registerManualApp(app);
+    if(!customAppByName.has(app.name)) customAppByName.set(app.name,app);
     appIdMap.set(raw.id,id);
     const ext=cy.extent();
     cy.add({group:"nodes",data:{id:"a"+id,label:buildNodeLabel(app),...nodeCardData(app),appId:id,isError:false,isStart:false,inSpace:false,isCustom:true,accent:"",fieldCount:fields.length,relCount:0,depth:0},
@@ -613,10 +627,11 @@ function applyImportedEditState(clean,fileApps){
 
   // 9. メモ（同じ内容・同じ位置のメモがあれば取り込まない）
   const notes=cy.nodes(".note-node");
+  const noteSeqBase=clean.notes.length?maxManualNumber(notes.map(n=>n.id()),"note_"):0;
   clean.notes.forEach(note=>{
     const same=notes.some(n=>n.data("label")===note.text&&Math.abs(n.position("x")-note.x)<1&&Math.abs(n.position("y")-note.y)<1);
     if(same){ importedCount(existing,"notes"); return; }
-    noteSeq=Math.max(noteSeq,maxManualNumber(cy.nodes(".note-node").map(n=>n.id()),"note_"))+1;
+    noteSeq=Math.max(noteSeq,noteSeqBase)+1;
     const id="note_"+noteSeq;
     addNoteElement({id,text:note.text,color:note.color,x:note.x,y:note.y});
     importedCount(done,"notes");
@@ -677,6 +692,7 @@ function describeEditImport(result,meta){
   const existingTotal=sumImportCounts(result.existing);
   if(existingTotal) lines.push("同じ内容が今の図にあったため取り込まなかった編集: "+existingTotal+" 件");
   if(meta.invalid) lines.push("形が正しくないため読まなかった値: "+meta.invalid+" 件");
+  if(meta.overLimit) lines.push("多すぎるため読まなかった編集: "+meta.overLimit+" 件（読むのは、手動で追加したアプリ "+ER_IMPORT_ELEMENT_LIMITS.customApps+" 件・項目 "+ER_IMPORT_ELEMENT_LIMITS.customFields+" 件・関連線 "+ER_IMPORT_ELEMENT_LIMITS.customRelations+" 件・メモ "+ER_IMPORT_ELEMENT_LIMITS.notes+" 件まで）");
   if(!meta.hasApps) lines.push("ファイルに元の図のデータが無いため、kintone の関連線の編集・削除は対応付けられませんでした");
   lines.push("");
   lines.push("表示設定（配置・カードの項目・線の種類・線のまとめなど）は今の図のままです。「元に戻す」（Ctrl+Z）で取り込む前に戻せます。残すには「出力 → 編集済みHTMLを保存」。");
@@ -697,7 +713,7 @@ function importEditedHtmlText(text,fileName){
       fit();
     });
   }
-  return describeEditImport(result,{fileName,version:clean.version,savedAt:clean.savedAt,invalid:clean.invalid,hasApps:!!read.apps});
+  return describeEditImport(result,{fileName,version:clean.version,savedAt:clean.savedAt,invalid:clean.invalid,overLimit:clean.overLimit,hasApps:!!read.apps});
 }
 function openEditImport(){
   closeAllMenus();

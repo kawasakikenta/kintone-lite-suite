@@ -2,7 +2,7 @@
 
 import { SECTION_DEFS } from './constants.js';
 import { hasKintoneOrderByClause, hasKintonePagingClause } from './kintone-query.js';
-import { normalizeSettingsSection, deepClone, apiErrorWithContext } from './utils.js';
+import { normalizeSettingsSection, deepClone, apiErrorWithContext, withoutApiContextLines } from './utils.js';
 import {
   RunCancelledError,
   createRequestSignal,
@@ -366,7 +366,9 @@ export function isRevisionConflictError(error: any): boolean {
     .map((c) => String(c || '').toUpperCase())
     .filter(Boolean);
   if (codes.some((c) => REVISION_CONFLICT_CODES.has(c))) return true;
-  const text = String(error?.message || '');
+  // 文面で見分けるのは kintone などが返した文だけ。apiErrorWithContext が添える通信情報の行（[API] … payload=…）には
+  // 送った内容（アクション名・フィールド名など利用者が付けた名前）が入るため読まない（「Approve latest」で競合と取り違えない）。
+  const text = withoutApiContextLines(error?.message || '');
   return /GAIA_CO02|リビジョン.*(最新|一致|異な)|revision.*(latest|mismatch|conflict)/i.test(text);
 }
 

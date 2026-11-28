@@ -11,10 +11,14 @@ import { parseDiffComparisonProfile } from '../../src/diff/comparison-profile';
 import { buildDesignSnapshot } from '../../src/design/snapshot';
 import { buildDesignAiMarkdown } from '../../src/design/ai-markdown';
 import { stripSensitiveSupplements } from '../../src/design/sanitize';
-import { buildErAppModel, buildErMarkdownSpec, buildErMermaidSource, buildErRelationsCsv } from '../../src/tabs/er-model';
+import { buildErAppModel, buildErAppModelFromBundle, buildErMarkdownSpec, buildErMermaidSource, buildErRelationsCsv } from '../../src/tabs/er-model';
 import { buildHTML } from '../../src/tabs/er.js';
 import { pickAllSettingsBundles, pickSettingsBundle } from '../../src/settingsBundleImport';
 import { readSettingsZip } from '../../src/settingsZipImport';
+import { buildErModelFromOfflineSource, buildErOfflineSource, listOfflineSpaceApps } from '../../src/tabs/er-offline';
+import { buildDesignHtml } from '../../src/design/html';
+import { readDiffBatchZipFiles } from '../../src/diff/batch-zip-import';
+import { buildProcessBatchOverviewMarkdown, buildProcessSpecMarkdown, extractOfflineProcessStatusData, formatProcessSimulationHistory } from '../../src/tabs/process-standalone';
 import { REFLECT_SECTION_KEYS } from '../../src/reflect/sections';
 import { buildReflectSectionPlan } from '../../src/reflect/standalonePlan';
 import { normalizeImportedReflectPresets } from '../../src/reflect/presetIo';
@@ -130,6 +134,36 @@ describe('読み込んだ設定の __proto__ / constructor / prototype でプロ
     const stripped = stripSensitiveSupplements(bundle);
     buildDesignSnapshot(bundle);
     buildDesignAiMarkdown({ bundle: stripped.bundle, bundles: [stripped.bundle], snapshot: buildDesignSnapshot(stripped.bundle) });
+  });
+
+  it('設定JSONから作る ER図・設計書 HTML・差分比較の ZIP 取込（11/28 に足した入口）', async () => {
+    const source = buildErOfflineSource(JSON.parse(`{"apps": [${poisonedBundleText('1', '旧')}, ${poisonedBundleText('2', '新')}], "__proto__": {"polluted": "apps"}}`), '__proto__.json');
+    expect(source.appIds).toEqual([1, 2]);
+    const models = source.appIds.map((appId) => buildErModelFromOfflineSource(source, appId));
+    expect(models.map((model) => model?.id)).toEqual([1, 2]);
+    listOfflineSpaceApps(source, '__proto__');
+    buildHTML(models, { startAppId: '1', startAppIds: ['1'], layoutName: 'dagre', fieldDensity: 'full', source: {}, offlineSource: source });
+    expect(buildDesignHtml(JSON.parse(poisonedBundleText('1', '旧')), { appNames: JSON.parse(POISON) })).toContain('アプリ旧');
+    const zip = new LiteZip();
+    zip.file('manifest.json', `{"apps": [{"file": "__proto__.json"}], "__proto__": {"polluted": "manifest"}}`);
+    zip.file('__proto__.json', poisonedBundleText('1', '旧'));
+    zip.file('constructor/prototype.json', poisonedBundleText('2', '新'));
+    const bytes = new Uint8Array(await (await zip.generateAsync({ type: 'blob' })).arrayBuffer());
+    const files = await readDiffBatchZipFiles(bytes, '__proto__.zip');
+    expect(files.files.map((file) => file.relativePath)).toEqual(['__proto__.zip/manifest.json', '__proto__.zip/__proto__.json', '__proto__.zip/constructor/prototype.json']);
+    parseDiffBatchFolderImport(files.files, { side: 'source' });
+  });
+
+  it('lite にしかない入口: 設定JSONの束から作る ER図（buildErAppModelFromBundle）と、設定JSONから作るプロセス管理仕様書・一括の overview.md', () => {
+    const bundles = [JSON.parse(poisonedBundleText('1', '旧')), JSON.parse(poisonedBundleText('2', '新'))];
+    const apps = bundles.map((bundle) => buildErAppModelFromBundle(bundle));
+    expect(apps.map((app) => app.id)).toEqual([1, 2]);
+    buildErMarkdownSpec(apps, {} as any);
+    const status = extractOfflineProcessStatusData({ importedBundle: bundles[0] });
+    expect(Object.prototype.hasOwnProperty.call(status.states, '__proto__')).toBe(true);
+    expect(buildProcessSpecMarkdown({ appId: '1', appName: '__proto__', states: status.states, actions: status.actions })).toContain('| __proto__ |');
+    formatProcessSimulationHistory([{ from: '__proto__', action: '__proto__', to: 'constructor' }], 'constructor', status.states);
+    buildProcessBatchOverviewMarkdown([{ appId: '1', guestId: '', appName: '__proto__', outcome: 'enabled', stateCount: 2, actionCount: 1, warnings: [], reason: '', file: '__proto__.mmd', states: status.states, actions: status.actions }], JSON.parse(`{"__proto__.mmd": "stateDiagram-v2", "__proto__": {"polluted": "sources"}}`), { generatedAt: 'x', preview: false, cancelled: false, total: 1 });
   });
 
   it('ER図（モデル・HTML・Mermaid・Markdown・CSV）', () => {

@@ -653,9 +653,13 @@ export function buildProcessBatchMmd(row: { appId: string; guestId?: string; app
   return `${header}\n${source.replace(/\r\n/g, '\n').replace(/\n+$/, '')}\n`;
 }
 
-/** Markdown の表のセルに入れる文字列。区切り・改行・HTML として解釈される文字を無害にする。 */
+/**
+ * Markdown（表のセル・箇条書き・見出し）に入れる設定の文字列（アプリ名・状態名・アクション名・作業者など）。
+ * 区切り・改行・HTML として解釈される文字に加え、リンク・画像の記法（`[` `]`）も働かないよう逃がす
+ * （`![](https://…)` があっても、表示した人の環境で外部の画像を読みに行かない）。バックスラッシュを先に逃がし、`\[` を入れて記法を戻させない。
+ */
 function mdCell(value: unknown): string {
-  return oneLine(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\|/g, '\\|');
+  return oneLine(value).replace(/\\/g, '\\\\').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\|/g, '\\|').replace(/[[\]]/g, '\\$&');
 }
 
 /** ソースの中に含まれる連続したバッククォートより長い囲みを選ぶ（図のソースが囲みを閉じてしまわないように）。 */
@@ -1049,25 +1053,27 @@ export function buildProcessSpecMarkdown(input: {
   const mermaidSource = buildProcessMermaidSource(stateObj, validActions, null).replace(/\r\n/g, '\n').replace(/\n+$/, '');
   const fence = mdFence(mermaidSource);
 
+  // アプリ名・状態名・構造上の注意（状態名を含む）は設定の文字列なので、見出し・箇条書きでも mdCell で逃がす
+  const names = (list: string[]) => (list.length ? list.map(mdCell).join(', ') : 'なし');
   const lines: string[] = [
-    `# プロセス管理仕様書${appName ? ` - ${appName}` : appId ? ` - アプリ ${appId}` : ''}`,
+    `# プロセス管理仕様書${appName ? ` - ${mdCell(appName)}` : appId ? ` - アプリ ${mdCell(appId)}` : ''}`,
     '',
     '## アプリ情報',
     '',
-    `- アプリID: ${appId || '-'}`,
-    ...(appName ? [`- アプリ名: ${appName}`] : []),
-    `- ゲストスペースID: ${guestId || 'なし'}`,
+    `- アプリID: ${mdCell(appId) || '-'}`,
+    ...(appName ? [`- アプリ名: ${mdCell(appName)}`] : []),
+    `- ゲストスペースID: ${mdCell(guestId) || 'なし'}`,
     `- 参照環境: ${preview ? 'プレビュー' : '本番'}`,
-    `- 生成日時: ${generatedAt}`,
+    `- 生成日時: ${mdCell(generatedAt)}`,
     '',
     '## 構造診断サマリ',
     '',
     `- 状態数: ${summary.stateCount}`,
     `- アクション数: ${summary.actionCount}`,
-    `- 始点ステータス: ${summary.startStates.length ? summary.startStates.join(', ') : 'なし'}`,
-    `- 終端ステータス: ${summary.endStates.length ? summary.endStates.join(', ') : 'なし'}`,
-    `- 分岐ステータス: ${summary.branchingStates.length ? summary.branchingStates.join(', ') : 'なし'}`,
-    `- 構造上の注意・警告: ${summary.warnings.length ? summary.warnings.join(' / ') : 'なし'}`,
+    `- 始点ステータス: ${names(summary.startStates)}`,
+    `- 終端ステータス: ${names(summary.endStates)}`,
+    `- 分岐ステータス: ${names(summary.branchingStates)}`,
+    `- 構造上の注意・警告: ${summary.warnings.length ? summary.warnings.map(mdCell).join(' / ') : 'なし'}`,
     '',
     '## ステータス定義一覧',
     '',
@@ -1128,23 +1134,24 @@ export function formatProcessSimulationHistory(
 ): string {
   const safeHistory = Array.isArray(history) ? history : [];
   const stateObj = states && typeof states === 'object' && !Array.isArray(states) ? states : {};
-  const currentAssignee = currentState && stateObj[currentState] ? `（${describeStateAssignee(stateObj[currentState])}）` : '';
+  // 状態名・アクション名・作業者は設定の文字列なので mdCell で逃がす（遷移経路でツールが付ける [ ] の中も、名前の `](…)` で閉じさせない）
+  const currentAssignee = currentState && stateObj[currentState] ? `（${mdCell(describeStateAssignee(stateObj[currentState]))}）` : '';
   const startState = safeHistory.length > 0 ? safeHistory[0].from : (currentState || '未開始');
 
   const lines: string[] = [
     '## プロセス遷移シミュレーション履歴',
     '',
-    `- 開始ステータス: ${startState}`,
-    `- 現在ステータス: ${currentState || '未開始'}${currentAssignee}`,
+    `- 開始ステータス: ${mdCell(startState)}`,
+    `- 現在ステータス: ${mdCell(currentState || '未開始')}${currentAssignee}`,
     `- 実行ステップ数: ${safeHistory.length}手`
   ];
 
   if (!safeHistory.length) {
-    lines.push(`- 遷移経路: ${currentState ? `${currentState}（遷移履歴なし）` : 'まだ開始していません'}`);
+    lines.push(`- 遷移経路: ${currentState ? `${mdCell(currentState)}（遷移履歴なし）` : 'まだ開始していません'}`);
     return `${lines.join('\n')}\n`;
   }
 
-  const chain = [safeHistory[0].from, ...safeHistory.map((h) => `[${h.action}] → ${h.to}`)].join(' ');
+  const chain = [mdCell(safeHistory[0].from), ...safeHistory.map((h) => `[${mdCell(h.action)}] → ${mdCell(h.to)}`)].join(' ');
   lines.push(
     `- 遷移経路: ${chain}`,
     '',

@@ -125,6 +125,15 @@ export function normalizeIdInputText(value: unknown): string {
     .replace(/，/g, ',');
 }
 
+/**
+ * 数字だけのアプリIDから先頭の 0 を外す（「07」→「7」、「0」はそのまま）。数字だけでない値は変えない。
+ * kintone はアプリIDを数値として読むので「07」も App 7 を指しうる。外さないと「7, 07」が別のアプリとして残り、
+ * 同じアプリへ 2 回書き込んだり（複数の反映先）、同じアプリを 2 回取得してファイル名・manifest に「07」が残ったりする。
+ */
+export function canonicalAppId(value: string): string {
+  return /^\d+$/.test(value) ? value.replace(/^0+(?=\d)/, '') : value;
+}
+
 export function deepClone<T>(v: T): T {
   return v == null ? v : JSON.parse(JSON.stringify(v));
 }

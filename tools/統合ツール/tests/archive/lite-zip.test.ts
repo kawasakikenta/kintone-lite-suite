@@ -181,6 +181,7 @@ describe('LiteZip', () => {
 });
 
 describe('LiteZip classic ZIP limits', () => {
+  // 約 65,535 件の ZIP を 3 回作る。PC が混んでいると既定の 5 秒を超えるため、時間の上限を延ばす
   it('refuses more than 65,535 entries (folders included) with a clear message', async () => {
     const zip = new LiteZip();
     for (let i = 0; i < LITE_ZIP_MAX_ENTRIES + 1; i += 1) zip.file(`f${i}.txt`, '');
@@ -197,7 +198,7 @@ describe('LiteZip classic ZIP limits', () => {
     const withFolders = new LiteZip();
     for (let i = 0; i < LITE_ZIP_MAX_ENTRIES / 2 + 1; i += 1) withFolders.file(`d${i}/f.txt`, '');
     await expect(withFolders.generateAsync({ type: 'blob' })).rejects.toThrow(ZipLimitError);
-  });
+  }, 60_000);
 
   it('refuses a file or an archive of 4GB or more before reading anything', async () => {
     const huge = (size: number) => ({
