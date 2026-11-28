@@ -277,6 +277,24 @@ describe('runDeployStandalone: まとめて反映（atomic）', () => {
     expect(conflict.statuses).toEqual(['conflict', 'conflict']);
   });
 
+  // kintone の入力エラー（CB_VA01）の項目ごとの文。以前は「apps[1].revision: …」とキーのまま並び、どのアプリの何かが分からなかった。
+  it('入力エラーで拒否されたら、項目ごとの場所（apps[N] は依頼したアプリ）を言葉にして先頭の数件を示す', async () => {
+    const errors = {
+      'apps[1].revision': { messages: ['数字で指定してください。'] },
+      'apps[0].app': { messages: ['アプリを指定してください。'] },
+      revert: { messages: ['真偽値で指定してください。'] },
+      'apps[1].app': { messages: ['重複しています。'] }
+    };
+    setup({ '1': changedApp('受注'), '2': changedApp('見積') }, { postError: { code: 'CB_VA01', id: 'req-9', message: '入力内容が正しくありません。', errors } });
+    const { result, statuses } = await run(await inspectApps(['1', '2']), { batchMode: 'atomic' });
+    expect(statuses).toEqual(['failed', 'failed']);
+    const message = result.apps[0].message || '';
+    expect(message).toBe('kintone が反映の依頼を受け付けませんでした（入力内容が正しくありません。 App 2（見積）の設定の更新番号（revision）: 数字で指定してください。 App 1（受注）のアプリID: アプリを指定してください。 変更の中止（revert）: 真偽値で指定してください。 ほか 1 件）。');
+    expect(message).not.toMatch(/apps\[|\[API\]/);
+    // ログには元の文（全件）を残す
+    expect(result.logs.join('\n')).toContain('2件目のアプリのアプリID: 重複しています。');
+  });
+
   it('開始時の再確認で食い違いがあれば全件依頼しない', async () => {
     const env = setup({ '1': changedApp(), '2': changedApp() });
     const targets = await inspectApps(['1', '2']);

@@ -109,7 +109,9 @@ describe('record status updates preserve the reviewed revisions', () => {
 
     const error = await runBatchProcessStandalone(options, status).catch((caught) => caught);
 
-    expect(error.message).toContain('レコードID 3・action: アクションが存在しません。');
+    expect(error.message).toContain('レコードID 3・アクション: アクションが存在しません。');
+    // 画面（ステータス）に先頭の数件を出すための行
+    expect(error.kintoneErrorDetails).toEqual(['レコードID 3・アクション: アクションが存在しません。']);
   });
 
   it('keeps non-conflict failures separate from revision conflicts', async () => {

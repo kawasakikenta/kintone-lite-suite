@@ -9,6 +9,7 @@ import {
   collectJsConfigFileKeys,
   type JsConfigFileSource,
   runApplyJsConfigMultiStandalone,
+  renderJsConfigMultiResult,
   runApplyJsConfigStandalone,
   runExportJsConfigStandalone,
   runFetchJsConfigStandalone,
@@ -255,7 +256,8 @@ export function mountJsconfigLitePanel() {
     const res = await runApplyJsConfigMultiStandalone(
       { targets: multiTable.getApps(), jsonText: jsonTa.value, fileSource: fileSource() },
       (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'),
-      (html: string) => { panel.setResultHtml(html); }
+      // 結果の表は、kintone が返した文を textContent で入れた要素にして出す
+      (result) => { panel.setResultNode(renderJsConfigMultiResult(result)); }
     );
     // 最終確認で見送った場合は、処理側がキャンセルを伝えている。それ以外は件数つきの結果を、部分成功なら警告色で示す。
     if (!res.declined) panel.setStatus(res.headline, res.tone);

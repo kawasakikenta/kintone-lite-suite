@@ -35,13 +35,15 @@ const ERROR_HINT_RULES: ErrorHintRule[] = [
     pattern: /CB_NO02|権限がありません|Forbidden|アクセスが拒否/i,
     hint: '反映先アプリのアプリ管理権限があるユーザーで実行しているか確認してください。'
   },
+  // ルックアップ・関連レコード一覧の設定のエラー（kintone の入力エラーの場所「フィールド「X」のルックアップ設定・参照するアプリID」を含む）は、
+  // 文に「アプリが見つかりません」があっても参照先のアプリの話なので、反映先アプリIDの確認より先に判定する。
+  {
+    pattern: /ルックアップ|lookup|relatedApp|関連レコード/i,
+    hint: '参照先アプリが反映先環境に存在しない可能性があります。「参照先変換」で参照先のアプリIDを変換してください。'
+  },
   {
     pattern: /GAIA_AP01|アプリ.*(見つかりません|存在しません)|指定したアプリ/,
     hint: '反映先アプリID・ゲストスペースIDが正しいか確認してください。'
-  },
-  {
-    pattern: /ルックアップ|lookup|relatedApp|関連レコード/i,
-    hint: '参照先アプリが反映先環境に存在しない可能性があります。「Lookup AppID マッピング」で参照先を変換してください。'
   },
   {
     pattern: /フィールド.*(見つかりません|存在しません)|GAIA_IL26/,
@@ -62,7 +64,8 @@ const ERROR_HINT_RULES: ErrorHintRule[] = [
  * 該当パターンがなければ空文字を返す（ログにはエラーのみ表示）。
  */
 export function buildReflectErrorHint(message: string): string {
-  const text = String(message || '');
+  // 送った内容（[API] … payload=… の行）は判定に使わない。フィールド設定の payload には "lookup" などが入り、エラーと関係なくヒントが決まってしまう。
+  const text = withoutApiContextLines(message);
   if (!text) return '';
   for (const rule of ERROR_HINT_RULES) {
     if (rule.pattern.test(text)) return rule.hint;

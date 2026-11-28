@@ -51,8 +51,9 @@ describe('kintone の実際の応答形式', () => {
     expect(plan('processSettings', source, target).warnings.join('')).toContain('反映先「未着手」→ 反映元「未処理」');
     expect(plan('processSettings', source, source).warnings).toEqual([]);
   });
-  it('kintone の項目別の拒否理由をメッセージに含める', () => {
+  // 検証環境で確かめたキーの形（states[未処理].index）。キーのままではどの設定か読めないため、ステータス名と項目名に言い換える。
+  it('kintone の項目別の拒否理由を、場所を言い換えてメッセージに含める', () => {
     const error = apiErrorWithContext({ message: '入力内容が正しくありません。', code: 'CB_VA01', errors: { 'states[未処理].index': { messages: ['先頭のステータスは、先頭以外の位置に変更できません。'] } } }, { method: 'PUT', path: '/app/status.json' });
-    expect(error.message.split('\n').slice(0, 2)).toEqual(['入力内容が正しくありません。', 'states[未処理].index: 先頭のステータスは、先頭以外の位置に変更できません。']);
+    expect(error.message.split('\n').slice(0, 2)).toEqual(['入力内容が正しくありません。', 'ステータス「未処理」の並び順: 先頭のステータスは、先頭以外の位置に変更できません。']);
   });
 });

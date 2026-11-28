@@ -184,17 +184,26 @@ describe('writeInChunks', () => {
     const write = async (_chunk: number[], index: number) => { if (index === 1) throw Object.assign(new Error('wrapped'), { original: rejection }); };
     const error = await writeInChunks(items, 'コピー', write, undefined, 100, (index) => `ID ${1000 + index}`).catch((caught) => caught);
     expect(error.message).toContain('ID 1102・price: 必須です。 / 数字でなければなりません。');
-    expect(error.message).toContain('ID 1107・table.value[0].value.qty: 不正です。');
-    expect(error.message).toContain('app: 不明');
+    expect(error.message).toContain('ID 1107・table1行目・qty: 不正です。');
+    expect(error.message).toContain('アプリID: 不明');
+    // API 層が文に入れた行（塊の中の位置で数えた「3件目」）は重ねない
+    expect(error.message).not.toMatch(/^\d+件目・/m);
+    // 画面に先頭の数件を出すための行（全体での位置つき）
+    expect(error.kintoneErrorDetails).toEqual(['ID 1102・price: 必須です。 / 数字でなければなりません。', 'ID 1107・table1行目・qty: 不正です。', 'アプリID: 不明']);
     expect(error.message).toContain('このチャンクは全体が取り消されています');
   });
 
-  it('limits the number of listed error details and tolerates unknown error shapes', () => {
+  it('lists every error detail up to the limit and tolerates unknown error shapes', () => {
+    // 1 回の要求（100 件）で返る数は全件出す（ログで全件を読めるように。画面では先頭の数件にする）
     const errors = Object.fromEntries(Array.from({ length: 13 }, (_, i) => [`records[${i}].f.value`, { messages: ['x'] }]));
     const lines = describeKintoneRecordErrors({ errors });
-    expect(lines).toHaveLength(11);
+    expect(lines).toHaveLength(13);
     expect(lines[0]).toBe('1件目・f: x');
-    expect(lines.at(-1)).toBe('ほか 3件のエラー');
+    expect(lines.at(-1)).toBe('13件目・f: x');
+    const many = Object.fromEntries(Array.from({ length: 103 }, (_, i) => [`records[${i}].f.value`, { messages: ['x'] }]));
+    const limited = describeKintoneRecordErrors({ errors: many });
+    expect(limited).toHaveLength(101);
+    expect(limited.at(-1)).toBe('ほか 3 件');
     expect(describeKintoneRecordErrors(new Error('boom'))).toEqual([]);
     expect(describeKintoneRecordErrors(null)).toEqual([]);
     expect(describeKintoneRecordErrors({ errors: [1] })).toEqual([]);

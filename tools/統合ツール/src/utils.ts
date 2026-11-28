@@ -1,6 +1,7 @@
 'use strict';
 
 import { META_KEYS, TOOL_ID } from './constants.js';
+import { formatKintoneErrorLines } from './kintoneErrorDetail.js';
 
 /** ツールの UI が載っているウィンドウ（ポップアウト先があればそちら、無ければ現在の window） */
 export function getToolWindowSafe(): Window {
@@ -243,18 +244,6 @@ export interface ApiDiagError extends Error {
   id?: string;
 }
 
-const MAX_API_FIELD_ERRORS = 5;
-
-/** kintone が項目ごとに返す拒否理由（errors）を、利用者が読める行にする。 */
-function formatApiFieldErrors(errors: unknown): string[] {
-  if (!errors || typeof errors !== 'object') return [];
-  const lines = Object.entries(errors as Record<string, any>).flatMap(([key, value]) =>
-    (Array.isArray(value?.messages) ? value.messages : []).map((message: unknown) => `${key}: ${String(message)}`));
-  const shown = lines.slice(0, MAX_API_FIELD_ERRORS);
-  if (lines.length > shown.length) shown.push(`ほか ${lines.length - shown.length} 件`);
-  return shown;
-}
-
 export function apiErrorWithContext(err: any, meta: ApiErrorMeta): ApiDiagError {
   if (err && err.__apiDiag) return err as ApiDiagError;
   const method = meta?.method || 'GET';
@@ -266,7 +255,9 @@ export function apiErrorWithContext(err: any, meta: ApiErrorMeta): ApiDiagError 
   const endpoint = `${prefix}${path}`;
   const contextLine = `[API] ${method} ${endpoint}${app ? ` app=${app}` : ''}${bodySummary ? ` payload=${bodySummary}` : ''}`;
   const baseMessage = err?.message || String(err);
-  const wrapped = new Error([baseMessage, ...formatApiFieldErrors(err?.errors), contextLine].join('\n')) as ApiDiagError;
+  // kintone が項目ごとに返す拒否理由（errors）は、キーをフィールド・設定の名前に言い換えた行にして全件（上限 100 件）入れる
+  // （kintoneErrorDetail.ts）。画面に出すときは abbreviateKintoneErrorMessage で先頭の数件と「ほか N 件」にする。
+  const wrapped = new Error([baseMessage, ...formatKintoneErrorLines(err), contextLine].join('\n')) as ApiDiagError;
   wrapped.__apiDiag = true;
   wrapped.original = err;
   if (err?.code) wrapped.code = err.code;
