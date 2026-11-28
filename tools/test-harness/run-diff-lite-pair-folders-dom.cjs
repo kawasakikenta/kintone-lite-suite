@@ -11,6 +11,8 @@
  *   - 同じ endpoint の変更前・変更後を含む全ペアを、フォルダ内 JSON だけで比較する
  *   - A旧→B新 / B旧→C新のような連鎖でも左右のバンドルを混同しない
  *   - 結果順、HTML / Excel 保存導線、390px 幅、片側選択・解除時の停止を保つ
+ *   - 設定取得の ZIP をそのまま選んでも（両側 ZIP・ZIP とフォルダの混在）、フォルダと同じ対応・同じ比較になる
+ *   - 壊れた ZIP・manifest の不一致・大きさを偽った ZIP・接続先の重複では、前の選択を残して止める。ZIP の読込も中止できる
  *
  * 実行:
  *   node tools/test-harness/run-diff-lite-pair-folders-dom.cjs
@@ -123,7 +125,7 @@ const INVALID_SOURCE_FILES = [{
   text: '{ broken json'
 }];
 
-async function buildDomHarnessBundle() {
+async function buildDomHarnessBundle(entry = path.join('src', 'entries', 'diff-lite-ui.ts'), globalName = 'DiffLitePairFoldersHarness') {
   const esbuildModule = path.join(TOOL_ROOT, 'node_modules', 'esbuild');
   let esbuild;
   try {
@@ -148,11 +150,11 @@ async function buildDomHarnessBundle() {
   };
   const result = await esbuild.build({
     absWorkingDir: TOOL_ROOT,
-    entryPoints: [path.resolve(TOOL_ROOT, 'src', 'entries', 'diff-lite-ui.ts')],
+    entryPoints: [path.resolve(TOOL_ROOT, entry)],
     bundle: true,
     write: false,
     format: 'iife',
-    globalName: 'DiffLitePairFoldersHarness',
+    globalName,
     platform: 'browser',
     target: ['chrome110'],
     plugins: [jsToTsResolver],
@@ -325,8 +327,17 @@ async function verifyDirectoryInputs(page) {
   }
   assert.equal(await page.getByRole('button', { name: '比較元（変更前）フォルダを選択', exact: true }).count(), 1, '比較元フォルダ選択のアクセシブル名が不正です');
   assert.equal(await page.getByRole('button', { name: '比較先（変更後）フォルダを選択', exact: true }).count(), 1, '比較先フォルダ選択のアクセシブル名が不正です');
-  assert.equal(await page.getByRole('region', { name: '比較元（変更前）フォルダ', exact: true }).count(), 1, '比較元フォルダ領域に名前がありません');
-  assert.equal(await page.getByRole('region', { name: '比較先（変更後）フォルダ', exact: true }).count(), 1, '比較先フォルダ領域に名前がありません');
+  assert.equal(await page.getByRole('region', { name: '比較元（変更前）フォルダ・ZIP', exact: true }).count(), 1, '比較元フォルダ領域に名前がありません');
+  assert.equal(await page.getByRole('region', { name: '比較先（変更後）フォルダ・ZIP', exact: true }).count(), 1, '比較先フォルダ領域に名前がありません');
+  for (const side of ['source', 'target']) {
+    const zipInput = page.locator(`[data-kus-dl-pair-zip-input="${side}"]`);
+    assert.equal(await zipInput.getAttribute('type'), 'file', `${side}: ZIP の file input ではありません`);
+    assert.match((await zipInput.getAttribute('accept')) || '', /(^|,)\.zip(,|$)/,`${side}: ZIP の accept に .zip がありません`);
+    assert.equal(await zipInput.getAttribute('webkitdirectory'), null, `${side}: ZIP の入力がフォルダ選択になっています`);
+    assert.equal(await zipInput.getAttribute('multiple'), null, `${side}: ZIP の入力が複数選択になっています`);
+  }
+  assert.equal(await page.getByRole('button', { name: '比較元（変更前）ZIPを選択', exact: true }).count(), 1, '比較元ZIP選択のアクセシブル名が不正です');
+  assert.equal(await page.getByRole('button', { name: '比較先（変更後）ZIPを選択', exact: true }).count(), 1, '比較先ZIP選択のアクセシブル名が不正です');
 }
 
 async function startSlowFolderReload(page, side, files, delayMs = 600) {
@@ -728,7 +739,7 @@ async function verifyIncompleteAndClearedFolderStop(context, browserBundle) {
     await setFolderFiles(page, 'source', SOURCE_FILES);
     await page.locator('[data-kus-dl-run-pairs]').click();
     const oneSideStatus = (await page.locator('#kus-diff-lite .kus-lp__status').textContent()) || '';
-    assert.match(oneSideStatus, /比較元と比較先の両フォルダ/, '片側フォルダだけで実行した際の案内が不正です');
+    assert.match(oneSideStatus, /比較元と比較先の両方で、フォルダかZIP/, '片側フォルダだけで実行した際の案内が不正です');
     assert.equal(await page.evaluate(() => window.__folderProbe.compareCalls.length), 0, '片側フォルダだけで比較が実行されました');
 
     await setFolderFiles(page, 'target', TARGET_FILES);
@@ -738,12 +749,214 @@ async function verifyIncompleteAndClearedFolderStop(context, browserBundle) {
     assert.match((await page.locator('[data-kus-dl-pair-folder-summary="target"]').textContent()) || '', /未選択/, '比較先フォルダの解除状態が表示されません');
     await page.locator('[data-kus-dl-run-pairs]').click();
     const clearedStatus = (await page.locator('#kus-diff-lite .kus-lp__status').textContent()) || '';
-    assert.match(clearedStatus, /比較元と比較先の両フォルダ/, '片側フォルダ解除後の実行停止案内が不正です');
+    assert.match(clearedStatus, /比較元と比較先の両方で、フォルダかZIP/, '片側フォルダ解除後の実行停止案内が不正です');
     const probe = await page.evaluate(() => JSON.parse(JSON.stringify(window.__folderProbe)));
     assert.equal(probe.compareCalls.length, 0, '片側フォルダ解除後に比較が実行されました');
     assert.equal(probe.apiCalls, 0, '片側フォルダ時に API へ自動切替されました');
     assert.deepEqual(pageErrors, [], '片側フォルダの実行停止確認中にブラウザエラーが発生しました');
     return probe;
+  } finally {
+    await page.close();
+  }
+}
+
+// ---- 設定取得の ZIP をそのまま選ぶ ----
+
+/** フォルダ用のファイルを、設定取得の ZIP と同じ並び（manifest.json → アプリの JSON → INDEX.md）の ZIP の中身にする。 */
+function zipEntriesFromFolderFiles(files, options = {}) {
+  const entries = files.map((item) => ({ path: item.relativePath.replace(/^[^/]+\//, ''), text: item.text }));
+  const manifest = options.manifest === false ? [] : [{
+    path: 'manifest.json',
+    text: JSON.stringify({ formatVersion: 2, appCount: options.appCount ?? files.length, apps: entries.map((entry) => ({ file: entry.path })) })
+  }];
+  return [...manifest, ...entries, { path: 'INDEX.md', text: '# 設定一括取得' }];
+}
+
+/** ページ内で LiteZip（設定取得が ZIP を作るのと同じ実装）を使って ZIP を作り、ZIP の入力へ渡す。 */
+async function dispatchZipFile(page, side, zipName, entries, options = {}) {
+  await page.evaluate(async ({ side, zipName, entries, options }) => {
+    const input = document.querySelector(`[data-kus-dl-pair-zip-input="${side}"]`);
+    if (!(input instanceof HTMLInputElement)) throw new Error(`${side} ZIP input が見つかりません`);
+    let bytes;
+    if (options.rawText) {
+      bytes = new TextEncoder().encode(options.rawText);
+    } else {
+      const zip = new window.PairFoldersHarnessZip.LiteZip();
+      entries.forEach((entry) => zip.file(entry.path, entry.zeroBytes ? new Uint8Array(entry.zeroBytes) : entry.text));
+      bytes = new Uint8Array(await (await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })).arrayBuffer());
+    }
+    if (options.understateFirstSize) {
+      // 中央ディレクトリの最初のエントリの「展開後の大きさ」を小さく偽る（ZIP 爆弾の形）
+      const view = new DataView(bytes.buffer);
+      for (let pos = 0; pos + 46 <= bytes.length; pos += 1) {
+        if (view.getUint32(pos, true) !== 0x02014b50) continue;
+        view.setUint32(pos + 24, 16, true);
+        break;
+      }
+    }
+    const file = new File([bytes], zipName, { type: 'application/zip', lastModified: options.lastModified || 1 });
+    if (options.delayMs) {
+      Object.defineProperty(file, 'arrayBuffer', {
+        configurable: true,
+        value: () => new Promise((resolve) => window.setTimeout(() => resolve(bytes.buffer.slice(0)), options.delayMs))
+      });
+    }
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }, { side, zipName, entries, options });
+}
+
+async function setZipFile(page, side, zipName, entries, count) {
+  await dispatchZipFile(page, side, zipName, entries);
+  await page.waitForFunction(({ side, zipName, count }) => {
+    const text = document.querySelector(`[data-kus-dl-pair-folder-summary="${side}"]`)?.textContent || '';
+    return text.includes(zipName) && text.includes(`${count}アプリ`) && !text.includes('読み込み中');
+  }, { side, zipName, count }, { timeout: 10000 });
+  assert.equal(await page.locator(`[data-kus-dl-pair-zip-input="${side}"]`).evaluate((input) => input.files.length), 0, `${side}: 読み込んだ後も ZIP の入力が残っています`);
+}
+
+async function createZipMountedPage(context, browserBundle, zipBundle) {
+  const mounted = await createMountedPage(context, browserBundle);
+  await mounted.page.addScriptTag({ content: zipBundle });
+  return mounted;
+}
+
+const SOURCE_ZIP = 'before-settings.zip';
+const TARGET_ZIP = 'after-settings.zip';
+
+// 両側を ZIP で選んでも、フォルダと同じ対応付け・同じ比較・同じ出力導線になる。
+async function verifyZipPairs(context, browserBundle, zipBundle, outDir) {
+  const { page, pageErrors } = await createZipMountedPage(context, browserBundle, zipBundle);
+  try {
+    await setZipFile(page, 'source', SOURCE_ZIP, zipEntriesFromFolderFiles(SOURCE_FILES), SOURCE_FILES.length);
+    await setZipFile(page, 'target', TARGET_ZIP, zipEntriesFromFolderFiles(TARGET_FILES, { manifest: false }), TARGET_FILES.length);
+    const sourceSummary = ((await page.locator('[data-kus-dl-pair-folder-summary="source"]').textContent()) || '').trim();
+    const targetSummary = ((await page.locator('[data-kus-dl-pair-folder-summary="target"]').textContent()) || '').trim();
+    assert.equal(sourceSummary, `${SOURCE_ZIP} — 5アプリ / JSON 5ファイル / JSON以外 1件を除外`, '比較元 ZIP の読込結果の表示が不正です');
+    assert.equal(targetSummary, `${TARGET_ZIP} — 5アプリ / JSON 5ファイル / JSON以外 1件を除外`, '比較先 ZIP（manifest なし）の読込結果の表示が不正です');
+    const mappingText = (await page.getByRole('region', { name: 'フォルダ内アプリの対応確認', exact: true }).textContent()) || '';
+    assert.match(mappingText, /before-settings\.zip\/apps\/01-chain-a\.json/, '対応確認表に ZIP 内のパスがありません');
+    assert.doesNotMatch((await page.locator('#kus-diff-lite .kus-lp__status-text').textContent()) || '', /同じZIP/, '別の ZIP なのに同じ ZIP と表示しました');
+    assert.equal(await page.locator('[data-kus-dl-pair-folder-clear="source"]').getAttribute('aria-label'), '比較元（変更前）ZIPの読込を解除', 'ZIP の解除ボタンの名前が不正です');
+    await inspectAndResolveMappings(page);
+    if (outDir) await page.locator('.kus-dl-pair-folder').screenshot({ path: path.join(outDir, 'pair-folders-zip-mapping-1440.png'), animations: 'disabled' });
+    await applyMappingsAndInspectRows(page);
+    assert.equal(((await page.locator('[data-kus-dl-pair-row]').first().locator('.kus-dl-pair-side__file').first().textContent()) || '').trim(),
+      `設定JSON: ${SOURCE_ZIP}/apps/01-chain-a.json`, 'ペア表に ZIP 内の設定JSONの場所がありません');
+    const comparison = await runFolderComparison(page, pageErrors);
+    if (outDir) await page.locator('#kus-diff-lite').screenshot({ path: path.join(outDir, 'pair-folders-zip-panel-1440.png'), animations: 'disabled' });
+    const mobileGeometry = await verifyMobileGeometry(page, '');
+    if (outDir) {
+      // パネルは固定表示なので、カードの先頭まで本文をスクロールして画面ごと撮る
+      await page.locator('.kus-dl-pair-folder').evaluate((element) => element.scrollIntoView({ block: 'start' }));
+      await page.screenshot({ path: path.join(outDir, 'pair-folders-zip-390.png'), animations: 'disabled' });
+    }
+    assert.deepEqual(pageErrors, [], 'ZIP の比較中にブラウザエラーが発生しました');
+    return { sourceSummary, targetSummary, compareCalls: comparison.compareCalls.length, mobileGeometry };
+  } finally {
+    await page.close();
+  }
+}
+
+// 片側を ZIP、反対側をフォルダにしても同じ対応・同じ比較になる（どちらの向きでも）。
+async function verifyMixedZipAndFolder(context, browserBundle, zipBundle) {
+  const results = [];
+  for (const zipSide of ['source', 'target']) {
+    const { page, pageErrors } = await createZipMountedPage(context, browserBundle, zipBundle);
+    try {
+      if (zipSide === 'source') {
+        await setZipFile(page, 'source', SOURCE_ZIP, zipEntriesFromFolderFiles(SOURCE_FILES), SOURCE_FILES.length);
+        await setFolderFiles(page, 'target', TARGET_FILES);
+      } else {
+        await setFolderFiles(page, 'source', SOURCE_FILES);
+        await setZipFile(page, 'target', TARGET_ZIP, zipEntriesFromFolderFiles(TARGET_FILES), TARGET_FILES.length);
+      }
+      await inspectAndResolveMappings(page);
+      await applyMappingsAndInspectRows(page);
+      const comparison = await runFolderComparison(page, pageErrors);
+      results.push({ zipSide, compareCalls: comparison.compareCalls.length });
+    } finally {
+      await page.close();
+    }
+  }
+  return results;
+}
+
+// 読めない ZIP は、前の選択（ZIP）を残したまま、理由を ZIP の欄に出して止める。
+async function verifyInvalidZipStops(context, browserBundle, zipBundle) {
+  const { page, pageErrors } = await createZipMountedPage(context, browserBundle, zipBundle);
+  try {
+    await setZipFile(page, 'source', SOURCE_ZIP, zipEntriesFromFolderFiles(SOURCE_FILES), SOURCE_FILES.length);
+    const previousSummary = ((await page.locator('[data-kus-dl-pair-folder-summary="source"]').textContent()) || '').trim();
+    const alert = page.locator('.kus-dl-pair-folder__error[role="alert"]');
+    const duplicateEndpoint = [
+      { path: 'a.json', text: SOURCE_FILES[0].text },
+      { path: 'copy/a.json', text: SOURCE_FILES[0].text }
+    ];
+    const cases = [
+      { name: 'not-zip.zip', entries: [], options: { rawText: 'PK' + String.fromCharCode(3, 4) + ' broken zip' }, pattern: /比較元ZIPを取り込めません: ZIP の終端が見つかりません/ },
+      { name: 'manifest-mismatch.zip', entries: zipEntriesFromFolderFiles(SOURCE_FILES, { appCount: 4 }), options: {}, pattern: /比較元ZIPを取り込めません: [\s\S]*manifest\.json[\s\S]*appCount 4/ },
+      { name: 'bomb.zip', entries: [{ path: 'app.json', zeroBytes: 8 * 1024 * 1024 }], options: { understateFirstSize: true }, pattern: /比較元ZIPを取り込めません: [\s\S]*「app\.json」の内容が壊れています/ },
+      { name: 'duplicate.zip', entries: duplicateEndpoint, options: {}, pattern: /比較元ZIPを取り込めません: [\s\S]*重複しています/ },
+      { name: 'broken-json.zip', entries: [{ path: 'broken.json', text: '{ broken json' }], options: {}, pattern: /比較元ZIPを取り込めません: [\s\S]*JSONの形式が不正です/ }
+    ];
+    const messages = [];
+    for (const [index, item] of cases.entries()) {
+      await dispatchZipFile(page, 'source', item.name, item.entries, { ...item.options, lastModified: 10 + index });
+      await page.waitForFunction((pattern) => {
+        const box = document.querySelector('.kus-dl-pair-folder__error[role="alert"]');
+        const summary = document.querySelector('[data-kus-dl-pair-folder-summary="source"]')?.textContent || '';
+        return box && !box.hidden && new RegExp(pattern).test(box.textContent || '') && !summary.includes('読み込み中');
+      }, item.pattern.source, { timeout: 10000 });
+      const message = (await alert.textContent()) || '';
+      assert.match(message, item.pattern, `${item.name}: 止めた理由の表示が不正です`);
+      assert.equal(((await page.locator('[data-kus-dl-pair-folder-summary="source"]').textContent()) || '').trim(), previousSummary, `${item.name}: 読めない ZIP で前の選択が失われました`);
+      assert.equal(await page.locator('[data-kus-dl-pair-zip-input="source"]').evaluate((input) => input.files.length), 0, `${item.name}: 失敗後も ZIP の入力が残っています`);
+      messages.push({ name: item.name, message });
+    }
+    // 比較元と同じ ZIP（名前・大きさ・更新日時が同じ）を比較先にも選ぶと、止めずに取り違えの注意を出す
+    await setZipFile(page, 'target', SOURCE_ZIP, zipEntriesFromFolderFiles(SOURCE_FILES), SOURCE_FILES.length);
+    const sameZipStatus = (await page.locator('#kus-diff-lite .kus-lp__status-text').textContent()) || '';
+    assert.match(sameZipStatus, /比較先ZIPから 5アプリを読み込みました。比較元と比較先が同じZIP（名前・大きさ・更新日時が同じ）です。取り違えていないか確かめてください/, '同じ ZIP を両側に選んだ注意がありません');
+    messages.push({ name: 'same-zip-both-sides', message: sameZipStatus });
+    assert.deepEqual(pageErrors, [], '読めない ZIP の確認中にブラウザエラーが発生しました');
+    return messages;
+  } finally {
+    await page.close();
+  }
+}
+
+// ZIP の読込も「中止」で止まり、読んだ内容を使わない。遅い ZIP の後に選んだフォルダが勝つ。
+async function verifyZipCancelAndReselect(context, browserBundle, zipBundle) {
+  const { page, pageErrors } = await createZipMountedPage(context, browserBundle, zipBundle);
+  try {
+    await dispatchZipFile(page, 'source', SOURCE_ZIP, zipEntriesFromFolderFiles(SOURCE_FILES), { delayMs: 600 });
+    await page.waitForFunction(() => (document.querySelector('[data-kus-dl-pair-folder-summary="source"]')?.textContent || '').includes('新しいZIPを読み込み中'));
+    const cancel = page.locator('#kus-diff-lite .kus-lp__cancel');
+    await cancel.waitFor({ state: 'visible' });
+    await cancel.click();
+    await page.waitForFunction(() => /^中止しました/.test(document.querySelector('#kus-diff-lite .kus-lp__status-text')?.textContent || ''), null, { timeout: 10000 });
+    await page.waitForFunction(() => !(document.querySelector('[data-kus-dl-pair-folder-summary="source"]')?.textContent || '').includes('読み込み中'));
+    const status = (await page.locator('#kus-diff-lite .kus-lp__status-text').textContent()) || '';
+    assert.match(status, /比較元ZIPの読み込みを止めました。ZIPは未選択のままです/, 'ZIP の読込を中止した旨が表示されていません');
+    assert.equal(((await page.locator('[data-kus-dl-pair-folder-summary="source"]').textContent()) || '').trim(), '未選択', '中止した ZIP が選択済みとして残っています');
+    assert.equal(await page.locator('.kus-dl-pair-folder__error[role="alert"]').isVisible(), false, 'ZIP の中止がエラー枠として表示されています');
+
+    // 遅い ZIP の読込中に同じ側でフォルダを選び直すと、後から選んだフォルダだけが残る
+    await dispatchZipFile(page, 'source', 'slow-before.zip', zipEntriesFromFolderFiles(SLOW_SOURCE_FILES), { delayMs: 800, lastModified: 5 });
+    await page.waitForFunction(() => (document.querySelector('[data-kus-dl-pair-folder-summary="source"]')?.textContent || '').includes('読み込み中'));
+    await dispatchFolderFiles(page, 'source', FAST_SOURCE_FILES, { lastModified: 6 });
+    await page.waitForFunction(() => {
+      const text = document.querySelector('[data-kus-dl-pair-folder-summary="source"]')?.textContent || '';
+      return text.includes('before-settings-fast') && text.includes('5アプリ') && !text.includes('読み込み中');
+    }, null, { timeout: 10000 });
+    await page.waitForTimeout(1000);
+    const finalSummary = ((await page.locator('[data-kus-dl-pair-folder-summary="source"]').textContent()) || '').trim();
+    assert.match(finalSummary, /^before-settings-fast — 5アプリ/, '遅い ZIP が後から選んだフォルダを上書きしました');
+    assert.deepEqual(pageErrors, [], 'ZIP の中止・選び直しの確認中にブラウザエラーが発生しました');
+    return { status, finalSummary };
   } finally {
     await page.close();
   }
@@ -760,6 +973,8 @@ async function main() {
   fs.mkdirSync(outDir, { recursive: true });
 
   const browserBundle = await buildDomHarnessBundle();
+  // ZIP を作るのは設定取得と同じ LiteZip（ページの中で ZIP を作って ZIP の入力へ渡す）
+  const zipBundle = await buildDomHarnessBundle(path.join('src', 'archive', 'lite-zip.ts'), 'PairFoldersHarnessZip');
   const browser = await launchBrowser(browserName, headed);
   let report;
   try {
@@ -784,6 +999,10 @@ async function main() {
     const invalidReselect = await verifyInvalidReselectStop(context, browserBundle);
     const stopped = await verifyIncompleteAndClearedFolderStop(context, browserBundle);
     const folderReadCancel = await verifyFolderReadCancel(context, browserBundle);
+    const zipPairs = await verifyZipPairs(context, browserBundle, zipBundle, outDir);
+    const mixedZipAndFolder = await verifyMixedZipAndFolder(context, browserBundle, zipBundle);
+    const invalidZips = await verifyInvalidZipStops(context, browserBundle, zipBundle);
+    const zipCancel = await verifyZipCancelAndReselect(context, browserBundle, zipBundle);
     await context.close();
     report = {
       generatedAt: new Date().toISOString(),
@@ -796,14 +1015,18 @@ async function main() {
       reloadRace,
       invalidReselect,
       stopped,
-      folderReadCancel
+      folderReadCancel,
+      zipPairs,
+      mixedZipAndFolder,
+      invalidZips,
+      zipCancel
     };
   } finally {
     await browser.close();
   }
 
   fs.writeFileSync(path.join(outDir, 'pair-folders-dom-result.json'), JSON.stringify(report, null, 2), 'utf8');
-  console.log('[pair-folders-dom] PASS: directory inputs / deterministic mapping / explicit review / folder-only bundles / asymmetric environments / chained endpoints / export contents / mobile / overlapping reload / invalid reselect / incomplete-stop / folder read cancel');
+  console.log('[pair-folders-dom] PASS: directory inputs / deterministic mapping / explicit review / folder-only bundles / asymmetric environments / chained endpoints / export contents / mobile / overlapping reload / invalid reselect / incomplete-stop / folder read cancel / settings ZIP pairs / ZIP + folder mix / invalid ZIP stops / ZIP read cancel');
   console.log(`[pair-folders-dom] output: ${outDir}`);
 }
 
