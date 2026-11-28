@@ -915,7 +915,7 @@ async function main() {
         let row = [];
         let cell = '';
         let quoted = false;
-        const body = text.replace(/^﻿/, '');
+        const body = text.replace(/^\uFEFF/, '');
         for (let i = 0; i < body.length; i += 1) {
           const ch = body[i];
           if (quoted) {

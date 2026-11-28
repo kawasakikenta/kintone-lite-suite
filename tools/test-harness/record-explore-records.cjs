@@ -167,7 +167,7 @@ function register(scenario, ctx) {
     await button('対象・条件を変更').click();
     await appInput().fill('105');
     await pickAction('CSVからレコードを追加');
-    await importFile('roundtrip.csv', Buffer.concat([Buffer.from('﻿'), Buffer.from(importable)]));
+    await importFile('roundtrip.csv', Buffer.concat([Buffer.from('\uFEFF'), Buffer.from(importable)]));
     await button('CSVを事前検査').click(); await idle();
     const precheck = await page.getByLabel('CSV事前検査結果', { exact: true }).innerText();
     assert.match(precheck, /App 105\n5件 \/ \d+フィールド \/ 検出した問題 0件/, precheck.slice(0, 400));
@@ -286,7 +286,7 @@ function register(scenario, ctx) {
     assert.match(`${await statusText()}\n${await logText()}`, /CSVをUTF-8として読み取れず、文字化け（�）を検出しました/);
     assert.equal(importWrites(await state()).length, 0);
     await button('対象・条件を変更').click();
-    const utf8 = Buffer.concat([Buffer.from('﻿'), Buffer.from('title,code,memo\r\n"改行\r\nと,カンマ",U-1,"引用""符"\r\n日本語,U-2,\r\n')]);
+    const utf8 = Buffer.concat([Buffer.from('\uFEFF'), Buffer.from('title,code,memo\r\n"改行\r\nと,カンマ",U-1,"引用""符"\r\n日本語,U-2,\r\n')]);
     await importFile('utf8.csv', utf8);
     await confirmAndRun('CSVからレコードを追加');
     const created = await recordsOf(105);
