@@ -159,7 +159,9 @@ describe('lite-suite の書き込み系ツールが読む入力の __proto__ / c
 
   it('フィールド追加: フィールドJSON・参照先変換の JSON と計画', () => {
     const props = parseFieldJsonInput(`{"properties":{"__proto__":${field('__proto__', 'a')},"constructor":${field('constructor', 'b')},"prototype":${field('prototype', 'c')}}}`);
-    const lookupMap = parseLookupMapInput(POISON);
+    // 参照先変換のキー・値は正の整数だけを受け付けるので、__proto__ などのキーは理由を示して止める
+    expect(() => parseLookupMapInput(POISON)).toThrow(/正の整数/);
+    const lookupMap = parseLookupMapInput('{"10":"20"}');
     planFieldApply(props, JSON.parse(`{"constructor":${field('constructor', 'old')}}`), lookupMap, true);
   });
 

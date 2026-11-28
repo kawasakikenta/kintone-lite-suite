@@ -2,23 +2,6 @@
 
 import { SYSTEM_FIELD_TYPES } from '../constants.js';
 
-export function parseLookupMapInput(text) {
-  const raw = String(text || '').trim();
-  if (!raw) return {};
-  const parsed = JSON.parse(raw);
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('Lookup AppID変換はJSONオブジェクトで入力してください');
-  }
-  const map = {};
-  for (const [k, v] of Object.entries(parsed) as Array<[string, any]>) {
-    const from = String(k).trim();
-    const to = String(v).trim();
-    if (!from || !to) continue;
-    map[from] = to;
-  }
-  return map;
-}
-
 export function parseAppIdList(text) {
   const tokens = String(text || '')
     .split(/[\s,]+/)

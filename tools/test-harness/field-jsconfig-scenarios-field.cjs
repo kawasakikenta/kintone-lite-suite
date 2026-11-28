@@ -91,6 +91,22 @@ module.exports = function (scenario, c) {
     ok('比較元から追加（参照先変換を含む）');
   });
 
+  scenario('フィールド追加: 全角数字で書いた参照先変換も、半角と同じに変換して反映する', async () => {
+    await reset('field');
+    await pickFromSource('101', ['cust_name', 'cust_tel', 'customer_code', 'tax_rate', 'shipping', 'total', 'items', 'rel', 'priority', 'tags']);
+    // 日本語入力のまま入れた変換。以前は変換されないまま（参照先 #301 のまま）反映していた
+    await fieldApply('202', { lookupMap: '{"３０１":"３０２"}' });
+    await fieldRun();
+    assert.match(dialogs[0] || '', /参照先AppID変換 3件/, '全角数字の変換も件数に数える');
+    const snap = await assertNoViolations('フィールド 全角の参照先変換', { allowedWrites: ['/202'] });
+    assert.equal(snap.writes.length, 1);
+    const sent = snap.writes[0].body.properties;
+    assert.equal(sent.customer_code.lookup.relatedApp.app, '302', 'ルックアップの参照先を変換');
+    assert.equal(sent.items.fields.item_code.lookup.relatedApp.app, '302', 'テーブルの中のルックアップも変換');
+    assert.equal(sent.rel.referenceTable.relatedApp.app, '302', '関連レコード一覧の参照先も変換');
+    ok('全角数字の参照先変換も半角と同じに変換する');
+  });
+
   scenario('フィールド追加: 選んだフィールドが参照するほかのフィールドが無いとき（計算・ルックアップのコピー先）は、最終確認で足りないコードを示す', async () => {
     await reset('field');
     // 計算 total は amount / tax_rate / shipping を、ルックアップ customer_code は cust_name / cust_tel を参照する。#202 には amount しかない。
@@ -359,6 +375,17 @@ module.exports = function (scenario, c) {
     await lookupBox().fill('{');
     await closeAdvanced();
     assert.equal(await button('内容を確認する').isDisabled(), true, '参照先変換の JSON が壊れている');
+    // 参照先変換のアプリIDが正の整数でないもの（数字でない・空・0・小数）は、黙って捨てず理由を示して止める
+    for (const [bad, shown] of [['{"301":"abc"}', '「301」→「abc」'], ['{"301":""}', '「301」→「（空）」'], ['{"abc":"302"}', '「abc」→「302」'], ['{"301":0}', '「301」→「0」'], ['{"301":2.5}', '「301」→「2.5」']]) {
+      await openAdvanced();
+      await lookupBox().fill(bad);
+      await closeAdvanced();
+      assert.equal(await button('内容を確認する').isDisabled(), true, `参照先変換のアプリIDの誤りを確認前に止める: ${bad}`);
+      const footer = (await page.locator('.kus-wf-footer-copy').first().textContent()) || '';
+      assert.ok(footer.includes('正の整数') && footer.includes(shown), `参照先変換の誤りの理由を示す: ${bad} → ${footer}`);
+    }
+    const blocked = await assertNoViolations('フィールド 入力の誤り', { allowedWrites: ['/202'] });
+    assert.equal(blocked.writes.length, 1, '入力の誤りでは書き込まない（二重クリックの 1 回だけ）');
     ok('入力の誤りは確認前に止める');
   });
 
