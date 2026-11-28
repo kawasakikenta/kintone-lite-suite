@@ -35,6 +35,15 @@ export function customizeSlotKey(platform: CustomizePlatform, kind: CustomizeKin
 
 export type CustomizeFileDownloader = (guestId: string, fileKey: string) => Promise<Blob>;
 
+/** 反映前バックアップに JS/CSS ファイルの本体を入れたときの案内（docs/design-output.md の「機微な値」と同じ方針）。 */
+export const BACKUP_FILE_BODY_NOTICE = '取扱注意: バックアップに JS/CSS ファイルの本体を入れました。本文に API トークンなどが含まれる場合があるため、保管と共有に注意してください';
+
+/** バックアップ（の一部）に、埋め込んだ JS/CSS ファイルの本体（file._content）があるか。 */
+export function hasEmbeddedFileBodies(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  return JSON.stringify(value).includes('"_content":{');
+}
+
 const PLATFORMS = ['desktop', 'mobile'] as const;
 const KINDS = ['js', 'css'] as const;
 const DOWNLOAD_CONCURRENCY = 4;

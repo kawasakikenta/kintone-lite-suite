@@ -10,7 +10,7 @@ import {
 import {
   esc,
   deepClone,
-  safeJsonForScript,
+  safeJsLiteralForScript,
   stableStringify,
   decodeHtmlEntities,
   stripHtmlToText,
@@ -47,7 +47,8 @@ import { decodeRow, isSemanticSection } from './path-decoder.js';
 import {
   isSensitiveSameDiffRow,
   redactSensitiveSameDiffRows,
-  SENSITIVE_SAME_VALUE_REDACTION
+  SENSITIVE_SAME_VALUE_REDACTION,
+  sha256Base64
 } from './export-safety.js';
 import { buildDesignSnapshot } from '../design/snapshot.js';
 
@@ -3102,13 +3103,13 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
 
   const logicScript = `
 (() => {
-  const REPORT_ROWS = ${safeJsonForScript(reportRows)};
+  const REPORT_ROWS = ${safeJsLiteralForScript(reportRows)};
   const ROW_SEARCH_TEXT_CACHE = new WeakMap();
   const REPORT_SEARCH_DEBOUNCE_MS = 150;
-  const SECTION_LABEL_MAP = ${safeJsonForScript(sectionLabelMap)};
-  const ENTITY_KIND_LABEL_MAP = ${safeJsonForScript(entityKindLabelMap)};
-  const REPORT_META = ${safeJsonForScript(reportMeta)};
-  const REPORT_EMPTY_STATE = ${safeJsonForScript({ title: emptyFactTitle, note: emptyFactNote })};
+  const SECTION_LABEL_MAP = ${safeJsLiteralForScript(sectionLabelMap)};
+  const ENTITY_KIND_LABEL_MAP = ${safeJsLiteralForScript(entityKindLabelMap)};
+  const REPORT_META = ${safeJsLiteralForScript(reportMeta)};
+  const REPORT_EMPTY_STATE = ${safeJsLiteralForScript({ title: emptyFactTitle, note: emptyFactNote })};
   const REVIEW_STATE_KIND = String(REPORT_META.reviewState.kind || '');
   const REVIEW_STATE_VERSION = Number(REPORT_META.reviewState.version || 0);
   const REVIEW_STATE_MAX_BYTES = Number(REPORT_META.reviewState.maxBytes || ${DIFF_HTML_REVIEW_STATE_MAX_BYTES});
@@ -3116,9 +3117,9 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   const HAS_COMPARED_CONTENT = ${includesComparedContent ? 'true' : 'false'};
   const CAN_BUILD_REFLECT_JSON = !!REPORT_META.reflectJsonAvailable;
   const REFLECT_JSON_BLOCK_REASON = String(REPORT_META.reflectJsonBlockedReason || '反映JSONを作成できません');
-  const DIFF_NAV_RANGE_NOTE = ${safeJsonForScript(diffNavRangeNote)};
-  const TARGET_PREVIEW_API_PREFIX = ${safeJsonForScript(targetPreviewApiPrefix)};
-  const NORMALIZATION_PRESETS = ${safeJsonForScript(clientNormalizationPresets)};
+  const DIFF_NAV_RANGE_NOTE = ${safeJsLiteralForScript(diffNavRangeNote)};
+  const TARGET_PREVIEW_API_PREFIX = ${safeJsLiteralForScript(targetPreviewApiPrefix)};
+  const NORMALIZATION_PRESETS = ${safeJsLiteralForScript(clientNormalizationPresets)};
   const THEME_KEY = '${TOOL_ID}:diffReportTheme';
   const ACTIVE_TAB_KEY = '${TOOL_ID}:diffReportActiveTab';
   const LINE_DIFF_MAX_CELLS = ${LINE_DIFF_MAX_CELLS};
@@ -3138,12 +3139,12 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   const expandedVals = new Set();
   const sameOpen = new Set();
   const KUC_SEMVER = '${KUC_REPORT_VERSION}';
-  const FIELD_PROPS_SRC = ${safeJsonForScript(srcFieldProps)};
-  const FIELD_PROPS_TGT = ${safeJsonForScript(tgtFieldProps)};
-  const SOURCE_SECTIONS = ${safeJsonForScript(srcSectionsForReport)};
-  const TARGET_SECTIONS = ${safeJsonForScript(tgtSectionsForReport)};
-  const LAYOUT_ROWS_SRC = ${safeJsonForScript(srcLayoutRows)};
-  const LAYOUT_ROWS_TGT = ${safeJsonForScript(tgtLayoutRows)};
+  const FIELD_PROPS_SRC = ${safeJsLiteralForScript(srcFieldProps)};
+  const FIELD_PROPS_TGT = ${safeJsLiteralForScript(tgtFieldProps)};
+  const SOURCE_SECTIONS = ${safeJsLiteralForScript(srcSectionsForReport)};
+  const TARGET_SECTIONS = ${safeJsLiteralForScript(tgtSectionsForReport)};
+  const LAYOUT_ROWS_SRC = ${safeJsLiteralForScript(srcLayoutRows)};
+  const LAYOUT_ROWS_TGT = ${safeJsLiteralForScript(tgtLayoutRows)};
   const FLAT_FIELD_PROPS_SRC = collectFlatFieldMap(FIELD_PROPS_SRC);
   const FLAT_FIELD_PROPS_TGT = collectFlatFieldMap(FIELD_PROPS_TGT);
   let activeFieldCode = '';
@@ -3501,9 +3502,9 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
 
   function csvEscape(v) {
     const raw = String(v == null ? '' : v);
-    // Excel 等で CSV を開いた際、先頭空白の後に = + - @ が続く値も式として
-    // 評価され得るため、文字列として扱われるよう先頭に apostrophe を付ける。
-    const s = /^[\\t\\r\\n ]*[=+\\-@]/.test(raw) ? "'" + raw : raw;
+    // Excel 等で CSV を開いた際に式として評価され得る値（= + - @ で始まる値。日本語版の Excel は全角の ＝ ＋ － ＠ も式にする。
+    // 先頭のタブ・改行・空白を除いて評価する表計算ソフトもある）は、文字列として扱われるよう先頭に apostrophe を付ける。
+    const s = /^(?:[\\t\\r\\n]|[\\t\\r\\n \\u3000]*[=+\\-@\\uff1d\\uff0b\\uff0d\\uff20])/.test(raw) ? "'" + raw : raw;
     if (/[",\\n\\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
     return s;
   }
@@ -3687,9 +3688,64 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     }
   }
 
+  // 改行類。* はこれらの文字に一致しない（比較時の照合と同じ）。
+  function isWildcardLineTerminator(code) {
+    return code === 10 || code === 13 || code === 0x2028 || code === 0x2029;
+  }
+
+  // パターン側に改行類があるときだけ使う、表による照合。
+  function matchWildcardByTable(pattern, value) {
+    let previous = new Uint8Array(value.length + 1);
+    previous[0] = 1;
+    for (let p = 0; p < pattern.length; p += 1) {
+      const current = new Uint8Array(value.length + 1);
+      if (pattern[p] === '*') {
+        current[0] = previous[0];
+        for (let v = 1; v <= value.length; v += 1) {
+          current[v] = previous[v] || (current[v - 1] && !isWildcardLineTerminator(value.charCodeAt(v - 1))) ? 1 : 0;
+        }
+      } else {
+        for (let v = 1; v <= value.length; v += 1) {
+          current[v] = previous[v - 1] && pattern[p] === value[v - 1] ? 1 : 0;
+        }
+      }
+      previous = current;
+    }
+    return previous[value.length] === 1;
+  }
+
+  // * だけを「改行以外の任意の文字列」とみなす全体一致。正規表現にすると * の多いルールと長いパスで固まるため、
+  // 最後の * の位置だけを覚えて進める（比較時の matchWildcard と同じ）。
+  function matchWildcard(pattern, value) {
+    for (let i = 0; i < pattern.length; i += 1) {
+      if (isWildcardLineTerminator(pattern.charCodeAt(i))) return matchWildcardByTable(pattern, value);
+    }
+    let p = 0;
+    let v = 0;
+    let starAt = -1;
+    let starValueAt = 0;
+    while (v < value.length) {
+      if (p < pattern.length && pattern[p] === '*') {
+        starAt = p;
+        starValueAt = v;
+        p += 1;
+      } else if (p < pattern.length && pattern[p] === value[v]) {
+        p += 1;
+        v += 1;
+      } else if (starAt >= 0 && !isWildcardLineTerminator(value.charCodeAt(starValueAt))) {
+        starValueAt += 1;
+        v = starValueAt;
+        p = starAt + 1;
+      } else {
+        return false;
+      }
+    }
+    while (p < pattern.length && pattern[p] === '*') p += 1;
+    return p === pattern.length;
+  }
+
   function compileIgnoreWildcard(token) {
-    const escaped = token.replace(/[.+?^\${}()|[\\]\\\\]/g, '\\\\$&').replace(/\\*/g, '.*');
-    return new RegExp('^' + escaped + '$');
+    return { test: (value) => matchWildcard(token, String(value)) };
   }
 
   function parseExtraIgnoreRules(text) {
@@ -3712,11 +3768,9 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         const isPath = token.indexOf('.') >= 0 || token.indexOf('[') >= 0;
         const cleaned = token;
         if (cleaned.indexOf('*') >= 0) {
-          try {
-            const re = compileIgnoreWildcard(cleaned);
-            if (isPath) pathPatterns.push(re);
-            else keyPatterns.push(re);
-          } catch (e) { /* 不正なパターンは無視 */ }
+          const matcher = compileIgnoreWildcard(cleaned);
+          if (isPath) pathPatterns.push(matcher);
+          else keyPatterns.push(matcher);
           return;
         }
         if (isPath) pathSet.push(cleaned);
@@ -4176,13 +4230,17 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
 
   // ---- 「JSONで比較」: フィールド単位に区切った WinMerge 風の左右比較 ----
 
+  // 設定の名前（フィールドコードなど）で引く表は、自身のプロパティだけを見る（constructor などを Object.prototype から拾わない）。
+  function ownValue(map, key) {
+    return map && Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined;
+  }
+
   function stripInternalFieldKeys(def) {
     if (!def || typeof def !== 'object' || Array.isArray(def)) return def;
-    const out = {};
-    Object.keys(def).forEach((k) => {
-      if (k === '__parentTableCode' || k === '__parentTableLabel') return;
-      out[k] = def[k];
-    });
+    // 代入ではなくスプレッドで写し、__proto__ という名前のキーも普通のプロパティとして残す。
+    const out = { ...def };
+    delete out.__parentTableCode;
+    delete out.__parentTableLabel;
     return out;
   }
 
@@ -4200,8 +4258,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     });
     const groups = [];
     map.forEach((bucket, code) => {
-      let src = stripInternalFieldKeys(FIELD_PROPS_SRC[code] || null);
-      let tgt = stripInternalFieldKeys(FIELD_PROPS_TGT[code] || null);
+      let src = stripInternalFieldKeys(ownValue(FIELD_PROPS_SRC, code) || null);
+      let tgt = stripInternalFieldKeys(ownValue(FIELD_PROPS_TGT, code) || null);
       if (!src && !tgt) {
         const rootRow = bucket.find((row) => {
           const info = extractFieldPathInfo(row.path);
@@ -4660,7 +4718,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
 
   function groupBySection(rows) {
     const order = {};
-    const defs = ${safeJsonForScript(SECTION_DEFS.map((d, i) => ({ key: d.key, label: d.label, order: i })))};
+    const defs = ${safeJsLiteralForScript(SECTION_DEFS.map((d, i) => ({ key: d.key, label: d.label, order: i })))};
     defs.forEach((d) => { order[d.key] = d.order; });
     const map = new Map();
     for (const row of rows) {
@@ -4924,7 +4982,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     const entries = Object.values(fields);
     if (!entries.length) return '<div class="sl-empty">（項目なし）</div>';
     const cp = (counterpart && typeof counterpart === 'object' && !Array.isArray(counterpart)) ? counterpart : null;
-    const cpByCode = {};
+    const cpByCode = Object.create(null);
     if (cp) {
       Object.entries(cp).forEach(([key, child]) => {
         const code = String((child && child.code) || key);
@@ -5587,7 +5645,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   }
 
   function collectFlatFieldMap(properties, out) {
-    const dest = out || ({});
+    // プロトタイプの無い表にする（__proto__・constructor という名前のフィールドも、自身のプロパティとして持ち・引く）
+    const dest = out || Object.create(null);
     function walk(props, parentMeta) {
       Object.entries(props || ({})).forEach(([code, field]) => {
         if (!field || typeof field !== 'object' || Array.isArray(field)) return;
@@ -7571,10 +7630,24 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
 })();
 `;
 
+  // 自己完結のレポートなので、外部への通信・読み込み・フォーム送信・<base> をすべて禁じる。
+  // スクリプトは埋め込んだ 1 つだけを内容のハッシュで許可する（設定の文字列から HTML が差し込まれても、onerror などは動かない）。
+  const contentSecurityPolicy = [
+    "default-src 'none'",
+    `script-src 'sha256-${sha256Base64(logicScript)}'`,
+    "style-src 'unsafe-inline'",
+    "connect-src 'none'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-src 'none'"
+  ].join('; ');
+
   return `<!doctype html>
 <html lang="ja">
 <head>
   <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="${contentSecurityPolicy}">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>kintone差分レポート</title>
   <style>

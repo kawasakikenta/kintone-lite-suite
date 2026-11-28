@@ -637,9 +637,10 @@ function showJSON(){
 }
 
 // ─── CSV exports ───
+// 表計算ソフトで式になり得る値（= + - @ で始まる値。日本語版の Excel は全角の ＝ ＋ － ＠ も式にする。先頭のタブ・改行・空白を除いて評価するソフトもある）は ' を付けて文字列にする
 function csvCell(v){
   const raw=String(v==null?"":v);
-  const s=/^[\t\r\n ]*[=+\-@]/.test(raw)?"'"+raw:raw;
+  const s=/^(?:[\t\r\n]|[\t\r\n \u3000]*[=+\-@\uff1d\uff0b\uff0d\uff20])/.test(raw)?"'"+raw:raw;
   return /[",\n\r]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
 }
 function csvLine(arr){return arr.map(csvCell).join(",");}

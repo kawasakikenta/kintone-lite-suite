@@ -1115,9 +1115,15 @@ export function buildErMarkdownSpec(
   return lines.join('\n');
 }
 
+/**
+ * 表計算ソフトで式として評価され得る値（= + - @ で始まる値。日本語版の Excel は全角の ＝ ＋ － ＠ も式にする。
+ * 先頭のタブ・改行・空白を除いて評価するソフトもある）には、先頭に ' を付けて文字列にする。
+ */
+const ER_CSV_FORMULA_LIKE = /^(?:[\t\r\n]|[\t\r\n \u3000]*[=+\-@\uff1d\uff0b\uff0d\uff20])/;
+
 function erCsvCell(value: unknown): string {
   const raw = String(value == null ? '' : value);
-  const safe = /^[\t\r\n ]*[=+\-@]/.test(raw) ? `'${raw}` : raw;
+  const safe = ER_CSV_FORMULA_LIKE.test(raw) ? `'${raw}` : raw;
   return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }
 

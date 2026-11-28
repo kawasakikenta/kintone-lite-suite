@@ -147,7 +147,7 @@ describe('ER relation details in the saved Markdown and CSV', () => {
   const apps = [model];
 
   it('adds the copied / displayed fields and the narrowing condition to the relation CSV', () => {
-    const rows = buildErRelationsCsv(apps).replace('﻿', '').split('\n');
+    const rows = buildErRelationsCsv(apps).replace('\uFEFF', '').split('\n');
     expect(rows[0]).toBe('参照元アプリID,参照元アプリ名,フィールドコード,フィールド名,リレーション種別,参照先アプリID,参照先アプリ名,キー・条件詳細,コピー・表示するフィールド,絞り込み条件');
     const lookupRow = rows.find((row) => row.includes('customer_lookup'))!;
     expect(lookupRow).toContain('参照先 company_name → customer_name / 参照先 industry → customer_industry');

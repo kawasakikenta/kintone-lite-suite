@@ -666,9 +666,10 @@
     const p = (n) => String(n).padStart(2, "0");
     return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
   }
+  var UNSAFE_FILENAME_CHARS = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u206f]/g;
   function sanitizeFilenamePart(value, fallback = "不明") {
     const text = String(value || "").trim();
-    const cleaned = text.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
+    const cleaned = text.replace(/[\\/:*?"<>|]/g, " ").replace(UNSAFE_FILENAME_CHARS, " ").replace(/\s+/g, " ").trim();
     return cleaned || fallback;
   }
   function buildAppFilenameLabel(appId, appName) {
@@ -786,6 +787,8 @@
     const syntax = querySyntaxText(query);
     return /\blimit\s+\d+/i.test(syntax) || /\boffset\s+\d+/i.test(syntax);
   }
+  var CALL_NAME_MAX = 256;
+  var CALL_PATTERN = new RegExp("([^\\s()=!<>,+\\-*/&^;:%]{1," + CALL_NAME_MAX + "})\\s*\\(([^()]*)\\)", "g");
 
   // src/runControl.ts
   var RUN_CANCELLED_MESSAGE = "利用者の操作で中止しました";
@@ -921,10 +924,20 @@
   }
 
   // src/api.ts
+  var GUEST_SPACE_ID_PATTERN = /^\d+$/;
   function buildApiPrefix(guestId, preview) {
     const g = String(guestId || "").trim();
+    if (g && !GUEST_SPACE_ID_PATTERN.test(g)) throw new Error(`ゲストスペースIDは半角数字で指定してください（${g.slice(0, 40)}）。`);
     if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
     return `/k/v1${preview ? "/preview" : ""}`;
+  }
+  var MUTATING_PREFIX_PATTERN = /^\/k(?:\/guest\/\d+)?\/v1(?:\/preview)?$/;
+  var MUTATING_PATH_PATTERN = /^(?:\/[A-Za-z0-9_-]+)+\.json$/;
+  var ERR_BAD_WRITE_TARGET = "kintone REST API の書き込み先の URL が不正なため、書き込みを中止しました。";
+  function assertMutatingRestTarget(prefix, path) {
+    if (!MUTATING_PREFIX_PATTERN.test(String(prefix ?? "")) || !MUTATING_PATH_PATTERN.test(String(path ?? ""))) {
+      throw new Error(`${ERR_BAD_WRITE_TARGET}（${String(prefix ?? "").slice(0, 80)}${String(path ?? "").slice(0, 80)}）`);
+    }
   }
   var DEPLOY_PATH_SNIPPET = "app/deploy.json";
   var ERR_NO_PROD_WRITE = "本番APIへの追加・更新・削除は無効です。プレビューAPIへの書き込みのみ可能です。本番への反映はkintone管理画面から手動でデプロイしてください。";
@@ -972,21 +985,22 @@
     if (m !== "POST" && m !== "PUT" && m !== "DELETE" && m !== "PATCH") return;
     const rel = String(path || "").replace(/\\/g, "/");
     if (rel.includes(DEPLOY_PATH_SNIPPET)) {
-      if (options.allowAppDeploy === true && path === APP_DEPLOY_PATH && m === "POST" && isPreviewRestPrefix(prefix)) return;
+      if (options.allowAppDeploy === true && path === APP_DEPLOY_PATH && m === "POST" && isPreviewRestPrefix(prefix)) return assertMutatingRestTarget(prefix, path);
       throw new Error(ERR_NO_DEPLOY_API);
     }
     if (normalizeApiResourcePath(rel) === RECORD_CURSOR_PATH && (m === "POST" || m === "DELETE")) {
       if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
-      return;
+      return assertMutatingRestTarget(prefix, path);
     }
     if (isRecordDataMutationPath(rel)) {
       if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
-      return;
+      return assertMutatingRestTarget(prefix, path);
     }
-    if (path === FILE_UPLOAD_PATH && m === "POST" && !isPreviewRestPrefix(prefix)) return;
+    if (path === FILE_UPLOAD_PATH && m === "POST" && !isPreviewRestPrefix(prefix)) return assertMutatingRestTarget(prefix, path);
     if (!isPreviewRestPrefix(prefix)) {
       throw new Error(ERR_NO_PROD_WRITE);
     }
+    assertMutatingRestTarget(prefix, path);
   }
   function normalizeApiGetOptions(optionsOrRetries) {
     if (typeof optionsOrRetries === "number") return { retries: optionsOrRetries };
@@ -1488,6 +1502,74 @@
     for (const cat of DIFF_CATEGORIES) for (const sec of cat.sections) m[sec] = cat.key;
     return m;
   })();
+
+  // src/diff/export-safety.ts
+  var SHA256_ROUND_CONSTANTS = new Int32Array([
+    1116352408,
+    1899447441,
+    3049323471,
+    3921009573,
+    961987163,
+    1508970993,
+    2453635748,
+    2870763221,
+    3624381080,
+    310598401,
+    607225278,
+    1426881987,
+    1925078388,
+    2162078206,
+    2614888103,
+    3248222580,
+    3835390401,
+    4022224774,
+    264347078,
+    604807628,
+    770255983,
+    1249150122,
+    1555081692,
+    1996064986,
+    2554220882,
+    2821834349,
+    2952996808,
+    3210313671,
+    3336571891,
+    3584528711,
+    113926993,
+    338241895,
+    666307205,
+    773529912,
+    1294757372,
+    1396182291,
+    1695183700,
+    1986661051,
+    2177026350,
+    2456956037,
+    2730485921,
+    2820302411,
+    3259730800,
+    3345764771,
+    3516065817,
+    3600352804,
+    4094571909,
+    275423344,
+    430227734,
+    506948616,
+    659060556,
+    883997877,
+    958139571,
+    1322822218,
+    1537002063,
+    1747873779,
+    1955562222,
+    2024104815,
+    2227730452,
+    2361852424,
+    2428436474,
+    2756734187,
+    3204031479,
+    3329325298
+  ]);
 
   // src/diff/export.ts
   var DIFF_HTML_REVIEW_STATE_MAX_BYTES = 2 * 1024 * 1024;
@@ -3555,7 +3637,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const s = String(val == null ? "" : val);
     return s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r") ? '"' + s.replace(/"/g, '""') + '"' : s;
   }
-  var CSV_FORMULA_RE = /^[\s\uFEFF]*[=+\-@]/;
+  var CSV_FORMULA_RE = /^[\s\uFEFF]*[=+\-@\uff1d\uff0b\uff0d\uff20]/;
   var CSV_CONTROL_RE = /^[\t\r\n]/;
   var CSV_NUMERIC_RE = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
   function neutralizeCsvFormula(text) {
@@ -3587,7 +3669,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     return "\uFEFF" + lines.join(lineEnding);
   }
   function sanitizeZipSegment(value, fallback = "item") {
-    const cleaned = String(value == null ? "" : value).replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "").trim();
+    const cleaned = String(value == null ? "" : value).replace(/[\\/:*?"<>|]/g, "_").replace(UNSAFE_FILENAME_CHARS, "").trim();
     return !cleaned || /^\.+$/.test(cleaned) ? fallback : cleaned;
   }
   function uniqueZipName(used, raw, fileKey, idx) {
@@ -4455,7 +4537,7 @@ ZIP ${downloads.length}個のダウンロードを依頼しました。ブラウ
         "テーブルごとに独立したCSVです。別のテーブルとの行の組み合わせは作りません。",
         "CSVは閲覧・集計用です。このツールのCSV取込でテーブルを復元することはできません。",
         "添付フィールドはファイル名のみです。実体を保存する場合はバックアップで「添付ファイルも保存」を選択してください。",
-        "= + - @ で始まる文字列セルは Excel の数式実行を防ぐため先頭に ' を付けています（数値は対象外）。"
+        "= + - @（全角を含む）で始まる文字列セルは Excel の数式実行を防ぐため先頭に ' を付けています（数値は対象外）。"
       ]
     };
   }
@@ -4464,7 +4546,7 @@ ZIP ${downloads.length}個のダウンロードを依頼しました。ブラウ
     for (const table of csv.tables) zip.file(`${prefix}${table.fileName}`, table.csvText);
   }
   function recordExportFilename(filename, extension, fallback) {
-    const stem = String(filename || "").trim().replace(/\.(csv|zip)$/i, "").replace(/[\u0000-\u001f\u007f]/g, "").trim();
+    const stem = String(filename || "").trim().replace(/\.(csv|zip)$/i, "").replace(UNSAFE_FILENAME_CHARS, "").trim();
     const safe = stem ? sanitizeFilenamePart(stem, "").replace(/^[. ]+|[. ]+$/g, "") : "";
     return safe ? `${safe}.${extension}` : fallback;
   }
@@ -6790,7 +6872,7 @@ ${failures.join("\n")}` };
             ["crlf", "CRLF（Windows標準）"]
           ]);
           lineEndingSelect.setAttribute("aria-label", "改行コード");
-          const neutralizeCb = makeCheck({ label: "= + - @ で始まる文字列の先頭に ' を付ける（Excel向け・既定）", checked: true });
+          const neutralizeCb = makeCheck({ label: "= + - @（全角を含む）で始まる文字列の先頭に ' を付ける（Excel向け・既定）", checked: true });
           const useView = makeButton("▼ 一覧から", "sub");
           useView.addEventListener("click", () => applyViewQuery(query));
           root2.appendChild(makeRow([query, useView], { label: "クエリ" }));
@@ -7235,7 +7317,7 @@ ${r.error || (r.report ? formatRecordCopyPreview(r.report) : "")}`).join("\n\n")
             scopeBox.style.display = incSettings.checkbox.checked ? "flex" : "none";
           });
           root2.appendChild(makeNote("ZIPには records.csv / records.json と manifest.json を保存します。テーブルがある場合は tables/ に明細CSVを追加し、親レコードの $id で紐付けできます。", "help"));
-          root2.appendChild(makeNote("CSVは閲覧・集計用で、CSV取込用の互換形式ではありません。Excelで数式として実行されないよう、= + - @ で始まる文字列の先頭に ' を付けます（数値は対象外）。", "help"));
+          root2.appendChild(makeNote("CSVは閲覧・集計用で、CSV取込用の互換形式ではありません。Excelで数式として実行されないよう、= + - @（全角を含む）で始まる文字列の先頭に ' を付けます（数値は対象外）。", "help"));
           root2.appendChild(makeNote("添付ファイルの本体は「添付ファイルも保存」で取得します。取得できなかった添付・コメント・設定は manifest.json に記録し、完了メッセージに件数を表示します。", "help"));
           root2.appendChild(makeNote("添付が約 2GB（またはファイル数が約 65,000 件）を超えるときは、添付を「…_part1.zip」「…_part2.zip」のように分け、レコード・コメント・設定と全体の manifest.json は最後の ZIP に保存します。", "help"));
           const run = makeButton("バックアップをZIPで保存", "primary", { icon: "↓" });

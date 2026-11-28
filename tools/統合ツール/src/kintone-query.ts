@@ -44,7 +44,10 @@ export function hasKintonePagingClause(query: unknown): boolean {
 const QUERY_KEYWORDS: ReadonlySet<string> = new Set(['and', 'or', 'not', 'in', 'like', 'order', 'by', 'asc', 'desc', 'limit', 'offset']);
 const NUMBER_TOKEN = /^[+-]?\d+(?:\.\d+)?$/;
 /** 「語(…)」の形。関数呼び出し（LOGINUSER()・FROM_TODAY(5, DAYS)・IF(...) など）の名前と引数を取り除くために使う。 */
-const CALL_PATTERN = /([^\s()=!<>,+\-*/&^;:%]+)\s*\(([^()]*)\)/g;
+// 語の長さに上限を付ける（上限が無いと、長い語の途中の位置ごとに語の終わりまで読み直し、5 万文字で数秒かかる）。
+// 関数名・フィールドコードはこれより十分短い（フィールドコードは 128 文字まで）。
+const CALL_NAME_MAX = 256;
+const CALL_PATTERN = new RegExp('([^\\s()=!<>,+\\-*/&^;:%]{1,' + CALL_NAME_MAX + '})\\s*\\(([^()]*)\\)', 'g');
 const QUERY_SPLIT = /[^\s()=!<>,]+/g;
 const EXPRESSION_SPLIT = /[^\s()=!<>,+\-*/&^;:%]+/g;
 
@@ -90,6 +93,6 @@ export function extractExpressionFieldCodes(expression: unknown, knownCodes: Rea
   if (!known.size) return [];
   const syntax = querySyntaxText(expression);
   // 関数名は、直後に括弧が続く語。引数のフィールドは残す（SUM(明細) の「明細」が参照）。
-  const withoutNames = syntax.replace(/([^\s()=!<>,+\-*/&^;:%]+)(\s*\()/g, (_match, name: string, paren: string) => ' '.repeat(name.length) + paren);
+  const withoutNames = syntax.replace(new RegExp('([^\\s()=!<>,+\\-*/&^;:%]{1,' + CALL_NAME_MAX + '})(\\s*\\()', 'g'), (_match, name: string, paren: string) => ' '.repeat(name.length) + paren);
   return uniqueKnownTokens(withoutNames, EXPRESSION_SPLIT, known);
 }

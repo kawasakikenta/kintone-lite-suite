@@ -382,6 +382,8 @@ describe('runDeployStandalone: バックアップ', () => {
     expect(embedded.fileKey).toBe('pA');
     expect(Buffer.from(embedded._content.base64, 'base64').toString()).toBe('console.log("A")');
     expect(embedded._content.byteSize).toBe(16);
+    // バックアップに JS/CSS の本体が入ったことを、取扱注意としてログに示す
+    expect(result.logs.some(line => line.includes('JS/CSS ファイルの本体') && line.includes('取扱注意'))).toBe(true);
     // 反映前の本番の fileKey だけを取得する
     expect(fetchMock.mock.calls.map(call => call[0])).toEqual(['/k/v1/file.json?fileKey=pA']);
 
@@ -420,6 +422,8 @@ describe('runDeployStandalone: バックアップ', () => {
     const { result } = await run(targets);
     expect(result.apps[0].status).toBe('success');
     expect(fetchMock).not.toHaveBeenCalled();
+    // 本体を入れていないので、取扱注意の案内も出さない
+    expect(result.logs.some(line => line.includes('取扱注意'))).toBe(false);
   });
 
   it('バックアップを保存できなければ、何も依頼せず blocked にする', async () => {

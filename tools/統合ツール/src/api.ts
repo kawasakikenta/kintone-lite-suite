@@ -13,10 +13,29 @@ import {
   throwIfCancelled
 } from './runControl.js';
 
+const GUEST_SPACE_ID_PATTERN = /^\d+$/;
+
+/**
+ * REST API の URL の先頭（`/k/v1`・`/k/guest/<ID>/v1` と、その `/preview`）。
+ * ゲストスペースIDは URL のパスにそのまま入るため、半角数字以外（`/`・`..`・`?`・`#` を含む値など。読み込んだファイルの値もある）は
+ * 別の API を指す URL にならないよう拒否する。
+ */
 export function buildApiPrefix(guestId: string | number | null | undefined, preview: boolean): string {
   const g = String(guestId || '').trim();
+  if (g && !GUEST_SPACE_ID_PATTERN.test(g)) throw new Error(`ゲストスペースIDは半角数字で指定してください（${g.slice(0, 40)}）。`);
   if (g) return `/k/guest/${g}/v1${preview ? '/preview' : ''}`;
   return `/k/v1${preview ? '/preview' : ''}`;
+}
+
+/** 書き込みを許可する URL の形。prefix は buildApiPrefix が作るものだけ、path は `/app/form/fields.json` のような区切りと英数字だけ。 */
+const MUTATING_PREFIX_PATTERN = /^\/k(?:\/guest\/\d+)?\/v1(?:\/preview)?$/;
+const MUTATING_PATH_PATTERN = /^(?:\/[A-Za-z0-9_-]+)+\.json$/;
+const ERR_BAD_WRITE_TARGET = 'kintone REST API の書き込み先の URL が不正なため、書き込みを中止しました。';
+
+function assertMutatingRestTarget(prefix: string, path: string): void {
+  if (!MUTATING_PREFIX_PATTERN.test(String(prefix ?? '')) || !MUTATING_PATH_PATTERN.test(String(path ?? ''))) {
+    throw new Error(`${ERR_BAD_WRITE_TARGET}（${String(prefix ?? '').slice(0, 80)}${String(path ?? '').slice(0, 80)}）`);
+  }
 }
 
 const DEPLOY_PATH_SNIPPET = 'app/deploy.json';
@@ -120,24 +139,26 @@ export function assertAllowsMutatingRestCall(prefix: string, path: string, metho
   if (m !== 'POST' && m !== 'PUT' && m !== 'DELETE' && m !== 'PATCH') return;
 
   const rel = String(path || '').replace(/\\/g, '/');
+  // 許可する場合も、prefix と path が想定どおりの形か最後に確かめる（prefix に /v1/preview を含むだけの別の URL を通さない）。
   if (rel.includes(DEPLOY_PATH_SNIPPET)) {
     // 呼び出し元が渡すパスそのものが完全一致し、POST でプレビュー prefix のときだけ許可する（本番 prefix・PUT/DELETE・別パスは拒否）。
-    if (options.allowAppDeploy === true && path === APP_DEPLOY_PATH && m === 'POST' && isPreviewRestPrefix(prefix)) return;
+    if (options.allowAppDeploy === true && path === APP_DEPLOY_PATH && m === 'POST' && isPreviewRestPrefix(prefix)) return assertMutatingRestTarget(prefix, path);
     throw new Error(ERR_NO_DEPLOY_API);
   }
   if (normalizeApiResourcePath(rel) === RECORD_CURSOR_PATH && (m === 'POST' || m === 'DELETE')) {
     if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
-    return;
+    return assertMutatingRestTarget(prefix, path);
   }
   if (isRecordDataMutationPath(rel)) {
     if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
-    return;
+    return assertMutatingRestTarget(prefix, path);
   }
   // 正規化で別のパスを /file.json に見せかけられないよう、呼び出し元が渡すパスそのものと一致する場合だけ許可する。
-  if (path === FILE_UPLOAD_PATH && m === 'POST' && !isPreviewRestPrefix(prefix)) return;
+  if (path === FILE_UPLOAD_PATH && m === 'POST' && !isPreviewRestPrefix(prefix)) return assertMutatingRestTarget(prefix, path);
   if (!isPreviewRestPrefix(prefix)) {
     throw new Error(ERR_NO_PROD_WRITE);
   }
+  assertMutatingRestTarget(prefix, path);
 }
 
 export interface ApiGetOptions {

@@ -800,7 +800,7 @@ describe('diff/xlsx-builder', () => {
       return { value: expectedPrefix + cluster + 'b'.repeat(remaining), expectedPrefix };
     };
     const cases = [
-      atBoundary('👨‍👩‍👧‍👦', 2),
+      atBoundary('👨\u200D👩\u200D👧\u200D👦', 2),
       atBoundary('e\u0301', 1),
       atBoundary('🇯🇵', 2)
     ];

@@ -452,7 +452,7 @@ describe('diff/xlsx-export', () => {
   });
 
   it('keeps the full customer target label, including a joined emoji and its trailing text', async () => {
-    const label = `${'x'.repeat(42)}👩‍💻tail`;
+    const label = `${'x'.repeat(42)}👩\u200D💻tail`;
     const layout = { layout: [{ type: 'ROW', fields: [{ type: 'LABEL', label }] }] };
     const list = await readWorksheetByName(buildDiffXlsxBlobWithSafeDefault({
       sourceBundle: { sections: { layoutSettings: layout } },
@@ -3215,14 +3215,14 @@ describe('diff/xlsx-export', () => {
         sectionKey: 'appSettings',
         type: 'changed',
         path: 'appSettings.description',
-        left: '👩‍💻'.repeat(1000),
+        left: '👩\u200D💻'.repeat(1000),
         right: '変更後'
       }]
     }), '差分一覧');
     const preview = worksheetInlineTexts(list, 'F', 4)[0];
     const body = preview.slice(preview.indexOf('\n') + 1, preview.lastIndexOf('\n…'));
 
-    expect(body.endsWith('👩‍💻')).toBe(true);
+    expect(body.endsWith('👩\u200D💻')).toBe(true);
     expect(body.endsWith('👩')).toBe(false);
     expect(preview).not.toContain('�');
   });
@@ -3265,7 +3265,7 @@ describe('diff/xlsx-export', () => {
     const result = buildDiffXlsxExportWithSafeDefault({
       audience: 'customer',
       rows: [],
-      filename: `\u202Eunsafe/name\u0001${'👩‍💻'.repeat(100)}\uD800.xlsx`
+      filename: `\u202Eunsafe/name\u0001${'👩\u200D💻'.repeat(100)}\uD800.xlsx`
     });
 
     expect(result.filename).toMatch(/\.xlsx$/);
@@ -3277,7 +3277,7 @@ describe('diff/xlsx-export', () => {
   });
 
   it('preserves both customer App IDs, the timestamp, and the extension within the filename limit', () => {
-    const sharedLongName = `同名アプリ${'👩‍💻長い名前'.repeat(50)}`;
+    const sharedLongName = `同名アプリ${'👩\u200D💻長い名前'.repeat(50)}`;
     const result = buildDiffXlsxExportWithSafeDefault({
       audience: 'customer',
       rows: [],

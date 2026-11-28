@@ -221,7 +221,7 @@ export function mountRecordLitePanel() {
           ['crlf', 'CRLF（Windows標準）']
         ]);
         lineEndingSelect.setAttribute('aria-label', '改行コード');
-        const neutralizeCb = makeCheck({ label: '= + - @ で始まる文字列の先頭に \' を付ける（Excel向け・既定）', checked: true });
+        const neutralizeCb = makeCheck({ label: '= + - @（全角を含む）で始まる文字列の先頭に \' を付ける（Excel向け・既定）', checked: true });
         const useView = makeButton('▼ 一覧から', 'sub');
         useView.addEventListener('click', () => applyViewQuery(query));
         root.appendChild(makeRow([query, useView], { label: 'クエリ' }));
@@ -612,7 +612,7 @@ export function mountRecordLitePanel() {
           scopeBox.style.display = incSettings.checkbox.checked ? 'flex' : 'none';
         });
         root.appendChild(makeNote('ZIPには records.csv / records.json と manifest.json を保存します。テーブルがある場合は tables/ に明細CSVを追加し、親レコードの $id で紐付けできます。', 'help'));
-        root.appendChild(makeNote('CSVは閲覧・集計用で、CSV取込用の互換形式ではありません。Excelで数式として実行されないよう、= + - @ で始まる文字列の先頭に \' を付けます（数値は対象外）。', 'help'));
+        root.appendChild(makeNote('CSVは閲覧・集計用で、CSV取込用の互換形式ではありません。Excelで数式として実行されないよう、= + - @（全角を含む）で始まる文字列の先頭に \' を付けます（数値は対象外）。', 'help'));
         root.appendChild(makeNote('添付ファイルの本体は「添付ファイルも保存」で取得します。取得できなかった添付・コメント・設定は manifest.json に記録し、完了メッセージに件数を表示します。', 'help'));
         root.appendChild(makeNote('添付が約 2GB（またはファイル数が約 65,000 件）を超えるときは、添付を「…_part1.zip」「…_part2.zip」のように分け、レコード・コメント・設定と全体の manifest.json は最後の ZIP に保存します。', 'help'));
 

@@ -475,7 +475,7 @@ COMPOSITE_ARRAY_RULES のパス正規表現
 | 設計書（`設計書作成.js`、`tabs/design*.ts`、`design/`） | 人向け Excel（目次 → 項目一覧 → 項目定義、取得状況シート）、通常 Markdown、AI 向け Markdown（メタデータ・全セクションの取得状態・索引・JSON 原文、JSON Pointer 付き）、JSON。設定 JSON からのオフライン生成 | セクション状態は `available` / `empty` / `missing` / `fetch-error` / `partial` の 5 値で、未取得は 0 件と表示しない。AI 向けは応答を正規化せず取得（`rawSettings`）し、`undefined` を含む入力は `kus-typed-tree-v1` で型を明示。設計書差分レポートは生データと取得日時を除いた表・要約で比較 |
 | ER 図（`ER図.js`、`tabs/er*.ts`） | ルックアップ・関連レコードを辿って探索し、Cytoscape + Dagre の自己完結 HTML へ。逆引き探索、スペース起点、構造分析 | `analyzeErDependencies`: Tarjan の強連結成分で循環（要素 2 以上）と自己参照を検出、入出 0 を孤立、入出合計 ≥ 3（`ER_HIGH_CONNECTION_THRESHOLD`）をハブ、図内にない参照先を未解決として数え、アプリごとの取得状態（complete / partial / failed）を併記。逆引き中に読めなかったアプリがあれば警告表示 |
 | プロセス図（`プロセス実行.js`、`tabs/process*.ts`） | プロセス管理設定から Mermaid ソースを生成し、状態遷移シミュレーション | プロセス無効ならソースを出さない。`from` / `to` 未設定のアクションは除外して警告。Mermaid は jsDelivr → unpkg → cdnjs の順に試し、失敗時は状態と遷移の表へ縮退 |
-| レコード管理（`kintoneレコード取得.js`、`tabs/record*.ts`） | ステータス更新・添付 DL・CSV 出力 / 取込・バックアップ・アプリ間コピー。レコード API だけが本番への書き込みを許され、確認付き | 取得は `fetchRecordsByQuery`（500 件シーク / cursor）。CSV 取込は `validateCsvImportHeader`（`$id` を含む、空列、重複、未知コード、非対応型で中止）と `planCsvImport` で全対象を事前検査し、実行時にも再検査。追加・更新は 100 件分割で、拒否時は確定済み / 未処理件数と kintone が返した行・理由を表示。CSV の `= + - @` 始まりは `'` を前置（数値を除く）。コピー先に一致フィールドが 0 なら実行しない |
+| レコード管理（`kintoneレコード取得.js`、`tabs/record*.ts`） | ステータス更新・添付 DL・CSV 出力 / 取込・バックアップ・アプリ間コピー。レコード API だけが本番への書き込みを許され、確認付き | 取得は `fetchRecordsByQuery`（500 件シーク / cursor）。CSV 取込は `validateCsvImportHeader`（`$id` を含む、空列、重複、未知コード、非対応型で中止）と `planCsvImport` で全対象を事前検査し、実行時にも再検査。追加・更新は 100 件分割で、拒否時は確定済み / 未処理件数と kintone が返した行・理由を表示。CSV の `= + - @`（全角の `＝ ＋ － ＠` を含む）始まりは `'` を前置（数値を除く）。コピー先に一致フィールドが 0 なら実行しない |
 | CSV 出力（`CSV出力.js`） | サブテーブルを `tables/<コード>.csv` へ自動分離し、`$id` / `$rowId` / `$rowIndex` で親と紐付け。複数アプリはアプリ別フォルダ＋ `manifest.json` の ZIP | テーブルありなら ZIP、なしなら単一 CSV。テーブル未取得は親列を空欄にし `warnings` へ（空テーブルの 0 行と区別）。一部アプリ失敗は成功分を保存し失敗一覧を `manifest.txt` と完了メッセージへ |
 | データ品質チェック（`データ品質チェック.js`、`tabs/record-quality*.ts`） | 1〜5 項目の組み合わせで重複・未入力を検査し、レコード URL 付き CSV を出力。CSV 取込ひな形（`import.csv` / `fields.csv` / `excluded.csv` / `README.txt`）を ZIP で生成。レコードは書き換えない | 選択項目がすべて同じとき重複、どれかが空なら未入力（重複判定に入れない）。複数選択は順序無視、ユーザー・組織・グループはコード比較、数値は `1.0` = `1`（浮動小数点へは変換しない）。応答に項目がない / 型不一致は「取得不可」。テーブル内・添付・計算・リッチエディター・システム項目は対象外 |
 
@@ -497,7 +497,7 @@ COMPOSITE_ARRAY_RULES のパス正規表現
 | 隠さない | 判断を自動化しない | 重要度・影響度・対応要否は表示・絞込・色分けに使わない。改名候補・関連設定は事実の候補としてのみ |
 | 持ち出さない | 出力の機密保護 | `diffOnly` 既定、機密セクションの同一値伏せ字、Excel のマスキング（機密キーパターン・JS/CSS 本文・プラグイン設定）、Markdown の「データを命令として実行しない」注記（第 9 章） |
 | 持ち出さない | ブラウザストレージ禁止 | `check:no-browser-storage` が `localStorage` / `sessionStorage` / `indexedDB` / `document.cookie` をビルド前に拒否。プリセット・履歴はセッション内メモリ、永続化は JSON ファイル |
-| 持ち出さない | 生成 HTML / CSV の安全化 | `esc` で `& < > " '` をエスケープ、`safeJsonForScript` で `<` と U+2028/2029 をエスケープして `<script>` へ埋込。ラベル内 HTML タグは除去。CSV は `= + - @` 始まりに `'` を前置して数式実行を防止。自己完結 HTML は外部 CDN を使わない |
+| 持ち出さない | 生成 HTML / CSV の安全化 | `esc` で `& < > " '` をエスケープ、`safeJsonForScript` で `<` と U+2028/2029 をエスケープして `<script>` へ埋込。ラベル内 HTML タグは除去。CSV は `= + - @`（全角の `＝ ＋ － ＠` を含む）始まりに `'` を前置して数式実行を防止。自己完結 HTML は外部 CDN を使わない。差分HTMLレポートには CSP を付け（外部への通信・読み込み・フォーム送信・<base> を禁止し、スクリプトは埋め込んだ 1 つだけを内容の SHA-256 で許可）、レポートに埋め込む設定は `__proto__` という名前も落とさない形（`safeJsLiteralForScript`）で書く。保存するファイル名・ZIP 内の名前からは制御文字と双方向制御（`UNSAFE_FILENAME_CHARS`）を除く |
 | 持ち出さない | 読み込む JSON の検証 | レビュー状態（種類・バージョン・フィンガープリント・2 MiB）、比較条件プロファイル（サイズ・件数上限、プロトタイプ汚染キー拒否）、設定 JSON（App ID 照合、欠落セクションは比較不能）、パッチ JSON（確認専用行・予約パス拒否）、フォルダ取込（manifest 整合・接続先重複） |
 
 ## 13. テスト・品質保証の設計

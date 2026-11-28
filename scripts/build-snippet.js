@@ -29,12 +29,9 @@ if (!source) {
   process.exit(1);
 }
 
-const oneLine = source
-  .replace(/\r\n/g, '\n')
-  .replace(/\/\*[\s\S]*?\*\//g, '')
-  .replace(/^[ \t]*\/\/.*$/gm, '')
-  .replace(/\n+/g, '\n')
-  .trim();
+// コメントや空行は消さない。正規表現では文字列の中（埋め込んだライブラリの本体・ライセンス表記・テンプレートの文章）と
+// 見分けられず、中身を壊すため。改行コードだけを LF にそろえる（テンプレートリテラルの値も LF として読まれるので変わらない）。
+const oneLine = source.replace(/\r\n/g, '\n');
 
 if (mode === 'bookmarklet') {
   const bookmarklet = `javascript:${encodeURIComponent(oneLine)}`;
