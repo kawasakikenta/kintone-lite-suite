@@ -1029,8 +1029,8 @@
     }
     throw apiErrorWithContext(lastErr, { method, prefix, path, payload: body });
   }
-  async function apiPut(prefix, path, body) {
-    return executeMutatingApiWithRetry("PUT", prefix, path, body);
+  async function apiPut(prefix, path, body, retries) {
+    return executeMutatingApiWithRetry("PUT", prefix, path, body, retries);
   }
   async function apiPost(prefix, path, body, retries) {
     return executeMutatingApiWithRetry("POST", prefix, path, body, retries);

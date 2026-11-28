@@ -156,9 +156,12 @@ export interface BatchWriteFailure {
   /** 失敗したチャンクの末尾（1 始まり） */
   to: number;
   total: number;
+  /** unconfirmed のとき、再実行の前に kintone 画面で確かめるもの（既定は「対象アプリのレコード件数」） */
+  checkBeforeRetry?: string;
 }
 
 const RECORD_ERROR_DETAIL_LIMIT = 10;
+const DEFAULT_CHECK_BEFORE_RETRY = '対象アプリのレコード件数';
 
 /**
  * kintone のレコード登録・更新エラー（`errors: { "records[3].title.value": { messages } }`）から、
@@ -216,7 +219,7 @@ export function describeBatchWriteFailure(label: string, failure: BatchWriteFail
   return [
     `${label}が途中で失敗しました。`,
     `確定済み: ${failure.done}件 / 失敗チャンク: ${failure.from}～${failure.to}件目 / 未処理: ${remaining}件（全${failure.total}件）`,
-    failure.unconfirmed ? `失敗チャンク（${failure.from}～${failure.to}件目）は、応答が届かなかったため、kintone に書き込まれたかどうか確認できません。再実行する前に、kintone 画面で対象アプリのレコード件数を確認してください。` : '',
+    failure.unconfirmed ? `失敗チャンク（${failure.from}～${failure.to}件目）は、応答が届かなかったため、kintone に書き込まれたかどうか確認できません。再実行する前に、kintone 画面で${failure.checkBeforeRetry || DEFAULT_CHECK_BEFORE_RETRY}を確認してください。` : '',
     reason ? `原因: ${reason}` : '',
     ...(details.length ? ['エラーの詳細（このチャンクは全体が取り消されています）:', ...details] : [])
   ].filter(Boolean).join('\n');
@@ -224,6 +227,7 @@ export function describeBatchWriteFailure(label: string, failure: BatchWriteFail
 
 /**
  * 100 件ずつ順に書き込み、失敗時は確定件数付きのエラーにして再送出する。
+ * @param checkBeforeRetry 応答が届かなかった塊があるとき、再実行の前に kintone 画面で確かめるもの（既定は「対象アプリのレコード件数」）
  * @returns 書き込んだ件数
  */
 export async function writeInChunks<T>(
@@ -233,7 +237,8 @@ export async function writeInChunks<T>(
   onProgress?: (done: number, total: number) => void,
   chunkSize: number = RECORDS_WRITE_CHUNK,
   describeItem?: (index: number) => string,
-  describeField?: (path: string) => string
+  describeField?: (path: string) => string,
+  checkBeforeRetry?: string
 ): Promise<number> {
   const size = Math.max(1, Math.floor(chunkSize) || RECORDS_WRITE_CHUNK);
   let done = 0;
@@ -244,7 +249,7 @@ export async function writeInChunks<T>(
     } catch (error) {
       const details = describeKintoneRecordErrors(error, i, describeItem, describeField);
       const unconfirmed = isUnconfirmedWriteFailure(error);
-      const wrapped = new Error(describeBatchWriteFailure(label, { done, from: i + 1, to: i + chunk.length, total: items.length, unconfirmed }, error, details));
+      const wrapped = new Error(describeBatchWriteFailure(label, { done, from: i + 1, to: i + chunk.length, total: items.length, unconfirmed, checkBeforeRetry }, error, details));
       (wrapped as any).partial = { done, from: i + 1, to: i + chunk.length, total: items.length, ...(unconfirmed ? { unconfirmed } : {}) };
       (wrapped as any).original = error;
       throw wrapped;

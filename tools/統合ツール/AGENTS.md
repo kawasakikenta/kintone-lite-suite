@@ -75,7 +75,7 @@ tools/統合ツール/
 
 ## 共有モジュールの注意点
 
-- `api.ts` の `apiPost` は、第 4 引数（試行回数の上限、省略時は従来どおり 3）を受け取る。応答だけ届かなかった塊を再送すると二重に登録されるレコード追加（CSV取込・コピーの `POST /records.json`）だけが `1` を渡して自動再送を止める。ほかの呼び出し（設定の PUT/POST、本番反映の deploy.json は従来どおり自動再試行なし）は引数を渡さず、動作は変わらない。
+- `api.ts` の `apiPost` は、第 4 引数（試行回数の上限、省略時は従来どおり 3）を受け取る。応答だけ届かなかった塊を再送すると二重に登録されるレコード追加（CSV取込・コピーの `POST /records.json`）だけが `1` を渡して自動再送を止める。`apiPut` も同じ第 4 引数を受け取り、ステータス更新（`PUT /records/status.json`。冪等ではなく、確定した塊を送り直すと進んだ revision と食い違って `GAIA_CO02` になる）だけが `1` を渡す。ほかの呼び出し（設定の PUT/POST、本番反映の deploy.json は従来どおり自動再試行なし）は引数を渡さず、動作は変わらない。応答が届かなかった塊の案内で、再実行の前に確かめるもの（既定は「対象アプリのレコード件数」）は `writeInChunks` の最後の引数で変えられる。
 - 添付ファイル保存・バックアップの ZIP は、`tabs/record-zip-split.ts` が取得の前にレコード単位で分け（1 つ分を取得するたびに保存して Blob を手放す）、上限は `archive/lite-zip.ts` の `LITE_ZIP_MAX_BYTES`・`LITE_ZIP_MAX_ENTRIES` を使う（見積もりは STORE の大きさで、DEFLATE で縮んでも上限を超えない）。
 - `tabs/design-xlsx.ts` は `tabs/design-standalone.ts`（lite 版）からインポートされる。
 - `tabs/er.ts` の `crawl`/`buildHTML` は `tabs/er-standalone.ts`（lite 版）から使用される。`crawl` は深さごとに同時 `ER_DEFAULTS.concurrency`（4）アプリまで読み取り、結果は見つけた順に取り込む（`runOrdered`。並び・深さ・関連は直列のときと同じ。中止の件数は読み取りを終えたアプリを数える）。

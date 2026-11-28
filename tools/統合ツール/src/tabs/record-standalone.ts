@@ -668,10 +668,11 @@ async function writeChunksUnlessCancelled<T>(
   writeChunk: (chunk: T[], chunkIndex: number) => Promise<void>,
   onProgress: (done: number, total: number) => void,
   describeItem?: (index: number) => string,
-  describeField?: (path: string) => string
+  describeField?: (path: string) => string,
+  checkBeforeRetry?: string
 ): Promise<number> {
   try {
-    return await writeInChunks(items, label, writeChunk, onProgress, undefined, describeItem, describeField);
+    return await writeInChunks(items, label, writeChunk, onProgress, undefined, describeItem, describeField, checkBeforeRetry);
   } catch (error: any) {
     if (!isRunCancelledError(error)) throw error;
     const done = Math.max(0, Number(error?.partial?.done) || 0);
@@ -757,10 +758,11 @@ export async function runBatchProcessStandalone(opts, setStatus) {
     `App ${appId} のステータス更新`,
     async (batch) => {
       try {
+        // ステータスの更新は冪等ではない（確定したのに応答だけ届かなかった塊を送り直すと、進んだ revision と食い違って競合に見える）ので、自動では再送しない
         await apiPut(prefix, '/records/status.json', {
           app: appId,
           records: batch.map(({ id, revision }) => ({ id, revision, action, ...(assignee ? { assignee } : {}) }))
-        });
+        }, 1);
       } catch (error: any) {
         if (!isRevisionConflictError(error)) throw error;
         const reported = new Error(
@@ -771,7 +773,9 @@ export async function runBatchProcessStandalone(opts, setStatus) {
       }
     },
     (done, total) => setStatus(`ステータス更新中... ${done}/${total}件`),
-    index => `レコードID ${targets[index]?.id}`
+    index => `レコードID ${targets[index]?.id}`,
+    undefined,
+    '失敗チャンクのレコードのステータス'
   );
   const summary: RecordOperationSummary = { counts: { 件: ok }, written: ok, describe: countedSummary('のステータスを更新しました', { withApp: true }) };
   setStatus(summary.describe(summary.counts, [appId]), 'ok');

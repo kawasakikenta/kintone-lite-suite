@@ -394,6 +394,37 @@ function register(scenario, ctx) {
     ok('revision 競合の塊は更新せず原因を示し、再実行は未処理の 50 件だけ（二重に進めない）');
   });
 
+  scenario('status: 通信エラー（応答が届かない）のあと、塊を自動で送り直して「revision 競合」と取り違えない', async () => {
+    await reset({ records: statusRecords(150, '申請中'), currentApp: 101 });
+    await appInput().fill('101');
+    await pickAction('ステータスを一括更新');
+    const { query, action } = statusInputs();
+    await query.fill('ステータス in ("申請中")');
+    await action.fill('承認');
+    // サーバー側では最初の 100 件が確定したが、応答が届かなかった
+    await page.evaluate(() => { window.__k.failNext.push({ kind: 'network-after-commit', match: '/records/status.json' }); });
+    await confirmAndRun('ステータスを一括更新');
+    // 失敗を注入した 1 回は、注入の記録と kintone 側の確定の記録の 2 行になる。確定の記録だけを数える
+    const sent = statusWrites(await state()).filter(w => !w.injectedFailure);
+    if (sent.length > 1) {
+      finding('status-retry-conflict', 'major', '応答が届かなかったステータス更新の塊を自動で送り直し、確定済みなのに「revision 競合」と表示した', { puts: sent.length });
+    }
+    assert.equal(sent.length, 1, '応答が届かなかった塊を送り直さない（ステータスの更新は冪等ではない）');
+    const log = `${await statusText()}\n${await logText()}`;
+    assert.doesNotMatch(log, /revision 競合/, '自分の書き込みを「別の更新」と取り違えない');
+    assert.match(log, /kintone に書き込まれたかどうか確認できません。再実行する前に、kintone 画面で失敗チャンクのレコードのステータスを確認してください/);
+    assert.match(log, /確定済み: 0件 \/ 失敗チャンク: 1～100件目 \/ 未処理: 150件（全150件）/);
+    assert.match(await statusText(), /書き込まれたか未確認/);
+    assert.equal((await recordsOf(101)).filter(r => r['ステータス'].value === '承認済').length, 100, '確定した 100 件だけが進み、残りの 50 件は送っていない');
+    // 再実行: 条件にステータスを含めているので、確定した 100 件は対象に入らない
+    await button('対象・条件を変更').click();
+    await page.evaluate(() => { window.__k.writes.length = 0; });
+    await confirmAndRun('ステータスを一括更新');
+    assert.deepEqual(statusWrites(await state()).map(w => w.body.records.length), [50], '残り 50 件だけ送る');
+    assert.equal((await recordsOf(101)).filter(r => r['ステータス'].value === '承認済').length, 150);
+    ok('応答が届かなかった塊は送り直さず、確定したか確認できないことと確かめる場所を示す。条件つきの再実行は残りの 50 件だけ');
+  });
+
   scenario('status: 同名アクションは遷移元で区別でき、API で指定できない重複は選べない', async () => {
     await reset({ records: [...statusRecords(2, '申請中'), ...statusRecords(1, '承認済').map(r => ({ ...r, values: { ...r.values, code: 'S-9001' } }))], currentApp: 101 });
     await appInput().fill('101');

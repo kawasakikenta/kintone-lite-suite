@@ -1065,8 +1065,8 @@
     }
     throw apiErrorWithContext(lastErr, { method, prefix, path, payload: body });
   }
-  async function apiPut(prefix, path, body) {
-    return executeMutatingApiWithRetry("PUT", prefix, path, body);
+  async function apiPut(prefix, path, body, retries) {
+    return executeMutatingApiWithRetry("PUT", prefix, path, body, retries);
   }
   var REVISION_CONFLICT_CODES = /* @__PURE__ */ new Set(["GAIA_CO02"]);
   function isRevisionConflictError(error) {

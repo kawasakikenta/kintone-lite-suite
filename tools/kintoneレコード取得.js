@@ -1095,8 +1095,8 @@
     }
     throw apiErrorWithContext(lastErr, { method, prefix, path, payload: body });
   }
-  async function apiPut(prefix, path, body) {
-    return executeMutatingApiWithRetry("PUT", prefix, path, body);
+  async function apiPut(prefix, path, body, retries) {
+    return executeMutatingApiWithRetry("PUT", prefix, path, body, retries);
   }
   async function apiPost(prefix, path, body, retries) {
     return executeMutatingApiWithRetry("POST", prefix, path, body, retries);
@@ -3607,6 +3607,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     return cand;
   }
   var RECORD_ERROR_DETAIL_LIMIT = 10;
+  var DEFAULT_CHECK_BEFORE_RETRY = "対象アプリのレコード件数";
   function describeKintoneRecordErrors(error, offset = 0, describeItem = (index) => `${index + 1}件目`, describeField = (path) => path) {
     let errors = null;
     for (let current = error, depth = 0; current && typeof current === "object" && depth < 5; current = current.original, depth++) {
@@ -3639,12 +3640,12 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     return [
       `${label}が途中で失敗しました。`,
       `確定済み: ${failure.done}件 / 失敗チャンク: ${failure.from}～${failure.to}件目 / 未処理: ${remaining}件（全${failure.total}件）`,
-      failure.unconfirmed ? `失敗チャンク（${failure.from}～${failure.to}件目）は、応答が届かなかったため、kintone に書き込まれたかどうか確認できません。再実行する前に、kintone 画面で対象アプリのレコード件数を確認してください。` : "",
+      failure.unconfirmed ? `失敗チャンク（${failure.from}～${failure.to}件目）は、応答が届かなかったため、kintone に書き込まれたかどうか確認できません。再実行する前に、kintone 画面で${failure.checkBeforeRetry || DEFAULT_CHECK_BEFORE_RETRY}を確認してください。` : "",
       reason ? `原因: ${reason}` : "",
       ...details.length ? ["エラーの詳細（このチャンクは全体が取り消されています）:", ...details] : []
     ].filter(Boolean).join("\n");
   }
-  async function writeInChunks(items, label, writeChunk, onProgress, chunkSize = RECORDS_WRITE_CHUNK, describeItem, describeField) {
+  async function writeInChunks(items, label, writeChunk, onProgress, chunkSize = RECORDS_WRITE_CHUNK, describeItem, describeField, checkBeforeRetry) {
     const size = Math.max(1, Math.floor(chunkSize) || RECORDS_WRITE_CHUNK);
     let done = 0;
     for (let i = 0; i < items.length; i += size) {
@@ -3654,7 +3655,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       } catch (error) {
         const details = describeKintoneRecordErrors(error, i, describeItem, describeField);
         const unconfirmed = isUnconfirmedWriteFailure(error);
-        const wrapped = new Error(describeBatchWriteFailure(label, { done, from: i + 1, to: i + chunk.length, total: items.length, unconfirmed }, error, details));
+        const wrapped = new Error(describeBatchWriteFailure(label, { done, from: i + 1, to: i + chunk.length, total: items.length, unconfirmed, checkBeforeRetry }, error, details));
         wrapped.partial = { done, from: i + 1, to: i + chunk.length, total: items.length, ...unconfirmed ? { unconfirmed } : {} };
         wrapped.original = error;
         throw wrapped;
@@ -4722,9 +4723,9 @@ ${failures.join("\n")}`);
     setStatus(problems ? `事前検査: ${problems}アプリに問題があります。まだ書き込んでいません。` : `事前検査完了: ${plans.length}アプリ。まだ書き込んでいません。`, problems > 0 ? "warn" : "ok");
     return result;
   }
-  async function writeChunksUnlessCancelled(items, label, writeChunk, onProgress, describeItem, describeField) {
+  async function writeChunksUnlessCancelled(items, label, writeChunk, onProgress, describeItem, describeField, checkBeforeRetry) {
     try {
-      return await writeInChunks(items, label, writeChunk, onProgress, void 0, describeItem, describeField);
+      return await writeInChunks(items, label, writeChunk, onProgress, void 0, describeItem, describeField, checkBeforeRetry);
     } catch (error) {
       if (!isRunCancelledError(error)) throw error;
       const done = Math.max(0, Number(error?.partial?.done) || 0);
@@ -4801,7 +4802,7 @@ ${[...problemBlocks, ...omitted(problems.length).map((line) => `${line}の詳細
           await apiPut(prefix, "/records/status.json", {
             app: appId,
             records: batch.map(({ id, revision }) => ({ id, revision, action, ...assignee ? { assignee } : {} }))
-          });
+          }, 1);
         } catch (error) {
           if (!isRevisionConflictError(error)) throw error;
           const reported = new Error(
@@ -4813,7 +4814,9 @@ ${error?.message || String(error)}`
         }
       },
       (done, total) => setStatus(`ステータス更新中... ${done}/${total}件`),
-      (index) => `レコードID ${targets[index]?.id}`
+      (index) => `レコードID ${targets[index]?.id}`,
+      void 0,
+      "失敗チャンクのレコードのステータス"
     );
     const summary = { counts: { 件: ok }, written: ok, describe: countedSummary("のステータスを更新しました", { withApp: true }) };
     setStatus(summary.describe(summary.counts, [appId]), "ok");
