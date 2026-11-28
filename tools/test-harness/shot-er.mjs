@@ -129,7 +129,7 @@ if (mode === 'save-reload') {
       csvHasManualRel: csvRel.includes('API連携'),
       mdHasManualField: md.includes('エラーメッセージ'),
       refKindStillHidden: refBtnOff,
-      overviewStillHidden: document.getElementById('overview').classList.contains('hidden'),
+      overviewClosed: document.getElementById('overview').classList.contains('collapsed'),
     };
   });
   console.log('reload checks:', JSON.stringify(checks));

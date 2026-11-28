@@ -9,8 +9,12 @@
 //   - 全レイアウト（Dagre・ツリー・フォース・同心円・グリッド・円形）× 全表示密度で、アプリのカードが重ならないこと
 //     （縮小表示と詳細表示の両方）、画面からはみ出さないこと、スクリーンショット。
 //   - 検索・強調・シンプル表示・詳細パネル・関連の詳細（コピーするフィールド・表示フィールド・絞り込み条件）。
+//   - 表示範囲（起点まわりで開く・全体／深さ 2／アプリのまわりへの切り替え）、同じアプリ間の線のまとめと線の名前。
+//   - 表のビュー（アプリ一覧・関連一覧）、印刷の資料、配色（OS の設定・切り替え・コントラスト）。
+//   - 以前の版で保存した編集状態（er-edit-state-v1.json・このリポジトリの以前の版で保存した er-edit-state-v1-lite.json）を
+//     新しい版の図で開き直したときの復元と、保存し直し。
 //   - 出力（PNG・Mermaid・draw.io・PlantUML・SQL DDL・JSON・Markdown・CSV 3 種）の中身。
-//   - 320〜1440px のはみ出し、キーボード操作。
+//   - 320〜1440px のはみ出し（スマホ幅の表・メニュー・引き出し）、キーボード操作。
 //
 // 画面と出力は .iter-shots/er-explore/ に保存する。失敗した検査は最後に一覧し、1 件でもあれば失敗にする。
 const assert = require('node:assert/strict');
@@ -197,8 +201,8 @@ async function generateHtml(browser, fixture, spec) {
 // ---------------------------------------------------------------------------
 // 生成した図を開く（file:// 以外の通信をすべて遮断）
 // ---------------------------------------------------------------------------
-async function openViewer(browser, file, { width = 1440, height = 900, hash = '' } = {}) {
-  const context = await browser.newContext({ viewport: { width, height }, acceptDownloads: true });
+async function openViewer(browser, file, { width = 1440, height = 900, hash = '', colorScheme = 'light' } = {}) {
+  const context = await browser.newContext({ viewport: { width, height }, acceptDownloads: true, colorScheme });
   const page = await context.newPage();
   const errors = [];
   const blocked = [];
@@ -214,6 +218,31 @@ async function openViewer(browser, file, { width = 1440, height = 900, hash = ''
   await page.waitForTimeout(1500);
   return { context, page, errors, blocked };
 }
+
+// 生成した HTML に、編集済みHTMLと同じ形で編集状態（window.__ER_EDIT_STATE__）を差し込んだ複製を作る。
+// 以前の版で保存した編集状態（er-edit-state-v1.json）を、新しい版の図で開き直すときに使う
+function withEditState(htmlFile, state, outFile) {
+  const html = fs.readFileSync(htmlFile, 'utf8');
+  const json = JSON.stringify(state).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026');
+  const marker = '<script id="er-main" type="text/plain">';
+  assert.ok(html.includes(marker), '図の本体スクリプトが見つかりません');
+  fs.writeFileSync(outFile, html.replace(marker, () => `<script id="er-edit-state">window.__ER_EDIT_STATE__=${json};</script>${marker}`), 'utf8');
+  return outFile;
+}
+
+// WCAG のコントラスト比（文字色と、透明でない一番近い背景色）
+const measureContrast = (page, selectors) => page.evaluate((list) => {
+  const parse = (c) => { const m = String(c).match(/rgba?\(([^)]+)\)/); if (!m) return null; const p = m[1].split(',').map((v) => parseFloat(v)); return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 }; };
+  const lum = ({ r, g, b }) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+  const bgOf = (el) => { for (let e = el; e; e = e.parentElement) { const c = parse(getComputedStyle(e).backgroundColor); if (c && c.a > 0.9) return c; } return { r: 255, g: 255, b: 255 }; };
+  return list.map((selector) => {
+    const el = document.querySelector(selector);
+    if (!el) return { selector, missing: true };
+    const fg = parse(getComputedStyle(el).color);
+    const a = lum(fg), b = lum(bgOf(el));
+    return { selector, ratio: Math.round(((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)) * 100) / 100 };
+  });
+}, selectors);
 
 const measureOverlaps = (page) => page.evaluate(() => {
   const nodes = cy.nodes().filter((node) => node.visible() && !node.hasClass('note-node'));
@@ -485,6 +514,389 @@ async function main() {
       await viewer.context.close();
     }
 
+    console.log('表示範囲（起点まわり / 全体）と線のまとめ');
+    if (shouldRun('scope')) {
+      await check('scope: 案件管理から辿った図は、起点まわり（起点と直接の関連先）で開き、カードの文字が読める倍率になる', async () => {
+        const viewer = await openViewer(browser, generated.business.file);
+        const { page } = viewer;
+        const state = await page.evaluate(() => {
+          const visible = cy.nodes().filter((n) => n.visible() && !n.hasClass('note-node'));
+          const neighbours = new Set(['a113']);
+          cy.getElementById('a113').connectedEdges().forEach((e) => { neighbours.add(e.source().id()); neighbours.add(e.target().id()); });
+          return {
+            scope: JSON.parse(JSON.stringify(viewScope)),
+            visible: visible.map((n) => n.id()).sort(),
+            expected: [...neighbours].sort(),
+            total: cy.nodes().not('.note-node').length,
+            zoom: cy.zoom(),
+            bar: document.getElementById('scope-bar').innerText.replace(/\s+/g, ' '),
+            startMarked: cy.nodes('[?isStart]').map((n) => n.id()),
+            labels: cy.nodes().map((n) => String(n.data('label') || ''))
+          };
+        });
+        await page.screenshot({ path: path.join(OUT, 'scope-start.png'), animations: 'disabled' });
+        const overlaps = await measureOverlaps(page);
+        await viewer.context.close();
+        assert.deepEqual(state.scope, { mode: 'around', roots: ['113'], depth: 1 });
+        assert.deepEqual(state.visible, state.expected, '起点と直接の関連先だけを表示していません');
+        assert.ok(state.visible.length < state.total, '起点まわりでアプリが減っていません');
+        assert.ok(state.zoom >= 0.6, `開いた直後の倍率が ${Math.round(state.zoom * 100)}% です（項目まで読める詳細カードで開くはず）`);
+        assert.match(state.bar, /起点まわり/);
+        assert.match(state.bar, /全体を表示/);
+        assert.deepEqual(state.startMarked, ['a113'], '起点の目印は起点アプリだけに付く');
+        assert.ok(!state.labels.some((label) => label.includes('★')), '意味のない「★」が残っています');
+        assert.equal(overlaps.overlaps, 0, `重なり ${JSON.stringify(overlaps.sample)}`);
+        return `${state.visible.length}/${state.total} アプリ・${Math.round(state.zoom * 100)}%`;
+      });
+      await check('scope: 全体・深さ 2・選んだアプリのまわりへ切り替えられ、戻ると前の位置に戻る', async () => {
+        const viewer = await openViewer(browser, generated.business.file);
+        const { page } = viewer;
+        const before = await page.evaluate(() => cy.getElementById('a113').position());
+        await page.locator('#scope-all-btn').click();
+        await settleLayout(page);
+        const all = await page.evaluate(() => ({ mode: viewScope.mode, visible: cy.nodes(':visible').length, total: cy.nodes().length }));
+        const allOverlaps = await measureOverlaps(page);
+        await page.locator('#scope-start-btn').click();
+        await settleLayout(page);
+        const back = await page.evaluate(() => ({ mode: viewScope.mode, pos: cy.getElementById('a113').position() }));
+        await page.locator('#scope-depth-2').click();
+        await settleLayout(page);
+        const depth2 = await page.evaluate(() => ({ depth: viewScope.depth, visible: cy.nodes(':visible').length }));
+        // アプリをダブルクリックすると、そのアプリのまわりを表示する
+        await page.evaluate(() => cy.getElementById('a101').emit('dbltap'));
+        await settleLayout(page);
+        const around = await page.evaluate(() => ({ scope: JSON.parse(JSON.stringify(viewScope)), bar: document.getElementById('scope-bar').innerText.replace(/\s+/g, ' ') }));
+        const aroundOverlaps = await measureOverlaps(page);
+        const problems = [...viewer.errors, ...viewer.blocked];
+        await viewer.context.close();
+        assert.deepEqual(problems, []);
+        assert.equal(all.mode, 'all');
+        assert.equal(all.visible, all.total, '全体を表示しても隠れたアプリがあります');
+        assert.equal(allOverlaps.overlaps, 0, `全体で重なり ${JSON.stringify(allOverlaps.sample)}`);
+        assert.equal(back.mode, 'around');
+        assert.deepEqual(back.pos, before, '起点まわりに戻ったとき、前の位置に戻っていません');
+        assert.equal(depth2.depth, 2);
+        assert.ok(depth2.visible > 9, `深さ 2 で ${depth2.visible} アプリ`);
+        assert.deepEqual(around.scope.roots, ['101']);
+        assert.match(around.bar, /顧客マスタ/);
+        assert.equal(aroundOverlaps.overlaps, 0, `重なり ${JSON.stringify(aroundOverlaps.sample)}`);
+        return `全体 ${all.total} / 深さ 2 ${depth2.visible}`;
+      });
+      await check('scope: 図の外のアプリを左の一覧で選ぶと、そのアプリのまわりへ移って詳細を出す', async () => {
+        const viewer = await openViewer(browser, generated.business.file);
+        const { page } = viewer;
+        const outside = await page.evaluate(() => cy.nodes('.scope-out').filter((n) => n.data('appId') != null).first().data('appId'));
+        assert.ok(outside, '図の外のアプリがありません');
+        await page.locator(`#app-list .app-list-item[data-app="${outside}"]`).click();
+        await settleLayout(page);
+        const state = await page.evaluate((id) => ({ visible: cy.getElementById(`a${id}`).visible(), title: document.getElementById('detail-title').textContent, roots: viewScope.roots }), outside);
+        await viewer.context.close();
+        assert.equal(state.visible, true);
+        assert.deepEqual(state.roots, [String(outside)]);
+        assert.ok(state.title.length > 0);
+      });
+      await check('scope: 全アプリを起点にした図は全体で開き、同じアプリ間の線を 1 本にまとめ、線の名前は選んだ線だけに出す', async () => {
+        const viewer = await openViewer(browser, generated.all.file);
+        const { page } = viewer;
+        const semantic = await page.evaluate(() => ({ semantic: semanticZoomActive, zoomMode: document.getElementById('zoom-mode').textContent }));
+        await page.screenshot({ path: path.join(OUT, 'scope-all.png'), animations: 'disabled' });
+        // 線の名前は、文字が読める倍率で確かめる（縮小中は名前を出さない）
+        await page.evaluate(() => { cy.zoom({ level: 1, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } }); });
+        await page.waitForTimeout(200);
+        const state = await page.evaluate(() => {
+          const bundled = cy.edges('[bundleCount > 1]');
+          const shown = (e) => Number(e.style('text-opacity'));
+          const edge = cy.edges(':visible').first();
+          const before = shown(edge);
+          edge.select();
+          const selected = shown(edge);
+          edge.unselect();
+          return {
+            mode: viewScope.mode,
+            bundled: bundled.length,
+            collapsed: cy.edges('.edge-collapsed').length,
+            maxCount: Math.max(...bundled.map((e) => e.data('bundleCount'))),
+            labelBefore: before,
+            labelSelected: selected,
+            startMarked: cy.nodes('[?isStart]').length
+          };
+        });
+        await viewer.context.close();
+        assert.equal(state.mode, 'all');
+        assert.ok(state.bundled > 0 && state.collapsed > 0, '同じアプリの組の線がまとまっていません');
+        assert.equal(state.labelBefore, 0, '選んでいない線にも名前が出ています');
+        assert.equal(state.labelSelected, 1, '選んだ線に名前が出ません');
+        assert.equal(state.startMarked, 0, '全アプリが起点の図で、起点の目印が付いています');
+        assert.equal(semantic.semantic, true, '縮小時は、アプリ名を大きく出す概要のカードにする');
+        assert.match(semantic.zoomMode, /概要|構造/);
+        return `まとめた線 ${state.bundled} 本（最大 ${state.maxCount} 本分）`;
+      });
+    }
+
+    console.log('表のビュー（アプリ一覧・関連一覧）');
+    if (shouldRun('table')) {
+      await check('table: アプリ一覧を並べ替え・絞り込みでき、行から図のそのアプリへ移れる', async () => {
+        const viewer = await openViewer(browser, generated.all.file);
+        const { page } = viewer;
+        await page.locator('#tab-apps').click();
+        const rows = () => page.locator('#apps-table tbody tr').count();
+        const total = await rows();
+        // 「参照される」で降順に並べ替える（2 回押す）
+        const header = page.locator('#apps-table th').filter({ hasText: '参照される' }).locator('button');
+        await header.click();
+        await page.locator('#apps-table th').filter({ hasText: '参照される' }).locator('button').click();
+        const sortState = await page.evaluate(() => ({
+          aria: document.querySelector('#apps-table th[aria-sort="descending"]')?.textContent || '',
+          values: [...document.querySelectorAll('#apps-table tbody tr')].map((tr) => Number(tr.querySelector('td[data-label="参照される"]').textContent))
+        }));
+        await page.screenshot({ path: path.join(OUT, 'table-apps.png'), animations: 'disabled' });
+        // 構造チェックで絞り込む（循環候補）
+        await page.locator('#apps-checks .check-chip').filter({ hasText: '循環候補' }).click();
+        const cycleRows = await rows();
+        const cycleApps = await page.evaluate(() => new Set(ER_ANALYSIS.cycles.flatMap((c) => c.appIds.map(String))).size);
+        await page.locator('#apps-checks .check-chip').filter({ hasText: '循環候補' }).click();
+        // 取得失敗の理由が表に出る
+        const failedText = await page.locator('#apps-table tbody tr').filter({ hasText: '外部連携ログ' }).innerText();
+        // 検索は表にも効く
+        await page.fill('#search-box', '顧客');
+        await page.waitForTimeout(300);
+        const searched = await rows();
+        const searchedCount = Number((await page.locator('#search-meta').innerText()).match(/(\d+)件/)[1]);
+        await page.fill('#search-box', '');
+        await page.waitForTimeout(300);
+        // 行の「図で見る」で図のそのアプリへ
+        await page.locator('#apps-table tbody tr').filter({ hasText: '案件管理' }).first().getByRole('button', { name: /図で見る/ }).click();
+        await page.waitForTimeout(900);
+        const moved = await page.evaluate(() => ({ tab: document.querySelector('[role="tab"][aria-selected="true"]').id, title: document.getElementById('detail-title').textContent, tableHidden: document.getElementById('view-apps').hidden }));
+        const problems = [...viewer.errors, ...viewer.blocked];
+        await viewer.context.close();
+        assert.deepEqual(problems, []);
+        assert.equal(total, 41);
+        assert.match(sortState.aria, /参照される/);
+        assert.deepEqual(sortState.values, [...sortState.values].sort((a, b) => b - a), '降順に並んでいません');
+        assert.equal(cycleRows, cycleApps, `循環候補で ${cycleRows} 行（循環に入るアプリは ${cycleApps}）`);
+        assert.match(failedText, /取得失敗/);
+        assert.match(failedText, /権限/);
+        assert.equal(searched, searchedCount, `検索「顧客」で表は ${searched} 行、検索の件数は ${searchedCount}`);
+        assert.deepEqual(moved, { tab: 'tab-diagram', title: '案件管理', tableHidden: true });
+        return `${total} 行 / 循環候補 ${cycleRows} 行 / 検索 ${searched} 行`;
+      });
+      await check('table: 関連一覧は参照元・参照先の項目とコピー・絞り込みを示し、種類で絞り込め、行から図のその線へ移れる', async () => {
+        const viewer = await openViewer(browser, generated.all.file);
+        const { page } = viewer;
+        await page.locator('#tab-relations').click();
+        const counts = await page.evaluate(() => {
+          const all = APPS.flatMap((a) => a.relations);
+          return { total: all.length, lookup: all.filter((r) => r.kind === 'LOOKUP').length };
+        });
+        const total = await page.locator('#relations-table tbody tr').count();
+        const lookupRow = await page.locator('#relations-table tbody tr').filter({ hasText: '参照先 業種名 → 顧客業種' }).first().innerText();
+        const refRow = await page.locator('#relations-table tbody tr').filter({ hasText: '見積番号 / 見積日 / 見積金額' }).first().innerText();
+        const filterRow = await page.locator('#relations-table tbody tr').filter({ hasText: 'ステータス != "完了"' }).first().innerText();
+        await page.screenshot({ path: path.join(OUT, 'table-relations.png'), animations: 'disabled' });
+        await page.locator('#relations-kinds .check-chip').filter({ hasText: 'ルックアップ' }).click();
+        const withoutLookup = await page.locator('#relations-table tbody tr').count();
+        await page.locator('#relations-kinds .check-chip').filter({ hasText: 'ルックアップ' }).click();
+        await page.selectOption('#relations-state', 'filtered');
+        const filtered = await page.locator('#relations-table tbody tr').count();
+        await page.selectOption('#relations-state', '');
+        // 「図で見る」で、その線（まとめた線なら代表の線）を選び、詳細を出す
+        const edgeId = 'e_113_0';
+        await page.locator(`#relations-table button[data-edge="${edgeId}"]`).click();
+        await page.waitForTimeout(1000);
+        const moved = await page.evaluate((id) => {
+          const edge = cy.getElementById(id);
+          const rep = bundleRepresentative(edge);
+          return { selected: rep.selected(), visible: rep.visible(), detail: document.getElementById('detail-title').textContent, view: activeView };
+        }, edgeId);
+        const problems = [...viewer.errors, ...viewer.blocked];
+        await viewer.context.close();
+        assert.deepEqual(problems, []);
+        assert.equal(total, counts.total);
+        assert.match(lookupRow, /ルックアップ/);
+        assert.match(lookupRow, /顧客マスタ/);
+        assert.match(refRow, /関連レコード一覧/);
+        assert.match(refRow, /一覧「見積書一覧」/);
+        assert.match(filterRow, /関連レコード一覧/);
+        assert.equal(withoutLookup, counts.total - counts.lookup);
+        assert.ok(filtered > 0 && filtered < total, `絞り込み条件のある関連 ${filtered} 行`);
+        assert.deepEqual(moved, { selected: true, visible: true, detail: '案件管理 → 顧客マスタ', view: 'diagram' });
+        return `${total} 行 / ルックアップを除くと ${withoutLookup} 行`;
+      });
+    }
+
+    console.log('印刷・配色');
+    if (shouldRun('print') || shouldRun('theme')) {
+      await check('print: 印刷は見出し・図（表示中の範囲）・アプリ一覧・関連一覧の資料になり、画面の部品を出さない', async () => {
+        const viewer = await openViewer(browser, generated.business.file);
+        const { page } = viewer;
+        const imagesBefore = await page.evaluate(() => document.images.length);
+        await page.evaluate(() => preparePrint());
+        await page.emulateMedia({ media: 'print' });
+        await page.waitForTimeout(400);
+        const state = await page.evaluate(() => {
+          const doc = document.getElementById('print-doc');
+          const img = doc.querySelector('img');
+          const shown = (sel) => { const el = document.querySelector(sel); return !!el && getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().height > 0; };
+          return {
+            doc: shown('#print-doc'),
+            chrome: ['#topbar', '#app-shell', '#cy'].filter(shown),
+            heading: doc.querySelector('h1')?.textContent || '',
+            meta: doc.querySelector('.print-meta')?.textContent || '',
+            image: img ? { w: img.naturalWidth, h: img.naturalHeight } : null,
+            appRows: doc.querySelectorAll('table')[0]?.querySelectorAll('tbody tr').length || 0,
+            relRows: doc.querySelectorAll('table')[1]?.querySelectorAll('tbody tr').length || 0,
+            apps: APPS.length,
+            rels: APPS.reduce((s, a) => s + a.relations.length, 0)
+          };
+        });
+        await page.screenshot({ path: path.join(OUT, 'print-preview.png'), fullPage: true, animations: 'disabled' });
+        await page.pdf({ path: path.join(OUT, 'print.pdf'), format: 'A4', landscape: true, printBackground: true });
+        await page.emulateMedia({ media: 'screen' });
+        await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+        await page.waitForTimeout(100);
+        const imagesAfter = await page.evaluate(() => document.images.length);
+        await viewer.context.close();
+        assert.equal(imagesBefore, 0, '開いた時点で画像の要素があります');
+        assert.equal(state.doc, true, '印刷で資料が出ません');
+        assert.deepEqual(state.chrome, [], `印刷に画面の部品が出ています: ${state.chrome}`);
+        assert.equal(state.heading, 'kintone ER図');
+        for (const word of ['対象（起点）', '取得日時', '接続先', '取得状態', '図の表示範囲', '起点まわり']) assert.ok(state.meta.includes(word), `見出しに「${word}」がありません`);
+        assert.ok(state.image && state.image.w > 300, `図の画像 ${JSON.stringify(state.image)}`);
+        assert.equal(state.appRows, state.apps);
+        assert.equal(state.relRows, state.rels);
+        assert.equal(imagesAfter, 0, '印刷のあとも画像が残っています');
+        return `アプリ ${state.appRows} 行・関連 ${state.relRows} 行・図 ${state.image.w}x${state.image.h}`;
+      });
+      await check('theme: 開いたときは OS の配色に従い、切り替えられ、文字のコントラストが AA（4.5:1）以上', async () => {
+        const results = {};
+        const selectors = ['.brand h1', '.brand-meta', '#search-box', '.view-tab[aria-selected="false"]', '.view-tab[aria-selected="true"]', '#scope-bar .scope-label', '#scope-bar .scope-label small', '.ali-name', '.ali-sub', '.sidebar-checks .check-facts', '#legend .legend-toggle', '#zoom-value', '.tb-menu-btn'];
+        for (const scheme of ['light', 'dark']) {
+          const viewer = await openViewer(browser, generated.business.file, { colorScheme: scheme });
+          const { page } = viewer;
+          const theme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
+          const contrast = await measureContrast(page, selectors);
+          const cardText = await page.evaluate(() => { const p = currentPalette(); return { text: p.text, surface: p.surface }; });
+          await page.screenshot({ path: path.join(OUT, `theme-${scheme}.png`), animations: 'disabled' });
+          await page.locator('#theme-btn').click();
+          const toggled = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
+          await viewer.context.close();
+          results[scheme] = { theme, toggled, low: contrast.filter((c) => c.missing || c.ratio < 4.5), cardText };
+        }
+        assert.equal(results.light.theme, 'light');
+        assert.equal(results.light.toggled, 'dark');
+        assert.equal(results.dark.theme, 'dark');
+        assert.equal(results.dark.toggled, 'light');
+        assert.notEqual(results.light.cardText.surface, results.dark.cardText.surface, 'カードの色が配色に合わせて変わりません');
+        assert.deepEqual(results.light.low, [], `明るい配色でコントラスト不足: ${JSON.stringify(results.light.low)}`);
+        assert.deepEqual(results.dark.low, [], `暗い配色でコントラスト不足: ${JSON.stringify(results.dark.low)}`);
+      });
+    }
+
+    console.log('以前の版で保存した編集済みHTMLの互換');
+    if (shouldRun('compat')) {
+      // 以前の版（stateVersion なし）で保存した編集状態。どちらも同じ編集（手動の追加・名前と色・メモ・位置・削除・固定・隠した項目・アクションの線の非表示）をしたもの。
+      //   er-edit-state-v1.json: kintone-settings-tools の以前の版で保存（同じ形式）
+      //   er-edit-state-v1-lite.json: このリポジトリの以前の版（9691a4a の tools/ER図.js）の図を操作して保存
+      const legacySources = [
+        { name: 'settings-tools の以前の版', key: 'v1', state: JSON.parse(fs.readFileSync(path.join(__dirname, 'er-edit-state-v1.json'), 'utf8')) },
+        { name: 'lite-suite の以前の版', key: 'v1-lite', state: JSON.parse(fs.readFileSync(path.join(__dirname, 'er-edit-state-v1-lite.json'), 'utf8')) }
+      ];
+      const inspectEdits = (page) => page.evaluate(() => {
+        const app113 = findApp(113);
+        const custom = findApp(-1);
+        const note = cy.getElementById('note_1');
+        const a113 = cy.getElementById('a113');
+        return {
+          customApp: custom ? { name: custom.name, fields: allFieldsForApp(custom).map((f) => f.label) } : null,
+          customNode: cy.getElementById('a-1').length === 1,
+          customField: allFieldsForApp(app113).some((f) => f.label === '承認ステータス' && f.isCustom),
+          customRelation: app113.relations.some((r) => r.isCustom && r.toApp === -1 && r.fromLabel === '会計連携' && r.kind === 'ACTION'),
+          note: note.length ? note.data('label') : null,
+          appName: findApp(101).name,
+          appColor: cy.getElementById('a101').data('accent'),
+          fieldLabel: allFieldsForApp(app113).find((f) => f.code === '案件名')?.label,
+          relationLabel: app113.relations[0].fromLabel,
+          hiddenField: hiddenFieldKeys.has('113::顧客'),
+          removedEdge: cy.getElementById('e_113_1').hasClass('rel-manual-hidden'),
+          removedApp: cy.getElementById('a110').hasClass('app-manual-hidden'),
+          pinned: a113.locked() && a113.hasClass('pinned-node'),
+          position: a113.position(),
+          actionHidden: !document.getElementById('rel-action-btn').classList.contains('active'),
+          scope: viewScope.mode,
+          labelsAlways: relationLabelVisible,
+          theme: document.documentElement.getAttribute('data-theme')
+        };
+      });
+      const expected = {
+        customApp: { name: '外部会計システム', fields: ['会計コード', '金額', 'メモ'] },
+        customNode: true,
+        customField: true,
+        customRelation: true,
+        note: '受注フローの中心',
+        appName: '顧客マスタ（編集済み）',
+        appColor: '#f472b6',
+        fieldLabel: '案件名（編集）',
+        relationLabel: '顧客参照（編集）',
+        hiddenField: true,
+        removedEdge: true,
+        removedApp: true,
+        pinned: true,
+        position: { x: 123.5, y: 456.25 }
+      };
+      for (const legacy of legacySources) {
+        await check(`compat: ${legacy.name}で保存した編集済みHTMLの編集（追加・名前・メモ・位置・削除・固定・非表示）を新しい版で復元する`, async () => {
+          const file = withEditState(generated.business.file, legacy.state, path.join(OUT, `compat-${legacy.key}.html`));
+          const viewer = await openViewer(browser, file);
+          const state = await inspectEdits(viewer.page);
+          await viewer.page.screenshot({ path: path.join(OUT, `compat-${legacy.key}.png`), animations: 'disabled' });
+          const problems = [...viewer.errors, ...viewer.blocked];
+          await viewer.context.close();
+          assert.deepEqual(problems, []);
+          const { actionHidden, scope, labelsAlways, theme, ...edits } = state;
+          assert.deepEqual(edits, expected);
+          assert.equal(actionHidden, true, '保存時に隠したアクションの線が戻っています');
+          // 以前の版は全体の図だけを保存していたため、全体で開く。線の名前は今の既定（選んだ線だけ）
+          assert.equal(scope, 'all');
+          assert.equal(labelsAlways, false);
+          // 以前の版が保存した配色（暗い配色の "d"）は使わず、OS の設定（ここでは明るい配色）に従う
+          assert.equal(legacy.state.view.theme, 'd');
+          assert.equal(theme, 'light');
+        });
+        await check(`compat: ${legacy.name}の編集状態を新しい版で保存し直した編集済みHTMLは、編集と表示範囲を保ったまま開き直せる`, async () => {
+          const file = withEditState(generated.business.file, legacy.state, path.join(OUT, `compat-${legacy.key}.html`));
+          const viewer = await openViewer(browser, file);
+          const { page } = viewer;
+          await page.evaluate(() => showAroundApp(101));
+          await settleLayout(page);
+          const before = await page.evaluate(() => ({ scope: JSON.parse(JSON.stringify(viewScope)), pos: cy.getElementById('a101').position() }));
+          const downloadPromise = page.waitForEvent('download', { timeout: 60000 });
+          await page.evaluate(() => window.exportEditedHtml());
+          const download = await downloadPromise;
+          const saved = path.join(OUT, `compat-${legacy.key}-v2-saved.html`);
+          await download.saveAs(saved);
+          await viewer.context.close();
+          const html = fs.readFileSync(saved, 'utf8');
+          const reopened = await openViewer(browser, saved);
+          const state = await inspectEdits(reopened.page);
+          const after = await reopened.page.evaluate(() => ({ scope: JSON.parse(JSON.stringify(viewScope)), pos: cy.getElementById('a101').position(), tables: document.querySelectorAll('#apps-table tr').length, theme: document.documentElement.getAttribute('data-theme') }));
+          const problems = [...reopened.errors, ...reopened.blocked];
+          await reopened.context.close();
+          assert.deepEqual(problems, []);
+          const { actionHidden, scope, labelsAlways, theme, ...edits } = state;
+          assert.deepEqual(edits, expected);
+          assert.equal(actionHidden, true);
+          assert.deepEqual(after.scope, before.scope, '表示範囲が戻りません');
+          assert.deepEqual(after.pos, before.pos, '位置が戻りません');
+          assert.match(html, /"stateVersion":2/);
+          assert.ok(!/"theme":/.test(html.match(/window\.__ER_EDIT_STATE__=(.*?);<\/script>/)[1]), '配色を保存しています');
+          assert.ok(!/<html[^>]*data-theme=/.test(html), '開いたときの配色を HTML に残しています');
+          assert.equal(after.tables, 0, '表のビューの中身を保存しています');
+          assert.equal(after.theme, 'light');
+        });
+      }
+    }
+
     console.log('出力（全アプリを起点にした図 41 アプリ）');
     if (shouldRun('output')) {
       const viewer = await openViewer(browser, generated.all.file);
@@ -634,8 +1046,52 @@ async function main() {
             return { overflow, topbar: rect('#topbar'), zoom: rect('#zoom-ctrl'), legend: rect('#legend'), viewport: { width: innerWidth, height: innerHeight } };
           });
           await page.screenshot({ path: path.join(OUT, `responsive-${width}.png`), animations: 'disabled' });
+          // スマホ幅: 表は 1 行を 1 枚のカードにして読め、メニュー・表示設定・アプリ一覧の引き出しが画面に収まる
+          let phone = null;
+          if (width <= 390) {
+            await page.locator('#tab-apps').click();
+            await page.waitForTimeout(200);
+            const table = await page.evaluate(() => {
+              const td = document.querySelector('#apps-table tbody td[data-label="アプリ名"]');
+              const rect = document.querySelector('#apps-table').getBoundingClientRect();
+              return {
+                label: td ? getComputedStyle(td, '::before').content : '',
+                overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth + 2,
+                tableFits: rect.right <= innerWidth + 1 && rect.left >= -1,
+                headerHidden: document.querySelector('#apps-table thead').getBoundingClientRect().height <= 1
+              };
+            });
+            await page.screenshot({ path: path.join(OUT, `responsive-${width}-apps.png`), animations: 'disabled' });
+            await page.locator('#tab-diagram').click();
+            await page.locator('#mobile-menu-btn').click();
+            await page.locator('#settings-btn').click();
+            await page.waitForTimeout(200);
+            const menu = await page.evaluate(() => {
+              const panel = document.querySelector('#settings-menu .tb-menu-panel').getBoundingClientRect();
+              const topbar = document.getElementById('topbar').getBoundingClientRect();
+              return { inside: panel.left >= -1 && panel.right <= innerWidth + 1 && panel.bottom <= innerHeight + 1 && panel.height > 0, belowTopbar: panel.top >= topbar.bottom - 1 };
+            });
+            await page.screenshot({ path: path.join(OUT, `responsive-${width}-settings.png`), animations: 'disabled' });
+            await page.keyboard.press('Escape');
+            await page.locator('#sidebar-toggle-btn').click();
+            await page.waitForTimeout(400);
+            const drawerOpen = await page.evaluate(() => { const r = document.getElementById('sidebar').getBoundingClientRect(); return r.left >= -1 && r.right <= innerWidth + 1 && getComputedStyle(document.getElementById('sidebar')).visibility === 'visible'; });
+            await page.keyboard.press('Escape');
+            await page.waitForTimeout(400);
+            const drawerClosed = await page.evaluate(() => getComputedStyle(document.getElementById('sidebar')).visibility === 'hidden');
+            phone = { table, menu, drawerOpen, drawerClosed };
+          }
           const problems = [...viewer.errors, ...viewer.blocked];
           await viewer.context.close();
+          if (phone) {
+            assert.match(phone.table.label, /アプリ名/, '表の値の前に列名が出ていません');
+            assert.equal(phone.table.overflow, false, '表のビューが横にはみ出しています');
+            assert.equal(phone.table.tableFits, true, '表が画面幅に収まっていません');
+            assert.equal(phone.table.headerHidden, true);
+            assert.deepEqual(phone.menu, { inside: true, belowTopbar: true }, '表示設定が画面からはみ出すか、操作バーに重なっています');
+            assert.equal(phone.drawerOpen, true, 'アプリ一覧の引き出しが開きません');
+            assert.equal(phone.drawerClosed, true, 'Esc でアプリ一覧の引き出しが閉じません');
+          }
           assert.deepEqual(problems, []);
           assert.equal(state.overflow, false, '横にはみ出しています');
           assert.ok(state.topbar.height <= state.viewport.height * 0.4, `操作バーが画面の 4 割を超えています (${Math.round(state.topbar.height)}px)`);
