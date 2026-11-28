@@ -47,7 +47,8 @@ import { decodeRow, isSemanticSection } from './path-decoder.js';
 import {
   isSensitiveSameDiffRow,
   redactSensitiveSameDiffRows,
-  SENSITIVE_SAME_VALUE_REDACTION
+  SENSITIVE_SAME_VALUE_REDACTION,
+  sha256Base64
 } from './export-safety.js';
 import { buildDesignSnapshot } from '../design/snapshot.js';
 
@@ -7624,10 +7625,24 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
 })();
 `;
 
+  // 自己完結のレポートなので、外部への通信・読み込み・フォーム送信・<base> をすべて禁じる。
+  // スクリプトは埋め込んだ 1 つだけを内容のハッシュで許可する（設定の文字列から HTML が差し込まれても、onerror などは動かない）。
+  const contentSecurityPolicy = [
+    "default-src 'none'",
+    `script-src 'sha256-${sha256Base64(logicScript)}'`,
+    "style-src 'unsafe-inline'",
+    "connect-src 'none'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-src 'none'"
+  ].join('; ');
+
   return `<!doctype html>
 <html lang="ja">
 <head>
   <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="${contentSecurityPolicy}">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>kintone差分レポート</title>
   <style>

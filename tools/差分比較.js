@@ -5992,114 +5992,192 @@
     "pluginSettings"
   ]);
   var SENSITIVE_SAME_VALUE_REDACTION = "（同一の機密値は安全のため省略しました）";
+  var SHA256_ROUND_CONSTANTS = new Int32Array([
+    1116352408,
+    1899447441,
+    3049323471,
+    3921009573,
+    961987163,
+    1508970993,
+    2453635748,
+    2870763221,
+    3624381080,
+    310598401,
+    607225278,
+    1426881987,
+    1925078388,
+    2162078206,
+    2614888103,
+    3248222580,
+    3835390401,
+    4022224774,
+    264347078,
+    604807628,
+    770255983,
+    1249150122,
+    1555081692,
+    1996064986,
+    2554220882,
+    2821834349,
+    2952996808,
+    3210313671,
+    3336571891,
+    3584528711,
+    113926993,
+    338241895,
+    666307205,
+    773529912,
+    1294757372,
+    1396182291,
+    1695183700,
+    1986661051,
+    2177026350,
+    2456956037,
+    2730485921,
+    2820302411,
+    3259730800,
+    3345764771,
+    3516065817,
+    3600352804,
+    4094571909,
+    275423344,
+    430227734,
+    506948616,
+    659060556,
+    883997877,
+    958139571,
+    1322822218,
+    1537002063,
+    1747873779,
+    1955562222,
+    2024104815,
+    2227730452,
+    2361852424,
+    2428436474,
+    2756734187,
+    3204031479,
+    3329325298
+  ]);
   function sha256Hex(text2) {
-    const bytes = new TextEncoder().encode(text2);
-    const bitLength = bytes.length * 8;
-    const paddedLength = Math.ceil((bytes.length + 9) / 64) * 64;
-    const message = new Uint8Array(paddedLength);
-    message.set(bytes);
-    message[bytes.length] = 128;
-    const view = new DataView(message.buffer);
-    view.setUint32(paddedLength - 8, Math.floor(bitLength / 4294967296), false);
-    view.setUint32(paddedLength - 4, bitLength >>> 0, false);
-    const constants = [
-      1116352408,
-      1899447441,
-      3049323471,
-      3921009573,
-      961987163,
-      1508970993,
-      2453635748,
-      2870763221,
-      3624381080,
-      310598401,
-      607225278,
-      1426881987,
-      1925078388,
-      2162078206,
-      2614888103,
-      3248222580,
-      3835390401,
-      4022224774,
-      264347078,
-      604807628,
-      770255983,
-      1249150122,
-      1555081692,
-      1996064986,
-      2554220882,
-      2821834349,
-      2952996808,
-      3210313671,
-      3336571891,
-      3584528711,
-      113926993,
-      338241895,
-      666307205,
-      773529912,
-      1294757372,
-      1396182291,
-      1695183700,
-      1986661051,
-      2177026350,
-      2456956037,
-      2730485921,
-      2820302411,
-      3259730800,
-      3345764771,
-      3516065817,
-      3600352804,
-      4094571909,
-      275423344,
-      430227734,
-      506948616,
-      659060556,
-      883997877,
-      958139571,
-      1322822218,
-      1537002063,
-      1747873779,
-      1955562222,
-      2024104815,
-      2227730452,
-      2361852424,
-      2428436474,
-      2756734187,
-      3204031479,
-      3329325298
-    ];
-    const state3 = [1779033703, 3144134277, 1013904242, 2773480762, 1359893119, 2600822924, 528734635, 1541459225];
-    const words = new Uint32Array(64);
-    const rotateRight = (value, amount) => value >>> amount | value << 32 - amount;
-    for (let offset = 0; offset < paddedLength; offset += 64) {
-      for (let i = 0; i < 16; i += 1) words[i] = view.getUint32(offset + i * 4, false);
+    const block = new Uint8Array(64);
+    const words = new Int32Array(64);
+    let blockLength = 0;
+    let byteLength = 0;
+    let h0 = 1779033703 | 0;
+    let h1 = 3144134277 | 0;
+    let h2 = 1013904242 | 0;
+    let h3 = 2773480762 | 0;
+    let h4 = 1359893119 | 0;
+    let h5 = 2600822924 | 0;
+    let h6 = 528734635 | 0;
+    let h7 = 1541459225 | 0;
+    const compress = () => {
+      for (let i = 0; i < 16; i += 1) {
+        const at = i * 4;
+        words[i] = block[at] << 24 | block[at + 1] << 16 | block[at + 2] << 8 | block[at + 3];
+      }
       for (let i = 16; i < 64; i += 1) {
-        const a2 = words[i - 15];
-        const b2 = words[i - 2];
-        const s0 = rotateRight(a2, 7) ^ rotateRight(a2, 18) ^ a2 >>> 3;
-        const s1 = rotateRight(b2, 17) ^ rotateRight(b2, 19) ^ b2 >>> 10;
-        words[i] = words[i - 16] + s0 + words[i - 7] + s1 >>> 0;
+        const x = words[i - 15];
+        const y = words[i - 2];
+        const s0 = (x >>> 7 | x << 25) ^ (x >>> 18 | x << 14) ^ x >>> 3;
+        const s1 = (y >>> 17 | y << 15) ^ (y >>> 19 | y << 13) ^ y >>> 10;
+        words[i] = words[i - 16] + s0 + words[i - 7] + s1 | 0;
       }
-      let [a, b, c, d, e, f, g, h] = state3;
+      let a = h0;
+      let b = h1;
+      let c = h2;
+      let d = h3;
+      let e = h4;
+      let f = h5;
+      let g = h6;
+      let h = h7;
       for (let i = 0; i < 64; i += 1) {
-        const sum1 = rotateRight(e, 6) ^ rotateRight(e, 11) ^ rotateRight(e, 25);
+        const sum1 = (e >>> 6 | e << 26) ^ (e >>> 11 | e << 21) ^ (e >>> 25 | e << 7);
         const choice = e & f ^ ~e & g;
-        const temp1 = h + sum1 + choice + constants[i] + words[i] >>> 0;
-        const sum0 = rotateRight(a, 2) ^ rotateRight(a, 13) ^ rotateRight(a, 22);
+        const temp1 = h + sum1 + choice + SHA256_ROUND_CONSTANTS[i] + words[i] | 0;
+        const sum0 = (a >>> 2 | a << 30) ^ (a >>> 13 | a << 19) ^ (a >>> 22 | a << 10);
         const majority = a & b ^ a & c ^ b & c;
-        const temp2 = sum0 + majority >>> 0;
-        [a, b, c, d, e, f, g, h] = [temp1 + temp2 >>> 0, a, b, c, d + temp1 >>> 0, e, f, g];
+        const temp2 = sum0 + majority | 0;
+        h = g;
+        g = f;
+        f = e;
+        e = d + temp1 | 0;
+        d = c;
+        c = b;
+        b = a;
+        a = temp1 + temp2 | 0;
       }
-      state3[0] = state3[0] + a >>> 0;
-      state3[1] = state3[1] + b >>> 0;
-      state3[2] = state3[2] + c >>> 0;
-      state3[3] = state3[3] + d >>> 0;
-      state3[4] = state3[4] + e >>> 0;
-      state3[5] = state3[5] + f >>> 0;
-      state3[6] = state3[6] + g >>> 0;
-      state3[7] = state3[7] + h >>> 0;
+      h0 = h0 + a | 0;
+      h1 = h1 + b | 0;
+      h2 = h2 + c | 0;
+      h3 = h3 + d | 0;
+      h4 = h4 + e | 0;
+      h5 = h5 + f | 0;
+      h6 = h6 + g | 0;
+      h7 = h7 + h | 0;
+    };
+    const push = (byte) => {
+      block[blockLength] = byte;
+      blockLength += 1;
+      if (blockLength === 64) {
+        compress();
+        blockLength = 0;
+      }
+    };
+    for (let i = 0; i < text2.length; i += 1) {
+      let code = text2.charCodeAt(i);
+      if (code < 128) {
+        push(code);
+        byteLength += 1;
+        continue;
+      }
+      if (code < 2048) {
+        push(192 | code >> 6);
+        push(128 | code & 63);
+        byteLength += 2;
+        continue;
+      }
+      if (code >= 55296 && code <= 56319 && i + 1 < text2.length) {
+        const next = text2.charCodeAt(i + 1);
+        if (next >= 56320 && next <= 57343) {
+          const point = 65536 + (code - 55296 << 10) + (next - 56320);
+          push(240 | point >> 18);
+          push(128 | point >> 12 & 63);
+          push(128 | point >> 6 & 63);
+          push(128 | point & 63);
+          byteLength += 4;
+          i += 1;
+          continue;
+        }
+      }
+      if (code >= 55296 && code <= 57343) code = 65533;
+      push(224 | code >> 12);
+      push(128 | code >> 6 & 63);
+      push(128 | code & 63);
+      byteLength += 3;
     }
-    return state3.map((value) => value.toString(16).padStart(8, "0")).join("");
+    const bitLength = byteLength * 8;
+    push(128);
+    while (blockLength !== 56) push(0);
+    const high = Math.floor(bitLength / 4294967296);
+    const low = bitLength >>> 0;
+    [high >>> 24, high >>> 16 & 255, high >>> 8 & 255, high & 255, low >>> 24, low >>> 16 & 255, low >>> 8 & 255, low & 255].forEach(push);
+    return [h0, h1, h2, h3, h4, h5, h6, h7].map((value) => (value >>> 0).toString(16).padStart(8, "0")).join("");
+  }
+  var BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  function sha256Base64(text2) {
+    const hex = sha256Hex(text2);
+    const bytes = [];
+    for (let i = 0; i < hex.length; i += 2) bytes.push(parseInt(hex.slice(i, i + 2), 16));
+    let out = "";
+    for (let i = 0; i < bytes.length; i += 3) {
+      const [a, b = 0, c = 0] = bytes.slice(i, i + 3);
+      const triple = a << 16 | b << 8 | c;
+      out += BASE64_ALPHABET[triple >> 18 & 63] + BASE64_ALPHABET[triple >> 12 & 63];
+      out += i + 1 < bytes.length ? BASE64_ALPHABET[triple >> 6 & 63] : "=";
+      out += i + 2 < bytes.length ? BASE64_ALPHABET[triple & 63] : "=";
+    }
+    return out;
   }
   function contentIdentifier(text2) {
     return `SHA256-${sha256Hex(text2).slice(0, 16).toUpperCase()}`;
@@ -11519,10 +11597,21 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   setActiveTab(safeStorageGet(ACTIVE_TAB_KEY) || 'diff');
 })();
 `;
+    const contentSecurityPolicy = [
+      "default-src 'none'",
+      `script-src 'sha256-${sha256Base64(logicScript)}'`,
+      "style-src 'unsafe-inline'",
+      "connect-src 'none'",
+      "object-src 'none'",
+      "base-uri 'none'",
+      "form-action 'none'",
+      "frame-src 'none'"
+    ].join("; ");
     return `<!doctype html>
 <html lang="ja">
 <head>
   <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="${contentSecurityPolicy}">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>kintone差分レポート</title>
   <style>
