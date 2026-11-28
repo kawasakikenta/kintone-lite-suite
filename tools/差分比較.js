@@ -7804,7 +7804,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const limit = maxLen || 200;
     let s = String(v == null ? '' : v);
     if (s.length > limit) s = s.slice(0, limit) + '…';
-    return s.replace(/\\|/g, '\\\\|').replace(/\\r?\\n/g, '<br>');
+    // 値の HTML のタグ・リンクと画像の記法（[）が働かないよう逃がす（バックスラッシュを先に逃がす）
+    return s.replace(/\\\\/g, '\\\\\\\\').replace(/\\|/g, '\\\\|').replace(/\\[/g, '\\\\[').replace(/</g, '&lt;').replace(/\\r?\\n/g, '<br>');
   }
 
   function copyVisibleRowsAsMarkdown() {

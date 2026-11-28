@@ -1,7 +1,7 @@
 'use strict';
 
 import { SYSTEM_FIELD_TYPES } from '../constants.js';
-import { deepClone, kusConfirm, normalizeIdInputText, summarizeList } from '../utils.js';
+import { canonicalAppId, deepClone, kusConfirm, normalizeIdInputText, summarizeList } from '../utils.js';
 import { apiGet, buildApiPrefix, decorateRevisionConflict, isRevisionConflictError, pickRevision } from '../api.js';
 import { isSettingsWriteUnconfirmed, writeSettingsWithRevision } from '../settingsWrite.js';
 import { isCancelRequested, isRunCancelledError } from '../runControl.js';
@@ -658,7 +658,7 @@ function fieldMultiLabel(t: { appId: string; guestId: string; appName: string })
   return `App ${t.appId}${t.appName ? `「${t.appName}」` : ''}${t.guestId ? `（ゲストスペース ${t.guestId}）` : ''}`;
 }
 
-/** 数値でない ID は例外で止める。同じアプリ・ゲストスペースの重複は 1 件にまとめる。 */
+/** 数値でない ID は例外で止める。同じアプリ・ゲストスペースの重複は 1 件にまとめる（「07」と「7」も同じアプリとしてまとめ、同じアプリへ 2 回書き込まない）。 */
 function normalizeFieldMultiTargets(targets: unknown): NormalizedFieldMultiTarget[] {
   const list = Array.isArray(targets) ? targets : [];
   const seen = new Set<string>();
@@ -668,7 +668,7 @@ function normalizeFieldMultiTargets(targets: unknown): NormalizedFieldMultiTarge
     const guestId = String(raw?.guestId ?? '').trim();
     if (!appId && !guestId) return;
     const label = `まとめて反映する反映先の${index + 1}件目の`;
-    const app = validateNumericId(appId, `${label}アプリID`, true);
+    const app = canonicalAppId(validateNumericId(appId, `${label}アプリID`, true));
     const guest = validateNumericId(guestId, `${label}ゲストスペースID`, false);
     const key = `${app}::${guest}`;
     if (seen.has(key)) return;

@@ -4315,7 +4315,7 @@ ${source.replace(/\r\n/g, "\n").replace(/\n+$/, "")}
 `;
   }
   function mdCell(value) {
-    return oneLine2(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\|/g, "\\|");
+    return oneLine2(value).replace(/\\/g, "\\\\").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\|/g, "\\|").replace(/[[\]]/g, "\\$&");
   }
   function mdFence(text) {
     const longest = Math.max(2, ...(text.match(/`+/g) || []).map((m) => m.length));
@@ -4644,25 +4644,26 @@ ${source.replace(/\r\n/g, "\n").replace(/\n+$/, "")}
     const sortedStates = sortStateEntries(stateObj);
     const mermaidSource = buildProcessMermaidSource(stateObj, validActions, null).replace(/\r\n/g, "\n").replace(/\n+$/, "");
     const fence = mdFence(mermaidSource);
+    const names = (list) => list.length ? list.map(mdCell).join(", ") : "なし";
     const lines = [
-      `# プロセス管理仕様書${appName ? ` - ${appName}` : appId ? ` - アプリ ${appId}` : ""}`,
+      `# プロセス管理仕様書${appName ? ` - ${mdCell(appName)}` : appId ? ` - アプリ ${mdCell(appId)}` : ""}`,
       "",
       "## アプリ情報",
       "",
-      `- アプリID: ${appId || "-"}`,
-      ...appName ? [`- アプリ名: ${appName}`] : [],
-      `- ゲストスペースID: ${guestId || "なし"}`,
+      `- アプリID: ${mdCell(appId) || "-"}`,
+      ...appName ? [`- アプリ名: ${mdCell(appName)}`] : [],
+      `- ゲストスペースID: ${mdCell(guestId) || "なし"}`,
       `- 参照環境: ${preview ? "プレビュー" : "本番"}`,
-      `- 生成日時: ${generatedAt}`,
+      `- 生成日時: ${mdCell(generatedAt)}`,
       "",
       "## 構造診断サマリ",
       "",
       `- 状態数: ${summary.stateCount}`,
       `- アクション数: ${summary.actionCount}`,
-      `- 始点ステータス: ${summary.startStates.length ? summary.startStates.join(", ") : "なし"}`,
-      `- 終端ステータス: ${summary.endStates.length ? summary.endStates.join(", ") : "なし"}`,
-      `- 分岐ステータス: ${summary.branchingStates.length ? summary.branchingStates.join(", ") : "なし"}`,
-      `- 構造上の注意・警告: ${summary.warnings.length ? summary.warnings.join(" / ") : "なし"}`,
+      `- 始点ステータス: ${names(summary.startStates)}`,
+      `- 終端ステータス: ${names(summary.endStates)}`,
+      `- 分岐ステータス: ${names(summary.branchingStates)}`,
+      `- 構造上の注意・警告: ${summary.warnings.length ? summary.warnings.map(mdCell).join(" / ") : "なし"}`,
       "",
       "## ステータス定義一覧",
       "",
@@ -4710,21 +4711,21 @@ ${source.replace(/\r\n/g, "\n").replace(/\n+$/, "")}
   function formatProcessSimulationHistory(history, currentState, states) {
     const safeHistory = Array.isArray(history) ? history : [];
     const stateObj = states && typeof states === "object" && !Array.isArray(states) ? states : {};
-    const currentAssignee = currentState && stateObj[currentState] ? `（${describeStateAssignee(stateObj[currentState])}）` : "";
+    const currentAssignee = currentState && stateObj[currentState] ? `（${mdCell(describeStateAssignee(stateObj[currentState]))}）` : "";
     const startState = safeHistory.length > 0 ? safeHistory[0].from : currentState || "未開始";
     const lines = [
       "## プロセス遷移シミュレーション履歴",
       "",
-      `- 開始ステータス: ${startState}`,
-      `- 現在ステータス: ${currentState || "未開始"}${currentAssignee}`,
+      `- 開始ステータス: ${mdCell(startState)}`,
+      `- 現在ステータス: ${mdCell(currentState || "未開始")}${currentAssignee}`,
       `- 実行ステップ数: ${safeHistory.length}手`
     ];
     if (!safeHistory.length) {
-      lines.push(`- 遷移経路: ${currentState ? `${currentState}（遷移履歴なし）` : "まだ開始していません"}`);
+      lines.push(`- 遷移経路: ${currentState ? `${mdCell(currentState)}（遷移履歴なし）` : "まだ開始していません"}`);
       return `${lines.join("\n")}
 `;
     }
-    const chain = [safeHistory[0].from, ...safeHistory.map((h) => `[${h.action}] → ${h.to}`)].join(" ");
+    const chain = [mdCell(safeHistory[0].from), ...safeHistory.map((h) => `[${mdCell(h.action)}] → ${mdCell(h.to)}`)].join(" ");
     lines.push(
       `- 遷移経路: ${chain}`,
       "",

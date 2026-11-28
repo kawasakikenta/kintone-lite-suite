@@ -929,6 +929,9 @@
   function normalizeIdInputText(value) {
     return String(value ?? "").replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 65248)).replace(/，/g, ",");
   }
+  function canonicalAppId(value) {
+    return /^\d+$/.test(value) ? value.replace(/^0+(?=\d)/, "") : value;
+  }
   function deepClone(v) {
     return v == null ? v : JSON.parse(JSON.stringify(v));
   }
@@ -4779,10 +4782,11 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       const guestId = String(raw?.guestId || "").trim();
       if (!appId && !guestId) continue;
       assertNumericAppAndGuestId(appId, guestId, `反映先アプリID（${appId || "未入力"}）`);
-      const key = `${appId}::${guestId}`;
+      const app = canonicalAppId(appId);
+      const key = `${app}::${guestId}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      targets.push({ appId, guestId, appName: String(raw?.appName || "") });
+      targets.push({ appId: app, guestId, appName: String(raw?.appName || "") });
     }
     if (!targets.length) throw new Error("まとめて反映する反映先を1件以上指定してください");
     const plan = parseJsConfigApplyText(p.jsonText);
@@ -4977,7 +4981,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
   function buildJsConfigBatchIndexMarkdown(manifest) {
     const apps = Array.isArray(manifest?.apps) ? manifest.apps : [];
     const exportedAt = manifest?.exportedAt || manifest?.generatedAt || "-";
-    const cell = (v) => String(v ?? "-").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+    const cell = (v) => String(v ?? "-").replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\[/g, "\\[").replace(/</g, "&lt;").replace(/\r?\n/g, " ");
     const lines = [
       "# JS/CSS設定 一括取得 INDEX",
       "",

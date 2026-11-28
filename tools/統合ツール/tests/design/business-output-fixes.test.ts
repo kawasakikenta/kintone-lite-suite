@@ -119,17 +119,24 @@ describe('設計書 Excel の列挙値の表示名', () => {
 });
 
 describe('複数アプリの設計書 ZIP の記録', () => {
-  const run = async (preview: boolean | undefined, appName = '案件管理') => {
+  const run = async (preview: boolean | undefined, appName = '案件管理', apps = [{ appId: '5', guestId: '' }]) => {
     installEnvironment(responses({ '/app.json': { name: appName, description: '' } }));
     const names: string[] = [];
     const blobs: Blob[] = [];
     vi.stubGlobal('URL', { createObjectURL: (blob: Blob) => { blobs.push(blob); return 'blob:fake'; }, revokeObjectURL: () => {} });
     const anchor = fakeElement();
     (globalThis as any).document.createElement = () => { anchor.click = () => { names.push(anchor.download); }; return anchor; };
-    await runBatchDesignExportXlsxZip({ apps: [{ appId: '5', guestId: '' }], ...(preview === undefined ? {} : { preview }), preselectedSheets: ['summary', 'fields'] });
+    await runBatchDesignExportXlsxZip({ apps, ...(preview === undefined ? {} : { preview }), preselectedSheets: ['summary', 'fields'] });
     const zipEntries: Record<string, string> = Object.fromEntries(readZip(Buffer.from(await blobs[0].arrayBuffer())).map((entry) => [entry.name, entry.data.toString('utf8')]));
     return { zipEntries, names };
   };
+
+  it('「5」と「05」は同じアプリとして 1 件だけ出す（ファイル名も「5」）', async () => {
+    const out = await run(false, '案件管理', [{ appId: '5', guestId: '' }, { appId: '05', guestId: '' }]);
+    expect(out.names.some((name) => /^kintone設計書_1件_\d/.test(name))).toBe(true);
+    expect(Object.keys(out.zipEntries).filter((name) => name.endsWith('.xlsx'))).toHaveLength(1);
+    expect(Object.keys(out.zipEntries).some((name) => /(^|\/)05[_.]/.test(name))).toBe(false);
+  });
 
   it('取得環境を manifest に残し、プレビューのときは ZIP の名前にも付ける', async () => {
     const live = await run(false);

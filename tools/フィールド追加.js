@@ -960,6 +960,9 @@
   function normalizeIdInputText(value) {
     return String(value ?? "").replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 65248)).replace(/，/g, ",");
   }
+  function canonicalAppId(value) {
+    return /^\d+$/.test(value) ? value.replace(/^0+(?=\d)/, "") : value;
+  }
   function deepClone(v) {
     return v == null ? v : JSON.parse(JSON.stringify(v));
   }
@@ -4392,7 +4395,7 @@ ${logs.join("\n")}` : baseMessage;
       const guestId = String(raw?.guestId ?? "").trim();
       if (!appId && !guestId) return;
       const label = `まとめて反映する反映先の${index + 1}件目の`;
-      const app = validateNumericId(appId, `${label}アプリID`, true);
+      const app = canonicalAppId(validateNumericId(appId, `${label}アプリID`, true));
       const guest = validateNumericId(guestId, `${label}ゲストスペースID`, false);
       const key = `${app}::${guest}`;
       if (seen.has(key)) return;

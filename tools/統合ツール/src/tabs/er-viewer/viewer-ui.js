@@ -790,7 +790,8 @@ function tableHeadHtml(columns,state,tableName){
   }).join('')+'</tr></thead>';
 }
 function sortTable(tableName,key){
-  const state=tableState[tableName];
+  // 表の名前（apps・relations）だけを受ける。data-table の値で Object のプロトタイプを書き換えない
+  const state=Object.prototype.hasOwnProperty.call(tableState,tableName)?tableState[tableName]:null;
   if(!state) return;
   if(state.sort===key) state.dir=-state.dir;
   else { state.sort=key; state.dir=1; }

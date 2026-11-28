@@ -154,6 +154,33 @@ describe('ER viewer: 編集済みHTMLからの取り込み（読み取りと確�
     expect(ctx.sanitizeImportedEditState({ view: [], customApps: {}, notes: 'x' })).toMatchObject({ customApps: [], notes: [], positions: [] });
   });
 
+  it('図に要素を足す編集（手動のアプリ・項目・関連線・メモ）は上限までだけ読み、超えた件数を数える（大量の要素で画面を固めない）', () => {
+    // 手動のアプリ 2 万件の細工したファイルは、取り込みで 8 分以上画面が固まり、4GB を超えるメモリを使った（上限を設ける前）
+    const n = 20000;
+    const raw = {
+      stateVersion: 2,
+      customApps: Array.from({ length: n }, (_, i) => ({ id: -(i + 1), name: `m${i}`, fields: [{ code: 'f', label: 'F', type: 'SINGLE_LINE_TEXT' }] })),
+      customFields: Array.from({ length: n }, (_, i) => ({ appId: 1, field: { code: `f${i}`, label: 'F', type: 'SINGLE_LINE_TEXT' } })),
+      customRelations: Array.from({ length: n }, (_, i) => ({ fromAppId: 1, rel: { toApp: 2, kind: 'LOOKUP', fromLabel: `r${i}` } })),
+      notes: Array.from({ length: n }, (_, i) => ({ text: `note ${i}`, x: i, y: i })),
+      // 図にあるアプリへの位置・削除・固定は、要素を足さないので今までどおり読む
+      view: { positions: Object.fromEntries(Array.from({ length: n }, (_, i) => [`a${i + 1}`, { x: i, y: i }])) }
+    };
+    const clean = ctx.sanitizeImportedEditState(raw);
+    const limits = runInNewContext('ER_IMPORT_ELEMENT_LIMITS', ctx);
+    expect(limits).toEqual({ customApps: 1000, customFields: 5000, customRelations: 5000, notes: 2000 });
+    expect(clean.customApps).toHaveLength(1000);
+    expect(clean.customApps[999].name).toBe('m999');
+    expect(clean.customFields).toHaveLength(5000);
+    expect(clean.customRelations).toHaveLength(5000);
+    expect(clean.notes).toHaveLength(2000);
+    expect(clean.positions).toHaveLength(n);
+    expect(clean.overLimit).toBe((n - 1000) + (n - 5000) * 2 + (n - 2000));
+    expect(clean.invalid).toBe(0);
+    // ふつうの件数は今までどおり全部読み、数えない
+    expect(ctx.sanitizeImportedEditState({ customApps: [{ id: -1, name: 'a', fields: [] }], notes: [{ text: 'x', x: 0, y: 0 }] }).overLimit).toBe(0);
+  });
+
   it('関連線は、関連の種類・項目・参照先で今の図と対応させる（並びが変わっても、同じ印は出てくる順で）', () => {
     const oldApps = [app(113, '案件', [lookup('customer', 101), ref('quotes', 102), action('受注へ', 104, 0), action('受注へ', 104, 1)])];
     const curApps = [app(113, '案件', [action('受注へ', 104, 0), ref('quotes', 102), action('受注へ', 104, 1), lookup('customer', 101), lookup('added', 105)])];

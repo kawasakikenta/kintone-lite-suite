@@ -3,7 +3,7 @@
 import { TOOL_ID, SECTION_DEFS } from '../constants.js';
 import { buildDesignSnapshot, designSnapshotStatusLabel } from '../design/snapshot.js';
 import { getToolDocument } from '../ui/dialog.js';
-import { showToast, stripHtmlToText, extractAppNameFromBundle, flattenCategories, UNSAFE_FILENAME_CHARS } from '../utils.js';
+import { showToast, stripHtmlToText, extractAppNameFromBundle, flattenCategories, UNSAFE_FILENAME_CHARS, canonicalAppId } from '../utils.js';
 import { isCancelRequested, isRunCancelledError, raceWithCancel, requestCancel, RUN_CANCELLED_MESSAGE, sleepUnlessCancelled, throwIfCancelled } from '../runControl.js';
 import { API_GET_TIMEOUT_MS, isRetriableApiError } from '../api.js';
 import { loadJSZipLite } from '../jszipLoader.js';
@@ -2838,7 +2838,8 @@ export async function runBatchDesignExportXlsxZip(params: {
   const seen = new Set<string>();
   const targets: Array<{ appId: string; guestId: string; bundle: any }> = [];
   for (const t of rawTargets) {
-    const id = String(t?.appId ?? '').trim();
+    // 「07」と「7」は同じアプリ。1 件にまとめ、ファイル名も「7」にする
+    const id = canonicalAppId(String(t?.appId ?? '').trim());
     const guestId = String(t?.guestId || '').trim();
     const key = `${id}::${guestId}`;
     if (!id || !/^\d+$/.test(id) || seen.has(key)) continue;
