@@ -138,10 +138,11 @@ describe('a chunk whose response never arrived is reported as unconfirmed', () =
 });
 
 describe('field names in kintone record errors', () => {
-  it('maps the field path to a label through describeField and leaves the default unchanged', () => {
+  it('maps the field code (and the table of a field in a table) to a label through describeField and leaves the default unchanged', () => {
     const error = { errors: { 'records[1].amount.value': { messages: ['数字でなければなりません。'] }, 'records[0].table.value[0].value.qty.value': { messages: ['不正です。'] } } };
-    expect(describeKintoneRecordErrors(error, 100, (index) => `CSV ${index + 2}行目`)).toEqual(['CSV 103行目・amount: 数字でなければなりません。', 'CSV 102行目・table.value[0].value.qty: 不正です。']);
-    const label = (path: string) => (path === 'amount' ? '金額［amount］' : path);
-    expect(describeKintoneRecordErrors(error, 0, undefined, label)).toEqual(['2件目・金額［amount］: 数字でなければなりません。', '1件目・table.value[0].value.qty: 不正です。']);
+    expect(describeKintoneRecordErrors(error, 100, (index) => `CSV ${index + 2}行目`)).toEqual(['CSV 103行目・amount: 数字でなければなりません。', 'CSV 102行目・table1行目・qty: 不正です。']);
+    const names: Record<string, string> = { amount: '金額［amount］', table: '明細［table］', 'table/qty': '数量［qty］' };
+    const label = (code: string, tableCode?: string) => names[tableCode ? `${tableCode}/${code}` : code] || code;
+    expect(describeKintoneRecordErrors(error, 0, undefined, label)).toEqual(['2件目・金額［amount］: 数字でなければなりません。', '1件目・明細［table］1行目・数量［qty］: 不正です。']);
   });
 });

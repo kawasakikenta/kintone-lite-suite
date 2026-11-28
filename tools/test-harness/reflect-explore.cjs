@@ -495,7 +495,7 @@ function installSyntheticKintone(config) {
       if (S.holdWrites) { S.heldWrites += 1; await new Promise(resolve => S.writeResolvers.push(resolve)); settle(); }
       const fail = error => { record.rejected = true; record.error = `${error.code}: ${error.message}`; return error; };
       if (processing(app)) throw fail(kerr('GAIA_AD01', 'アプリの設定を反映中のため、設定を変更できません。'));
-      if (S.failWrites[key] && (S.failWrites[key].times === undefined || S.failWrites[key].times > 0)) { if (S.failWrites[key].times !== undefined) S.failWrites[key].times -= 1; throw fail(kerr(S.failWrites[key].code, S.failWrites[key].message)); }
+      if (S.failWrites[key] && (S.failWrites[key].times === undefined || S.failWrites[key].times > 0)) { if (S.failWrites[key].times !== undefined) S.failWrites[key].times -= 1; const rule = S.failWrites[key]; throw fail(rule.errors ? { code: rule.code, id: `req-${S.seq}`, message: rule.message, errors: clone(rule.errors) } : kerr(rule.code, rule.message)); }
       // 応答が届かない書き込み。kintone.api は kintone のエラー応答（id・code）の無い失敗として返す。
       const lose = S.loseWrites[key] && (S.loseWrites[key].times === undefined || S.loseWrites[key].times > 0) ? S.loseWrites[key] : null;
       if (lose && lose.times !== undefined) lose.times -= 1;
@@ -1182,6 +1182,46 @@ function registerScenarios(scenario, ctx) {
     await idle();
     assert.match(await statusText(), /すべて反映元と一致しています/);
     ok('failure: 途中の失敗と再実行');
+  });
+
+  // kintone の入力エラー（CB_VA01）は、受け付けなかった項目ごとの文（errors）を返す。以前は「項目ごとの結果」に
+  // 「properties.status.options.完了.index: …」のようにキーのまま並び、どのフィールドのどの設定かを読み取れなかった。
+  scenario('failure: kintone の入力エラーは、項目ごとの結果にフィールドと設定の名前で先頭 3 件とほか N 件を示し、実行ログに全件を残す', async () => {
+    const errors = {
+      'properties.status.options.完了.index': { messages: ['indexが重複しています。'] },
+      'properties[customer_code].lookup.relatedApp.app': { messages: ['参照するアプリが見つかりません。'] },
+      'properties.items.fields.qty.minValue': { messages: ['最小値は最大値以下にしてください。'] },
+      'properties.total.expression': { messages: ['計算式が正しくありません。'] },
+      'properties.memo.label': { messages: ['フィールド名は必須です。'] }
+    };
+    const lines = [
+      'フィールド「status」の選択肢「完了」の並び順: indexが重複しています。',
+      'フィールド「customer_code」のルックアップ設定・参照するアプリID: 参照するアプリが見つかりません。',
+      'テーブル「items」のフィールド「qty」の数値の制限（最小）: 最小値は最大値以下にしてください。',
+      'フィールド「total」の計算式: 計算式が正しくありません。',
+      'フィールド「memo」のフィールド名: フィールド名は必須です。'
+    ];
+    await reset(reflectWorld({ engine: { failWrites: { fieldSettings: { code: 'CB_VA01', message: '入力内容が正しくありません。', errors, times: 1 } } } }));
+    await setup({ scopes: ['fieldSettings', 'viewSettings'] });
+    await setLookup('401 → 301');
+    await compare();
+    await run();
+    await assertOnlyAllowedWrites('入力エラー');
+    // 項目ごとの結果（下の実行ログを含めない）
+    const failed = await page.locator('#kus-rl-stage-result .kus-rl-result-list').first().innerText();
+    for (const line of lines.slice(0, 3)) assert.ok(failed.includes(line), `項目ごとの結果に先頭 3 件: ${line}\n${failed}`);
+    assert.match(failed, /ほか 2 件/, failed);
+    assert.ok(!failed.includes(lines[3]), '4 件目以降は項目ごとの結果に出さない');
+    assert.doesNotMatch(failed, /properties[.[]|\[API\]|payload=/, `キー・通信情報を結果に出さない: ${failed}`);
+    const log = await page.evaluate(() => [...document.querySelectorAll('pre')].map(pre => pre.textContent || '').find(content => content.includes('=== 完了')) || '');
+    for (const line of lines) assert.ok(log.includes(line), `実行ログに全件: ${line}\n${log}`);
+    await shot('input-error-1440');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.locator('#kus-rl-stage-result .kus-rl-result-list').first().evaluate(element => element.scrollIntoView({ block: 'start' }));
+    // 幅 720px 以下ではバッジの行を畳むため、文言の検査が幅の狭い画面と分かる名前（-w390-）にする
+    await shot('input-error-w390-result');
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    ok('failure: 入力エラーをフィールドと設定の名前で示す（先頭 3 件とほか 2 件、実行ログに全件）');
   });
 
   // 応答が届かなかった書き込み（kintone では反映済み）を同じ revision で送り直すと、進んだ revision と食い違って「revision 競合」と表示していた。

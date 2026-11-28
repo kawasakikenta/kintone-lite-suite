@@ -5,6 +5,7 @@ import { FILE_DOWNLOAD_TIMEOUT_MS, apiGet, apiPost, apiPut, buildApiPrefix, fetc
 import { loadJSZipLite } from '../jszipLoader.js';
 import { RunCancelledError, activeRun, createRequestSignal, isRunCancelledError, sleepUnlessCancelled, throwIfCancelled } from '../runControl.js';
 import { createCancelReport, describeInnerCancel, formatCancelledHeadline, isCancelStop } from './run-cancel-summary.js';
+import { kintoneErrorDetailsOf } from '../kintoneErrorDetail.js';
 import {
   sanitizeZipSegment,
   uniqueZipName,
@@ -107,6 +108,8 @@ export async function runRecordAppBatchStandalone(
   const appIds = parseRecordAppIds(appIdsValue);
   if (!appIds.length) throw new Error('対象アプリIDを1件以上入力してください');
   const failures: string[] = [];
+  /** 失敗したアプリごとの、kintone が受け付けなかった項目（行番号・フィールド名つき。画面のステータスに先頭の数件を出す） */
+  const errorDetails: Array<{ appId: string; lines: string[] }> = [];
   const warnings: string[] = [];
   const cancelled: string[] = [];
   const completed: Array<{ appId: string; summary?: RecordOperationSummary }> = [];
@@ -138,6 +141,8 @@ export async function runRecordAppBatchStandalone(
         ]);
       }
       failures.push(`App ${appId}: ${error?.message || String(error)}`);
+      const details = kintoneErrorDetailsOf(error);
+      if (details.length) errorDetails.push({ appId, lines: details });
       const partial = error?.partial;
       if (partial && Number.isFinite(Number(partial.done)) && Number.isFinite(Number(partial.total))) {
         writeKnown = true;
@@ -163,6 +168,8 @@ export async function runRecordAppBatchStandalone(
     const error = new Error(`${appIds.length}アプリ中${failures.length}アプリで失敗しました${known.length ? `（${known.join('・')}）` : ''}\n${failures.join('\n')}${warningSummary ? `\n${warningSummary}` : ''}${cancelSummary ? `\n${cancelSummary}` : ''}`);
     // 一部のアプリが成功しているときは、エラーではなく警告として知らせる
     if (completed.length) Object.assign(error, { partialSuccess: true });
+    // 複数のアプリで失敗したときは、どのアプリの行かを先頭に付ける
+    if (errorDetails.length) Object.assign(error, { kintoneErrorDetails: errorDetails.flatMap(({ appId, lines }) => (appIds.length > 1 ? lines.map((line) => `App ${appId}: ${line}`) : lines)) });
     throw error;
   }
   if (cancelled.length === appIds.length) {
@@ -671,7 +678,7 @@ async function writeChunksUnlessCancelled<T>(
   writeChunk: (chunk: T[], chunkIndex: number) => Promise<void>,
   onProgress: (done: number, total: number) => void,
   describeItem?: (index: number) => string,
-  describeField?: (path: string) => string,
+  describeField?: (code: string, tableCode?: string) => string,
   checkBeforeRetry?: string
 ): Promise<number> {
   try {
@@ -686,10 +693,11 @@ async function writeChunksUnlessCancelled<T>(
   }
 }
 
-/** 書き込みのエラーに出るフィールドのコード（`code`）を「フィールド名［コード］」にする。テーブル内などのパスはそのまま。 */
-function fieldLabelFor(properties: Record<string, any> | undefined, path: string): string {
-  const label = /^[^.[\]]+$/.test(path) ? properties?.[path]?.label : undefined;
-  return label && label !== path ? `${label}［${path}］` : path;
+/** 書き込みのエラーに出るフィールドのコードを「フィールド名［コード］」にする（テーブル内のフィールドは、そのテーブルの定義から名前を引く）。 */
+function fieldLabelFor(properties: Record<string, any> | undefined, code: string, tableCode?: string): string {
+  const def = tableCode ? properties?.[tableCode]?.fields?.[code] : properties?.[code];
+  const label = def && typeof def === 'object' ? def.label : undefined;
+  return label && label !== code ? `${label}［${code}］` : code;
 }
 
 export async function runCsvImportBatchStandalone(opts, setStatus) {
@@ -723,7 +731,7 @@ export async function runCsvImportBatchStandalone(opts, setStatus) {
       batch => apiPost(prefix, '/records.json', { app: appId, records: batch }, 1),
       (done, total) => setStatus(`App ${appId}: インポート中... (${done} / ${total}件)`),
       index => `CSV ${recordRows[index]}行目`,
-      path => fieldLabelFor(plan.properties, path));
+      (code, tableCode) => fieldLabelFor(plan.properties, code, tableCode));
     setStatus(`App ${appId}: ${ok}件を取り込みました`);
     return { summary: { counts: { 件: ok }, written: ok, describe: countedSummary('を取り込みました', { withApp: true }) } };
   }, setStatus);
@@ -1069,7 +1077,7 @@ export async function runRecordCopyStandalone(opts, setStatus) {
     (batch) => apiPost(tgtPrefix, '/records.json', { app: targetAppId, records: batch }, 1),
     (done, total) => setStatus(`コピー中... ${done} / ${total}件`),
     index => `コピー元レコードID ${records[index]?.$id?.value ?? index + 1}`,
-    path => fieldLabelFor(targetProps, path)
+    (code, tableCode) => fieldLabelFor(targetProps, code, tableCode)
   );
   const fileDropNote = plan.droppedFileFields.length ? `添付除外 ${plan.droppedFileFields.length}フィールド` : '';
   const dropWarning = [fileDropNote, droppedNote].filter(Boolean).join(' / ');

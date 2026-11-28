@@ -549,6 +549,367 @@
     root = el;
   }
 
+  // src/diff/label-dict.ts
+  var FIELD_SETTING_LABELS = {
+    label: "フィールド名",
+    name: "フィールド名",
+    code: "フィールドコード",
+    type: "フィールドの種類",
+    noLabel: "フィールド名を表示しない",
+    required: "必須項目にする",
+    unique: "値の重複を禁止する",
+    defaultValue: "初期値",
+    defaultNowValue: "レコード登録時の日時を初期値にする",
+    description: "説明",
+    minLength: "文字数（最小）",
+    maxLength: "文字数（最大）",
+    minValue: "数値の制限（最小）",
+    maxValue: "数値の制限（最大）",
+    expression: "計算式",
+    hideExpression: "計算式を表示しない",
+    options: "選択肢",
+    protocol: "入力値の種類",
+    displayScale: "小数点以下の表示桁数",
+    digit: "桁区切りを表示する",
+    unit: "単位記号",
+    unitPosition: "単位記号の表示位置",
+    align: "選択肢の並び",
+    format: "表示形式",
+    entities: "選択候補",
+    fields: "テーブル内のフィールド",
+    referenceTable: "関連レコード一覧設定",
+    lookup: "ルックアップ設定",
+    condition: "表示するレコードの条件",
+    displayFields: "表示するフィールド",
+    filterCond: "絞り込み条件",
+    relatedApp: "参照するアプリ",
+    size: "一度に表示する最大レコード数",
+    sort: "ソート",
+    relatedKeyField: "コピー元のフィールド",
+    fieldMappings: "ほかのフィールドのコピー",
+    lookupPickerFields: "コピー元のレコード選択時に表示するフィールド",
+    field: "自アプリのフィールド",
+    relatedField: "参照するアプリのフィールド",
+    app: "参照するアプリID",
+    thumbnailSize: "サムネイルの大きさ",
+    openGroup: "グループの初期表示",
+    enabled: "有効状態",
+    index: "並び順"
+  };
+  function ownLookup(dict, key) {
+    if (!dict || key == null) return void 0;
+    const name = String(key);
+    return Object.prototype.hasOwnProperty.call(dict, name) ? dict[name] : void 0;
+  }
+
+  // src/kintoneErrorDetail.ts
+  var KINTONE_ERROR_SCREEN_LIMIT = 3;
+  var KINTONE_ERROR_LIST_LIMIT = 100;
+  var MESSAGE_MAX = 200;
+  var WHERE_MAX = 160;
+  var clip = (text, max) => text.length > max ? `${text.slice(0, max)}…` : text;
+  var oneLine = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
+  function tokenizeKey(key) {
+    const tokens = [];
+    let i = 0;
+    while (i < key.length) {
+      if (key[i] === ".") {
+        i++;
+        continue;
+      }
+      if (key[i] === "[") {
+        const end = key.indexOf("]", i + 1);
+        if (end < 0) {
+          tokens.push({ kind: "name", value: key.slice(i), start: i });
+          break;
+        }
+        const inner = key.slice(i + 1, end);
+        tokens.push(/^\d+$/.test(inner) ? { kind: "index", value: Number(inner), start: i } : { kind: "key", value: inner, start: i });
+        i = end + 1;
+        continue;
+      }
+      let j = i;
+      while (j < key.length && key[j] !== "." && key[j] !== "[") j++;
+      tokens.push({ kind: "name", value: key.slice(i, j), start: i });
+      i = j;
+    }
+    return tokens;
+  }
+  var tokenText = (token) => token ? String(token.value) : "";
+  var isName = (token, ...names) => !!token && token.kind === "name" && names.includes(token.value);
+  var LAYOUT_LABELS = { fields: "部品", layout: "グループ内のレイアウト", code: "フィールドコード", type: "種類", size: "大きさ", width: "幅", height: "高さ", innerHeight: "高さ", label: "ラベル", elementId: "要素ID" };
+  var VIEW_LABELS = { type: "一覧の種類", builtinType: "一覧の種類", name: "一覧名", index: "並び順", fields: "表示するフィールド", filterCond: "絞り込み条件", sort: "ソート", html: "HTML", pager: "ページネーション", device: "表示する画面", date: "日付のフィールド", title: "タイトルのフィールド" };
+  var REPORT_LABELS = { name: "グラフ名", index: "並び順", chartType: "グラフの種類", chartMode: "表示モード", groups: "分類する項目", aggregations: "集計方法", filterCond: "絞り込み条件", sorts: "ソート", periodicReport: "定期レポート", code: "フィールドコード", per: "単位", type: "種類", by: "基準", order: "順序" };
+  var STATE_LABELS = { name: "ステータス名", index: "並び順", assignee: "作業者", type: "作業者の指定方法", entities: "作業者", entity: "作業者", code: "コード" };
+  var ACTION_LABELS = { name: "アクション名", from: "実行前のステータス", to: "実行後のステータス", filterCond: "実行条件", type: "種類", executableUser: "実行できるユーザー", destApp: "コピー先のアプリ", app: "アプリID", mappings: "コピーするフィールド", srcType: "コピー元の種類", srcField: "コピー元のフィールド", destField: "コピー先のフィールド", entities: "利用できるユーザー", entity: "ユーザー", index: "並び順", code: "コード" };
+  var CUSTOMIZE_LABELS = { js: "JavaScript", css: "CSS", url: "URL", type: "種類", file: "ファイル", fileKey: "ファイル", name: "ファイル名" };
+  var RIGHT_LABELS = {
+    entity: "対象",
+    entities: "対象",
+    type: "種類",
+    code: "コード",
+    filterCond: "条件",
+    includeSubs: "下位の組織への継承",
+    accessibility: "権限",
+    appEditable: "アプリ管理",
+    recordViewable: "レコード閲覧",
+    recordAddable: "レコード追加",
+    recordEditable: "レコード編集",
+    recordDeletable: "レコード削除",
+    recordImportable: "ファイルから読み込む",
+    recordExportable: "ファイルに書き出す",
+    viewable: "閲覧",
+    editable: "編集",
+    deletable: "削除"
+  };
+  var NOTIFICATION_LABELS = {
+    entity: "通知先",
+    targets: "通知先",
+    type: "種類",
+    code: "コード",
+    includeSubs: "下位の組織",
+    filterCond: "条件",
+    title: "通知の内容",
+    timing: "通知のタイミング",
+    recordAdded: "レコード追加",
+    recordEdited: "レコード編集",
+    commentAdded: "コメント書き込み",
+    statusChanged: "ステータスの更新",
+    fileImported: "ファイル読み込み",
+    daysLater: "日後",
+    hoursLater: "時間後",
+    time: "時刻",
+    field: "基準の日時のフィールド"
+  };
+  var APP_SETTING_LABELS = {
+    name: "アプリ名",
+    description: "説明",
+    icon: "アイコン",
+    theme: "デザインテーマ",
+    titleField: "レコードタイトル",
+    selectionMode: "選び方",
+    code: "フィールドコード",
+    enableThumbnails: "サムネイルの表示",
+    enableBulkDeletion: "レコードの一括削除",
+    enableComments: "コメント機能",
+    enableDuplicateRecord: "レコードの再利用",
+    enableInlineRecordEditing: "一覧での編集",
+    numberPrecision: "数値の計算の精度",
+    digits: "全体の桁数",
+    decimalPlaces: "小数部の桁数",
+    roundingMode: "数値の丸めかた",
+    firstMonthOfFiscalYear: "年度の開始月"
+  };
+  var SECTION_RULES = {
+    layout: { label: "レイアウト", labels: LAYOUT_LABELS, unit: "行目" },
+    views: { label: "一覧", labels: VIEW_LABELS },
+    reports: { label: "グラフ", labels: REPORT_LABELS },
+    states: { label: "ステータス", labels: STATE_LABELS },
+    actions: { label: "アクション", labels: ACTION_LABELS },
+    desktop: { label: "PC用", labels: CUSTOMIZE_LABELS },
+    mobile: { label: "モバイル用", labels: CUSTOMIZE_LABELS },
+    rights: { label: "アクセス権", labels: RIGHT_LABELS },
+    notifications: { label: "通知", labels: NOTIFICATION_LABELS },
+    categories: { label: "カテゴリー", labels: { name: "カテゴリー名", index: "並び順", children: "下位のカテゴリー" } },
+    apps: { label: "アプリ", labels: { app: "アプリID", revision: "設定の更新番号（revision）" } }
+  };
+  var SINGLE_LABELS = {
+    ...APP_SETTING_LABELS,
+    enable: "プロセス管理の有効化",
+    scope: "JavaScript・CSS の適用範囲",
+    notifyToCommenter: "コメント投稿者への通知",
+    timezone: "タイムゾーン",
+    enabled: "有効状態",
+    ids: "プラグイン",
+    app: "アプリID",
+    revision: "設定の更新番号（revision）",
+    revert: "変更の中止（revert）",
+    // 先頭の id は、レコード 1 件の更新ならレコードID・アプリの取得ならアプリIDで、決められないのでキーのまま出す（records[N].id はレコードID）
+    query: "条件",
+    limit: "件数の上限",
+    offset: "開始位置",
+    fields: "取得するフィールド",
+    totalCount: "件数の取得",
+    properties: "フィールドの設定",
+    records: "レコード",
+    record: "レコード"
+  };
+  function describeTokens(tokens, labels, unit = "件目") {
+    const parts = [];
+    for (const token of tokens) {
+      if (token.kind === "index") {
+        if (parts.length) parts[parts.length - 1] += `（${token.value + 1}${unit}）`;
+        else parts.push(`${token.value + 1}${unit}`);
+        continue;
+      }
+      const label = ownLookup(labels, token.value) || token.value;
+      const previous = parts[parts.length - 1];
+      if (previous === label) continue;
+      if (previous && !/）$/.test(previous) && label.startsWith(previous)) parts[parts.length - 1] = label;
+      else parts.push(label);
+    }
+    return parts.join("・");
+  }
+  function describeFieldSetting(rest, key) {
+    if (!rest.length) return "";
+    if (isName(rest[0], "options")) {
+      if (rest.length === 1) return "選択肢";
+      if (rest[1].kind === "key") {
+        const suffix = rest.slice(2);
+        return `選択肢「${rest[1].value}」${suffix.length ? `の${describeOptionProperty(suffix)}` : ""}`;
+      }
+      const tail = key.slice(rest[1].start);
+      const property = /^(.+)\.(label|index)$/.exec(tail);
+      return `選択肢「${property ? property[1] : tail}」${property ? `の${property[2] === "label" ? "名前" : "並び順"}` : ""}`;
+    }
+    return describeTokens(rest, FIELD_SETTING_LABELS);
+  }
+  function describeOptionProperty(tokens) {
+    if (tokens.length === 1 && isName(tokens[0], "label")) return "名前";
+    if (tokens.length === 1 && isName(tokens[0], "index")) return "並び順";
+    return describeTokens(tokens, FIELD_SETTING_LABELS);
+  }
+  function describePropertiesKey(tokens, key) {
+    const [, codeToken, ...after] = tokens;
+    if (!codeToken) return "フィールドの設定";
+    let where = `フィールド「${tokenText(codeToken)}」`;
+    let rest = after;
+    if (isName(rest[0], "fields") && rest[1] && rest[1].kind !== "index") {
+      where = `テーブル「${tokenText(codeToken)}」のフィールド「${tokenText(rest[1])}」`;
+      rest = rest.slice(2);
+    }
+    const setting = describeFieldSetting(rest, key);
+    return setting ? `${where}の${setting}` : where;
+  }
+  function describeRecordKey(tokens, naming) {
+    const single = isName(tokens[0], "record");
+    let rest = tokens.slice(1);
+    let recordLabel = "";
+    if (!single && rest[0]?.kind === "index") {
+      const index = rest[0].value;
+      recordLabel = naming.record ? naming.record(index) : `${index + 1}件目`;
+      rest = rest.slice(1);
+    }
+    if (!rest.length) return recordLabel || "レコード";
+    const fieldName = (code, table) => naming.recordField ? naming.recordField(code, table) : code;
+    const [head, ...tail] = rest;
+    const SPECIAL = { id: "レコードID", revision: "レコードの更新番号（revision）", action: "アクション", assignee: "作業者" };
+    let field;
+    if (head.kind === "name" && !tail.length && ownLookup(SPECIAL, head.value)) field = ownLookup(SPECIAL, head.value);
+    else if (head.kind === "index") field = describeTokens(rest, {});
+    else {
+      const code = tokenText(head);
+      const inner = isName(tail[0], "value") ? tail.slice(1) : tail;
+      if (!inner.length) field = fieldName(code);
+      else if (inner[0].kind === "index") {
+        const row = `${fieldName(code)}${inner[0].value + 1}行目`;
+        const cell = isName(inner[1], "value") ? inner.slice(2) : inner.slice(1);
+        if (!cell.length) field = row;
+        else if (cell.length === 1 && isName(cell[0], "id")) field = `${row}の行ID`;
+        else {
+          const child = tokenText(cell[0]);
+          const more = isName(cell[1], "value") ? cell.slice(2) : cell.slice(1);
+          field = `${row}・${fieldName(child, code)}${more.length ? `（${more.map(tokenText).join(".")}）` : ""}`;
+        }
+      } else field = `${fieldName(code)}（${inner.map(tokenText).join(".")}）`;
+    }
+    return [recordLabel, field].filter(Boolean).join("・");
+  }
+  function describeAppsKey(tokens, naming) {
+    const rest = tokens.slice(1);
+    if (rest[0]?.kind !== "index") return describeTokens(tokens, { apps: "アプリ", ...SECTION_RULES.apps.labels });
+    const app = naming.app ? naming.app(rest[0].value) : `${rest[0].value + 1}件目のアプリ`;
+    const setting = describeTokens(rest.slice(1), SECTION_RULES.apps.labels);
+    return setting ? `${app}の${setting}` : app;
+  }
+  function describeKintoneErrorKey(key, naming = {}) {
+    const raw = oneLine(key);
+    if (!raw) return "（場所の指定なし）";
+    const tokens = tokenizeKey(raw);
+    const head = tokens[0];
+    if (!head || head.kind !== "name") return clip(raw, WHERE_MAX);
+    let text = "";
+    if (head.value === "properties") text = describePropertiesKey(tokens, raw);
+    else if (head.value === "records" && tokens.length > 1 || head.value === "record" && tokens.length > 1) text = describeRecordKey(tokens, naming);
+    else if (head.value === "apps") text = describeAppsKey(tokens, naming);
+    else if (ownLookup(SECTION_RULES, head.value)) {
+      const rule = SECTION_RULES[head.value];
+      const [, entity, ...rest] = tokens;
+      if (!entity) text = rule.label;
+      else if (entity.kind === "index") {
+        const setting = describeTokens(rest, rule.labels);
+        text = `${rule.label}（${entity.value + 1}${rule.unit || "件目"}）${setting ? `の${setting}` : ""}`;
+      } else if (head.value === "desktop" || head.value === "mobile") {
+        text = `${rule.label}の${describeTokens([entity, ...rest], rule.labels)}`;
+      } else {
+        const setting = describeTokens(rest, rule.labels);
+        text = `${rule.label}「${entity.value}」${setting ? `の${setting}` : ""}`;
+      }
+    } else if (ownLookup(SINGLE_LABELS, head.value)) {
+      text = [ownLookup(SINGLE_LABELS, head.value), describeTokens(tokens.slice(1), APP_SETTING_LABELS)].filter(Boolean).join("・");
+    } else text = raw;
+    return clip(text || raw, WHERE_MAX);
+  }
+  function findKintoneErrorMap(error) {
+    for (let current = error, depth = 0; current && typeof current === "object" && depth < 6; current = current.original, depth++) {
+      const errors = current.errors;
+      if (errors && typeof errors === "object" && !Array.isArray(errors) && Object.keys(errors).length) return errors;
+    }
+    return null;
+  }
+  function messagesOf(value) {
+    const list = Array.isArray(value?.messages) ? value.messages : typeof value === "string" ? [value] : [];
+    return list.map((message) => clip(oneLine(message), MESSAGE_MAX)).filter(Boolean);
+  }
+  function collectKintoneErrors(error, naming = {}) {
+    const map = findKintoneErrorMap(error);
+    if (!map) return [];
+    return Object.entries(map).filter(([, value]) => value != null && (typeof value === "string" || typeof value === "object")).map(([key, value]) => ({ key, where: describeKintoneErrorKey(key, naming), messages: messagesOf(value) }));
+  }
+  function formatKintoneError(item) {
+    return `${item.where}: ${item.messages.join(" / ") || "(詳細なし)"}`;
+  }
+  var kintoneErrorOverflowLine = (rest) => `ほか ${rest} 件`;
+  function formatKintoneErrorLines(error, naming = {}, limit = KINTONE_ERROR_LIST_LIMIT) {
+    const lines = collectKintoneErrors(error, naming).map(formatKintoneError);
+    return lines.length > limit ? [...lines.slice(0, limit), kintoneErrorOverflowLine(lines.length - limit)] : lines;
+  }
+  function kintoneErrorDetailsOf(error) {
+    for (let current = error, depth = 0; current && typeof current === "object" && depth < 6; current = current.original, depth++) {
+      if (Array.isArray(current.kintoneErrorDetails)) return current.kintoneErrorDetails.map((line) => String(line));
+      const map = current.errors;
+      if (map && typeof map === "object" && !Array.isArray(map) && Object.keys(map).length) return formatKintoneErrorLines(current);
+    }
+    return [];
+  }
+  function summarizeKintoneErrorDetails(details, limit = KINTONE_ERROR_SCREEN_LIMIT) {
+    const list = [...details];
+    let hidden = 0;
+    const overflow = /^ほか (\d+) 件$/.exec(list[list.length - 1] || "");
+    if (overflow) {
+      hidden = Number(overflow[1]);
+      list.pop();
+    }
+    if (list.length <= limit) return hidden ? [...list, kintoneErrorOverflowLine(hidden)] : list;
+    return [...list.slice(0, limit), kintoneErrorOverflowLine(list.length - limit + hidden)];
+  }
+  function withoutKintoneErrorLines(message, error) {
+    return splitKintoneErrorLines(message, error, kintoneErrorDetailsOf(error)).lines.join("\n");
+  }
+  function splitKintoneErrorLines(message, error, details) {
+    const known = new Set([...formatKintoneErrorLines(error), ...details].map((line) => line.trim()));
+    const lines = [];
+    let at = -1;
+    for (const line of String(message ?? "").split("\n")) {
+      if (known.size && known.has(line.trim())) {
+        if (at < 0) at = lines.length;
+        continue;
+      }
+      lines.push(line);
+    }
+    return { lines, at };
+  }
+
   // src/utils.ts
   function getToolWindowSafe() {
     try {
@@ -607,14 +968,6 @@
       return raw.length > max ? `${raw.slice(0, max)}...` : raw;
     }
   }
-  var MAX_API_FIELD_ERRORS = 5;
-  function formatApiFieldErrors(errors) {
-    if (!errors || typeof errors !== "object") return [];
-    const lines = Object.entries(errors).flatMap(([key, value]) => (Array.isArray(value?.messages) ? value.messages : []).map((message) => `${key}: ${String(message)}`));
-    const shown = lines.slice(0, MAX_API_FIELD_ERRORS);
-    if (lines.length > shown.length) shown.push(`ほか ${lines.length - shown.length} 件`);
-    return shown;
-  }
   function apiErrorWithContext(err, meta) {
     if (err && err.__apiDiag) return err;
     const method = meta?.method || "GET";
@@ -626,7 +979,7 @@
     const endpoint = `${prefix}${path}`;
     const contextLine = `[API] ${method} ${endpoint}${app ? ` app=${app}` : ""}${bodySummary ? ` payload=${bodySummary}` : ""}`;
     const baseMessage = err?.message || String(err);
-    const wrapped = new Error([baseMessage, ...formatApiFieldErrors(err?.errors), contextLine].join("\n"));
+    const wrapped = new Error([baseMessage, ...formatKintoneErrorLines(err), contextLine].join("\n"));
     wrapped.__apiDiag = true;
     wrapped.original = err;
     if (err?.code) wrapped.code = err.code;
@@ -714,10 +1067,10 @@
   }
   async function copyTextToClipboard(text) {
     if (!text) return false;
-    const clip = typeof navigator !== "undefined" ? navigator.clipboard : void 0;
-    if (clip && typeof clip.writeText === "function") {
+    const clip2 = typeof navigator !== "undefined" ? navigator.clipboard : void 0;
+    if (clip2 && typeof clip2.writeText === "function") {
       try {
-        await clip.writeText(text);
+        await clip2.writeText(text);
         return true;
       } catch {
       }
@@ -2248,6 +2601,10 @@ ${message}`);
       result.prepend(resultTools);
       result.classList.remove("kus-lp__result--empty");
     }
+    function setResultNode(node) {
+      result.replaceChildren(resultTools, node);
+      result.classList.remove("kus-lp__result--empty");
+    }
     function setResultHtml(html) {
       if (!html) {
         result.innerHTML = "";
@@ -2487,7 +2844,7 @@ ${message}`);
       } catch {
       }
     });
-    const handle = { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setCollapsed, resetPosition, setPrimaryAction, requestCancel: requestCancel2, isCancelRequested: isCancelRequested2 };
+    const handle = { root: root2, body, status, result, setStatus, setResult, setResultHtml, setResultNode, setBusy, close, setCollapsed, resetPosition, setPrimaryAction, requestCancel: requestCancel2, isCancelRequested: isCancelRequested2 };
     return handle;
   }
   function makeRow(child, opts = {}) {
@@ -2852,9 +3209,12 @@ ${message}`);
       const message = String(e?.message || e || "不明なエラー");
       const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
       const [first, ...rest] = lines.length ? lines : [message];
+      const details = summarizeKintoneErrorDetails(kintoneErrorDetailsOf(e));
+      const withDetails = (text) => details.length ? `${text}
+${details.map((line) => `・${line}`).join("\n")}` : text;
       if (e?.partialSuccess === true || e?.writeUnconfirmed === true) {
         const logNote = rest.length ? /[）)]$/.test(first) ? "。詳細は下のログを確認してください" : "（詳細は下のログ）" : "";
-        panel.setStatus(`${first}${logNote}`, "warn");
+        panel.setStatus(withDetails(`${first}${logNote}`), "warn");
         if (rest.length) panel.setResult(lines.join("\n"));
         return void 0;
       }
@@ -2864,11 +3224,11 @@ ${message}`);
         return void 0;
       }
       if (token?.cancelled) {
-        panel.setStatus(`エラー: ${first}（中止の要求後に失敗しました${rest.length ? "。詳細は下のログ" : ""}）`, "err");
+        panel.setStatus(withDetails(`エラー: ${first}（中止の要求後に失敗しました${rest.length ? "。詳細は下のログ" : ""}）`), "err");
         if (rest.length) panel.setResult(lines.join("\n"));
         return void 0;
       }
-      panel.setStatus(`エラー: ${first}${rest.length ? "（詳細は下のログ）" : ""}`, "err");
+      panel.setStatus(withDetails(`エラー: ${first}${rest.length ? "（詳細は下のログ）" : ""}`), "err");
       if (rest.length) panel.setResult(lines.join("\n"));
       return void 0;
     } finally {
@@ -3738,30 +4098,18 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     used.add(cand);
     return cand;
   }
-  var RECORD_ERROR_DETAIL_LIMIT = 10;
   var DEFAULT_CHECK_BEFORE_RETRY = "対象アプリのレコード件数";
-  function describeKintoneRecordErrors(error, offset = 0, describeItem = (index) => `${index + 1}件目`, describeField = (path) => path) {
-    let errors = null;
-    for (let current = error, depth = 0; current && typeof current === "object" && depth < 5; current = current.original, depth++) {
-      if (current.errors && typeof current.errors === "object" && !Array.isArray(current.errors)) {
-        errors = current.errors;
-        break;
-      }
-    }
-    const lines = Object.entries(errors || {}).map(([key, value]) => {
-      const messages = Array.isArray(value?.messages) ? value.messages : typeof value === "string" ? [value] : [];
-      const matched = /^records\[(\d+)\]\.?(.*)$/.exec(key);
-      const where = matched ? [describeItem(offset + Number(matched[1])), describeField(matched[2].replace(/\.value$/, ""))].filter(Boolean).join("・") : key;
-      return `${where}: ${messages.map(String).join(" / ") || "(詳細なし)"}`;
-    });
-    return lines.length > RECORD_ERROR_DETAIL_LIMIT ? [...lines.slice(0, RECORD_ERROR_DETAIL_LIMIT), `ほか ${lines.length - RECORD_ERROR_DETAIL_LIMIT}件のエラー`] : lines;
+  function describeKintoneRecordErrors(error, offset = 0, describeItem = (index) => `${index + 1}件目`, describeField = (code) => code) {
+    const lines = collectKintoneErrors(error, { record: (index) => describeItem(offset + index), recordField: describeField }).map(formatKintoneError);
+    return lines.length > KINTONE_ERROR_LIST_LIMIT ? [...lines.slice(0, KINTONE_ERROR_LIST_LIMIT), kintoneErrorOverflowLine(lines.length - KINTONE_ERROR_LIST_LIMIT)] : lines;
   }
   function isUnconfirmedWriteFailure(error) {
     if (error == null || isRunCancelledError(error)) return false;
     return !isKintoneRejection(error);
   }
   function describeBatchWriteFailure(label, failure, error, details = []) {
-    const reason = error instanceof Error ? error.message : String(error ?? "");
+    const message = error instanceof Error ? error.message : String(error ?? "");
+    const reason = details.length ? withoutKintoneErrorLines(message, error) : message;
     const remaining = Math.max(0, failure.total - failure.done);
     return [
       `${label}が途中で失敗しました。`,
@@ -3786,6 +4134,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         const wrapped = new Error(describeBatchWriteFailure(label, { done, from: i + 1, to: i + chunk.length, total: items.length, unconfirmed, checkBeforeRetry, chunkSpan }, error, details));
         wrapped.partial = { done, from: i + 1, to: i + chunk.length, total: items.length, ...unconfirmed ? { unconfirmed } : {} };
         wrapped.original = error;
+        if (details.length) wrapped.kintoneErrorDetails = details;
         throw wrapped;
       }
       done += chunk.length;
@@ -4401,6 +4750,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     const appIds = parseRecordAppIds(appIdsValue);
     if (!appIds.length) throw new Error("対象アプリIDを1件以上入力してください");
     const failures = [];
+    const errorDetails = [];
     const warnings = [];
     const cancelled = [];
     const completed = [];
@@ -4430,6 +4780,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
           ]);
         }
         failures.push(`App ${appId}: ${error?.message || String(error)}`);
+        const details = kintoneErrorDetailsOf(error);
+        if (details.length) errorDetails.push({ appId, lines: details });
         const partial = error?.partial;
         if (partial && Number.isFinite(Number(partial.done)) && Number.isFinite(Number(partial.total))) {
           writeKnown = true;
@@ -4457,6 +4809,7 @@ ${failures.join("\n")}${warningSummary ? `
 ${warningSummary}` : ""}${cancelSummary ? `
 ${cancelSummary}` : ""}`);
       if (completed.length) Object.assign(error, { partialSuccess: true });
+      if (errorDetails.length) Object.assign(error, { kintoneErrorDetails: errorDetails.flatMap(({ appId, lines }) => appIds.length > 1 ? lines.map((line) => `App ${appId}: ${line}`) : lines) });
       throw error;
     }
     if (cancelled.length === appIds.length) {
@@ -4864,9 +5217,10 @@ ${failures.join("\n")}`);
       ]);
     }
   }
-  function fieldLabelFor(properties, path) {
-    const label = /^[^.[\]]+$/.test(path) ? properties?.[path]?.label : void 0;
-    return label && label !== path ? `${label}［${path}］` : path;
+  function fieldLabelFor(properties, code, tableCode) {
+    const def = tableCode ? properties?.[tableCode]?.fields?.[code] : properties?.[code];
+    const label = def && typeof def === "object" ? def.label : void 0;
+    return label && label !== code ? `${label}［${code}］` : code;
   }
   async function runCsvImportBatchStandalone(opts, setStatus) {
     const { prefix, rows, plans } = await inspectCsvImportBatch(opts, setStatus);
@@ -4899,7 +5253,7 @@ ${[...problemBlocks, ...omitted(problems.length).map((line) => `${line}の詳細
         (batch) => apiPost(prefix, "/records.json", { app: appId, records: batch }, 1),
         (done, total) => setStatus(`App ${appId}: インポート中... (${done} / ${total}件)`),
         (index) => `CSV ${recordRows[index]}行目`,
-        (path) => fieldLabelFor(plan.properties, path)
+        (code, tableCode) => fieldLabelFor(plan.properties, code, tableCode)
       );
       setStatus(`App ${appId}: ${ok}件を取り込みました`);
       return { summary: { counts: { 件: ok }, written: ok, describe: countedSummary("を取り込みました", { withApp: true }) } };
@@ -5206,7 +5560,7 @@ ${droppedNote}` : ""}`);
       (batch) => apiPost(tgtPrefix, "/records.json", { app: targetAppId, records: batch }, 1),
       (done, total) => setStatus(`コピー中... ${done} / ${total}件`),
       (index) => `コピー元レコードID ${records[index]?.$id?.value ?? index + 1}`,
-      (path) => fieldLabelFor(targetProps, path)
+      (code, tableCode) => fieldLabelFor(targetProps, code, tableCode)
     );
     const fileDropNote = plan.droppedFileFields.length ? `添付除外 ${plan.droppedFileFields.length}フィールド` : "";
     const dropWarning = [fileDropNote, droppedNote].filter(Boolean).join(" / ");

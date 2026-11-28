@@ -4,6 +4,7 @@ import { hasKintoneOrderByClause, hasKintonePagingClause } from '../kintone-quer
 import { UNSAFE_FILENAME_CHARS } from '../utils.js';
 import { isRunCancelledError } from '../runControl.js';
 import { isKintoneRejection } from '../settingsWrite.js';
+import { KINTONE_ERROR_LIST_LIMIT, collectKintoneErrors, formatKintoneError, kintoneErrorOverflowLine, withoutKintoneErrorLines } from '../kintoneErrorDetail.js';
 
 /**
  * レコード一括取得・CSV・ZIP 命名の純粋ヘルパー。
@@ -166,35 +167,26 @@ export interface BatchWriteFailure {
   chunkSpan?: { first: string; last: string };
 }
 
-const RECORD_ERROR_DETAIL_LIMIT = 10;
 const DEFAULT_CHECK_BEFORE_RETRY = '対象アプリのレコード件数';
 
 /**
  * kintone のレコード登録・更新エラー（`errors: { "records[3].title.value": { messages } }`）から、
  * どのレコードのどのフィールドが原因かを取り出す。一括リクエストは全体が取り消されるため、
  * この詳細が無いと利用者は 100 件のどれが不正か分からない。
+ * キーの言い換えは設定の書き込みと共通（kintoneErrorDetail.ts）。全件（上限 KINTONE_ERROR_LIST_LIMIT）を返し、画面では先頭の数件にする。
  * @param offset 失敗したチャンク先頭の、全体での 0 始まり位置
  * @param describeItem 全体での 0 始まり位置を利用者向けの呼び名（CSV の行番号など）にする
- * @param describeField フィールドのパス（`code` や `table.value[0].value.qty`）を利用者向けの呼び名（フィールド名［コード］など）にする
+ * @param describeField フィールドのコードを利用者向けの呼び名（フィールド名［コード］など）にする。tableCode はテーブル内のフィールドのとき、そのテーブルのコード
  */
 export function describeKintoneRecordErrors(
   error: unknown,
   offset = 0,
   describeItem: (index: number) => string = (index) => `${index + 1}件目`,
-  describeField: (path: string) => string = (path) => path
+  describeField: (code: string, tableCode?: string) => string = (code) => code
 ): string[] {
-  let errors: any = null;
-  for (let current: any = error, depth = 0; current && typeof current === 'object' && depth < 5; current = current.original, depth++) {
-    if (current.errors && typeof current.errors === 'object' && !Array.isArray(current.errors)) { errors = current.errors; break; }
-  }
-  const lines = Object.entries(errors || {}).map(([key, value]: [string, any]) => {
-    const messages = Array.isArray(value?.messages) ? value.messages : typeof value === 'string' ? [value] : [];
-    const matched = /^records\[(\d+)\]\.?(.*)$/.exec(key);
-    const where = matched ? [describeItem(offset + Number(matched[1])), describeField(matched[2].replace(/\.value$/, ''))].filter(Boolean).join('・') : key;
-    return `${where}: ${messages.map(String).join(' / ') || '(詳細なし)'}`;
-  });
-  return lines.length > RECORD_ERROR_DETAIL_LIMIT
-    ? [...lines.slice(0, RECORD_ERROR_DETAIL_LIMIT), `ほか ${lines.length - RECORD_ERROR_DETAIL_LIMIT}件のエラー`]
+  const lines = collectKintoneErrors(error, { record: (index) => describeItem(offset + index), recordField: describeField }).map(formatKintoneError);
+  return lines.length > KINTONE_ERROR_LIST_LIMIT
+    ? [...lines.slice(0, KINTONE_ERROR_LIST_LIMIT), kintoneErrorOverflowLine(lines.length - KINTONE_ERROR_LIST_LIMIT)]
     : lines;
 }
 
@@ -215,7 +207,9 @@ export function isUnconfirmedWriteFailure(error: unknown): boolean {
  * 利用者に伝えるメッセージ。部分成功を隠さない。
  */
 export function describeBatchWriteFailure(label: string, failure: BatchWriteFailure, error: unknown, details: string[] = []): string {
-  const reason = error instanceof Error ? error.message : String(error ?? '');
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  // 項目ごとの行は details（全体での行番号・フィールド名つき）で示す。API 層が文に入れた行（塊の中の位置「50件目」）は重ねない。
+  const reason = details.length ? withoutKintoneErrorLines(message, error) : message;
   const remaining = Math.max(0, failure.total - failure.done);
   return [
     `${label}が途中で失敗しました。`,
@@ -241,7 +235,7 @@ export async function writeInChunks<T>(
   onProgress?: (done: number, total: number) => void,
   chunkSize: number = RECORDS_WRITE_CHUNK,
   describeItem?: (index: number) => string,
-  describeField?: (path: string) => string,
+  describeField?: (code: string, tableCode?: string) => string,
   checkBeforeRetry?: string
 ): Promise<number> {
   const size = Math.max(1, Math.floor(chunkSize) || RECORDS_WRITE_CHUNK);
@@ -257,6 +251,8 @@ export async function writeInChunks<T>(
       const wrapped = new Error(describeBatchWriteFailure(label, { done, from: i + 1, to: i + chunk.length, total: items.length, unconfirmed, checkBeforeRetry, chunkSpan }, error, details));
       (wrapped as any).partial = { done, from: i + 1, to: i + chunk.length, total: items.length, ...(unconfirmed ? { unconfirmed } : {}) };
       (wrapped as any).original = error;
+      // 画面（ステータス）に先頭の数件を出すための、全体での行番号・フィールド名つきの行（kintoneErrorDetail.ts の kintoneErrorDetailsOf）
+      if (details.length) (wrapped as any).kintoneErrorDetails = details;
       throw wrapped;
     }
     done += chunk.length;
