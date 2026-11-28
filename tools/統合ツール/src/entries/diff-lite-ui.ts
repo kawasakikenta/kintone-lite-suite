@@ -28,7 +28,7 @@ import { runExportDiffMarkdown } from '../tabs/diff-markdown-export-standalone.j
 import { buildDiffMarkdownBatchExport, type DiffMarkdownContext } from '../diff/markdown-export.js';
 import { decodeRow, type DecodedRow } from '../diff/path-decoder.js';
 import { collectFieldDefinitions, extractFieldPathInfo, getFieldRowPayload } from '../diff/enrich.js';
-import { downloadBlob, downloadText, esc, extractAppNameFromBundle, nowStamp, readTextFile, stableStringify, stripHtmlToText, withoutApiContextLines } from '../utils.js';
+import { copyTextToClipboard, downloadBlob, downloadText, esc, extractAppNameFromBundle, nowStamp, readTextFile, stableStringify, stripHtmlToText, withoutApiContextLines } from '../utils.js';
 import { runExportDiffHtmlStandalone } from '../tabs/diff-export-standalone.js';
 import {
   createLitePanel,
@@ -251,6 +251,8 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-alert{margin:0 12px 10px;padding:8px 10px;border:1px solid #fdba74;border-radius:7px;background:#fff7ed;color:#9a3412;font:600 12.5px/1.55 -apple-system,Segoe UI,sans-serif}
 .kus-dl-legend{margin:14px 12px 0;padding:11px 2px 13px;border-top:1px solid #e2e8f0;color:#475569;font:13px/1.7 -apple-system,Segoe UI,sans-serif}
 .kus-dl-legend span{display:block}
+.kus-dl-overview__actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin:0 12px 14px;padding:0 2px}
+.kus-dl-overview__actions-note{flex:1 1 220px;min-width:0;color:#475569;font:12.5px/1.6 -apple-system,Segoe UI,sans-serif}
 .kus-dl-result__summary{margin:0 2px 7px;font-family:-apple-system,Segoe UI,sans-serif;font-size:12.5px;color:#64748b;display:flex;flex-wrap:wrap;gap:6px 12px}
 .kus-dl-sticky{position:sticky;top:-18px;z-index:4;margin:0 0 12px;padding:0;border:1px solid #cbd5e1;border-radius:0 0 12px 12px;background:#fff;box-shadow:0 8px 16px -12px rgba(15,37,63,.55)}
 .kus-dl-contextbar{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:stretch;border-bottom:1px solid #e2e8f0;font-family:-apple-system,Segoe UI,sans-serif}
@@ -1398,39 +1400,29 @@ function displayBundleSide(bundle: any, fallbackRole: string): { name: string; e
   return { name, environment };
 }
 
-export function renderLiteDiffOverviewHtml(cache: DiffCache, options: { announce?: boolean } = {}): string {
+/** 比較結果の判定（概要の見出しと 1 行の説明）。画面の概要と「結果の要約をコピー」で同じ文にする。 */
+function liteDiffVerdict(cache: DiffCache) {
   const counts = summarizeLiteDiffRows(cache.rows || []);
   const contentChanged = contentChangedCount(counts);
-  const source = displayBundleSide(cache.sourceBundle, '比較元');
-  const target = displayBundleSide(cache.targetBundle, '比較先');
-  const fetchIssues = cache.fetchIssues || [];
-  const partialIssues = cache.partialIssues || [];
-  const ignoreRuleSummary = summarizeLiteIgnoreRules(cache.ignoreKeys || '');
-  const normalizationLabels = Object.entries(DIFF_NORMALIZATION_PRESETS)
-    .filter(([key]) => cache.normalizationPresetState?.[key] === true)
-    .map(([, preset]) => preset.label);
-  const truncated = !!cache.truncation?.truncated;
-  const actualDiffTruncated = hasIncompleteActualDiffTruncation(cache.truncation);
   const incomplete = isIncompleteLiteDiff(cache);
   const hasNoticeOnlyChanges = counts.actual === 0 && counts.displayOnly > 0;
-  const verdictClass = incomplete ? 'kus-dl-verdict--warn' : (counts.actual === 0 && !hasNoticeOnlyChanges ? 'kus-dl-verdict--same' : '');
-  const verdictTitle = incomplete
+  const title = incomplete
     ? '比較結果は不完全です'
     : (hasNoticeOnlyChanges
       ? `状態名の変更候補が ${counts.displayOnly} 件見つかりました`
       : (counts.actual === 0 ? '選択した設定に差分はありません' : `差分が ${counts.actual} 件見つかりました`));
-  const verdictText = incomplete
+  const text = incomplete
     ? (counts.actual ? `取得できた範囲では ${counts.actual} 件の差分があります。警告内容を確認してください。` : '差分なしとは判断できません。取得失敗または件数上限を解消して再比較してください。')
     : (hasNoticeOnlyChanges
       ? '参照先の連動変更をまとめた表示用通知です。削除・追加としては数えていません。内容を確認してください。'
       : (counts.actual === 0
         ? `比較元と比較先は一致しています${counts.same ? `（同一 ${counts.same} 件）` : ''}。`
         : `追加 ${counts.added} / 削除 ${counts.removed} / 内容変更 ${contentChanged}${counts.moved ? ` / 移動 ${counts.moved}` : ''}`));
-  const metric = (type: string, label: string, hint: string, value: number) =>
-    value > 0 ? `<button type="button" class="kus-dl-metric" data-kus-dl-type-filter="${esc(type)}" aria-label="${esc(label)} ${value}件を表示">` +
-      `<span class="kus-dl-metric__num">${value}</span><span class="kus-dl-metric__label">${esc(label)}</span><span class="kus-dl-metric__hint">${esc(hint)}</span></button>`
-      : '';
+  return { counts, contentChanged, incomplete, hasNoticeOnlyChanges, title, text };
+}
 
+/** セクションごとの行（SECTION_DEFS の順。知らないセクションは後ろ）と、その件数の表示。 */
+function liteDiffSections(cache: DiffCache): Array<{ key: string; label: string; rows: DiffRow[]; actual: number; countLabel: string }> {
   const bySection = new Map<string, DiffRow[]>();
   for (const row of cache.rows || []) {
     const key = row.sectionKey || '(その他)';
@@ -1440,15 +1432,39 @@ export function renderLiteDiffOverviewHtml(cache: DiffCache, options: { announce
   const orderedKeys: string[] = [];
   for (const def of SECTION_DEFS) if (bySection.has(def.key)) orderedKeys.push(def.key);
   for (const key of bySection.keys()) if (!orderedKeys.includes(key)) orderedKeys.push(key);
-  const sectionButtons = orderedKeys.map((key) => {
-    const sectionCounts = summarizeLiteDiffRows(bySection.get(key) || []);
+  return orderedKeys.map((key) => {
+    const rows = bySection.get(key) || [];
+    const sectionCounts = summarizeLiteDiffRows(rows);
     const label = SECTION_DEFS.find((def) => def.key === key)?.label || key;
     const countLabel = sectionCounts.actual
       ? `${sectionCounts.actual}件`
       : (sectionCounts.displayOnly ? `変更候補 ${sectionCounts.displayOnly}件` : `一致 ${sectionCounts.same}件`);
-    return `<button type="button" class="kus-dl-section-jump" data-kus-dl-section-filter="${esc(key)}" aria-label="${esc(`${label}で結果を絞り込む（${countLabel}）`)}">${esc(label)} ${esc(countLabel)}</button>`;
-  }).join('');
+    return { key, label, rows, actual: sectionCounts.actual, countLabel };
+  });
+}
 
+/** 適用した比較条件（無視ルール・正規化）の文。 */
+function liteDiffConditionTexts(cache: DiffCache): { ignore: string; normalization: string } {
+  const ignoreRuleSummary = summarizeLiteIgnoreRules(cache.ignoreKeys || '');
+  const normalizationLabels = Object.entries(DIFF_NORMALIZATION_PRESETS)
+    .filter(([key]) => cache.normalizationPresetState?.[key] === true)
+    .map(([, preset]) => preset.label);
+  return {
+    ignore: ignoreRuleSummary.total
+      ? `無視ルール ${ignoreRuleSummary.total}件を適用した後の結果です。ルールに一致した設定差分は一覧に含まれません${ignoreRuleSummary.contextualRules ? `（完全パス/パターン ${ignoreRuleSummary.contextualRules}件）` : ''}。`
+      : '無視ルールは適用していません。',
+    normalization: normalizationLabels.length
+      ? `正規化 ${normalizationLabels.length}件を適用しています（${normalizationLabels.join('、')}）。`
+      : '正規化は適用していません。'
+  };
+}
+
+/** 件数上限・取得失敗・本文未検証の警告文（概要の警告と「結果の要約をコピー」で同じ文にする）。 */
+function liteDiffAlertMessages(cache: DiffCache): string[] {
+  const fetchIssues = cache.fetchIssues || [];
+  const partialIssues = cache.partialIssues || [];
+  const truncated = !!cache.truncation?.truncated;
+  const actualDiffTruncated = hasIncompleteActualDiffTruncation(cache.truncation);
   const alerts: string[] = [];
   if (actualDiffTruncated) {
     const truncationSections = cache.truncation?.sections || [];
@@ -1487,6 +1503,46 @@ export function renderLiteDiffOverviewHtml(cache: DiffCache, options: { announce
     const remainder = partialIssues.length > details.length ? ` / ほか ${partialIssues.length - details.length} 件` : '';
     alerts.push(`本文サイズまたは形式の制約により、${partialIssues.length} 件は本文を比較できず fileKey だけで比較しました（本文内容は未検証です）。${details.join(' / ')}${remainder}`);
   }
+  return alerts;
+}
+
+/**
+ * 「結果の要約をコピー」の文。チャットや課題の記録へそのまま貼れる、比較方向・判定・内訳・セクション別の件数・注意・比較条件の数行。
+ * 値（設定の中身）は含めない。画面の概要と同じ数え方・同じ文を使う。
+ */
+export function buildLiteDiffSummaryText(cache: DiffCache): string {
+  const verdict = liteDiffVerdict(cache);
+  const source = displayBundleSide(cache.sourceBundle, '比較元');
+  const target = displayBundleSide(cache.targetBundle, '比較先');
+  const sections = liteDiffSections(cache).filter((section) => section.actual > 0);
+  const conditions = liteDiffConditionTexts(cache);
+  const lines = [
+    '差分比較の結果',
+    `比較元: ${source.name}（${source.environment}）`,
+    `比較先: ${target.name}（${target.environment}）`,
+    `結果: ${verdict.title}。${verdict.text}`,
+    `取得: ${verdict.incomplete ? '確認が必要（下の注意を確認してください）' : '問題なし'}`
+  ];
+  if (sections.length) lines.push(`セクション別: ${sections.map((section) => `${section.label} ${section.countLabel}`).join('、')}`);
+  liteDiffAlertMessages(cache).forEach((message) => lines.push(`注意: ${message}`));
+  lines.push(`比較条件: ${conditions.ignore} ${conditions.normalization}`);
+  return `${lines.join('\n')}\n`;
+}
+
+export function renderLiteDiffOverviewHtml(cache: DiffCache, options: { announce?: boolean } = {}): string {
+  const { counts, contentChanged, incomplete, hasNoticeOnlyChanges, title: verdictTitle, text: verdictText } = liteDiffVerdict(cache);
+  const source = displayBundleSide(cache.sourceBundle, '比較元');
+  const target = displayBundleSide(cache.targetBundle, '比較先');
+  const verdictClass = incomplete ? 'kus-dl-verdict--warn' : (counts.actual === 0 && !hasNoticeOnlyChanges ? 'kus-dl-verdict--same' : '');
+  const metric = (type: string, label: string, hint: string, value: number) =>
+    value > 0 ? `<button type="button" class="kus-dl-metric" data-kus-dl-type-filter="${esc(type)}" aria-label="${esc(label)} ${value}件を表示">` +
+      `<span class="kus-dl-metric__num">${value}</span><span class="kus-dl-metric__label">${esc(label)}</span><span class="kus-dl-metric__hint">${esc(hint)}</span></button>`
+      : '';
+  const sections = liteDiffSections(cache);
+  const sectionButtons = sections.map(({ key, label, countLabel }) =>
+    `<button type="button" class="kus-dl-section-jump" data-kus-dl-section-filter="${esc(key)}" aria-label="${esc(`${label}で結果を絞り込む（${countLabel}）`)}">${esc(label)} ${esc(countLabel)}</button>`
+  ).join('');
+  const alerts = liteDiffAlertMessages(cache);
 
   const matchingNoticesData = cache.matchingNotices;
   let matchingNoticesHtml = '';
@@ -1511,7 +1567,7 @@ export function renderLiteDiffOverviewHtml(cache: DiffCache, options: { announce
   }
 
   // 旧フォーム設定は、フィールド設定・レイアウト設定の再掲。件数には含めるが、Excel の変更一覧には含めない。
-  const formReprintCount = (bySection.get('formSettings') || []).filter((row) => !row._displayOnly && row.type !== 'same').length;
+  const formReprintCount = (sections.find((section) => section.key === 'formSettings')?.rows || []).filter((row) => !row._displayOnly && row.type !== 'same').length;
   const comparedWithOrigin = (cache.scopes || []).some((key) => key === 'fieldSettings' || key === 'layoutSettings');
   const formReprintNote = formReprintCount > 0 && comparedWithOrigin
     ? `<span>フォーム設定の ${formReprintCount} 件は、フィールド設定・レイアウト設定の変更の再掲です（Excelの変更一覧には含めません）。</span>`
@@ -1520,12 +1576,7 @@ export function renderLiteDiffOverviewHtml(cache: DiffCache, options: { announce
   const alertAttrs = options.announce === false ? '' : ' role="alert"';
   const completeness = incomplete ? 'incomplete' : 'complete';
   const alertsHtml = alerts.map((message) => `<div class="kus-dl-alert"${alertAttrs}>${esc(message)}</div>`).join('');
-  const ignoreCondition = ignoreRuleSummary.total
-    ? `無視ルール ${ignoreRuleSummary.total}件を適用した後の結果です。ルールに一致した設定差分は一覧に含まれません${ignoreRuleSummary.contextualRules ? `（完全パス/パターン ${ignoreRuleSummary.contextualRules}件）` : ''}。`
-    : '無視ルールは適用していません。';
-  const normalizationCondition = normalizationLabels.length
-    ? `正規化 ${normalizationLabels.length}件を適用しています（${normalizationLabels.join('、')}）。`
-    : '正規化は適用していません。';
+  const { ignore: ignoreCondition, normalization: normalizationCondition } = liteDiffConditionTexts(cache);
   return `<section id="kus-dl-overview" class="kus-dl-overview" data-kus-dl-overview tabindex="-1" aria-label="比較結果サマリー">` +
     `<div class="kus-dl-overview__direction"><div class="kus-dl-side"><span class="kus-dl-side__role">比較元</span><span class="kus-dl-side__name" title="${esc(source.name)}">${esc(source.name)}</span><span class="kus-dl-side__env">${esc(source.environment)}</span></div>` +
     `<span class="kus-dl-overview__arrow" aria-label="から">→</span>` +
@@ -1538,7 +1589,9 @@ export function renderLiteDiffOverviewHtml(cache: DiffCache, options: { announce
     (sectionButtons ? `<div class="kus-dl-section-nav"><span class="kus-dl-section-nav__label">セクションで絞り込む</span>${sectionButtons}</div>` : '') +
     matchingNoticesHtml +
     `<div class="kus-dl-alert kus-dl-conditions" role="note"><strong>適用した比較条件</strong><span>${esc(ignoreCondition)} ${esc(normalizationCondition)}</span></div>` +
-    `<div class="kus-dl-legend"><span>「比較先のみ」は追加、「比較元のみ」は削除として検出しています。</span><span>比較方向は上の矢印で確認できます。</span>${formReprintNote}</div></section>`;
+    `<div class="kus-dl-legend"><span>「比較先のみ」は追加、「比較元のみ」は削除として検出しています。</span><span>比較方向は上の矢印で確認できます。</span>${formReprintNote}</div>` +
+    `<div class="kus-dl-overview__actions"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-copy-summary>結果の要約をコピー</button>` +
+    `<span class="kus-dl-overview__actions-note">比較方向・件数・セクション別の件数・注意を数行の文でコピーします（設定の値は含めません）。</span></div></section>`;
 }
 
 export interface LiteRowsRenderOptions {
@@ -4349,6 +4402,14 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
         multiXlsxExportActive = false;
         multiXlsxButton.disabled = false;
       }
+      return;
+    }
+    if (target?.closest('[data-kus-dl-copy-summary]')) {
+      if (!cache) return;
+      const copied = await copyTextToClipboard(buildLiteDiffSummaryText(cache));
+      panel.setStatus(copied
+        ? '結果の要約をクリップボードにコピーしました'
+        : '結果の要約をコピーできませんでした。ブラウザのクリップボードの権限を確認してください', copied ? 'ok' : 'err');
       return;
     }
     const typeButton = target?.closest<HTMLElement>('[data-kus-dl-type-filter]');
