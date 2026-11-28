@@ -12,6 +12,7 @@ import {
 } from '../../src/reflect/applyOutcome.js';
 import { describeApplySectionStatus, normalizeApplySections } from '../../src/reflect/liteSetup.js';
 import { applyProgressUpdate, describeApplyProgressStatus, summarizeApplyProgress } from '../../src/reflect/applyProgress.js';
+import { apiErrorWithContext } from '../../src/utils.js';
 
 describe('buildReflectErrorHint', () => {
   it('権限エラーには管理権限の確認を促す', () => {
@@ -24,7 +25,7 @@ describe('buildReflectErrorHint', () => {
   });
 
   it('ルックアップ関連エラーにはマッピングでの変換を促す', () => {
-    expect(buildReflectErrorHint('ルックアップの参照先アプリが不正です')).toContain('Lookup AppID マッピング');
+    expect(buildReflectErrorHint('ルックアップの参照先アプリが不正です')).toContain('「参照先変換」');
   });
 
   it('フィールド不存在エラーには先にフィールド設定の反映を促す', () => {
@@ -46,6 +47,21 @@ describe('buildReflectErrorHint', () => {
   it('未知のエラーは空文字（ヒントなし）', () => {
     expect(buildReflectErrorHint('something unexpected happened')).toBe('');
     expect(buildReflectErrorHint('')).toBe('');
+  });
+
+  // 以前は、ルックアップの参照先アプリの入力エラー（「参照するアプリが見つかりません」）に「反映先アプリID・ゲストスペースIDが正しいか」を案内していた。
+  // また、送った内容（[API] の行の payload にある "lookup"）でもルックアップのヒントが決まっていた。
+  it('ルックアップの設定の入力エラーには参照先の変換を案内し、送った内容（[API] の行）ではヒントを決めない', () => {
+    const lookupError = apiErrorWithContext(
+      { code: 'CB_VA01', id: 'x', message: '入力内容が正しくありません。', errors: { 'properties[customer_code].lookup.relatedApp.app': { messages: ['参照するアプリが見つかりません。'] } } },
+      { method: 'POST', path: '/app/form/fields.json', payload: { app: '202', properties: {} } }
+    );
+    expect(buildReflectErrorHint(lookupError.message)).toContain('「参照先変換」');
+    const notFound = apiErrorWithContext({ code: 'GAIA_AP01', id: 'y', message: '指定したアプリ（id: 202）が見つかりません。' }, { method: 'POST', path: '/app/form/fields.json', payload: { app: '202', properties: { c: { lookup: { relatedApp: { app: '301' } } } } } });
+    expect(notFound.message).toContain('lookup');
+    expect(buildReflectErrorHint(notFound.message)).toContain('ゲストスペースID');
+    const viewError = apiErrorWithContext({ code: 'GAIA_IL26', id: 'z', message: '指定したフィールドが存在しません。' }, { method: 'PUT', path: '/app/views.json', payload: { app: '202', views: { a: { fields: ['lookup_code'] } } } });
+    expect(buildReflectErrorHint(viewError.message)).toContain('フィールド設定');
   });
 });
 
