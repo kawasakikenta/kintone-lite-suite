@@ -218,7 +218,13 @@ async function main() {
     const idCheck = page.getByRole('textbox', { name: '確認用の反映先アプリID', exact: true });
     if (await idCheck.isVisible()) {
       await idCheck.fill('wrong'); assert.equal(await applyButton().isDisabled(), true);
-      await idCheck.fill(await page.evaluate(() => document.querySelector('[aria-label="反映先アプリID"]').value));
+      const targetAppId = await page.evaluate(() => document.querySelector('[aria-label="反映先アプリID"]').value);
+      // 日本語入力のまま入れた全角数字は半角に直す。違う番号は全角でも進めない（一致の判定は変えない）
+      const fullWidth = (digits) => digits.replace(/[0-9]/g, (d) => String.fromCharCode(d.charCodeAt(0) + 0xfee0));
+      await idCheck.fill(fullWidth(targetAppId + '9'));
+      assert.equal(await idCheck.inputValue(), targetAppId + '9', '確認用の反映先アプリIDの全角数字を半角にする');
+      assert.equal(await applyButton().isDisabled(), true, '全角で入れた違うアプリIDでは書き込まない');
+      await idCheck.fill(targetAppId);
       const count = await page.evaluate(() => window.__reflectMock.applies.length);
       await idCheck.press('Enter'); assert.equal(await page.evaluate(() => window.__reflectMock.applies.length), count, '確認IDのEnterで書き込まない');
     }

@@ -114,6 +114,17 @@ export function summarizeList(lines: string[], limit = SUMMARY_LIST_LIMIT): stri
   return [...items.slice(0, limit), `…ほか ${items.length - limit} 件（合計 ${items.length} 件）`].join('\n');
 }
 
+/**
+ * 全角数字（０〜９）を半角数字に、全角カンマ「，」を半角カンマ「,」にする。
+ * アプリID・ゲストスペースID・スペースIDの入力に使う（日本語入力のまま「１０１，１０２」と入れても受け付ける）。
+ * 1 文字を 1 文字に置き換えるので、文字の位置（入力欄のカーソル位置）は変わらない。
+ */
+export function normalizeIdInputText(value: unknown): string {
+  return String(value ?? '')
+    .replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
+    .replace(/，/g, ',');
+}
+
 export function deepClone<T>(v: T): T {
   return v == null ? v : JSON.parse(JSON.stringify(v));
 }

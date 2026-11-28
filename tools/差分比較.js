@@ -617,6 +617,9 @@
   function safeJsLiteralForScript(v) {
     return safeJsonForScript(v).replace(/([{,])"__proto__":/g, '$1["__proto__"]:');
   }
+  function normalizeIdInputText(value) {
+    return String(value ?? "").replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 65248)).replace(/，/g, ",");
+  }
   function deepClone(v) {
     return v == null ? v : JSON.parse(JSON.stringify(v));
   }
@@ -5591,7 +5594,7 @@
 
   // src/handlers/diffFocus.ts
   function extractAppIdFromInput(value) {
-    const raw = String(value || "").trim();
+    const raw = normalizeIdInputText(value).trim();
     if (!raw) return "";
     if (/^\d+$/.test(raw)) return raw;
     let decoded = raw;
@@ -5608,7 +5611,7 @@
     return "";
   }
   function extractGuestIdFromInput(value) {
-    const raw = String(value || "").trim();
+    const raw = normalizeIdInputText(value).trim();
     if (!raw) return "";
     let decoded = raw;
     try {
@@ -13895,6 +13898,29 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     }
     return wrap;
   }
+  function normalizeIdInputValue(el) {
+    const next = normalizeIdInputText(el.value);
+    if (next === el.value) return false;
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    el.value = next;
+    if (start !== null && el.ownerDocument?.activeElement === el) {
+      try {
+        el.setSelectionRange(start, end ?? start);
+      } catch {
+      }
+    }
+    return true;
+  }
+  function installIdInputNormalizer(el) {
+    el.addEventListener("input", (ev) => {
+      if (ev.isComposing) return;
+      normalizeIdInputValue(el);
+    });
+    el.addEventListener("compositionend", () => {
+      if (normalizeIdInputValue(el)) el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
   function makeInput(opts = {}) {
     const inp = document.createElement("input");
     inp.type = opts.type || "text";
@@ -13902,6 +13928,7 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     if (opts.value) inp.value = opts.value;
     if (opts.ariaLabel) inp.setAttribute("aria-label", opts.ariaLabel);
     if (opts.noSubmit) inp.setAttribute("data-lp-no-submit", "");
+    if (opts.idInput) installIdInputNormalizer(inp);
     inp.className = "kus-lp__input" + (opts.width ? ` kus-lp__input--${opts.width}` : "");
     return inp;
   }
@@ -21396,14 +21423,14 @@ ${fence}`;
     ensureStyles2();
     const { details, body } = makeDetails(opts.title || "アプリを検索（名前・コード・ID）", { open: !!opts.open });
     const keyword = makeInput({ placeholder: "アプリ名 / アプリID / URL", width: "wide", noSubmit: true });
-    const guest = makeInput({ placeholder: "ゲストID（任意）", width: "guest", noSubmit: true });
+    const guest = makeInput({ placeholder: "ゲストID（任意）", width: "guest", noSubmit: true, idInput: true });
     if (opts.guestEl?.value.trim()) guest.value = opts.guestEl.value.trim();
     const searchBtn = makeButton("検索", "sub", { icon: "🔍" });
     const allBtn = makeButton("環境内の全アプリ", "sub");
     allBtn.title = "接続先で閲覧できるアプリをすべて候補に表示します（検索語とスペースIDは使いません）";
     const searchMode = makeSelect([["name", "名前 / ID / URL"], ["code", "アプリコード（完全一致）"]]);
     searchMode.setAttribute("aria-label", "検索方法");
-    const space = makeInput({ placeholder: "スペースID（任意）", width: "guest", noSubmit: true, ariaLabel: "検索対象スペースID" });
+    const space = makeInput({ placeholder: "スペースID（任意）", width: "guest", noSubmit: true, ariaLabel: "検索対象スペースID", idInput: true });
     body.appendChild(makeRow([searchMode, space], { label: "検索方法" }));
     body.appendChild(makeRow([keyword, guest, searchBtn], { label: "検索語" }));
     body.appendChild(makeRow([allBtn], { label: "全アプリ" }));
@@ -21755,7 +21782,7 @@ ${fence}`;
 
   // src/reflect/appReference.ts
   function parseAppReference(text2) {
-    const raw = String(text2 || "").trim();
+    const raw = normalizeIdInputText(text2).trim();
     if (!raw) return null;
     if (/^[1-9]\d*$/.test(raw)) return { appId: raw, guestId: "" };
     const appId = extractAppIdFromInput(raw);
@@ -21763,7 +21790,7 @@ ${fence}`;
     return { appId, guestId: extractGuestIdFromInput(raw) };
   }
   function needsAppReferenceParse(text2) {
-    const raw = String(text2 || "").trim();
+    const raw = normalizeIdInputText(text2).trim();
     return !!raw && !/^\d+$/.test(raw);
   }
 
@@ -22393,9 +22420,9 @@ ${fence}`;
     return "";
   }
   function mergePastedTargetAppIds(current, selectionStart, selectionEnd, pasted) {
-    const tokens = String(pasted || "").split(/[,、，\s]+/).filter(Boolean);
+    const tokens = normalizeIdInputText(pasted || "").split(/[,、，\s]+/).filter(Boolean);
     if (tokens.length <= 1) return { merged: current, splits: false };
-    const value = String(current || "");
+    const value = normalizeIdInputText(current || "");
     const start = Math.min(Math.max(0, selectionStart ?? value.length), value.length);
     const end = Math.min(Math.max(start, selectionEnd ?? start), value.length);
     const before = value.slice(0, start).replace(/[,、，\s]+$/, "").trim();
@@ -23668,11 +23695,11 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     panel.status.setAttribute("aria-live", "polite");
     panel.status.setAttribute("aria-atomic", "true");
     panel.root.classList.add("kus-dl-workspace");
-    const srcApp = makeInput({ placeholder: "アプリID", width: "id", ariaLabel: "比較元アプリID" });
-    const srcGuest = makeInput({ placeholder: "ゲストID", width: "guest", ariaLabel: "比較元ゲストスペースID" });
+    const srcApp = makeInput({ placeholder: "アプリID", width: "id", ariaLabel: "比較元アプリID", idInput: true });
+    const srcGuest = makeInput({ placeholder: "ゲストID", width: "guest", ariaLabel: "比較元ゲストスペースID", idInput: true });
     const srcPrev = makeCheck({ label: "プレビューで取得" });
-    const tgtApp = makeInput({ placeholder: "アプリID（カンマ区切り可）", width: "medium", ariaLabel: "比較先1アプリID" });
-    const tgtGuest = makeInput({ placeholder: "ゲストID", width: "guest", ariaLabel: "比較先1ゲストスペースID" });
+    const tgtApp = makeInput({ placeholder: "アプリID（カンマ区切り可）", width: "medium", ariaLabel: "比較先1アプリID", idInput: true });
+    const tgtGuest = makeInput({ placeholder: "ゲストID", width: "guest", ariaLabel: "比較先1ゲストスペースID", idInput: true });
     const tgtPrev = makeCheck({ label: "プレビューで取得" });
     srcPrev.checkbox.setAttribute("aria-label", "比較元をプレビュー環境から取得");
     tgtPrev.checkbox.setAttribute("aria-label", "比較先をプレビュー環境から取得");
@@ -23775,8 +23802,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     });
     const addTargetRow = (appId = "", guestId = "", appName = "", container = targetList, refresh = true) => {
       const rowNumber = targetRows.length + 1;
-      const app = makeInput({ placeholder: "アプリID（カンマ区切り可）", width: "medium", ariaLabel: `比較先${rowNumber}アプリID` });
-      const guest = makeInput({ placeholder: "ゲストID", width: "guest", ariaLabel: `比較先${rowNumber}ゲストスペースID` });
+      const app = makeInput({ placeholder: "アプリID（カンマ区切り可）", width: "medium", ariaLabel: `比較先${rowNumber}アプリID`, idInput: true });
+      const guest = makeInput({ placeholder: "ゲストID", width: "guest", ariaLabel: `比較先${rowNumber}ゲストスペースID`, idInput: true });
       const name = makeTargetName();
       app.value = appId;
       guest.value = guestId;
@@ -24004,8 +24031,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     pairList.dataset.kusDlPairList = "";
     const pairRows = [];
     const makePairEndpoint = (side, rowNumber) => {
-      const app = makeInput({ placeholder: "アプリID", width: "medium", ariaLabel: `ペア${rowNumber}${side === "source" ? "比較元" : "比較先"}アプリID` });
-      const guest = makeInput({ placeholder: "ゲストID", width: "guest", ariaLabel: `ペア${rowNumber}${side === "source" ? "比較元" : "比較先"}ゲストスペースID` });
+      const app = makeInput({ placeholder: "アプリID", width: "medium", ariaLabel: `ペア${rowNumber}${side === "source" ? "比較元" : "比較先"}アプリID`, idInput: true });
+      const guest = makeInput({ placeholder: "ゲストID", width: "guest", ariaLabel: `ペア${rowNumber}${side === "source" ? "比較元" : "比較先"}ゲストスペースID`, idInput: true });
       app.inputMode = "numeric";
       guest.inputMode = "numeric";
       const preview = makeCheck({ label: "プレビューで取得" });
@@ -24757,7 +24784,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       const invalidLines = [];
       pairBulkTextarea.value.split(/\r?\n/).forEach((rawLine, index) => {
         if (!rawLine.trim()) return;
-        const line = rawLine.replace(/\r$/, "");
+        const line = normalizeIdInputText(rawLine.replace(/\r$/, ""));
         const columns = (line.includes("	") ? line.split("	") : line.split(/[,、，]/)).map((value) => value.trim());
         if (columns.length === 2) parsed.push({ source: { appId: columns[0] }, target: { appId: columns[1] } });
         else if (columns.length === 4) parsed.push({ source: { appId: columns[0], guestId: columns[1] }, target: { appId: columns[2], guestId: columns[3] } });

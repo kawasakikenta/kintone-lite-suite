@@ -345,6 +345,7 @@
     } },
     { key: "categories", label: "カテゴリ設定", endpoint: "/app/categories.json", put: true, putBuilder: (d) => ({ categories: d.categories || d }) }
   ];
+  var META_KEYS = /* @__PURE__ */ new Set(["revision", "creator", "createdAt", "modifier", "modifiedAt"]);
   var DEFAULT_SUBTAB_STATE = Object.freeze({
     diff: "conditions",
     reflect: "settings",
@@ -551,36 +552,6 @@
     root = el;
   }
 
-  // src/handlers/diffFocus.ts
-  function extractAppIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    if (/^\d+$/.test(raw)) return raw;
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
-    if (queryMatch) return queryMatch[1];
-    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
-    if (guestPathMatch) return guestPathMatch[1];
-    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
-    if (pathMatch) return pathMatch[1];
-    return "";
-  }
-  function extractGuestIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
-    return guestPathMatch ? guestPathMatch[1] : "";
-  }
-
   // src/utils.ts
   function getToolWindowSafe() {
     try {
@@ -608,6 +579,22 @@
     const items = lines.filter(Boolean);
     if (items.length <= limit) return items.join("\n");
     return [...items.slice(0, limit), `…ほか ${items.length - limit} 件（合計 ${items.length} 件）`].join("\n");
+  }
+  function normalizeIdInputText(value) {
+    return String(value ?? "").replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 65248)).replace(/，/g, ",");
+  }
+  function deepClone(v) {
+    return v == null ? v : JSON.parse(JSON.stringify(v));
+  }
+  function normalizeSettingsSection(value) {
+    const sortValue = (current, responseRoot = false) => {
+      if (Array.isArray(current)) return current.map((item) => sortValue(item));
+      if (current && typeof current === "object") {
+        return Object.fromEntries(Object.keys(current).sort().filter((key) => !responseRoot || !META_KEYS.has(key)).map((key) => [key, sortValue(current[key])]));
+      }
+      return current;
+    };
+    return sortValue(value, true);
   }
   function compactForLog(value, max = 220) {
     try {
@@ -732,6 +719,36 @@
       }
     }
     return legacyCopy(text);
+  }
+
+  // src/handlers/diffFocus.ts
+  function extractAppIdFromInput(value) {
+    const raw = normalizeIdInputText(value).trim();
+    if (!raw) return "";
+    if (/^\d+$/.test(raw)) return raw;
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
+    if (queryMatch) return queryMatch[1];
+    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
+    if (guestPathMatch) return guestPathMatch[1];
+    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
+    if (pathMatch) return pathMatch[1];
+    return "";
+  }
+  function extractGuestIdFromInput(value) {
+    const raw = normalizeIdInputText(value).trim();
+    if (!raw) return "";
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
+    return guestPathMatch ? guestPathMatch[1] : "";
   }
 
   // src/diff/engine.ts
@@ -941,6 +958,31 @@
     apiGetMetrics.lastError = lastError;
     apiGetMetrics.lastLatencyMs = Date.now() - startAt;
     throw apiErrorWithContext(err, { method: "GET", prefix, path, payload: params });
+  }
+  function sanitizeBundleMeta(meta) {
+    const out = { sectionRevisions: {} };
+    const revisions = meta?.sectionRevisions;
+    if (!revisions || typeof revisions !== "object") return out;
+    Object.keys(revisions).forEach((key) => {
+      const value = revisions[key];
+      if (value == null || value === "") return;
+      out.sectionRevisions[key] = String(value);
+    });
+    return out;
+  }
+  function ensureBundleShape(bundle, rawSettings = false) {
+    if (!bundle || typeof bundle !== "object") throw new Error("バンドル形式が不正です");
+    if (!bundle.sections || typeof bundle.sections !== "object") throw new Error("sections がありません");
+    return {
+      appId: String(bundle.appId || ""),
+      guestId: String(bundle.guestId || ""),
+      preview: !!bundle.preview,
+      fetchedAt: bundle.fetchedAt || (/* @__PURE__ */ new Date()).toISOString(),
+      meta: sanitizeBundleMeta(bundle.meta),
+      sections: rawSettings ? deepClone(bundle.sections) : Object.fromEntries(
+        Object.keys(bundle.sections).sort().map((key) => [key, normalizeSettingsSection(bundle.sections[key])])
+      )
+    };
   }
   var CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
   var FILE_DOWNLOAD_DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
@@ -1992,6 +2034,29 @@
     }
     return wrap;
   }
+  function normalizeIdInputValue(el) {
+    const next = normalizeIdInputText(el.value);
+    if (next === el.value) return false;
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    el.value = next;
+    if (start !== null && el.ownerDocument?.activeElement === el) {
+      try {
+        el.setSelectionRange(start, end ?? start);
+      } catch {
+      }
+    }
+    return true;
+  }
+  function installIdInputNormalizer(el) {
+    el.addEventListener("input", (ev) => {
+      if (ev.isComposing) return;
+      normalizeIdInputValue(el);
+    });
+    el.addEventListener("compositionend", () => {
+      if (normalizeIdInputValue(el)) el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
   function makeInput(opts = {}) {
     const inp = document.createElement("input");
     inp.type = opts.type || "text";
@@ -1999,6 +2064,7 @@
     if (opts.value) inp.value = opts.value;
     if (opts.ariaLabel) inp.setAttribute("aria-label", opts.ariaLabel);
     if (opts.noSubmit) inp.setAttribute("data-lp-no-submit", "");
+    if (opts.idInput) installIdInputNormalizer(inp);
     inp.className = "kus-lp__input" + (opts.width ? ` kus-lp__input--${opts.width}` : "");
     return inp;
   }
@@ -4108,6 +4174,7 @@ ${String(text).trim().replace(/\*\//g, "* /")}
     lines.push("# kintone ER図 仕様書");
     lines.push("");
     lines.push(`- 生成日時: ${generatedAt}`);
+    if (options?.sourceNote) lines.push(`- 取得元: ${options.sourceNote}`);
     lines.push(`- アプリ数: ${safeApps.length}`);
     lines.push(`- 総リレーション: ${totalRelations}`);
     lines.push(`- 取得完了: ${dep.counts.retrievalComplete}`);
@@ -8240,6 +8307,7 @@ const commands=[\r
   {label:"ミニマップ",icon:"🗺",action:toggleMinimap},\r
   {label:"配色を切り替える（明るい / 暗い）",icon:"◐",action:toggleTheme},\r
   {label:"編集済みHTMLを保存",icon:"💾",action:exportEditedHtml},\r
+  {label:"編集済みHTMLから編集を取り込む",icon:"📥",action:openEditImport},\r
   {label:"PNG 画像を保存（白背景）",icon:"🖼",action:exportPNG},\r
   {label:"Mermaid を出力",icon:"🧜",action:showMermaid},\r
   {label:"draw.io XML を出力",icon:"📊",action:showDrawio},\r
@@ -8534,6 +8602,7 @@ function buildPrintDocHtml(){\r
   const startNames=startIds.slice(0,8).map(id=>{const a=findApp(id);return a?a.name+"（App "+id+"）":"App "+id;});\r
   const meta=[\r
     ["対象（起点）",startNames.join("、")+(startIds.length>8?" ほか "+(startIds.length-8)+" 件":"")||"-"],\r
+    ...(ER_OPTIONS.sourceLabel?[["取得元",ER_OPTIONS.sourceLabel]]:[]),\r
     ["取得日時",ER_OPTIONS.generatedAt?new Date(ER_OPTIONS.generatedAt).toLocaleString("ja-JP"):"-"],\r
     ["印刷日時",new Date().toLocaleString("ja-JP")],\r
     ["接続先",printConnectionText()],\r
@@ -8728,7 +8797,7 @@ function exportImageMeta(){\r
   const shown=ids.slice(0,5).join(", ")+(ids.length>5?" ほか"+(ids.length-5)+"件":"");\r
   return [\r
     "起点: "+(shown||"-"),\r
-    (ER_OPTIONS.sourceGuestId?("ゲスト "+ER_OPTIONS.sourceGuestId):"通常空間")+" / "+(ER_OPTIONS.sourcePreview?"プレビュー":"本番"),\r
+    (ER_OPTIONS.sourceLabel?ER_OPTIONS.sourceLabel+" / ":"")+(ER_OPTIONS.sourceGuestId?("ゲスト "+ER_OPTIONS.sourceGuestId):"通常空間")+" / "+(ER_OPTIONS.sourcePreview?"プレビュー":"本番"),\r
     "表示: "+scopeDescription(),\r
     "出力: "+new Date().toLocaleString("ja-JP")\r
   ].join("  |  ");\r
@@ -9034,6 +9103,7 @@ const exportRelationLabel=rel=>{\r
 function exportProvenanceEntries(){\r
   return [\r
     ["生成日時",new Date().toLocaleString("ja-JP")],\r
+    ...(ER_OPTIONS.sourceLabel?[["取得元",ER_OPTIONS.sourceLabel]]:[]),\r
     ["起点アプリ",(ER_OPTIONS.startAppIds||[]).join(", ")||"-"],\r
     ["探索深さ",ER_OPTIONS.maxDepth?String(ER_OPTIONS.maxDepth):"無制限"],\r
     ["逆引き探索",ER_OPTIONS.includeReverseLookup?"ON":"OFF"],\r
@@ -9374,6 +9444,7 @@ function showMarkdown(){\r
   lines.push("# kintone ER図 仕様書");\r
   lines.push("");\r
   lines.push("- 生成日時: " + new Date().toLocaleString("ja-JP"));\r
+  if(ER_OPTIONS.sourceLabel) lines.push("- 取得元: " + ER_OPTIONS.sourceLabel);\r
   lines.push("- 起点アプリ: " + ((ER_OPTIONS.startAppIds||[]).join(", ") || "-"));\r
   lines.push("- 探索深さ: " + (ER_OPTIONS.maxDepth||"無制限"));\r
   lines.push("- 逆引き探索: " + (ER_OPTIONS.includeReverseLookup?"ON":"OFF"));\r
@@ -9528,12 +9599,15 @@ function copyShareUrl(){\r
 }\r
 `;
 
+  // raw-text:src/tabs/er-viewer/viewer-import.js
+  var viewer_import_default = '// ER図ビューアー: 以前に保存した編集済みHTML（以前の版・今の版）から、編集を今の図へ取り込む（「編集 → 編集済みHTMLから取り込む」）。\r\n// 取り込む編集: 手動で追加したアプリ・項目・関連線、アプリの名前と枠の色、項目と関連線の編集、メモ、位置（今の版は表示範囲も）、\r\n// 図からの削除、固定、隠した項目。表示設定（配置・カードの項目・線の種類の表示・線のまとめなど）は今の図のままにする。\r\n// 読み込んだファイルのスクリプトは実行しない。編集の状態の script 要素（id が er-edit-state）の中の文字列から JSON だけを取り出し、\r\n// 形と値を確かめて、知っている項目だけを使う。今の図に無いアプリ・項目・線の編集は「対象外」として件数を示す。\r\n// 関連線は「アプリID と、そのアプリの関連の順番」で名前が付いているため、ファイルに入っている元の図のデータ（const APPS）と\r\n// 今の図の元のデータを、関連の種類・項目・参照先で突き合わせて対応させる（設定の変更で関連の順番が変わっても対応できる）。\r\n\r\nconst ER_IMPORT_MAX_BYTES=64*1024*1024;\r\n// 1 種類あたりに読む件数の上限（壊れたファイル・巨大なファイルで固まらないようにする）\r\nconst ER_IMPORT_LIMIT=20000;\r\nconst ER_IMPORT_TEXT_MAX=2000;\r\nconst ER_IMPORT_NAME_MAX=200;\r\nconst ER_IMPORT_KINDS=["LOOKUP","REF","ACTION"];\r\n// この画面のスクリプト自身の文字列と取り違えないよう、目印は分けて書いてつなぐ\r\nconst ER_IMPORT_STATE_TAG="<script id=\\"er-"+"edit-state\\">";\r\nconst ER_IMPORT_STATE_PREFIX="window.__ER_EDIT_"+"STATE__=";\r\nconst ER_IMPORT_MAIN_TAG="<script id=\\"er-"+"main\\" type=\\"text/plain\\">";\r\nconst ER_IMPORT_APPS_PREFIX="const APPS = ";\r\nconst ER_IMPORT_SCRIPT_END="</"+"script>";\r\n\r\n// ─── ファイルの読み取り（文字列だけを扱う。DOM にもスクリプトにもしない） ───\r\nfunction readEditedHtmlText(text){\r\n  const source=String(text==null?"":text);\r\n  const at=source.indexOf(ER_IMPORT_STATE_TAG);\r\n  // 編集の状態は図の本体（er-main）の前に置かれる。本体の中の文字列に同じ並びがあっても、それは使わない\r\n  const mainAt=source.indexOf(ER_IMPORT_MAIN_TAG);\r\n  if(at<0||(mainAt>=0&&at>mainAt)) return {error:"編集済みHTMLではありません（編集の内容が見つかりません）。図の画面の「出力 → 編集済みHTMLを保存」で保存したファイルを選んでください"};\r\n  const end=source.indexOf(ER_IMPORT_SCRIPT_END,at);\r\n  let body=source.slice(at+ER_IMPORT_STATE_TAG.length,end<0?source.length:end).trim();\r\n  if(body.indexOf(ER_IMPORT_STATE_PREFIX)!==0) return {error:"編集の内容を読み取れません（ファイルの形が違います）"};\r\n  body=body.slice(ER_IMPORT_STATE_PREFIX.length).trim();\r\n  if(body.charAt(body.length-1)===";") body=body.slice(0,-1);\r\n  let state;\r\n  try{ state=JSON.parse(body); }catch(_){ return {error:"編集の内容を読み取れません（ファイルが壊れている可能性があります）"}; }\r\n  if(!state||typeof state!=="object"||Array.isArray(state)) return {error:"編集の内容を読み取れません（ファイルの形が違います）"};\r\n  return {state,apps:readEditedHtmlApps(source)};\r\n}\r\n// 編集済みHTMLに入っている、元の図のアプリのデータ（関連線の対応付けに使う）。読めなければ null\r\nfunction readEditedHtmlApps(source){\r\n  const at=source.indexOf(ER_IMPORT_MAIN_TAG);\r\n  if(at<0) return null;\r\n  let start=at+ER_IMPORT_MAIN_TAG.length;\r\n  while(source.charAt(start)==="\\n"||source.charAt(start)==="\\r") start+=1;\r\n  if(source.indexOf(ER_IMPORT_APPS_PREFIX,start)!==start) return null;\r\n  const lineEnd=source.indexOf("\\n",start);\r\n  let json=source.slice(start+ER_IMPORT_APPS_PREFIX.length,lineEnd<0?source.length:lineEnd).trim();\r\n  if(json.charAt(json.length-1)===";") json=json.slice(0,-1);\r\n  try{ const apps=JSON.parse(json); return Array.isArray(apps)?apps:null; }catch(_){ return null; }\r\n}\r\n\r\n// ─── 値の確かめ（知っている項目だけを、決まった形にして取り出す） ───\r\nfunction importText(value,max){\r\n  if(typeof value!=="string") return "";\r\n  return value.replace(/[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]/g,"").slice(0,max||ER_IMPORT_TEXT_MAX);\r\n}\r\nfunction importColor(value){\r\n  return typeof value==="string"&&/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(value)?value:"";\r\n}\r\n// アプリID（kintone のアプリは正、手動で追加したアプリは負）\r\nfunction importAppId(value){\r\n  if(typeof value!=="number"&&typeof value!=="string") return null;\r\n  const s=String(value).trim();\r\n  if(!/^-?\\d{1,16}$/.test(s)) return null;\r\n  const n=Number(s);\r\n  return Number.isSafeInteger(n)&&n!==0?n:null;\r\n}\r\nfunction importPoint(value){\r\n  if(!value||typeof value!=="object") return null;\r\n  const x=value.x, y=value.y;\r\n  return typeof x==="number"&&typeof y==="number"&&Number.isFinite(x)&&Number.isFinite(y)&&Math.abs(x)<1e7&&Math.abs(y)<1e7?{x,y}:null;\r\n}\r\nfunction importList(value){ return Array.isArray(value)?value.slice(0,ER_IMPORT_LIMIT):[]; }\r\nfunction importKeys(value){ return value&&typeof value==="object"&&!Array.isArray(value)?Object.keys(value).slice(0,ER_IMPORT_LIMIT):[]; }\r\nfunction importOwn(record,key){ return Object.prototype.hasOwnProperty.call(record,key)?record[key]:undefined; }\r\n// 図のノードID: アプリは「a + アプリID」、未取得の参照先は「g + 参照先」\r\nfunction importNodeId(value){\r\n  const s=String(value==null?"":value);\r\n  const m=/^a(-?\\d{1,16})$/.exec(s);\r\n  if(m){ const appId=importAppId(m[1]); return appId===null?null:{kind:"app",appId}; }\r\n  if(/^g[0-9A-Za-z_-]{1,40}$/.test(s)) return {kind:"ghost",id:s};\r\n  return null;\r\n}\r\n// 関連線のID: 「e_アプリID_関連の順番」\r\nfunction importEdgeRef(value){\r\n  const m=/^e_(-?\\d{1,16})_(\\d{1,6})$/.exec(String(value==null?"":value));\r\n  if(!m) return null;\r\n  const appId=importAppId(m[1]);\r\n  return appId===null?null:{appId,ri:Number(m[2])};\r\n}\r\n// 項目のキー: 「アプリID::項目のパス（またはコード）」\r\nfunction importFieldRef(value){\r\n  const s=String(value==null?"":value);\r\n  const i=s.indexOf("::");\r\n  if(i<=0) return null;\r\n  const appId=importAppId(s.slice(0,i));\r\n  const path=s.slice(i+2);\r\n  if(appId===null||!path||path.length>ER_IMPORT_TEXT_MAX) return null;\r\n  return {appId,path};\r\n}\r\nfunction importFieldType(value){ return typeof value==="string"&&/^[A-Z_]{1,40}$/.test(value)?value:""; }\r\nfunction importField(raw){\r\n  if(!raw||typeof raw!=="object") return null;\r\n  const code=importText(raw.code,ER_IMPORT_NAME_MAX).trim();\r\n  if(!code) return null;\r\n  return {code,label:importText(raw.label,ER_IMPORT_NAME_MAX).trim()||code,type:importFieldType(raw.type)||"SINGLE_LINE_TEXT",\r\n    required:raw.required===true,isPK:raw.isPK===true,unique:raw.unique===true,isLookup:raw.isLookup===true,isRef:raw.isRef===true,isCustom:true};\r\n}\r\nfunction importFieldPatch(raw){\r\n  const patch={};\r\n  if(!raw||typeof raw!=="object") return patch;\r\n  const label=importText(raw.label,ER_IMPORT_NAME_MAX).trim();\r\n  if(label) patch.label=label;\r\n  const type=importFieldType(raw.type);\r\n  if(type) patch.type=type;\r\n  ["isPK","unique","required","isLookup","isRef"].forEach(key=>{ if(typeof raw[key]==="boolean") patch[key]=raw[key]; });\r\n  return patch;\r\n}\r\nfunction importRelationPatch(raw){\r\n  const patch={};\r\n  if(!raw||typeof raw!=="object") return patch;\r\n  const fromLabel=importText(raw.fromLabel,ER_IMPORT_NAME_MAX).trim();\r\n  const fromDisplay=importText(raw.fromDisplay,ER_IMPORT_NAME_MAX).trim();\r\n  if(fromLabel) patch.fromLabel=fromLabel;\r\n  if(fromDisplay) patch.fromDisplay=fromDisplay;\r\n  if(ER_IMPORT_KINDS.indexOf(raw.kind)>=0) patch.kind=raw.kind;\r\n  return patch;\r\n}\r\nfunction importScopeKey(key){\r\n  if(key==="all") return {mode:"all",roots:[],depth:1};\r\n  const m=/^around:([-0-9,]{1,20000}):([12])$/.exec(String(key));\r\n  if(!m) return null;\r\n  const roots=m[1].split(",").map(importAppId);\r\n  if(!roots.length||roots.some(id=>id===null)) return null;\r\n  return {mode:"around",roots,depth:Number(m[2])};\r\n}\r\nfunction importPositionMap(raw){\r\n  const out=[];\r\n  importKeys(raw).forEach(key=>{\r\n    const node=importNodeId(key);\r\n    const pos=node&&importPoint(importOwn(raw,key));\r\n    if(pos) out.push({node,pos});\r\n  });\r\n  return out;\r\n}\r\n\r\n/**\r\n * 読み込んだ編集の状態（以前の版: stateVersion なし / 今の版: 2）を確かめ、決まった形にする。\r\n * 形の正しくない値は使わず、件数（invalid）だけを数える。\r\n */\r\nfunction sanitizeImportedEditState(raw){\r\n  const state=raw&&typeof raw==="object"&&!Array.isArray(raw)?raw:{};\r\n  const view=state.view&&typeof state.view==="object"&&!Array.isArray(state.view)?state.view:{};\r\n  const out={\r\n    version:Number(state.stateVersion)>=2?2:1,\r\n    savedAt:typeof state.savedAt==="string"&&!Number.isNaN(Date.parse(state.savedAt))?state.savedAt:"",\r\n    customApps:[],customFields:[],customRelations:[],\r\n    appOverrides:[],fieldOverrides:[],relationOverrides:[],notes:[],\r\n    positions:[],scope:null,scopePositions:[],\r\n    removedNodes:[],removedEdges:[],pinnedNodes:[],hiddenFields:[],\r\n    invalid:0\r\n  };\r\n  importList(state.customApps).forEach(app=>{\r\n    const id=importAppId(app&&app.id);\r\n    const name=importText(app&&app.name,ER_IMPORT_NAME_MAX).trim();\r\n    if(id===null||id>=0||!name){ out.invalid+=1; return; }\r\n    out.customApps.push({id,name,fields:importList(app.fields).slice(0,500).map(importField).filter(Boolean)});\r\n  });\r\n  importList(state.customFields).forEach(item=>{\r\n    const appId=importAppId(item&&item.appId);\r\n    const field=importField(item&&item.field);\r\n    if(appId===null||!field){ out.invalid+=1; return; }\r\n    out.customFields.push({appId,field});\r\n  });\r\n  importList(state.customRelations).forEach(item=>{\r\n    const rel=item&&item.rel;\r\n    const fromAppId=importAppId(item&&item.fromAppId);\r\n    const toApp=importAppId(rel&&rel.toApp);\r\n    const kind=rel&&ER_IMPORT_KINDS.indexOf(rel.kind)>=0?rel.kind:"";\r\n    if(fromAppId===null||toApp===null||!kind){ out.invalid+=1; return; }\r\n    const label=importText(rel.fromLabel,ER_IMPORT_NAME_MAX).trim()||importText(rel.fromDisplay,ER_IMPORT_NAME_MAX).trim()\r\n      ||(kind==="LOOKUP"?"ルックアップ":(kind==="REF"?"関連":"アクション"))+"(手動)";\r\n    out.customRelations.push({fromAppId,toApp,kind,label});\r\n  });\r\n  importKeys(state.appOverrides).forEach(key=>{\r\n    const id=importAppId(key);\r\n    const o=importOwn(state.appOverrides,key);\r\n    if(id===null||!o||typeof o!=="object"){ out.invalid+=1; return; }\r\n    const entry={id};\r\n    const name=importText(o.name,ER_IMPORT_NAME_MAX).trim();\r\n    if(name) entry.name=name;\r\n    if(typeof o.color==="string"){\r\n      const color=importColor(o.color);\r\n      if(color||o.color==="") entry.color=color;\r\n      else out.invalid+=1;\r\n    }\r\n    if(entry.name!==undefined||entry.color!==undefined) out.appOverrides.push(entry);\r\n  });\r\n  importKeys(state.fieldOverrides).forEach(key=>{\r\n    const ref=importFieldRef(key);\r\n    const patch=importFieldPatch(importOwn(state.fieldOverrides,key));\r\n    if(!ref||!Object.keys(patch).length){ out.invalid+=1; return; }\r\n    out.fieldOverrides.push({appId:ref.appId,path:ref.path,patch});\r\n  });\r\n  importKeys(state.relationOverrides).forEach(key=>{\r\n    const ref=importEdgeRef(key);\r\n    const patch=importRelationPatch(importOwn(state.relationOverrides,key));\r\n    if(!ref||!Object.keys(patch).length){ out.invalid+=1; return; }\r\n    out.relationOverrides.push({appId:ref.appId,ri:ref.ri,patch});\r\n  });\r\n  importList(state.notes).forEach(note=>{\r\n    const text=importText(note&&note.text,ER_IMPORT_TEXT_MAX).trim();\r\n    const pos=importPoint(note);\r\n    if(!text||!pos){ out.invalid+=1; return; }\r\n    out.notes.push({text,color:importColor(note.color)||"#fef08a",x:pos.x,y:pos.y});\r\n  });\r\n  out.positions=importPositionMap(view.positions);\r\n  const nodeList=(value)=>importList(value).map(importNodeId).filter(Boolean);\r\n  out.removedNodes=nodeList(view.removedNodeIds);\r\n  out.pinnedNodes=nodeList(view.pinnedNodeIds);\r\n  // アプリを削除したときに一緒に隠した線（nodeHiddenEdgeIds）は、削除したアプリから作り直すので読まない\r\n  out.removedEdges=importList(view.removedEdgeIds).map(importEdgeRef).filter(Boolean);\r\n  out.hiddenFields=importList(view.hiddenFieldKeys).map(importFieldRef).filter(Boolean);\r\n  if(out.version>=2){\r\n    // 今の版は表示範囲と、表示範囲ごとの位置を持つ（以前の版は全体の図だけ）\r\n    const scope=view.scope&&typeof view.scope==="object"?view.scope:null;\r\n    if(scope&&scope.mode==="around"){\r\n      const roots=importList(scope.roots).map(importAppId).filter(id=>id!==null);\r\n      if(roots.length) out.scope={mode:"around",roots,depth:Number(scope.depth)===2?2:1};\r\n    }else if(scope&&scope.mode==="all") out.scope={mode:"all",roots:[],depth:1};\r\n    importKeys(view.scopePositions).forEach(key=>{\r\n      const scopeRef=importScopeKey(key);\r\n      if(scopeRef) out.scopePositions.push({scope:scopeRef,positions:importPositionMap(importOwn(view.scopePositions,key))});\r\n    });\r\n  }\r\n  return out;\r\n}\r\n\r\n// ─── 関連線の対応付け ───\r\n// 関連の印: 種類・参照元の項目（関連レコード一覧は表示部品、アクションは名前）・参照先。同じ印が複数あるときは出てくる順で区別する\r\nfunction relationImportSignature(rel){\r\n  if(!rel||typeof rel!=="object") return "";\r\n  const to=String(rel.toApp==null?"":rel.toApp);\r\n  if(rel.kind==="REF") return "R|"+String(rel.controlFieldPath||rel.controlField||rel.fromPath||rel.from||"")+"|"+to;\r\n  if(rel.kind==="ACTION") return "A|"+String(rel.fromLabel||"")+"|"+to;\r\n  return "L|"+String(rel.fromPath||rel.from||"")+"|"+to;\r\n}\r\nfunction relationSignatureList(relations){\r\n  const seen=new Map();\r\n  return (Array.isArray(relations)?relations:[]).map(rel=>{\r\n    const sig=relationImportSignature(rel);\r\n    const n=(seen.get(sig)||0)+1;\r\n    seen.set(sig,n);\r\n    return sig+"#"+n;\r\n  });\r\n}\r\n// 元の図のアプリのデータ（id → 関連の印の一覧）。手動で追加したアプリは入らない\r\nfunction relationSignatureIndex(apps){\r\n  const index=new Map();\r\n  (Array.isArray(apps)?apps:[]).forEach(app=>{\r\n    const id=app&&importAppId(app.id);\r\n    if(id!==null&&id>0&&!index.has(id)) index.set(id,relationSignatureList(app.relations));\r\n  });\r\n  return index;\r\n}\r\n/** 取り込むファイルの「アプリ appId の ri 番目の関連」が、今の図の元のデータの何番目か。対応が無ければ -1 */\r\nfunction mapImportedRelationIndex(oldIndex,currentIndex,appId,ri){\r\n  const oldSigs=oldIndex&&oldIndex.get(appId);\r\n  const curSigs=currentIndex&&currentIndex.get(appId);\r\n  if(!oldSigs||!curSigs||ri<0||ri>=oldSigs.length) return -1;\r\n  return curSigs.indexOf(oldSigs[ri]);\r\n}\r\n// 今の図の元のデータ（この画面に入っている const APPS。編集で変わる前の名前・種類）\r\nlet currentOriginalSignatureIndex=null;\r\nfunction currentRelationSignatureIndex(){\r\n  if(currentOriginalSignatureIndex) return currentOriginalSignatureIndex;\r\n  const main=document.getElementById("er-main");\r\n  const apps=main?readEditedHtmlApps(ER_IMPORT_MAIN_TAG+(main.textContent||"")):null;\r\n  currentOriginalSignatureIndex=relationSignatureIndex(apps||APPS.filter(a=>!a.isCustom));\r\n  return currentOriginalSignatureIndex;\r\n}\r\n\r\n// ─── 今の図へ当てはめる ───\r\nfunction importedCount(map,key,n){ map[key]=(map[key]||0)+(n===undefined?1:n); }\r\nfunction maxManualNumber(values,prefix){\r\n  let max=0;\r\n  values.forEach(v=>{ const s=String(v||""); if(s.indexOf(prefix)===0){ const n=Number(s.slice(prefix.length)); if(Number.isSafeInteger(n)&&n>max) max=n; } });\r\n  return max;\r\n}\r\n/**\r\n * 確かめた編集を今の図へ当てはめ、結果（取り込んだ件数・対象外・すでにあった件数）を返す。\r\n * 全体を 1 回の「元に戻す」で取り込む前に戻せる。\r\n */\r\nfunction applyImportedEditState(clean,fileApps){\r\n  const undo=[];\r\n  const done={}, skipped={}, existing={};\r\n  // 表示範囲・位置は最後に戻す（先に登録し、取り消しでは最後に動く）。手動のアプリの削除・削除の取り消しの後に、表示範囲を数え直す\r\n  const beforePositions=cy.nodes().map(n=>({id:n.id(),pos:Object.assign({},n.position())}));\r\n  const beforeScope={mode:viewScope.mode,roots:viewScope.roots.slice(),depth:viewScope.depth};\r\n  const beforeCache=new Map(scopePositionCache);\r\n  undo.push(()=>{\r\n    setScope(beforeScope,{keepPositions:true});\r\n    scopePositionCache.clear();\r\n    beforeCache.forEach((value,key)=>scopePositionCache.set(key,value));\r\n    beforePositions.forEach(item=>{ const n=cy.getElementById(item.id); if(n.length&&!n.locked()) n.position(item.pos); });\r\n  });\r\n  const missingApps=new Set();\r\n  const oldIndex=fileApps?relationSignatureIndex(fileApps):null;\r\n  const curIndex=currentRelationSignatureIndex();\r\n  const oldRelationCount=(appId)=>{\r\n    if(appId<0) return 0;\r\n    const sigs=oldIndex&&oldIndex.get(appId);\r\n    return sigs?sigs.length:-1;\r\n  };\r\n  // アプリIDの対応（手動で追加したアプリは、今の図で空いている番号に付け直す）\r\n  const appIdMap=new Map();\r\n  const mapApp=(id)=>{\r\n    if(appIdMap.has(id)) return appIdMap.get(id);\r\n    const app=id>0?findApp(id):null;\r\n    const mapped=app&&!app.isCustom?app.id:null;\r\n    appIdMap.set(id,mapped);\r\n    return mapped;\r\n  };\r\n  const noteMissing=(id)=>{ if(id>0) missingApps.add(id); };\r\n  const codeMap=new Map(); // 「元のアプリID::元のコード」→ 付け直したコード\r\n  const edgeMap=new Map(); // 「元のアプリID_元の順番」→ 今の線のID\r\n  const mapNode=(node)=>{\r\n    if(node.kind==="ghost") return cy.getElementById(node.id).length?node.id:null;\r\n    const id=mapApp(node.appId);\r\n    return id===null?null:"a"+id;\r\n  };\r\n\r\n  // 1. 手動で追加したアプリ（同じ名前の手動のアプリが今の図にあれば、それに対応させる）\r\n  clean.customApps.forEach(raw=>{\r\n    const same=APPS.find(a=>a.isCustom&&a.name===raw.name);\r\n    if(same){ appIdMap.set(raw.id,same.id); importedCount(existing,"apps"); return; }\r\n    customAppSeq=Math.max(customAppSeq,maxManualNumber(APPS.filter(a=>a.isCustom).map(a=>"m"+(-a.id)),"m"))+1;\r\n    const id=-customAppSeq;\r\n    const fields=raw.fields.map(f=>Object.assign({},f));\r\n    const app={id,name:raw.name,fields,totalFieldCount:fields.length,relations:[],ok:true,depth:0,isCustom:true,\r\n      requiredCount:fields.filter(f=>f.required).length,lookupCount:0,refCount:0};\r\n    registerManualApp(app);\r\n    appIdMap.set(raw.id,id);\r\n    const ext=cy.extent();\r\n    cy.add({group:"nodes",data:{id:"a"+id,label:buildNodeLabel(app),...nodeCardData(app),appId:id,isError:false,isStart:false,inSpace:false,isCustom:true,accent:"",fieldCount:fields.length,relCount:0,depth:0},\r\n      position:{x:(ext.x1+ext.x2)/2,y:(ext.y1+ext.y2)/2}});\r\n    const command={label:"アプリ: "+app.name+" (手動追加)",icon:"⬡",appId:id,action:()=>focusApp(id)};\r\n    commands.push(command);\r\n    importedCount(done,"apps");\r\n    undo.push(()=>{\r\n      const n=cy.getElementById("a"+id);\r\n      if(n.length) cy.remove(n);\r\n      const at=APPS.indexOf(app);\r\n      if(at>=0) APPS.splice(at,1);\r\n      appMap.delete(id);\r\n      if(scopeMembers) scopeMembers.delete("a"+id);\r\n      const c=commands.indexOf(command);\r\n      if(c>=0) commands.splice(c,1);\r\n      if(String(activeAppId)===String(id)) closeDetail();\r\n    });\r\n  });\r\n\r\n  // 2. 手動で追加した項目（同じ名前・種類の手動の項目があれば取り込まない。コードが重なるときは付け直す）\r\n  clean.customFields.forEach(item=>{\r\n    const appId=mapApp(item.appId);\r\n    const app=appId===null?null:findApp(appId);\r\n    if(!app){ importedCount(skipped,"fields"); noteMissing(item.appId); return; }\r\n    const list=Array.isArray(app.allFields)?app.allFields:(app.fields||[]);\r\n    const same=list.find(f=>f&&f.isCustom&&f.label===item.field.label&&f.type===item.field.type);\r\n    if(same){ codeMap.set(item.appId+"::"+item.field.code,same.code); importedCount(existing,"fields"); return; }\r\n    const field=Object.assign({},item.field);\r\n    if(list.some(f=>f&&(f.code===field.code||f.path===field.code))){\r\n      customFieldSeq=Math.max(customFieldSeq,maxManualNumber(list.map(f=>f&&f.code),"manual_"))+1;\r\n      field.code="manual_"+customFieldSeq;\r\n    }\r\n    codeMap.set(item.appId+"::"+item.field.code,field.code);\r\n    applyManualFieldData(app,field);\r\n    importedCount(done,"fields");\r\n    undo.push(()=>{\r\n      [app.fields,app.allFields].forEach(fields=>{ if(!Array.isArray(fields)) return; const at=fields.indexOf(field); if(at>=0) fields.splice(at,1); });\r\n      if(typeof app.totalFieldCount==="number") app.totalFieldCount=Math.max(0,app.totalFieldCount-1);\r\n      if(field.required) app.requiredCount=Math.max(0,(app.requiredCount||0)-1);\r\n    });\r\n  });\r\n  // 手動で追加した項目が、手動で追加したアプリの項目の中で重なったときのコードの対応も持つ\r\n  clean.customApps.forEach(raw=>{ raw.fields.forEach(f=>{ const key=raw.id+"::"+f.code; if(!codeMap.has(key)) codeMap.set(key,f.code); }); });\r\n\r\n  // 3. 手動で追加した関連線\r\n  const customRelationOrder=new Map(); // 元のアプリID → そのアプリの手動の関連線の数（順番の対応付けに使う）\r\n  clean.customRelations.forEach(item=>{\r\n    const k=customRelationOrder.get(item.fromAppId)||0;\r\n    customRelationOrder.set(item.fromAppId,k+1);\r\n    const fromId=mapApp(item.fromAppId), toId=mapApp(item.toApp);\r\n    const from=fromId===null?null:findApp(fromId), to=toId===null?null:findApp(toId);\r\n    const base=oldRelationCount(item.fromAppId);\r\n    const oldKey=base>=0?item.fromAppId+"_"+(base+k):"";\r\n    if(!from||!to){ importedCount(skipped,"relations"); if(!from) noteMissing(item.fromAppId); if(!to) noteMissing(item.toApp); return; }\r\n    const sameIndex=from.relations.findIndex(r=>r&&r.isCustom&&String(r.toApp)===String(to.id)&&r.kind===item.kind&&(r.fromLabel===item.label||r.fromDisplay===item.label));\r\n    if(sameIndex>=0){ if(oldKey) edgeMap.set(oldKey,"e_"+from.id+"_"+sameIndex); importedCount(existing,"relations"); return; }\r\n    customRelSeq=Math.max(customRelSeq,maxManualNumber(from.relations.map(r=>r&&r.from),"__MANUAL__"))+1;\r\n    const rel={from:"__MANUAL__"+customRelSeq,fromLabel:item.label,fromDisplay:item.label,toApp:to.id,toField:"",kind:item.kind,isCustom:true};\r\n    const relIndex=from.relations.length;\r\n    applyManualRelationData(from,rel);\r\n    const edgeId="e_"+from.id+"_"+relIndex;\r\n    cy.add({group:"edges",data:{id:edgeId,source:"a"+from.id,target:"a"+to.id,kind:item.kind,label:edgeDisplayLabel(item.label),fromLabel:item.label,fromDisplay:item.label,isCustom:true,bundleCount:1,bundleWidth:1.8}});\r\n    if(oldKey) edgeMap.set(oldKey,edgeId);\r\n    importedCount(done,"relations");\r\n    undo.push(()=>{\r\n      const at=from.relations.indexOf(rel);\r\n      if(at>=0) from.relations.splice(at,1);\r\n      if(rel.kind==="LOOKUP") from.lookupCount=Math.max(0,(from.lookupCount||0)-1);\r\n      if(rel.kind==="REF") from.refCount=Math.max(0,(from.refCount||0)-1);\r\n      const e=cy.getElementById(edgeId);\r\n      if(e.length) cy.remove(e);\r\n    });\r\n  });\r\n  // 元のファイルの線（アプリID と順番）→ 今の図の線のID\r\n  const mapEdge=(ref)=>{\r\n    const key=ref.appId+"_"+ref.ri;\r\n    if(edgeMap.has(key)) return edgeMap.get(key);\r\n    const appId=mapApp(ref.appId);\r\n    if(appId===null||ref.appId<0) return null;\r\n    const ri=mapImportedRelationIndex(oldIndex,curIndex,ref.appId,ref.ri);\r\n    if(ri<0) return null;\r\n    const edgeId="e_"+appId+"_"+ri;\r\n    return cy.getElementById(edgeId).length?edgeId:null;\r\n  };\r\n\r\n  // 4. アプリの名前・枠の色\r\n  clean.appOverrides.forEach(o=>{\r\n    const appId=mapApp(o.id);\r\n    const app=appId===null?null:findApp(appId);\r\n    if(!app){ importedCount(skipped,"appEdits"); noteMissing(o.id); return; }\r\n    const node=cy.getElementById("a"+app.id);\r\n    const before={name:app.name,entry:Object.prototype.hasOwnProperty.call(appOverrides,app.id)?Object.assign({},appOverrides[app.id]):undefined,accent:node.length?node.data("accent"):""};\r\n    const name=o.name!==undefined?o.name:app.name;\r\n    const color=o.color!==undefined?o.color:appAccentColor(app);\r\n    if(name===app.name&&color===appAccentColor(app)){ importedCount(existing,"appEdits"); return; }\r\n    applyAppOverride(app,name,color);\r\n    importedCount(done,"appEdits");\r\n    undo.push(()=>{\r\n      app.name=before.name;\r\n      if(before.entry===undefined) delete appOverrides[app.id]; else appOverrides[app.id]=before.entry;\r\n      const n=cy.getElementById("a"+app.id);\r\n      if(n.length){ n.data("accent",before.accent||""); refreshNodeDisplay(n,app); }\r\n      commands.forEach(c=>{ if(c.appId!==undefined&&String(c.appId)===String(app.id)) c.label="アプリ: "+before.name+(app.isCustom?" (手動追加)":" (ID:"+app.id+")"); });\r\n    });\r\n  });\r\n\r\n  // 5. 項目の編集（名前・種類・区分）\r\n  const mapFieldKey=(ref)=>{\r\n    const appId=mapApp(ref.appId);\r\n    if(appId===null) return null;\r\n    const code=codeMap.get(ref.appId+"::"+ref.path);\r\n    return {appId,key:appId+"::"+(code||ref.path)};\r\n  };\r\n  clean.fieldOverrides.forEach(o=>{\r\n    const ref=mapFieldKey(o);\r\n    const app=ref&&findApp(ref.appId);\r\n    const field=app&&findFieldByKey(app,ref.key);\r\n    if(!field){ importedCount(skipped,"fieldEdits"); if(!app) noteMissing(o.appId); return; }\r\n    const beforeField={}, keys=Object.keys(o.patch);\r\n    keys.forEach(k=>{ beforeField[k]=field[k]; });\r\n    const beforeEntry=Object.prototype.hasOwnProperty.call(fieldOverrides,ref.key)?Object.assign({},fieldOverrides[ref.key]):undefined;\r\n    if(keys.every(k=>field[k]===o.patch[k])){ importedCount(existing,"fieldEdits"); return; }\r\n    Object.assign(field,o.patch);\r\n    fieldOverrides[ref.key]=Object.assign({},fieldOverrides[ref.key],o.patch);\r\n    importedCount(done,"fieldEdits");\r\n    undo.push(()=>{\r\n      keys.forEach(k=>{ if(beforeField[k]===undefined) delete field[k]; else field[k]=beforeField[k]; });\r\n      if(beforeEntry===undefined) delete fieldOverrides[ref.key]; else fieldOverrides[ref.key]=beforeEntry;\r\n    });\r\n  });\r\n\r\n  // 6. 関連線の編集（名前・種類）\r\n  clean.relationOverrides.forEach(o=>{\r\n    const edgeId=mapEdge(o);\r\n    const ref=edgeId&&parseEdgeId(edgeId);\r\n    const app=ref&&findApp(ref.appId);\r\n    const rel=app&&(app.relations||[])[ref.ri];\r\n    if(!rel){ importedCount(skipped,"relationEdits"); if(mapApp(o.appId)===null) noteMissing(o.appId); return; }\r\n    const keys=Object.keys(o.patch);\r\n    if(keys.every(k=>rel[k]===o.patch[k])){ importedCount(existing,"relationEdits"); return; }\r\n    const beforeRel={}; keys.forEach(k=>{ beforeRel[k]=rel[k]; });\r\n    const beforeEntry=Object.prototype.hasOwnProperty.call(relationOverrides,edgeId)?Object.assign({},relationOverrides[edgeId]):undefined;\r\n    applyRelationOverride(app,edgeId,ref.ri,o.patch);\r\n    importedCount(done,"relationEdits");\r\n    undo.push(()=>{\r\n      keys.forEach(k=>{ if(beforeRel[k]===undefined) delete rel[k]; else rel[k]=beforeRel[k]; });\r\n      if(beforeEntry===undefined) delete relationOverrides[edgeId]; else relationOverrides[edgeId]=beforeEntry;\r\n      const e=cy.getElementById(edgeId);\r\n      if(e.length){ e.data("kind",rel.kind); e.data("label",edgeDisplayLabel(rel.fromDisplay||rel.fromLabel||"")); e.data("fromLabel",rel.fromLabel); e.data("fromDisplay",rel.fromDisplay||rel.fromLabel||""); }\r\n    });\r\n  });\r\n\r\n  // 7. 図からの削除（アプリと一緒に、そのアプリの線も隠す）・固定・隠した項目\r\n  const removeNodeIds=new Set();\r\n  clean.removedNodes.forEach(node=>{\r\n    const id=mapNode(node);\r\n    if(!id||!cy.getElementById(id).length){ importedCount(skipped,"removed"); if(node.kind==="app") noteMissing(node.appId); return; }\r\n    if(manuallyRemovedNodeIds.has(id)){ importedCount(existing,"removed"); return; }\r\n    removeNodeIds.add(id);\r\n  });\r\n  removeNodeIds.forEach(id=>{\r\n    const node=cy.getElementById(id);\r\n    const hiddenEdges=[];\r\n    manuallyRemovedNodeIds.add(id);\r\n    node.addClass("app-manual-hidden");\r\n    node.connectedEdges().forEach(edge=>{\r\n      if(nodeHiddenEdgeIds.has(edge.id())) return;\r\n      nodeHiddenEdgeIds.add(edge.id());\r\n      hiddenEdges.push({id:edge.id(),had:edge.hasClass("rel-manual-hidden")});\r\n      edge.addClass("rel-manual-hidden");\r\n    });\r\n    importedCount(done,"removedApps");\r\n    undo.push(()=>{\r\n      manuallyRemovedNodeIds.delete(id);\r\n      const n=cy.getElementById(id);\r\n      if(n.length) n.removeClass("app-manual-hidden");\r\n      hiddenEdges.forEach(h=>{ nodeHiddenEdgeIds.delete(h.id); const e=cy.getElementById(h.id); if(e.length&&!h.had&&!manuallyRemovedEdgeIds.has(h.id)) e.removeClass("rel-manual-hidden"); });\r\n    });\r\n  });\r\n  clean.removedEdges.forEach(ref=>{\r\n    const edgeId=mapEdge(ref);\r\n    if(!edgeId){ importedCount(skipped,"removed"); if(mapApp(ref.appId)===null) noteMissing(ref.appId); return; }\r\n    if(manuallyRemovedEdgeIds.has(edgeId)){ importedCount(existing,"removed"); return; }\r\n    const edge=cy.getElementById(edgeId);\r\n    const had=edge.hasClass("rel-manual-hidden");\r\n    manuallyRemovedEdgeIds.add(edgeId);\r\n    edge.addClass("rel-manual-hidden");\r\n    importedCount(done,"removedRelations");\r\n    undo.push(()=>{ manuallyRemovedEdgeIds.delete(edgeId); const e=cy.getElementById(edgeId); if(e.length&&!had&&!nodeHiddenEdgeIds.has(edgeId)) e.removeClass("rel-manual-hidden"); });\r\n  });\r\n  clean.pinnedNodes.forEach(node=>{\r\n    const id=mapNode(node);\r\n    const n=id&&cy.getElementById(id);\r\n    if(!n||!n.length){ importedCount(skipped,"pins"); if(node.kind==="app") noteMissing(node.appId); return; }\r\n    if(pinnedNodeIds.has(id)){ importedCount(existing,"pins"); return; }\r\n    // 位置を当てはめてから固定する（固定したアプリは動かせないため、ここでは印だけ付けておく）\r\n    importedCount(done,"pins");\r\n    undo.push(()=>{ const m=cy.getElementById(id); if(m.length) unpinNode(m,true); });\r\n  });\r\n  clean.hiddenFields.forEach(ref=>{\r\n    const mapped=mapFieldKey(ref);\r\n    const app=mapped&&findApp(mapped.appId);\r\n    if(!app||!findFieldByKey(app,mapped.key)){ importedCount(skipped,"hiddenFields"); if(!app) noteMissing(ref.appId); return; }\r\n    if(hiddenFieldKeys.has(mapped.key)){ importedCount(existing,"hiddenFields"); return; }\r\n    hiddenFieldKeys.add(mapped.key);\r\n    importedCount(done,"hiddenFields");\r\n    undo.push(()=>{ hiddenFieldKeys.delete(mapped.key); });\r\n  });\r\n\r\n  // 8. 表示範囲と位置（今の版: 保存したときの表示範囲。以前の版: 全体）。位置の無いアプリは、取り込んだ位置の下に並べる\r\n  const mapScope=(scope)=>{\r\n    if(!scope||scope.mode!=="around") return {mode:"all",roots:[],depth:1};\r\n    const roots=scope.roots.map(id=>id<0?(appIdMap.has(id)?appIdMap.get(id):null):mapApp(id)).filter(id=>id!==null).map(String);\r\n    return roots.length?{mode:"around",roots,depth:scope.depth}:{mode:"all",roots:[],depth:1};\r\n  };\r\n  const mapPositions=(list)=>{\r\n    const out=new Map();\r\n    list.forEach(item=>{ const id=mapNode(item.node); if(id) out.set(id,item.pos); });\r\n    return out;\r\n  };\r\n  const targetScope=mapScope(clean.version>=2?clean.scope:null);\r\n  // 表示範囲を切り替えてから（切り替えで今の位置を覚え直すため）、保存した表示範囲ごとの位置を入れる\r\n  setScope(targetScope,{keepPositions:true});\r\n  clean.scopePositions.forEach(entry=>{\r\n    const scope=mapScope(entry.scope);\r\n    if(entry.scope.mode==="around"&&scope.mode!=="around") return;\r\n    const positions={};\r\n    mapPositions(entry.positions).forEach((pos,id)=>{ positions[id]={x:pos.x,y:pos.y}; });\r\n    if(Object.keys(positions).length) scopePositionCache.set(scopeKeyOf(scope),positions);\r\n  });\r\n  const positions=mapPositions(clean.positions);\r\n  const placed=new Set();\r\n  positions.forEach((pos,id)=>{\r\n    const n=cy.getElementById(id);\r\n    if(!n.length||n.hasClass("note-node")||n.locked()) return;\r\n    n.position({x:pos.x,y:pos.y});\r\n    placed.add(id);\r\n  });\r\n  const visible=cy.nodes().filter(n=>!n.hasClass("note-node")&&!n.hasClass("scope-out")&&!n.hasClass("app-manual-hidden"));\r\n  const placedVisible=visible.filter(n=>placed.has(n.id()));\r\n  const rest=visible.filter(n=>!placed.has(n.id())&&!n.locked());\r\n  let arranged=0;\r\n  if(placedVisible.length&&rest.length){\r\n    const box=placedVisible.boundingBox();\r\n    const width=Math.max(box.w,1200);\r\n    let x=box.x1, y=box.y2+160, rowH=0;\r\n    rest.forEach(n=>{\r\n      const span=nodeSpan(n);\r\n      if(x>box.x1&&x+span.w>box.x1+width){ x=box.x1; y+=rowH+80; rowH=0; }\r\n      n.position({x:x+span.w/2,y:y+span.h/2});\r\n      x+=span.w+80;\r\n      rowH=Math.max(rowH,span.h);\r\n      arranged+=1;\r\n    });\r\n  }\r\n  if(placed.size) importedCount(done,"positions",placed.size);\r\n  const unplaced=clean.positions.length-positions.size;\r\n  if(unplaced>0) importedCount(skipped,"positions",unplaced);\r\n  clean.positions.forEach(item=>{ if(item.node.kind==="app"&&!mapNode(item.node)) noteMissing(item.node.appId); });\r\n  clean.pinnedNodes.forEach(node=>{ const id=mapNode(node); const n=id&&cy.getElementById(id); if(n&&n.length&&!pinnedNodeIds.has(id)) pinNode(n,true); });\r\n\r\n  // 9. メモ（同じ内容・同じ位置のメモがあれば取り込まない）\r\n  const notes=cy.nodes(".note-node");\r\n  clean.notes.forEach(note=>{\r\n    const same=notes.some(n=>n.data("label")===note.text&&Math.abs(n.position("x")-note.x)<1&&Math.abs(n.position("y")-note.y)<1);\r\n    if(same){ importedCount(existing,"notes"); return; }\r\n    noteSeq=Math.max(noteSeq,maxManualNumber(cy.nodes(".note-node").map(n=>n.id()),"note_"))+1;\r\n    const id="note_"+noteSeq;\r\n    addNoteElement({id,text:note.text,color:note.color,x:note.x,y:note.y});\r\n    importedCount(done,"notes");\r\n    undo.push(()=>{ const n=cy.getElementById(id); if(n.length) cy.remove(n); });\r\n  });\r\n\r\n  customFieldSeq=Math.max(customFieldSeq,maxManualNumber([].concat(...APPS.map(a=>(a.allFields||a.fields||[]).map(f=>f&&f.code))),"manual_"));\r\n  refreshAfterEditImport();\r\n  fit();\r\n  return {done,skipped,existing,missingApps:[...missingApps].sort((a,b)=>a-b),arranged,scope:targetScope,undo};\r\n}\r\n// 取り込み・取り込みの取り消しのあとに、カード・線・一覧・表を合わせる\r\nfunction refreshAfterEditImport(){\r\n  invalidateRelationCounts();\r\n  APPS.forEach(app=>{\r\n    const n=cy.getElementById("a"+app.id);\r\n    if(n.length){ n.data("relCount",(app.relations||[]).length); n.data("fieldCount",visibleFieldsForNode(app).length); }\r\n  });\r\n  refreshNodeLabels();\r\n  refreshNodeCards();\r\n  if(scopeMembers) applyScopeClasses();\r\n  applyRelationFilter();\r\n  applyRelationLabelVisibility();\r\n  if(semanticZoomActive) applySemanticZoom(cy.zoom(),true);\r\n  if(focusMode&&currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId),true);\r\n  recomputeErAnalysis();\r\n  afterGraphChange();\r\n  refreshSidebar();\r\n  refreshOpenDetail();\r\n}\r\n\r\n// ─── 結果の説明 ───\r\nconst ER_IMPORT_LABELS=[\r\n  ["apps","手動で追加したアプリ"],["fields","手動で追加した項目"],["relations","手動で追加した関連線"],\r\n  ["appEdits","アプリの名前・枠の色"],["fieldEdits","項目の編集"],["relationEdits","関連線の編集"],["notes","メモ"],\r\n  ["positions","位置"],["removedApps","図から削除したアプリ"],["removedRelations","図から削除した関連線"],["removed","図からの削除"],\r\n  ["pins","固定"],["hiddenFields","隠した項目"]\r\n];\r\nfunction sumImportCounts(map){ return Object.keys(map).reduce((s,k)=>s+map[k],0); }\r\nfunction describeEditImport(result,meta){\r\n  const lines=[];\r\n  lines.push("取り込んだファイル: "+(meta.fileName||"-")+"（"+(meta.version>=2?"今の版":"以前の版")+"の編集済みHTML）");\r\n  if(meta.savedAt) lines.push("保存した日時: "+new Date(meta.savedAt).toLocaleString("ja-JP"));\r\n  lines.push("");\r\n  const doneTotal=sumImportCounts(result.done);\r\n  lines.push(doneTotal?"取り込んだ編集":"取り込んだ編集はありません");\r\n  ER_IMPORT_LABELS.forEach(([key,label])=>{ if(result.done[key]) lines.push("- "+label+": "+result.done[key]+" 件"); });\r\n  if(result.arranged) lines.push("- ファイルに位置が無いアプリ "+result.arranged+" 件は、取り込んだ位置の下に並べました");\r\n  lines.push("表示範囲: "+(result.scope.mode==="all"?"全体":"保存したときの範囲（"+result.scope.roots.map(id=>{const a=findApp(id);return a?a.name:"App "+id;}).join("、")+" のまわり・深さ "+result.scope.depth+"）")\r\n    +(meta.version>=2?"":"（以前の版は全体の図だけを保存しています）"));\r\n  const skippedTotal=sumImportCounts(result.skipped);\r\n  if(skippedTotal){\r\n    lines.push("");\r\n    lines.push("対象外: "+skippedTotal+" 件（今の図に無いアプリ・項目・関連線の編集）");\r\n    ER_IMPORT_LABELS.forEach(([key,label])=>{ if(result.skipped[key]) lines.push("- "+label+": "+result.skipped[key]+" 件"); });\r\n    if(result.missingApps.length) lines.push("- 今の図に無いアプリ: "+result.missingApps.slice(0,10).map(id=>"App "+id).join("、")+(result.missingApps.length>10?" ほか "+(result.missingApps.length-10)+" 件":""));\r\n  }\r\n  const existingTotal=sumImportCounts(result.existing);\r\n  if(existingTotal) lines.push("同じ内容が今の図にあったため取り込まなかった編集: "+existingTotal+" 件");\r\n  if(meta.invalid) lines.push("形が正しくないため読まなかった値: "+meta.invalid+" 件");\r\n  if(!meta.hasApps) lines.push("ファイルに元の図のデータが無いため、kintone の関連線の編集・削除は対応付けられませんでした");\r\n  lines.push("");\r\n  lines.push("表示設定（配置・カードの項目・線の種類・線のまとめなど）は今の図のままです。「元に戻す」（Ctrl+Z）で取り込む前に戻せます。残すには「出力 → 編集済みHTMLを保存」。");\r\n  return {text:lines.join("\\n"),doneTotal,skippedTotal,existingTotal};\r\n}\r\n\r\n/** 編集済みHTMLの文字列から編集を取り込む。結果の説明を返す（失敗したときは error）。 */\r\nfunction importEditedHtmlText(text,fileName){\r\n  const read=readEditedHtmlText(text);\r\n  if(read.error) return {error:read.error};\r\n  const clean=sanitizeImportedEditState(read.state);\r\n  const result=applyImportedEditState(clean,read.apps);\r\n  const undo=result.undo;\r\n  if(sumImportCounts(result.done)){\r\n    pushUndo("編集済みHTMLの取り込み",()=>{\r\n      for(let i=undo.length-1;i>=0;i--){ try{ undo[i](); }catch(err){ console.error("[ER] 取り込みの取り消しに失敗",err); } }\r\n      refreshAfterEditImport();\r\n      fit();\r\n    });\r\n  }\r\n  return describeEditImport(result,{fileName,version:clean.version,savedAt:clean.savedAt,invalid:clean.invalid,hasApps:!!read.apps});\r\n}\r\nfunction openEditImport(){\r\n  closeAllMenus();\r\n  const input=document.getElementById("edit-import-file");\r\n  if(!input){ toast("この画面では取り込めません"); return; }\r\n  input.value="";\r\n  input.click();\r\n}\r\nasync function importEditedHtmlFile(file){\r\n  if(!file) return;\r\n  if(file.size>ER_IMPORT_MAX_BYTES){ toast("ファイルが大きすぎます（64MB まで）。編集済みHTMLか確認してください"); return; }\r\n  try{\r\n    const text=await file.text();\r\n    const result=importEditedHtmlText(text,file.name);\r\n    if(result.error){ toast(result.error); return; }\r\n    toast(result.doneTotal?("編集を取り込みました: "+result.doneTotal+" 件"+(result.skippedTotal?"（対象外 "+result.skippedTotal+" 件）":"")):"取り込める編集はありませんでした");\r\n    openModal("編集済みHTMLから取り込みました",result.text,exportFilename("ER図_取り込み結果","txt"));\r\n  }catch(err){\r\n    console.error("[ER] 編集済みHTMLの取り込みに失敗",err);\r\n    toast("取り込みに失敗しました: "+((err&&err.message)||err));\r\n  }\r\n}\r\n(function(){\r\n  const input=document.getElementById("edit-import-file");\r\n  // 同じファイルをもう一度選んでも取り込めるよう、読んだら選択を空に戻す\r\n  if(input) input.addEventListener("change",()=>{ const file=input.files&&input.files[0]; input.value=""; importEditedHtmlFile(file); });\r\n})();\r\n';
+
   // raw-text:src/tabs/er-viewer/viewer-boot.js
   var viewer_boot_default = '// ER図ビューアー: 起動。すべての関数と状態を定義した後に、画面の状態を決めて最初の配置をする。\r\n// 保存した HTML（編集済みHTML）は開いた時点の画面の部品を複製しているため、ここで開閉や表示を初期の状態に戻す。\r\napplyTheme();\r\nsyncLayoutButtons(ER_OPTIONS.layoutName || "dagre");\r\nsyncDensityControl();\r\nsyncSeparateNoLinkButton();\r\nsyncFocusButton();\r\nsyncRelationKindButtons();\r\nsyncBundleButton();\r\nsyncSimpleModeButton();\r\nsyncRelationLabelButton();\r\nsetView("diagram");\r\nhideOverview();\r\ncloseDetail();\r\nsyncSidebarMode();\r\nsyncLegendToggle();\r\nconst restoredScope = applySavedViewState();\r\napplyRelationFilter();\r\napplyRelationLabelVisibility();\r\nupdateFocusOptions();\r\nupdateSearchMeta("", 0);\r\nrenderAnalysisPanel();\r\nrefreshSidebar();\r\nif(hasSavedLayout){\r\n  // 保存した位置をそのまま使い、配置し直さない\r\n  setScope(restoredScope || { mode: "all" }, { initial: true, keepPositions: true });\r\n  if(ER_EDIT_STATE.view && typeof ER_EDIT_STATE.view.zoom === "number" && ER_EDIT_STATE.view.pan){\r\n    cy.viewport({zoom:ER_EDIT_STATE.view.zoom, pan:ER_EDIT_STATE.view.pan});\r\n  }else{\r\n    setTimeout(fit,100);\r\n  }\r\n}else{\r\n  setScope(defaultScope(), { initial: true });\r\n}\r\nsetTimeout(updateZoomLabel, 300);\r\nsetTimeout(applyStateFromHash, 350);\r\n';
 
   // src/tabs/er-viewer/page.ts
   var lf = (text) => String(text).replace(/\r\n?/g, "\n");
-  var ER_VIEWER_SCRIPT = [viewer_core_default, viewer_edit_default, viewer_ui_default, viewer_export_default, viewer_boot_default].map(lf).join("\n");
+  var ER_VIEWER_SCRIPT = [viewer_core_default, viewer_edit_default, viewer_ui_default, viewer_export_default, viewer_import_default, viewer_boot_default].map(lf).join("\n");
   var ER_VIEWER_CSS = lf(viewer_default);
   var LAYOUT_BUTTONS = [
     ["dagre", "階層", "関連の向きに沿って左から右へ並べます（おすすめ）"],
@@ -9568,7 +9642,7 @@ ${ER_VIEWER_CSS}
     <h1 id="er-title" title="${esc(ctx.targetTitle)}">kintone ER図<small>${esc(ctx.targetText)}</small></h1>
     <div class="brand-sub">
       <button type="button" class="meta-pill meta-pill--btn" id="overview-pill" onclick="toggleOverview()" title="取得・関連サマリーを開く" aria-controls="overview" aria-expanded="false">${ctx.appCount}アプリ · ${ctx.relationCount}関連 · 循環${a.cycles} · 孤立${a.isolated} · 未取得${a.unresolved}<span aria-hidden="true"> ▾</span></button>
-      <span class="brand-meta" title="取得日時と接続先">${esc(ctx.generatedText)} 取得 · ${esc(ctx.connectionText)}</span>
+      <span class="brand-meta" title="${ctx.sourceText ? esc(`${ctx.sourceText} · ${ctx.connectionText}`) : "取得日時と接続先"}">${ctx.sourceText ? esc(ctx.sourceText) : `${esc(ctx.generatedText)} 取得`} · ${esc(ctx.connectionText)}</span>
     </div>
   </div>
   <div class="search-wrap" role="search">
@@ -9665,6 +9739,9 @@ ${ER_VIEWER_CSS}
         <button type="button" class="tb" onclick="restoreRemovedApps()">削除したアプリを戻す</button>
         <button type="button" class="tb" onclick="restoreAllHiddenFields()">隠した項目をすべて戻す</button>
         <button type="button" class="tb" onclick="clearPins()">固定をすべて解除</button>
+        <div class="menu-heading">取り込む</div>
+        <button type="button" class="tb" onclick="openEditImport()" title="以前に保存した編集済みHTMLの、手動の追加・名前と色・位置・メモ・削除をこの図へ取り込みます">編集済みHTMLから取り込む</button>
+        <input type="file" id="edit-import-file" accept=".html,.htm,text/html" hidden aria-label="取り込む編集済みHTML">
       </div>
     </div>
     <div class="tb-menu" id="export-menu">
@@ -9950,6 +10027,149 @@ ${ctx.mainScript}
     );
   }
 
+  // src/settingsBundleImport.ts
+  function preserveImportedMetadata(bundle, raw, preserve) {
+    if (!preserve || !bundle || !raw || typeof raw !== "object") return bundle;
+    bundle.fetchedAt = Object.prototype.hasOwnProperty.call(raw, "fetchedAt") ? raw.fetchedAt : null;
+    if (Object.prototype.hasOwnProperty.call(raw, "guestId")) bundle.guestId = raw.guestId;
+    else delete bundle.guestId;
+    if (Object.prototype.hasOwnProperty.call(raw, "preview")) bundle.preview = raw.preview;
+    else delete bundle.preview;
+    if (raw.meta && typeof raw.meta === "object" && !Array.isArray(raw.meta)) {
+      bundle.meta = {
+        ...raw.meta,
+        sectionRevisions: bundle.meta?.sectionRevisions || {}
+      };
+    }
+    return bundle;
+  }
+  function unwrapBundleCandidates(raw, side) {
+    if (!raw || typeof raw !== "object") return [];
+    if (raw.source && raw.target) return unwrapBundleCandidates(side === "target" ? raw.target : raw.source, side);
+    if (raw.bundle) return unwrapBundleCandidates(raw.bundle, side);
+    if (Array.isArray(raw.apps)) return raw.apps;
+    if (Array.isArray(raw.bundles)) return raw.bundles;
+    if (raw.sections && raw.appId != null) return [raw];
+    return [raw];
+  }
+  function pickAllSettingsBundles(raw, side, rawSettings = false, preserveMetadata = false) {
+    const candidates = unwrapBundleCandidates(raw, side).map((item) => {
+      try {
+        return preserveImportedMetadata(ensureBundleShape(item, rawSettings), item, preserveMetadata);
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+    if (!candidates.length) throw new Error("設定JSON内にアプリ設定バンドルが見つかりません");
+    return candidates;
+  }
+
+  // src/tabs/er-offline.ts
+  var ER_OFFLINE_SECTIONS = [
+    ["fieldSettings", "フィールド設定"],
+    ["appInfo", "アプリ情報"],
+    ["actionSettings", "アクション設定"]
+  ];
+  var hasOwn2 = (record, key) => !!record && typeof record === "object" && Object.prototype.hasOwnProperty.call(record, key);
+  function buildErOfflineSource(raw, fileName = "") {
+    const candidates = pickAllSettingsBundles(raw, void 0, true, true);
+    const bundles = /* @__PURE__ */ new Map();
+    const appIds = [];
+    let missingAppId = 0;
+    const duplicated = [];
+    const guestIds = /* @__PURE__ */ new Set();
+    const previews = /* @__PURE__ */ new Set();
+    const fetchedTimes = [];
+    for (const bundle of candidates) {
+      const text = String(bundle?.appId ?? "").trim();
+      const appId = /^\d+$/.test(text) ? Number(text) : NaN;
+      if (!Number.isSafeInteger(appId) || appId <= 0) {
+        missingAppId += 1;
+        continue;
+      }
+      if (bundles.has(appId)) {
+        if (!duplicated.includes(appId)) duplicated.push(appId);
+      } else appIds.push(appId);
+      bundles.set(appId, bundle);
+    }
+    for (const appId of appIds) {
+      const bundle = bundles.get(appId);
+      guestIds.add(String(bundle?.guestId ?? "").trim());
+      previews.add(bundle?.preview === true);
+      const time = Date.parse(String(bundle?.fetchedAt ?? ""));
+      if (Number.isFinite(time)) fetchedTimes.push(time);
+    }
+    if (!appIds.length) {
+      throw new Error("設定JSONにアプリIDのある設定が見つかりません。設定取得で保存した JSON または ZIP か確認してください");
+    }
+    const warnings = [];
+    if (missingAppId) warnings.push(`アプリIDの無い設定 ${missingAppId}件は読み込めませんでした`);
+    if (duplicated.length) warnings.push(`同じアプリIDが複数あったため後の設定を使用しました（App ${duplicated.slice(0, 5).join(", ")}${duplicated.length > 5 ? ` ほか ${duplicated.length - 5} 件` : ""}）`);
+    const withoutFields = appIds.filter((appId) => !hasOwn2(bundles.get(appId)?.sections, "fieldSettings"));
+    if (withoutFields.length) {
+      warnings.push(`${withoutFields.length}アプリの設定にフィールド設定が含まれていないため、それらは「取得失敗」として図に出ます（App ${withoutFields.slice(0, 5).join(", ")}${withoutFields.length > 5 ? " ほか" : ""}）`);
+    }
+    const guestId = guestIds.size === 1 ? [...guestIds][0] : "";
+    const preview = previews.size === 1 && previews.has(true);
+    const spaceText = guestIds.size > 1 ? "通常空間・ゲストスペースが混在" : guestId ? `ゲストスペース ${guestId}` : "通常空間";
+    const envText = previews.size > 1 ? "本番・プレビューが混在" : preview ? "プレビュー" : "本番";
+    const sorted = fetchedTimes.slice().sort((a, b) => a - b);
+    return {
+      bundles,
+      appIds,
+      fileName: String(fileName || ""),
+      fetchedAtFrom: sorted.length ? new Date(sorted[0]).toISOString() : "",
+      fetchedAtTo: sorted.length ? new Date(sorted[sorted.length - 1]).toISOString() : "",
+      guestId,
+      preview,
+      connectionText: `${spaceText} / ${envText}`,
+      warnings
+    };
+  }
+  function buildErModelFromOfflineSource(source, rawAppId) {
+    const appId = Number(rawAppId);
+    const bundle = source.bundles.get(appId);
+    if (!bundle) return null;
+    const sections = bundle.sections && typeof bundle.sections === "object" ? bundle.sections : {};
+    const missing = (key) => {
+      if (hasOwn2(sections, key)) return void 0;
+      const label = ER_OFFLINE_SECTIONS.find(([k]) => k === key)?.[1] || key;
+      return `読み込んだ設定JSONに${label}が含まれていません`;
+    };
+    const sourceGuestId = String(bundle.guestId ?? "").trim();
+    const fieldsMissing = missing("fieldSettings");
+    if (fieldsMissing) {
+      return buildFailedErAppModel(appId, new Error(`${fieldsMissing}（設定取得で「フィールド設定」を含めて保存してください）`), {
+        appInfoResponse: sections.appInfo,
+        sourceGuestId
+      });
+    }
+    try {
+      return buildErAppModel({
+        appId,
+        fieldsResponse: sections.fieldSettings,
+        appInfoResponse: sections.appInfo,
+        actionsResponse: sections.actionSettings,
+        appInfoError: missing("appInfo"),
+        actionsError: missing("actionSettings"),
+        sourceGuestId
+      });
+    } catch (e) {
+      return buildFailedErAppModel(appId, e, { appInfoResponse: sections.appInfo, sourceGuestId });
+    }
+  }
+  function listOfflineSpaceApps(source, spaceId) {
+    const id = String(spaceId || "").trim();
+    if (!id) return [];
+    return source.appIds.map((appId) => ({ appId, info: source.bundles.get(appId)?.sections?.appInfo })).filter(({ info }) => info && typeof info === "object" && String(info.spaceId ?? "") === id).map(({ appId, info }) => ({ appId: String(appId), name: typeof info.name === "string" ? info.name : "" }));
+  }
+  function describeOfflineFetchedAt(source, format) {
+    if (!source.fetchedAtFrom) return "取得日時不明";
+    const from = format(new Date(source.fetchedAtFrom));
+    const to = source.fetchedAtTo ? format(new Date(source.fetchedAtTo)) : from;
+    return from === to ? from : `${from}〜${to}`;
+  }
+
   // src/tabs/er.ts
   var ER_DEFAULTS = {
     maxFields: 220,
@@ -10169,12 +10389,19 @@ ${ctx.mainScript}
     const cache = /* @__PURE__ */ new Map();
     let reverseLookupIndex = null;
     const concurrency = resolveCrawlConcurrency(options);
-    const sleepMs = options?.sleepMs || ER_DEFAULTS.sleepMs;
+    const offline = options?.offlineSource || null;
+    const sleepMs = offline ? 0 : options?.sleepMs || ER_DEFAULTS.sleepMs;
+    const loadSchema = (appId) => {
+      if (!offline) return getSchema(appId, options, cache);
+      const key = Number(appId);
+      if (!cache.has(key)) cache.set(key, buildErModelFromOfflineSource(offline, key));
+      return Promise.resolve(cache.get(key));
+    };
     const seeds = [...new Set((Array.isArray(startIds) ? startIds : [startIds]).map((v) => Number(v)).filter((v) => Number.isFinite(v) && v > 0))];
     const apps = [];
     if (options?.includeReverseLookup) {
-      progressUi.update(3, "逆引き探索用に全アプリを走査中...");
-      const allApps = await fetchAllApps2(options);
+      progressUi.update(3, offline ? "逆引き探索用に読み込んだアプリを走査中..." : "逆引き探索用に全アプリを走査中...");
+      const allApps = offline ? offline.appIds.map((appId) => ({ appId })) : await fetchAllApps2(options);
       reverseLookupIndex = /* @__PURE__ */ new Map();
       const incomplete = [];
       options.reverseScan = { total: allApps.length, incomplete };
@@ -10183,9 +10410,10 @@ ${ctx.mainScript}
       const scan = await runOrdered(
         scanIds,
         concurrency,
-        Math.max(10, Math.floor(sleepMs / 4)),
-        (appId) => getSchema(appId, options, cache),
+        offline ? 0 : Math.max(10, Math.floor(sleepMs / 4)),
+        (appId) => loadSchema(appId),
         (appId, schema, i) => {
+          if (!schema) return;
           const relationIssues = (schema.issues || []).filter((issue) => issue.scope !== "metadata");
           if (schema.status === "failed" || schema.ok === false || relationIssues.length) {
             incomplete.push({ appId, status: schema.status, message: (relationIssues[0] || schema.issues?.[0])?.message || "" });
@@ -10222,8 +10450,9 @@ ${ctx.mainScript}
         level,
         concurrency,
         sleepMs,
-        (item) => getSchema(item.id, options, cache),
+        (item) => loadSchema(item.id),
         (item, a, i) => {
+          if (!a) return;
           const { id, depth } = item;
           a.depth = depth;
           apps.push(a);
@@ -10267,7 +10496,8 @@ ${ctx.mainScript}
       const reason = String(app?.issues?.[0]?.message || app?.issues?.[0]?.code || "原因不明").replace(/[。．.\s]+$/, "");
       return `起点アプリ ${id}${name}を取得できませんでした: ${reason}`;
     });
-    throw new Error(`ER図を作成できませんでした。${targets.join(" / ")}。アプリIDと閲覧権限を確認してください`);
+    const hint = options?.offlineSource ? "設定取得で「フィールド設定」を含めて保存した設定JSONか確認してください" : "アプリIDと閲覧権限を確認してください";
+    throw new Error(`ER図を作成できませんでした。${targets.join(" / ")}。${hint}`);
   };
   function formatErGeneratedAt(date) {
     const p = (n) => String(n).padStart(2, "0");
@@ -10299,8 +10529,12 @@ ${ctx.mainScript}
     });
     const data = safeJsonForScript(serializedApps);
     const reverseScanNote = describeReverseScan(options);
-    const generatedAt = options.generatedAt ? new Date(options.generatedAt) : /* @__PURE__ */ new Date();
-    const sourceHost = String(options.source?.host || (typeof location !== "undefined" && location && location.host ? location.host : ""));
+    const offline = options.offlineSource || null;
+    const offlineFrom = offline?.fetchedAtFrom ? new Date(offline.fetchedAtFrom) : null;
+    const generatedAt = offlineFrom || (options.generatedAt ? new Date(options.generatedAt) : /* @__PURE__ */ new Date());
+    const sourceHost = offline ? "" : String(options.source?.host || (typeof location !== "undefined" && location && location.host ? location.host : ""));
+    const offlineFetchedText = offline ? describeOfflineFetchedAt(offline, formatErGeneratedAt) : "";
+    const sourceLabel = offline ? `設定JSONから作成（${offlineFetchedText} 取得）` : "";
     const startAppIdList = (Array.isArray(options.startAppIds) ? options.startAppIds : [options.startAppId || ""]).map((v) => String(v)).filter(Boolean);
     const diagramOptions = safeJsonForScript({
       startAppId: options.startAppId || "",
@@ -10317,7 +10551,9 @@ ${ctx.mainScript}
       sourcePreview: !!options.source?.preview,
       sourceHost,
       generatedAt: generatedAt.toISOString(),
-      reverseScanNote
+      reverseScanNote,
+      // 設定JSONから作った図だけ「設定JSONから作成（取得日時）」を持つ（印刷・出力の見出しに出す）
+      ...sourceLabel ? { sourceLabel } : {}
     });
     const dependencyAnalysis = analyzeErDependencies(safeApps);
     const dependencyAnalysisData = safeJsonForScript(dependencyAnalysis);
@@ -10335,11 +10571,12 @@ ${ctx.mainScript}
     const spaceAppCount = erSpaceId ? safeApps.filter((app) => spaceAppIdSet.has(String(app?.id)) || String(app?.spaceId || "") === erSpaceId).length : 0;
     const densityLabel = densityLabelMap[options.fieldDensity || ER_DEFAULTS.fieldDensity] || String(options.fieldDensity || ER_DEFAULTS.fieldDensity || "-");
     const target = describeErTarget(safeApps, startAppIdList);
-    const connectionText = describeErConnection(options, sourceHost);
+    const connectionText = offline ? offline.connectionText : describeErConnection(options, sourceHost);
     const conditions = [
       ["起点", summarizeErStartIds(startAppIdList)],
+      ...offline ? [["取得元", `設定JSON${offline.fileName ? `「${offline.fileName}」` : ""}（${offline.appIds.length}アプリ。kintone には問い合わせていません）`]] : [],
       ["接続先", connectionText],
-      ["取得日時", formatErGeneratedAt(generatedAt)],
+      ["取得日時", offline ? offlineFetchedText : formatErGeneratedAt(generatedAt)],
       ["探索の深さ", options.maxDepth ? String(options.maxDepth) : "無制限"],
       ["逆引き探索", options.includeReverseLookup ? "ON" : "OFF"],
       ["サブテーブル", options.includeSubtableFields ? "ON" : "OFF"],
@@ -10363,6 +10600,7 @@ ${ctx.mainScript}
       targetText: target.text,
       targetTitle: target.title,
       generatedText: formatErGeneratedAt(generatedAt),
+      ...sourceLabel ? { sourceText: sourceLabel } : {},
       connectionText,
       libraryScripts: buildErLibraryScripts(),
       appCount: safeApps.length,
@@ -10386,12 +10624,12 @@ ${ctx.mainScript}
 
   // src/tabs/er-standalone.ts
   async function applySpaceToErOptions(opts, options, setStatus) {
-    const spaceId = String(opts.spaceId || "").trim();
+    const spaceId = normalizeIdInputText(opts.spaceId).trim();
     if (!/^\d+$/.test(spaceId)) return;
     let apps = Array.isArray(opts.spaceApps) ? opts.spaceApps : null;
     if (!apps) {
       setStatus(`スペース ${spaceId} のアプリ一覧を取得中...`);
-      apps = await fetchAppsInSpace(spaceId, opts.guestId);
+      apps = await fetchAppsInSpace(spaceId, options.source?.guestId || "");
     }
     const spaceIds = apps.map((a) => String(a.appId));
     options.spaceId = spaceId;
@@ -10404,7 +10642,7 @@ ${ctx.mainScript}
     );
   }
   function splitErAppIds(value) {
-    return String(value || "").split(/[\s,、，]+/).map((v) => v.trim()).filter(Boolean);
+    return normalizeIdInputText(value || "").split(/[\s,、，]+/).map((v) => v.trim()).filter(Boolean);
   }
   function erAppIdValues(opts, key, fallback = "") {
     const value = opts?.[key];
@@ -10418,16 +10656,16 @@ ${ctx.mainScript}
     return /^\d+$/.test(value) && Number.isSafeInteger(Number(value)) && Number(value) > 0;
   }
   function validateErOptions(opts) {
-    const appId = String(opts?.appId || "").trim();
+    const appId = normalizeIdInputText(opts?.appId || "").trim();
     const primaryIds = erAppIdValues(opts, "appIds", appId);
     const extraIds = erAppIdValues(opts, "extraAppIds");
     const invalidAppId = [...primaryIds, ...extraIds].find((v) => !/^\d+$/.test(v));
     if (invalidAppId) return `アプリIDは数値で入力してください: ${invalidAppId}`;
     const unusableAppId = [...primaryIds, ...extraIds].find((v) => !isUsableErAppId(v));
     if (unusableAppId) return `アプリIDは1以上${Number.MAX_SAFE_INTEGER}以下の整数で入力してください: ${unusableAppId}`;
-    const guestId = String(opts?.guestId || "").trim();
+    const guestId = normalizeIdInputText(opts?.guestId || "").trim();
     if (guestId && !/^\d+$/.test(guestId)) return `ゲストスペースIDは半角数字で入力してください: ${guestId}`;
-    const spaceId = String(opts?.spaceId || "").trim();
+    const spaceId = normalizeIdInputText(opts?.spaceId || "").trim();
     if (spaceId && !/^\d+$/.test(spaceId)) return `スペースIDは数値で入力してください: ${spaceId}`;
     const depthText = String(opts?.maxDepth ?? "").trim();
     if (depthText) {
@@ -10441,7 +10679,7 @@ ${ctx.mainScript}
     return "";
   }
   function buildErCrawlOptions(opts) {
-    const appId = String(opts?.appId || "").trim();
+    const appId = normalizeIdInputText(opts?.appId || "").trim();
     const primaryAppIds = erAppIdValues(opts, "appIds", appId);
     const startAppIds = [...primaryAppIds, ...erAppIdValues(opts, "extraAppIds")].map((v) => String(v || "").trim()).filter(isUsableErAppId).map((v) => String(Number(v))).filter((v, i, a) => a.indexOf(v) === i);
     const maxDepthRaw = Number(opts?.maxDepth);
@@ -10455,18 +10693,40 @@ ${ctx.mainScript}
       includeReverseLookup: !!opts?.includeReverseLookup,
       maxFields: ER_DEFAULTS.maxFields,
       sleepMs: ER_DEFAULTS.sleepMs,
-      source: { guestId: opts?.guestId || "", preview: !!opts?.preview }
+      source: { guestId: normalizeIdInputText(opts?.guestId || "").trim(), preview: !!opts?.preview }
     };
   }
   async function resolveErOptions(opts, setStatus) {
     const validationError = validateErOptions(opts);
     if (validationError) throw new Error(validationError);
-    const appId = String(opts.appId || "").trim();
-    const spaceId = String(opts.spaceId || "").trim();
+    const appId = normalizeIdInputText(opts.appId || "").trim();
+    const spaceId = normalizeIdInputText(opts.spaceId || "").trim();
     const options = buildErCrawlOptions(opts);
-    await applySpaceToErOptions(opts, options, setStatus);
-    if (!options.startAppIds.length) throw new Error("対象アプリが見つかりませんでした");
+    const offline = opts?.offlineSource || null;
+    if (offline) {
+      options.offlineSource = offline;
+      options.source = { guestId: offline.guestId, preview: offline.preview };
+      await applySpaceToErOptions(spaceId ? { ...opts, spaceApps: listOfflineSpaceApps(offline, spaceId) } : opts, options, setStatus);
+    } else {
+      await applySpaceToErOptions(opts, options, setStatus);
+    }
+    if (!options.startAppIds.length) throw new Error(offline ? "起点にするアプリがありません。起点アプリIDか、読み込んだ設定にあるスペースIDを入れてください" : "対象アプリが見つかりませんでした");
+    if (offline) {
+      const missing = options.startAppIds.filter((id) => !offline.bundles.has(Number(id)));
+      if (missing.length) {
+        throw new Error(`起点アプリ ${missing.slice(0, 5).join(", ")}${missing.length > 5 ? ` ほか ${missing.length - 5} 件` : ""} は、読み込んだ設定JSONにありません。起点アプリIDを確かめるか、そのアプリを含む設定JSONを読み込んでください`);
+      }
+    }
     return options;
+  }
+  function erFilenameSuffix(opts, options) {
+    const guestId = options?.source?.guestId || "";
+    const preview = options?.offlineSource ? !!options.source?.preview : !!opts?.preview;
+    return `${guestId ? `guest${guestId}_` : ""}${preview ? "プレビュー" : "本番"}`;
+  }
+  function offlineNote(options) {
+    const offline = options?.offlineSource || null;
+    return offline ? `。設定JSON${offline.fileName ? `「${offline.fileName}」` : ""}から作成（kintone には問い合わせていません）` : "";
   }
   var isFailedErApp = (app) => app?.status === "failed" || app?.ok === false;
   function summarizeCrawl(apps, options) {
@@ -10511,7 +10771,7 @@ ${ctx.mainScript}
       popup.location.href = url;
       progressUi.close();
       const summary = summarizeCrawl(apps, options);
-      setStatus(summary.note ? `ER図を生成しました: ${apps.length}アプリ${summary.note}` : `ER図の生成完了: ${apps.length}アプリを別タブ表示しました`, summary.tone);
+      setStatus(summary.note ? `ER図を生成しました: ${apps.length}アプリ${summary.note}${offlineNote(options)}` : `ER図の生成完了: ${apps.length}アプリを別タブ表示しました${offlineNote(options)}`, summary.tone);
       setTimeout(() => URL.revokeObjectURL(url), 60 * 1e3);
     } catch (e) {
       try {
@@ -10524,8 +10784,8 @@ ${ctx.mainScript}
     }
   }
   async function runExportERDiagramHtmlStandalone(opts, setStatus) {
-    const appId = String(opts.appId || "").trim();
-    const spaceId = String(opts.spaceId || "").trim();
+    const appId = normalizeIdInputText(opts.appId || "").trim();
+    const spaceId = normalizeIdInputText(opts.spaceId || "").trim();
     const options = await resolveErOptions(opts, setStatus);
     setStatus(`ER図HTMLを生成中... 起点 ${summarizeErStartIds(options.startAppIds)}`);
     progressUi.init();
@@ -10536,7 +10796,7 @@ ${ctx.mainScript}
       progressUi.update(94, "HTML保存データ生成中...");
       const html = buildHTML(apps, options);
       const baseName = options.startAppIds[0] || appId || `space${spaceId}`;
-      const suffix = `${opts.guestId ? `guest${opts.guestId}_` : ""}${opts.preview ? "プレビュー" : "本番"}`;
+      const suffix = erFilenameSuffix(opts, options);
       if (opts?.download !== false) downloadText(
         buildExportFilename("ER図", "html", { appLabel: buildAppFilenameLabel(baseName, ""), suffix }),
         html,
@@ -10544,7 +10804,7 @@ ${ctx.mainScript}
       );
       progressUi.close();
       const summary = summarizeCrawl(apps, options);
-      setStatus(summary.note ? `ER図HTMLを保存しました: ${apps.length}アプリ${summary.note}` : `ER図HTMLを保存しました (${apps.length}アプリ)`, summary.tone);
+      setStatus(summary.note ? `ER図HTMLを保存しました: ${apps.length}アプリ${summary.note}${offlineNote(options)}` : `ER図HTMLを保存しました (${apps.length}アプリ)${offlineNote(options)}`, summary.tone);
     } catch (e) {
       if (isCancelStop(e)) progressUi.dismiss();
       else progressUi.error(e.message || String(e));
@@ -10584,17 +10844,21 @@ ${ctx.mainScript}
   }
   async function runExportERMarkdownStandalone(opts, setStatus = () => {
   }) {
-    const appId = String(opts?.appId || "").trim();
-    const spaceId = String(opts?.spaceId || "").trim();
+    const appId = normalizeIdInputText(opts?.appId || "").trim();
+    const spaceId = normalizeIdInputText(opts?.spaceId || "").trim();
     let usedProgress = false;
     try {
       const { apps, options, fromBundles } = await resolveErAppsForExport(opts, setStatus, "ER図仕様書");
       usedProgress = !fromBundles;
       if (usedProgress) progressUi.update(94, "Markdown仕様書データ生成中...");
       const analysis = analyzeErDependencies(apps);
-      const markdown = buildErMarkdownSpec(apps, analysis, { generatedAt: opts?.generatedAt });
+      const offline = options.offlineSource || null;
+      const markdown = buildErMarkdownSpec(apps, analysis, {
+        generatedAt: opts?.generatedAt,
+        ...offline ? { sourceNote: `設定JSON${offline.fileName ? `「${offline.fileName}」` : ""}から作成（${describeOfflineFetchedAt(offline, (d) => d.toLocaleString("ja-JP"))} 取得。kintone には問い合わせていません）` } : {}
+      });
       const baseName = options.startAppIds[0] || appId || (spaceId ? `space${spaceId}` : String(apps[0]?.id || "er"));
-      const suffix = `${opts?.guestId ? `guest${opts.guestId}_` : ""}${opts?.preview ? "プレビュー" : "本番"}`;
+      const suffix = erFilenameSuffix(opts, options);
       if (opts?.download !== false) downloadText(
         buildExportFilename("ER図仕様書", "md", { appLabel: buildAppFilenameLabel(baseName, ""), suffix }),
         markdown,
@@ -10602,7 +10866,7 @@ ${ctx.mainScript}
       );
       if (usedProgress) progressUi.close();
       const summary = summarizeCrawl(apps, options);
-      setStatus(summary.note ? `ER図仕様書を保存しました: ${apps.length}アプリ${summary.note}` : `ER図仕様書を保存しました (${apps.length}アプリ)`, summary.tone);
+      setStatus(summary.note ? `ER図仕様書を保存しました: ${apps.length}アプリ${summary.note}${offlineNote(options)}` : `ER図仕様書を保存しました (${apps.length}アプリ)${offlineNote(options)}`, summary.tone);
       return { apps, analysis, markdown };
     } catch (e) {
       if (usedProgress) {
@@ -10614,8 +10878,8 @@ ${ctx.mainScript}
   }
   async function runExportERMermaidStandalone(opts, setStatus = () => {
   }) {
-    const appId = String(opts?.appId || "").trim();
-    const spaceId = String(opts?.spaceId || "").trim();
+    const appId = normalizeIdInputText(opts?.appId || "").trim();
+    const spaceId = normalizeIdInputText(opts?.spaceId || "").trim();
     let usedProgress = false;
     try {
       const { apps, options, fromBundles } = await resolveErAppsForExport(opts, setStatus, "ER図Mermaid");
@@ -10623,7 +10887,7 @@ ${ctx.mainScript}
       if (usedProgress) progressUi.update(94, "Mermaidデータ生成中...");
       const mermaid = buildErMermaidSource(apps, { showAllFields: opts?.showAllFields });
       const baseName = options.startAppIds[0] || appId || (spaceId ? `space${spaceId}` : String(apps[0]?.id || "er"));
-      const suffix = `${opts?.guestId ? `guest${opts.guestId}_` : ""}${opts?.preview ? "プレビュー" : "本番"}`;
+      const suffix = erFilenameSuffix(opts, options);
       if (opts?.download !== false) downloadText(
         buildExportFilename("ER図", "mmd", { appLabel: buildAppFilenameLabel(baseName, ""), suffix }),
         mermaid,
@@ -10631,7 +10895,7 @@ ${ctx.mainScript}
       );
       if (usedProgress) progressUi.close();
       const summary = summarizeCrawl(apps, options);
-      setStatus(summary.note ? `ER図Mermaidを保存しました: ${apps.length}アプリ${summary.note}` : `ER図Mermaidを保存しました (${apps.length}アプリ)`, summary.tone);
+      setStatus(summary.note ? `ER図Mermaidを保存しました: ${apps.length}アプリ${summary.note}${offlineNote(options)}` : `ER図Mermaidを保存しました (${apps.length}アプリ)${offlineNote(options)}`, summary.tone);
       return { apps, mermaid };
     } catch (e) {
       if (usedProgress) {
@@ -10643,8 +10907,8 @@ ${ctx.mainScript}
   }
   async function runExportERRelationsCsvStandalone(opts, setStatus = () => {
   }) {
-    const appId = String(opts?.appId || "").trim();
-    const spaceId = String(opts?.spaceId || "").trim();
+    const appId = normalizeIdInputText(opts?.appId || "").trim();
+    const spaceId = normalizeIdInputText(opts?.spaceId || "").trim();
     let usedProgress = false;
     try {
       const { apps, options, fromBundles } = await resolveErAppsForExport(opts, setStatus, "ER図リレーション一覧CSV");
@@ -10652,7 +10916,7 @@ ${ctx.mainScript}
       if (usedProgress) progressUi.update(94, "CSVデータ生成中...");
       const csv = buildErRelationsCsv(apps);
       const baseName = options.startAppIds[0] || appId || (spaceId ? `space${spaceId}` : String(apps[0]?.id || "er"));
-      const suffix = `${opts?.guestId ? `guest${opts.guestId}_` : ""}${opts?.preview ? "プレビュー" : "本番"}`;
+      const suffix = erFilenameSuffix(opts, options);
       if (opts?.download !== false) downloadText(
         buildExportFilename("ER図_リレーション一覧", "csv", { appLabel: buildAppFilenameLabel(baseName, ""), suffix }),
         csv,
@@ -10660,7 +10924,7 @@ ${ctx.mainScript}
       );
       if (usedProgress) progressUi.close();
       const summary = summarizeCrawl(apps, options);
-      setStatus(summary.note ? `ER図リレーション一覧CSVを保存しました: ${apps.length}アプリ${summary.note}` : `ER図リレーション一覧CSVを保存しました (${apps.length}アプリ)`, summary.tone);
+      setStatus(summary.note ? `ER図リレーション一覧CSVを保存しました: ${apps.length}アプリ${summary.note}${offlineNote(options)}` : `ER図リレーション一覧CSVを保存しました (${apps.length}アプリ)${offlineNote(options)}`, summary.tone);
       return { apps, csv };
     } catch (e) {
       if (usedProgress) {
@@ -10724,14 +10988,14 @@ ${ctx.mainScript}
     ensureStyles2();
     const { details, body } = makeDetails(opts.title || "アプリを検索（名前・コード・ID）", { open: !!opts.open });
     const keyword = makeInput({ placeholder: "アプリ名 / アプリID / URL", width: "wide", noSubmit: true });
-    const guest = makeInput({ placeholder: "ゲストID（任意）", width: "guest", noSubmit: true });
+    const guest = makeInput({ placeholder: "ゲストID（任意）", width: "guest", noSubmit: true, idInput: true });
     if (opts.guestEl?.value.trim()) guest.value = opts.guestEl.value.trim();
     const searchBtn = makeButton("検索", "sub", { icon: "🔍" });
     const allBtn = makeButton("環境内の全アプリ", "sub");
     allBtn.title = "接続先で閲覧できるアプリをすべて候補に表示します（検索語とスペースIDは使いません）";
     const searchMode = makeSelect([["name", "名前 / ID / URL"], ["code", "アプリコード（完全一致）"]]);
     searchMode.setAttribute("aria-label", "検索方法");
-    const space = makeInput({ placeholder: "スペースID（任意）", width: "guest", noSubmit: true, ariaLabel: "検索対象スペースID" });
+    const space = makeInput({ placeholder: "スペースID（任意）", width: "guest", noSubmit: true, ariaLabel: "検索対象スペースID", idInput: true });
     body.appendChild(makeRow([searchMode, space], { label: "検索方法" }));
     body.appendChild(makeRow([keyword, guest, searchBtn], { label: "検索語" }));
     body.appendChild(makeRow([allBtn], { label: "全アプリ" }));
@@ -10986,6 +11250,37 @@ ${ctx.mainScript}
     return details;
   }
 
+  // src/archive/crc32.ts
+  var crcTable = null;
+  function getCrcTable() {
+    if (crcTable) return crcTable;
+    const table = new Uint32Array(256);
+    for (let i = 0; i < 256; i += 1) {
+      let value = i;
+      for (let bit = 0; bit < 8; bit += 1) {
+        value = value & 1 ? 3988292384 ^ value >>> 1 : value >>> 1;
+      }
+      table[i] = value >>> 0;
+    }
+    crcTable = table;
+    return table;
+  }
+  var CRC32_INITIAL = 4294967295;
+  function crc32Update(state3, bytes) {
+    const table = getCrcTable();
+    let crc = state3;
+    for (let i = 0; i < bytes.length; i += 1) {
+      crc = table[(crc ^ bytes[i]) & 255] ^ crc >>> 8;
+    }
+    return crc >>> 0;
+  }
+  function crc32Finish(state3) {
+    return (state3 ^ 4294967295) >>> 0;
+  }
+  function crc32(bytes) {
+    return crc32Finish(crc32Update(CRC32_INITIAL, bytes));
+  }
+
   // src/archive/lite-zip.ts
   var LITE_ZIP_MAX_ENTRIES = 65535;
   var LITE_ZIP_MAX_BYTES = 4294967294;
@@ -11008,7 +11303,7 @@ ${ctx.mainScript}
 
   // src/tabs/record-standalone.ts
   function parseRecordAppIds(value) {
-    const tokens = String(value ?? "").split(/[\s,\u3001\uFF0C]+/).filter(Boolean);
+    const tokens = normalizeIdInputText(value).split(/[\s,\u3001\uFF0C]+/).filter(Boolean);
     const invalid = tokens.filter((id) => !/^\d+$/.test(id) || Number(id) <= 0);
     if (invalid.length) throw new Error(`アプリIDは正の数値で入力してください: ${invalid.join(", ")}`);
     return [...new Set(tokens)];
@@ -11032,6 +11327,139 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
     return ["対象アプリ", connectionSummary(text, guest, environment)];
   }
 
+  // src/archive/zip-read.ts
+  var SIG_END = 101010256;
+  var SIG_CENTRAL = 33639248;
+  var SIG_LOCAL = 67324752;
+  var DEFAULT_MAX_TOTAL = 512 * 1024 * 1024;
+  function looksLikeZip(bytes) {
+    return bytes.length >= 4 && bytes[0] === 80 && bytes[1] === 75 && (bytes[2] === 3 && bytes[3] === 4 || bytes[2] === 5 && bytes[3] === 6);
+  }
+  async function inflateRaw(bytes, expectedSize) {
+    if (typeof DecompressionStream !== "function") throw new Error("このブラウザは ZIP の展開（deflate-raw）に対応していません。設定JSONを読み込んでください");
+    const reader = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw")).getReader();
+    const chunks = [];
+    let length = 0;
+    for (; ; ) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > expectedSize) {
+        await reader.cancel().catch(() => {
+        });
+        return null;
+      }
+      chunks.push(value);
+    }
+    const out = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) {
+      out.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return out;
+  }
+  async function readZipEntries(bytes, options = {}) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const u16 = (offset) => view.getUint16(offset, true);
+    const u32 = (offset) => view.getUint32(offset, true);
+    let end = -1;
+    for (let pos2 = bytes.length - 22; pos2 >= Math.max(0, bytes.length - 22 - 65535); pos2 -= 1) {
+      if (u32(pos2) === SIG_END) {
+        end = pos2;
+        break;
+      }
+    }
+    if (end < 0) throw new Error("ZIP の終端が見つかりません（ZIP ファイルではないか、壊れています）");
+    const count = u16(end + 10);
+    const centralOffset = u32(end + 16);
+    if (count === 65535 || centralOffset === 4294967295) throw new Error("ZIP64 形式の ZIP には対応していません");
+    if (count > (options.maxEntries ?? 65535)) throw new Error(`ZIP のファイル数（${count}）が多すぎます`);
+    const decoder = new TextDecoder("utf-8");
+    const maxTotal = options.maxTotalBytes ?? DEFAULT_MAX_TOTAL;
+    const entries = [];
+    let total = 0;
+    let pos = centralOffset;
+    for (let i = 0; i < count; i += 1) {
+      if (pos + 46 > bytes.length || u32(pos) !== SIG_CENTRAL) throw new Error("ZIP の中央ディレクトリが壊れています");
+      const flags = u16(pos + 8);
+      const method = u16(pos + 10);
+      const crc = u32(pos + 16);
+      const compressedSize = u32(pos + 20);
+      const size = u32(pos + 24);
+      const nameLength = u16(pos + 28);
+      const extraLength = u16(pos + 30);
+      const commentLength = u16(pos + 32);
+      const localOffset = u32(pos + 42);
+      const name = decoder.decode(bytes.subarray(pos + 46, pos + 46 + nameLength));
+      pos += 46 + nameLength + extraLength + commentLength;
+      if (name.endsWith("/")) {
+        entries.push({ name, data: new Uint8Array(0) });
+        continue;
+      }
+      if (options.include && !options.include(name)) continue;
+      if (flags & 1) throw new Error(`暗号化された ZIP には対応していません（${name}）`);
+      if (method !== 0 && method !== 8) throw new Error(`未対応の圧縮方式です（${name}・方式 ${method}）`);
+      total += size;
+      if (total > maxTotal) throw new Error("ZIP の展開後の大きさが上限を超えます");
+      if (localOffset + 30 > bytes.length || u32(localOffset) !== SIG_LOCAL) throw new Error(`ZIP のファイル「${name}」の位置が壊れています`);
+      const dataStart = localOffset + 30 + u16(localOffset + 26) + u16(localOffset + 28);
+      if (dataStart + compressedSize > bytes.length) throw new Error(`ZIP のファイル「${name}」が途中で切れています`);
+      const raw = bytes.subarray(dataStart, dataStart + compressedSize);
+      const data = method === 8 ? await inflateRaw(raw, size) : raw.slice();
+      if (!data || data.length !== size || crc32(data) !== crc) throw new Error(`ZIP のファイル「${name}」の内容が壊れています（大きさ・CRC が一致しません）`);
+      entries.push({ name, data });
+    }
+    return entries;
+  }
+
+  // src/settingsZipImport.ts
+  var isBundle = (value) => !!value && typeof value === "object" && !Array.isArray(value) && !!value.sections && typeof value.sections === "object";
+  async function readSettingsZip(bytes) {
+    const entries = await readZipEntries(bytes, { include: (name) => /\.json$/i.test(name) });
+    const decoder = new TextDecoder("utf-8");
+    const jsonByName = new Map(entries.filter((entry) => !entry.name.endsWith("/")).map((entry) => [entry.name, entry.data]));
+    const parse = (name) => {
+      try {
+        return JSON.parse(decoder.decode(jsonByName.get(name)));
+      } catch {
+        throw new Error(`ZIP 内の「${name}」を JSON として読み込めません`);
+      }
+    };
+    const warnings = [];
+    const bundles = [];
+    const files = [];
+    const manifest = jsonByName.has("manifest.json") ? parse("manifest.json") : null;
+    const listed = Array.isArray(manifest?.apps) ? manifest.apps.map((app) => String(app?.file || "")).filter(Boolean) : [];
+    if (listed.length) {
+      const missing = [];
+      for (const name of listed) {
+        if (!jsonByName.has(name)) {
+          missing.push(name);
+          continue;
+        }
+        const bundle = parse(name);
+        if (!isBundle(bundle)) {
+          missing.push(name);
+          continue;
+        }
+        bundles.push(bundle);
+        files.push(name);
+      }
+      if (missing.length) warnings.push(`manifest.json にある ${missing.length} 件の設定JSONを ZIP から読み込めませんでした（${missing.slice(0, 3).join("、")}${missing.length > 3 ? " ほか" : ""}）`);
+    } else {
+      for (const name of [...jsonByName.keys()].filter((key) => key !== "manifest.json").sort()) {
+        const value = parse(name);
+        if (isBundle(value)) {
+          bundles.push(value);
+          files.push(name);
+        }
+      }
+    }
+    if (!bundles.length) throw new Error("ZIP 内に設定JSONが見つかりません。設定取得の「設定をZIPで保存」で保存した ZIP か確認してください");
+    return { raw: { bundles }, files, warnings };
+  }
+
   // src/entries/er-lite-ui.ts
   function mountErLitePanel() {
     const panel = createLitePanel({
@@ -11043,9 +11471,15 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
       hint: "つながりのあるアプリを、画面で開くか共有用の HTML として保存できます。kintone のアプリや設定は変更しません。"
     });
     const cardMain = makeCard({ title: "起点アプリ", number: 1 });
-    const appInp = makeInput({ placeholder: "アプリID（複数はカンマ区切り）", value: DEFAULT_APP_ID || "", width: "wide" });
-    const guestInp = makeInput({ placeholder: "ゲストID（任意）", value: DEFAULT_GUEST_ID, width: "guest" });
+    const appInp = makeInput({ placeholder: "アプリID（複数はカンマ区切り）", value: DEFAULT_APP_ID || "", width: "wide", idInput: true });
+    const guestInp = makeInput({ placeholder: "ゲストID（任意）", value: DEFAULT_GUEST_ID, width: "guest", idInput: true });
     cardMain.body.appendChild(makeRow([appInp, guestInp], { label: "起点ID" }));
+    const offlineBadge = document.createElement("div");
+    offlineBadge.className = "kus-lp__pill kus-lp__pill--ok";
+    offlineBadge.setAttribute("data-er-offline", "");
+    offlineBadge.style.overflowWrap = "anywhere";
+    offlineBadge.hidden = true;
+    cardMain.body.appendChild(offlineBadge);
     cardMain.body.appendChild(createAppSearchControl(panel, {
       guestEl: guestInp,
       targets: [{
@@ -11113,8 +11547,8 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
     presetCard.body.appendChild(makeNote("押すと、探索の深さ・密度・レイアウト・逆引きをまとめて設定します。内容は「詳細設定…」の詳細オプションで変更できます。", "help"));
     panel.body.insertBefore(presetCard.card, panel.status);
     const details = makeCard({ title: "詳細オプション" });
-    const extra = makeInput({ placeholder: "カンマ区切り (例: 100, 120)", width: "wide" });
-    const spaceInp = makeInput({ placeholder: "スペースID", width: "narrow" });
+    const extra = makeInput({ placeholder: "カンマ区切り (例: 100, 120)", width: "wide", idInput: true });
+    const spaceInp = makeInput({ placeholder: "スペースID", width: "narrow", idInput: true });
     const layoutSel = makeSelect([
       ["dagre", "Dagre（推奨）"],
       ["breadthfirst", "ツリー"],
@@ -11142,7 +11576,8 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
       footer: (selected, total) => `スペース #${pickerSpaceId} のアプリ ${total}件中 ${selected}件を起点にします。${selected ? "" : "1件以上選ぶか、起点IDを入力してください。"}`
     });
     let spaceAppsCache = null;
-    const spaceCacheKey = () => `${spaceInp.value.trim()}|${guestInp.value.trim()}`;
+    let offlineSource = null;
+    const spaceCacheKey = () => `${offlineSource ? `json:${offlineSource.fileName}|` : ""}${normalizeIdInputText(spaceInp.value).trim()}|${normalizeIdInputText(guestInp.value).trim()}`;
     function renderSpacePicker(spaceId, apps) {
       pickerSpaceId = spaceId;
       spacePicker.setItems(apps.map((a) => ({ value: String(a.appId), label: a.name || `アプリ ${a.appId}`, sub: `#${a.appId}`, checked: true })));
@@ -11153,18 +11588,21 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
       });
     }
     async function loadSpaceApps() {
-      const spaceId = spaceInp.value.trim();
+      const spaceId = normalizeIdInputText(spaceInp.value).trim();
       if (!/^\d+$/.test(spaceId)) throw new Error("スペースIDを数値で入力してください");
       const key = spaceCacheKey();
       let apps;
       if (spaceAppsCache && spaceAppsCache.key === key) {
         apps = spaceAppsCache.apps;
+      } else if (offlineSource) {
+        apps = listOfflineSpaceApps(offlineSource, spaceId);
+        spaceAppsCache = { key, apps };
       } else {
-        apps = await fetchAppsInSpace(spaceId, guestInp.value.trim());
+        apps = await fetchAppsInSpace(spaceId, normalizeIdInputText(guestInp.value).trim());
         spaceAppsCache = { key, apps };
       }
       renderSpacePicker(spaceId, apps);
-      panel.setStatus(`スペース ${spaceId} のアプリ ${apps.length}件を読み込みました。起点にするアプリを選択してください`, "info");
+      panel.setStatus(`スペース ${spaceId} のアプリ ${apps.length}件を${offlineSource ? "読み込んだ設定JSONから探しました" : "読み込みました"}。起点にするアプリを選択してください`, "info");
     }
     spaceLoadBtn.addEventListener("click", () => liteRun(panel, "スペース内アプリを取得中…", loadSpaceApps));
     details.body.appendChild(makeRow(extra, { label: "追加起点" }));
@@ -11176,18 +11614,79 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
     details.body.appendChild(makeRow([subtableCb.label, reverseCb.label]));
     details.body.appendChild(makeNote("起点IDはカンマ区切りで複数指定でき、追加起点も同じ図にまとめて描画します。スペースIDを入れて「スペース内アプリを読込」を押すと、起点にするアプリを選べます。", "help"));
     function parseAppIds(value) {
-      return String(value || "").split(/[\s,、，]+/).map((v) => v.trim()).filter(Boolean);
+      return normalizeIdInputText(value || "").split(/[\s,、，]+/).map((v) => v.trim()).filter(Boolean);
     }
     panel.body.insertBefore(details.card, panel.status);
+    const importCard = makeCard({ title: "設定JSON・ZIP から作る（任意）", soft: true });
+    importCard.body.appendChild(makeNote("「設定取得」で保存した設定JSON（「設定をZIPで保存」の ZIP も可）を読み込むと、kintone に問い合わせず、ファイルにあるアプリの設定（フィールド・ルックアップ・関連レコード一覧・アクション）から図を作ります。読み込んだ中に無い参照先は「未取得の参照先」として出ます。読み込むと、起点を読み込んだすべてのアプリにします（起点・探索の深さ・逆引きはあとから変えられます）。", "help"));
+    const importFile = document.createElement("input");
+    importFile.type = "file";
+    importFile.accept = ".json,.zip,application/json,application/zip";
+    importFile.className = "kus-lp__file";
+    importFile.setAttribute("aria-label", "設定JSON・ZIP を読み込む");
+    const clearImportBtn = makeButton("読込解除", "ghost");
+    const importStatus = document.createElement("span");
+    importStatus.className = "kus-lp__pill";
+    importStatus.style.overflowWrap = "anywhere";
+    importStatus.setAttribute("data-import-status", "empty");
+    importStatus.textContent = "設定JSON: 未読込";
+    importCard.body.appendChild(makeRow(importFile, { label: "設定JSON" }));
+    importCard.body.appendChild(makeRow([clearImportBtn, importStatus]));
+    panel.body.insertBefore(importCard.card, panel.status);
+    function syncOfflineState() {
+      const loaded = offlineSource;
+      importStatus.className = loaded ? "kus-lp__pill kus-lp__pill--ok" : "kus-lp__pill";
+      importStatus.setAttribute("data-import-status", loaded ? "loaded" : "empty");
+      importStatus.textContent = loaded ? `読込中: ${loaded.fileName}（${loaded.appIds.length}アプリ）` : "設定JSON: 未読込";
+      offlineBadge.hidden = !loaded;
+      offlineBadge.textContent = loaded ? `設定JSON「${loaded.fileName}」の ${loaded.appIds.length}アプリから作ります（kintone に問い合わせません）` : "";
+      prevCb.checkbox.disabled = !!loaded;
+      prevCb.label.title = loaded ? "設定JSONから作るときは、読み込んだ設定の取得環境のとおりになります" : "";
+      spacePicker.clear();
+      importCard.card.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    importFile.addEventListener("change", () => {
+      void liteRun(panel, "設定JSONを読み込み中…", async () => {
+        const file = importFile.files?.[0];
+        if (!file) return;
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        let raw;
+        const warnings = [];
+        if (looksLikeZip(bytes)) {
+          const zip = await readSettingsZip(bytes);
+          raw = zip.raw;
+          warnings.push(...zip.warnings);
+        } else {
+          try {
+            raw = JSON.parse(new TextDecoder("utf-8").decode(bytes));
+          } catch {
+            throw new Error("設定JSONとして読み込めません。設定取得で保存した JSON または ZIP か確認してください");
+          }
+        }
+        const loaded = buildErOfflineSource(raw, file.name);
+        warnings.push(...loaded.warnings);
+        offlineSource = loaded;
+        appInp.value = loaded.appIds.join(", ");
+        appInp.dispatchEvent(new Event("input", { bubbles: true }));
+        panel.setStatus(`設定JSON「${file.name}」から${loaded.appIds.length}アプリの設定を読み込みました。起点を読み込んだ${loaded.appIds.length}アプリにしました（それまでの起点は置き換えました）。kintone には問い合わせずに図を作ります${warnings.length ? `。注意: ${warnings.join("。")}` : ""}`, warnings.length ? "warn" : "ok");
+      }).then(() => syncOfflineState());
+    });
+    clearImportBtn.addEventListener("click", () => {
+      const wasLoaded = !!offlineSource;
+      offlineSource = null;
+      importFile.value = "";
+      syncOfflineState();
+      panel.setStatus(wasLoaded ? "設定JSONの読込を解除しました。kintone から設定を読み取って図を作ります" : "読み込んでいる設定JSONはありません", "info");
+    });
     function source() {
-      const spaceId = spaceInp.value.trim();
+      const spaceId = normalizeIdInputText(spaceInp.value).trim();
       const cacheHit = !!(spaceAppsCache && spaceAppsCache.key === spaceCacheKey());
       const pickerMatches = cacheHit && pickerSpaceId === spaceId && !spacePicker.element.hidden;
       const selectedIds = pickerMatches ? spacePicker.selected() : null;
       return {
-        appId: appInp.value.trim(),
+        appId: normalizeIdInputText(appInp.value).trim(),
         appIds: parseAppIds(appInp.value),
-        guestId: guestInp.value.trim(),
+        guestId: normalizeIdInputText(guestInp.value).trim(),
         preview: prevCb.checkbox.checked,
         layoutName: layoutSel.value,
         fieldDensity: densitySel.value,
@@ -11197,7 +11696,8 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
         extraAppIds: parseAppIds(extra.value),
         spaceId,
         spaceApps: cacheHit ? spaceAppsCache.apps : void 0,
-        spaceSelectedAppIds: selectedIds ?? void 0
+        spaceSelectedAppIds: selectedIds ?? void 0,
+        offlineSource: offlineSource || void 0
       };
     }
     bOpen.addEventListener("click", () => liteRun(panel, "ER 図を生成中…", async () => {
@@ -11233,8 +11733,10 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
     guestInp.setAttribute("aria-label", "ゲストスペースID");
     const erSummary = () => [
       // 起点が複数のときは件数と先頭 20 件までを示す（全アプリを起点にしても確認画面が数千行にならない）
-      ["起点", recordTargetSummary(appInp.value, guestInp.value)[1]],
-      ["参照環境", prevCb.checkbox.checked ? "プレビュー環境を参照" : "本番環境"],
+      ["起点", recordTargetSummary(appInp.value, guestInp.value, offlineSource ? "設定JSON" : prevCb.checkbox.checked ? "プレビュー" : "本番")[1]],
+      // 取得元は、設定JSONから作るときだけ示す（kintone から読むときの確認画面は今までどおり）
+      ...offlineSource ? [["取得元", `読み込んだ設定JSON「${offlineSource.fileName}」（${offlineSource.appIds.length}アプリ）。kintone には問い合わせません`]] : [],
+      ["参照環境", offlineSource ? `設定JSONのとおり（${offlineSource.connectionText}）` : prevCb.checkbox.checked ? "プレビュー環境を参照" : "本番環境"],
       ["追加起点", extra.value.trim() || "なし"],
       ["スペース", (() => {
         const spaceId = spaceInp.value.trim();
@@ -11244,14 +11746,14 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
       })()],
       ["探索の深さ", !depthInp.value.trim() || Number(depthInp.value) === 0 ? "無制限（関連アプリを最後まで探索します）" : depthInp.value.trim()],
       ["表示", (layoutSel.selectedOptions[0]?.textContent || "") + " / " + (densitySel.selectedOptions[0]?.textContent || "")],
-      ["逆引き", reverseCb.checkbox.checked ? "逆引きあり（テナント内のアプリを走査するため時間がかかる場合があります）" : "なし"],
+      ["逆引き", reverseCb.checkbox.checked ? offlineSource ? "逆引きあり（読み込んだアプリの中から探します）" : "逆引きあり（テナント内のアプリを走査するため時間がかかる場合があります）" : "なし"],
       ...parseAppIds(appInp.value).length >= 50 ? [["起点が多い場合", `${parseAppIds(appInp.value).length}アプリを起点に、設定を数アプリずつ並行して読み取ります。数百アプリを超えると数分かかり、図やHTMLも大きくなります。途中で「中止」できます。`]] : []
     ];
     const erProblem = () => validateErOptions(source());
     installLiteWorkflow(panel, {
       setup: [cardMain.card, presetCard.card],
-      advanced: [details.card],
-      advancedCopy: "追加起点・スペースID・レイアウト・表示密度・探索の深さ・サブテーブル・逆引きを変えるときはこちら。",
+      advanced: [details.card, importCard.card],
+      advancedCopy: "追加起点・スペースID・レイアウト・表示密度・探索の深さ・サブテーブル・逆引きを変える、設定JSON・ZIP から作るときはこちら。",
       actions: [
         { id: "open", label: "ER図を開く", description: "関連アプリの設定を読み取り、アプリ同士のつながりを別画面の図で表示します。", button: bOpen, validate: erProblem, summary: erSummary },
         { id: "save", label: "ER図をHTMLで保存", description: "選んだ条件のER図を、共有できるHTMLファイルとして保存します。", button: bSave, validate: erProblem, summary: erSummary },

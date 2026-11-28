@@ -291,6 +291,60 @@ describe('lite design export', () => {
     expect(zipFiles[manifest.items[1].aiMdFile]).toContain('raw-settings-api');
   });
 
+  it('HTML の設計書: 設定JSONから作るときは kintone に問い合わせず、.html を保存する', async () => {
+    const wrapper = { apps: [bundle('101'), bundle('202', { ...emptySections(), appSettings: { name: '選択対象' } })] };
+    const status = vi.fn();
+    await runDesignExportStandalone('html', { appId: '202', importedBundle: wrapper, appNameLookup: { '101': '名前101' } }, status);
+    expect(fetchBundle).not.toHaveBeenCalled();
+    const [name, saved, type] = vi.mocked(downloadText).mock.calls[0];
+    expect(name).toMatch(/^設計書_選択対象\(app202\)_\d{8}_\d{6}\.html$/);
+    expect(type).toBe('text/html');
+    expect(saved).toMatch(/^<!DOCTYPE html>/);
+    expect(saved).toContain('<h1 class="doc-title">選択対象</h1>');
+    expect(saved).toContain('<dt>取得元</dt><dd>読み込んだ設定JSON</dd>');
+    expect(status).toHaveBeenLastCalledWith('HTML設計書を保存しました（App 202）', false);
+  });
+
+  it('HTML の設計書: kintone から取得するときは Markdown と同じく JS/CSS 本文とプラグインの設定値を取得しない', async () => {
+    vi.mocked(fetchBundle).mockResolvedValue(bundle('404') as any);
+    await runDesignExportStandalone('html', { appId: '404', guestId: '77', preview: true }, vi.fn());
+    expect(vi.mocked(fetchBundle).mock.calls[0][0]).toMatchObject({ appId: '404', guestId: '77', preview: true, rawSettings: false, skipPluginConfig: true, skipCustomizeBodies: true });
+    expect(String(vi.mocked(downloadText).mock.calls[0][1])).toContain('<dt>取得元</dt><dd>アプリから取得</dd>');
+  });
+
+  it('複数アプリの HTML ZIP: アプリごとの設計書 HTML と overview.html・_manifest.json を入れ、失敗したアプリを残す', async () => {
+    vi.mocked(fetchBundle).mockImplementation(async (params: any) => {
+      if (params.appId === '300') throw new Error('403 Forbidden');
+      return bundle(params.appId, { ...emptySections(), appSettings: { name: `ライブアプリ_${params.appId}` } }) as any;
+    });
+    const status = vi.fn();
+    const result = await runBatchDesignExportMdZipStandalone({
+      apps: [
+        { appId: '100', bundle: bundle('100', { ...emptySections(), appSettings: { name: 'インポートアプリ' } }) },
+        { appId: '200', guestId: '8' },
+        { appId: '300' }
+      ],
+      format: 'html'
+    }, status);
+    expect(result.successCount).toBe(2);
+    expect(Object.keys(zipFiles).sort()).toEqual(['_manifest.json', 'overview.html', '設計書_インポートアプリ(app100).html', '設計書_ライブアプリ_200(app200).html'].sort());
+    const manifest = JSON.parse(zipFiles['_manifest.json']);
+    expect(manifest.format).toBe('html');
+    expect(manifest.items.map((item: any) => item.htmlFile)).toEqual(['設計書_インポートアプリ(app100).html', '設計書_ライブアプリ_200(app200).html']);
+    expect(manifest.items[0].mdFile).toBeUndefined();
+    expect(zipFiles['overview.html']).toContain(`href="${encodeURIComponent('設計書_インポートアプリ(app100).html')}"`);
+    expect(zipFiles['overview.html']).toContain('403 Forbidden');
+    expect(zipFiles['overview.html']).toContain('設計書HTML (html)');
+    expect(zipFiles['設計書_インポートアプリ(app100).html']).toContain('<dt>取得元</dt><dd>読み込んだ設定JSON</dd>');
+    expect(vi.mocked(downloadBlob).mock.calls[0][0]).toMatch(/^設計書_HTML一括_2件_\d{8}_\d{6}\.zip$/);
+    expect(status).toHaveBeenLastCalledWith(expect.stringMatching(/^設計書HTML ZIPを保存しました。成功 2 \/ 失敗 1（全3件）。失敗したアプリ: App 300。詳細は ZIP 内の overview\.html \/ _manifest\.json を確認してください$/), true);
+  });
+
+  it('一括出力の形式が分からないときは、取得する前に止める', async () => {
+    await expect(runBatchDesignExportMdZipStandalone({ apps: [{ appId: '1' }], format: 'pdf' as any }, vi.fn())).rejects.toThrow(/md、ai-md、both または html/);
+    expect(fetchBundle).not.toHaveBeenCalled();
+  });
+
   it('設定を 1 つも取得できなかったアプリ（存在しないアプリ）は、成功に数えず失敗として示す', async () => {
     const notFound = '指定したアプリ（ID: 999999）が見つかりません。';
     vi.mocked(fetchBundle).mockImplementation(async (params: any) => {

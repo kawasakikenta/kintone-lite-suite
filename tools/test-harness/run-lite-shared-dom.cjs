@@ -98,6 +98,10 @@ async function main() {
     await resolve({ name: '通常のアプリ' });
     await page.getByRole('button', { name: '選択', exact: true }).click();
     assert.equal(await page.evaluate(() => window.guestTarget.value), '');
+    await keyword.fill('４４');
+    await searchButton.click();
+    assert.deepEqual(await page.evaluate(() => window.apiCalls.at(-1)), { url: '/k/v1/app.json', method: 'GET', params: { id: '44' } }, '全角数字のアプリIDをIDとして調べる');
+    await resolve({ name: '全角で入れたアプリ' });
     await guest.fill('3');
     assert.equal(await rows.count(), 0, 'ゲスト変更で候補を無効化する');
     await keyword.fill('処理前の検索');
@@ -109,7 +113,7 @@ async function main() {
     assert.match(await page.locator('.kus-lp__status').innerText(), /設定を取得中/);
     await page.evaluate(() => { window.panel.setStatus('設定の取得完了', 'ok'); window.panel.setBusy(false); });
     assert.equal(await searchButton.isEnabled(), true, '本処理完了後に検索を再開できる');
-    results.push('検索: 古い応答の破棄・URLのゲスト優先・通常スペースへの切り替え');
+    results.push('検索: 古い応答の破棄・URLのゲスト優先・通常スペースへの切り替え・全角数字のアプリID');
 
     const mode = page.getByRole('combobox', { name: '検索方法', exact: true });
     const space = page.getByRole('textbox', { name: '検索対象スペースID', exact: true });
@@ -246,6 +250,36 @@ async function main() {
     });
     assert.deepEqual(fullWidthSeparators.afterPaste.map((app) => app.appId), ['505', '606', '707'], '貼り付けた全角カンマ・読点の区切りを行に分ける');
     assert.deepEqual(fullWidthSeparators.afterChange.map((app) => app.appId), ['808', '909'], '入力した全角カンマの区切りを確定時に行に分ける');
+    // 全角数字・全角カンマ（日本語入力のまま入れた値）: 貼り付け・入力・変換の確定のどれでも半角にして受け付ける
+    const fullWidthPasted = await page.evaluate(() => {
+      window.table.setApps([{ appId: '', guestId: '' }]);
+      const [input, guestInput] = window.table.element.querySelectorAll('tbody tr input');
+      guestInput.value = '７';
+      input.focus(); input.select();
+      const clipboardData = new DataTransfer(); clipboardData.setData('text/plain', '３０３，４０４');
+      input.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData }));
+      return window.table.getApps();
+    });
+    assert.deepEqual(fullWidthPasted, [{ appId: '303', guestId: '7' }, { appId: '404', guestId: '7' }], '全角数字・全角カンマの貼り付けを行に分ける');
+    await page.evaluate(() => window.table.setApps([{ appId: '', guestId: '' }]));
+    const tableApp = page.getByRole('textbox', { name: 'アプリID', exact: true }).first();
+    await tableApp.focus();
+    await page.keyboard.insertText('１２３');
+    assert.equal(await tableApp.inputValue(), '123', '全角数字の入力を半角にする');
+    const composed = await page.evaluate(() => {
+      const input = window.table.element.querySelector('tbody tr input');
+      input.focus();
+      input.value = '';
+      const seen = [];
+      input.addEventListener('input', () => seen.push(input.value));
+      // 変換中（isComposing）は触らず、確定（compositionend）で直す
+      input.value = '４５';
+      input.dispatchEvent(new InputEvent('input', { bubbles: true, isComposing: true, inputType: 'insertCompositionText', data: '４５' }));
+      const during = input.value;
+      input.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '４５' }));
+      return { during, after: input.value, seen, caret: input.selectionStart };
+    });
+    assert.deepEqual(composed, { during: '４５', after: '45', seen: ['４５', '45'], caret: 2 }, '変換中は触らず、確定で半角にして input を送り直す');
     assert.deepEqual(await page.evaluate(() => {
       window.table.setApps([{ appId: '', guestId: '7' }]);
       window.table.putApp('42', '');
@@ -257,7 +291,7 @@ async function main() {
       return { count: window.table.count(), rows: window.table.element.querySelectorAll('tbody tr').length, durationMs: performance.now() - start };
     });
     assert.equal(bulk.count, 1000); assert.equal(bulk.rows, 1000);
-    results.push({ name: 'キーボードタブ操作・選択範囲への貼り付け・1000行一括入力', ...bulk });
+    results.push({ name: 'キーボードタブ操作・選択範囲への貼り付け・全角数字と全角カンマ（貼り付け・入力・変換の確定）・1000行一括入力', ...bulk });
     await page.evaluate(() => window.table.setApps([{ appId: '303', guestId: '7' }]));
 
     await page.evaluate(async () => {

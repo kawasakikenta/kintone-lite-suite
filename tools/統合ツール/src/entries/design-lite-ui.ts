@@ -73,7 +73,7 @@ export function mountDesignLitePanel() {
   cardTarget.body.appendChild(appTable.element);
   const prev = makeCheck({ label: 'プレビュー環境から取得' });
   cardTarget.body.appendChild(makeRow([prev.label], { label: '取得環境' }));
-  cardTarget.body.appendChild(makeNote('出力は対象アプリ表の1行目が対象です（ZIP 一括出力だけは全行）。Excel は人が読む用、AI向けMarkdown は AI に渡す用です。', 'help'));
+  cardTarget.body.appendChild(makeNote('出力は対象アプリ表の1行目が対象です（ZIP 一括出力だけは全行）。Excel・HTML は人が読む用（HTML はブラウザだけで読めます）、AI向けMarkdown は AI に渡す用です。', 'help'));
   cardTarget.body.appendChild(makeNote('アプリごとに別のゲストスペースを指定できます。各行の「↑コピー」で上の行を複製できます。', 'help'));
   panel.body.insertBefore(cardTarget.card, panel.status);
 
@@ -262,7 +262,9 @@ export function mountDesignLitePanel() {
   const bCopy = makeButton('Markdown クリップボード', 'sub', { icon: '⎘' });
   const bAiCopy = makeButton('AI向けMarkdown コピー', 'sub', { icon: '⎘' });
   const bXlsx = makeButton('Excel (.xlsx) 保存', 'primary', { icon: '↓' });
+  const bHtml = makeButton('HTML 保存', 'primary', { icon: '↓' });
   grid.appendChild(bMd);
+  grid.appendChild(bHtml);
   grid.appendChild(bAiMd);
   grid.appendChild(bXlsx);
   grid.appendChild(bJson);
@@ -273,6 +275,9 @@ export function mountDesignLitePanel() {
 
   bMd.addEventListener('click', () => { if (!requireFirstApp()) return; liteRun(panel, '設計書 Markdown 生成中…', async () => {
     await runDesignExportStandalone('md', { ...source(), appNameLookup: appNameLookup() }, (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
+  }); });
+  bHtml.addEventListener('click', () => { if (!requireFirstApp()) return; liteRun(panel, '設計書 HTML 生成中…', async () => {
+    await runDesignExportStandalone('html', { ...source(), appNameLookup: appNameLookup() }, (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
   }); });
   bAiMd.addEventListener('click', () => { if (!requireFirstApp()) return; liteRun(panel, 'AI向けMarkdown 生成中…', async () => {
     await runDesignExportStandalone('ai-md', { ...source(), rawSettings: true }, (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
@@ -307,7 +312,7 @@ export function mountDesignLitePanel() {
     });
   });
   const batchTargets = () => appTable.getApps().map((r, i) => ({ appId: r.appId, guestId: r.guestId, bundle: findImportedBundle(r.appId, r.guestId, i) }));
-  const makeMdZipButton = (label: string, format: 'md' | 'ai-md' | 'both') => {
+  const makeMdZipButton = (label: string, format: 'md' | 'ai-md' | 'both' | 'html') => {
     const button = makeButton(label, 'ghost', { icon: '↓' });
     button.style.width = '100%';
     cardBatch.body.appendChild(button);
@@ -327,6 +332,7 @@ export function mountDesignLitePanel() {
   const bMdZip = makeMdZipButton('Markdown ZIP', 'md');
   const bAiMdZip = makeMdZipButton('AI向けMarkdown ZIP', 'ai-md');
   const bBothZip = makeMdZipButton('Markdown＋AI向けMarkdown ZIP', 'both');
+  const bHtmlZip = makeMdZipButton('HTML ZIP', 'html');
   panel.body.insertBefore(cardBatch.card, panel.status);
 
   // ---- 2アプリ差分 MD（表の 1行目 ⇔ 2行目） ----
@@ -388,6 +394,8 @@ export function mountDesignLitePanel() {
       { id: 'xlsx', label: 'Excel設計書を保存', description: '1行目のアプリの設計書をExcel（.xlsx）で保存します。', button: bXlsx, validate: firstTargetRequired, summary: () => singleSummary('Excel (.xlsx)') },
       { id: 'zip', label: '全対象をExcel ZIPで保存', description: '全対象アプリの設計書をExcelにして、1つのZIPで保存します。', button: bBatchZip, validate: () => validateDesignExportTargets(appTable.getApps().map((r, i) => ({ ...r, bundle: findImportedBundle(r.appId, r.guestId, i) })), '対象アプリ表: '), summary: () => [['対象', summarizeList(appTable.getApps().map((r, i) => connectionSummary(r.appId, r.guestId, hasImportedBundle(r.appId, r.guestId, i) ? '読込済みJSON' : prev.checkbox.checked ? 'プレビュー' : '本番')))], ['出力', appTable.count() + ' アプリのExcelをZIPに保存'], ['取得環境', `${prev.checkbox.checked ? 'プレビュー' : '本番'}から取得します。設定JSONを読み込んだアプリはその内容を使用します。`], ...(appTable.count() >= 50 ? [['件数が多い場合', 'アプリごとに順に取得するため、時間とメモリを使います。途中で「中止」でき、その場合ZIPは保存しません。'] as [string, string]] : [])] },
       { id: 'ai-md', label: 'AI向けMarkdownを保存', description: '1行目のアプリの設定を、AIに渡す用のMarkdownファイルで保存します。', button: bAiMd, validate: firstTargetRequired, summary: () => singleSummary('AI向けMarkdown（AIへの受け渡し）') },
+      { id: 'html', label: 'HTML設計書を保存', description: '1行目のアプリの設計書を、ブラウザだけで読めるHTMLファイル（目次・絞り込み・印刷つき）で保存します。', button: bHtml, validate: firstTargetRequired, summary: () => singleSummary('HTML（ブラウザで読む設計書）') },
+      { id: 'html-zip', label: '全対象をHTML ZIPで保存', description: '全対象アプリの設計書をHTMLにして、1つのZIPで保存します（一覧は overview.html）。', button: bHtmlZip, validate: batchTargetsRequired, summary: () => mdZipSummary('HTML') },
       { id: 'md', label: 'Markdown設計書を保存', description: '1行目のアプリの設計書をMarkdownファイルで保存します。', button: bMd, validate: firstTargetRequired, summary: () => singleSummary('Markdown') },
       { id: 'ai-copy', label: 'AI向けMarkdownをコピー', description: '1行目のアプリの設定を、AIに渡す用のMarkdownとしてコピーします。', button: bAiCopy, validate: firstTargetRequired, summary: () => singleSummary('AI向けMarkdown（クリップボード）') },
       { id: 'json', label: '設計書JSONを保存', description: '1行目のアプリの設定をJSONファイルで保存します。', button: bJson, validate: firstTargetRequired, summary: () => [...singleSummary('JSON'), ['取扱注意', DESIGN_JSON_SENSITIVE_NOTICE]] },

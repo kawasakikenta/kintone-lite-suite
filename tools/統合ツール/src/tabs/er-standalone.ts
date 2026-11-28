@@ -3,7 +3,7 @@
 import { crawl, buildHTML, assertErAnalysed, progressUi, ER_DEFAULTS, describeReverseScan, summarizeErStartIds } from './er.js';
 import { fetchAppsInSpace } from '../api.js';
 import { isCancelStop } from './run-cancel-summary.js';
-import { downloadText, buildExportFilename, buildAppFilenameLabel } from '../utils.js';
+import { downloadText, buildExportFilename, buildAppFilenameLabel, normalizeIdInputText } from '../utils.js';
 import { analyzeErDependencies } from './er-analysis.js';
 import {
   buildErMermaidSource,
@@ -11,6 +11,7 @@ import {
   buildErRelationsCsv,
   buildErAppModelFromBundle
 } from './er-model.js';
+import { describeOfflineFetchedAt, listOfflineSpaceApps, type ErOfflineSource } from './er-offline.js';
 
 export {
   buildErMermaidSource,
@@ -26,12 +27,12 @@ export {
  * - opts.spaceSelectedAppIds: 配列を渡すと選択したアプリだけを起点に追加する（null/未指定なら全アプリ）
  */
 async function applySpaceToErOptions(opts: any, options: any, setStatus: (msg: string, err?: ErStatusTone) => void): Promise<void> {
-  const spaceId = String(opts.spaceId || '').trim();
+  const spaceId = normalizeIdInputText(opts.spaceId).trim();
   if (!/^\d+$/.test(spaceId)) return;
   let apps = Array.isArray(opts.spaceApps) ? opts.spaceApps : null;
   if (!apps) {
     setStatus(`スペース ${spaceId} のアプリ一覧を取得中...`);
-    apps = await fetchAppsInSpace(spaceId, opts.guestId);
+    apps = await fetchAppsInSpace(spaceId, options.source?.guestId || '');
   }
   const spaceIds = apps.map((a: any) => String(a.appId));
   options.spaceId = spaceId;
@@ -47,7 +48,8 @@ async function applySpaceToErOptions(opts: any, options: any, setStatus: (msg: s
 }
 
 function splitErAppIds(value: unknown): string[] {
-  return String(value || '')
+  // 全角数字・全角カンマ（１０１，１０２）も受け付ける
+  return normalizeIdInputText(value || '')
     .split(/[\s,、，]+/)
     .map((v) => v.trim())
     .filter(Boolean);
@@ -69,7 +71,7 @@ function isUsableErAppId(value: string): boolean {
 
 /** ER図の取得前に、入力の誤りを対象欄ごとに明示する。 */
 export function validateErOptions(opts: any): string {
-  const appId = String(opts?.appId || '').trim();
+  const appId = normalizeIdInputText(opts?.appId || '').trim();
   const primaryIds = erAppIdValues(opts, 'appIds', appId);
   const extraIds = erAppIdValues(opts, 'extraAppIds');
   const invalidAppId = [...primaryIds, ...extraIds].find((v) => !/^\d+$/.test(v));
@@ -77,9 +79,9 @@ export function validateErOptions(opts: any): string {
   const unusableAppId = [...primaryIds, ...extraIds].find((v) => !isUsableErAppId(v));
   if (unusableAppId) return `アプリIDは1以上${Number.MAX_SAFE_INTEGER}以下の整数で入力してください: ${unusableAppId}`;
 
-  const guestId = String(opts?.guestId || '').trim();
+  const guestId = normalizeIdInputText(opts?.guestId || '').trim();
   if (guestId && !/^\d+$/.test(guestId)) return `ゲストスペースIDは半角数字で入力してください: ${guestId}`;
-  const spaceId = String(opts?.spaceId || '').trim();
+  const spaceId = normalizeIdInputText(opts?.spaceId || '').trim();
   if (spaceId && !/^\d+$/.test(spaceId)) return `スペースIDは数値で入力してください: ${spaceId}`;
 
   const depthText = String(opts?.maxDepth ?? '').trim();
@@ -100,7 +102,7 @@ export function validateErOptions(opts: any): string {
  * 起点アプリ ID は数値のみ残し、重複を除いて順序を保つ。
  */
 export function buildErCrawlOptions(opts: any) {
-  const appId = String(opts?.appId || '').trim();
+  const appId = normalizeIdInputText(opts?.appId || '').trim();
   const primaryAppIds = erAppIdValues(opts, 'appIds', appId);
   const startAppIds = [...primaryAppIds, ...erAppIdValues(opts, 'extraAppIds')]
     .map((v) => String(v || '').trim())
@@ -119,19 +121,47 @@ export function buildErCrawlOptions(opts: any) {
     includeReverseLookup: !!opts?.includeReverseLookup,
     maxFields: ER_DEFAULTS.maxFields,
     sleepMs: ER_DEFAULTS.sleepMs,
-    source: { guestId: opts?.guestId || '', preview: !!opts?.preview }
+    source: { guestId: normalizeIdInputText(opts?.guestId || '').trim(), preview: !!opts?.preview }
   };
 }
 
 async function resolveErOptions(opts: any, setStatus: (msg: string, err?: ErStatusTone) => void) {
   const validationError = validateErOptions(opts);
   if (validationError) throw new Error(validationError);
-  const appId = String(opts.appId || '').trim();
-  const spaceId = String(opts.spaceId || '').trim();
+  const appId = normalizeIdInputText(opts.appId || '').trim();
+  const spaceId = normalizeIdInputText(opts.spaceId || '').trim();
   const options: any = buildErCrawlOptions(opts);
-  await applySpaceToErOptions(opts, options, setStatus);
-  if (!options.startAppIds.length) throw new Error('対象アプリが見つかりませんでした');
+  const offline: ErOfflineSource | null = opts?.offlineSource || null;
+  if (offline) {
+    // 設定JSONから作る: 接続先・環境は読み込んだ設定のとおりにし、スペースのアプリも読み込んだ設定（アプリ情報のスペースID）から探す
+    options.offlineSource = offline;
+    options.source = { guestId: offline.guestId, preview: offline.preview };
+    await applySpaceToErOptions(spaceId ? { ...opts, spaceApps: listOfflineSpaceApps(offline, spaceId) } : opts, options, setStatus);
+  } else {
+    await applySpaceToErOptions(opts, options, setStatus);
+  }
+  if (!options.startAppIds.length) throw new Error(offline ? '起点にするアプリがありません。起点アプリIDか、読み込んだ設定にあるスペースIDを入れてください' : '対象アプリが見つかりませんでした');
+  if (offline) {
+    const missing = options.startAppIds.filter((id: string) => !offline.bundles.has(Number(id)));
+    if (missing.length) {
+      throw new Error(`起点アプリ ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? ` ほか ${missing.length - 5} 件` : ''} は、読み込んだ設定JSONにありません。起点アプリIDを確かめるか、そのアプリを含む設定JSONを読み込んでください`);
+    }
+  }
   return options;
+}
+
+/** 保存するファイル名の末尾（ゲストスペースID・取得環境）。ゲストスペースIDは半角に直した値（options.source）を使う。 */
+function erFilenameSuffix(opts: any, options: any): string {
+  const guestId = options?.source?.guestId || '';
+  // 設定JSONから作るときは、取得環境も読み込んだ設定のとおりにする
+  const preview = options?.offlineSource ? !!options.source?.preview : !!opts?.preview;
+  return `${guestId ? `guest${guestId}_` : ''}${preview ? 'プレビュー' : '本番'}`;
+}
+
+/** 完了の表示に添える取得元（設定JSONから作ったときだけ）。 */
+function offlineNote(options: any): string {
+  const offline: ErOfflineSource | null = options?.offlineSource || null;
+  return offline ? `。設定JSON${offline.fileName ? `「${offline.fileName}」` : ''}から作成（kintone には問い合わせていません）` : '';
 }
 
 /** 状態表示の種類。true は取得失敗あり、'warn' は部分成功（図は生成済み）。 */
@@ -199,8 +229,8 @@ export async function runGenerateERDiagramStandalone(opts, setStatus) {
     progressUi.close();
     const summary = summarizeCrawl(apps, options);
     setStatus(summary.note
-      ? `ER図を生成しました: ${apps.length}アプリ${summary.note}`
-      : `ER図の生成完了: ${apps.length}アプリを別タブ表示しました`, summary.tone);
+      ? `ER図を生成しました: ${apps.length}アプリ${summary.note}${offlineNote(options)}`
+      : `ER図の生成完了: ${apps.length}アプリを別タブ表示しました${offlineNote(options)}`, summary.tone);
     setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
   } catch (e) {
     try { popup.close(); } catch (_) { /* noop */ }
@@ -211,8 +241,8 @@ export async function runGenerateERDiagramStandalone(opts, setStatus) {
 }
 
 export async function runExportERDiagramHtmlStandalone(opts, setStatus) {
-  const appId = String(opts.appId || '').trim();
-  const spaceId = String(opts.spaceId || '').trim();
+  const appId = normalizeIdInputText(opts.appId || '').trim();
+  const spaceId = normalizeIdInputText(opts.spaceId || '').trim();
   const options = await resolveErOptions(opts, setStatus);
 
   setStatus(`ER図HTMLを生成中... 起点 ${summarizeErStartIds(options.startAppIds)}`);
@@ -225,7 +255,7 @@ export async function runExportERDiagramHtmlStandalone(opts, setStatus) {
     progressUi.update(94, 'HTML保存データ生成中...');
     const html = buildHTML(apps, options);
     const baseName = options.startAppIds[0] || appId || `space${spaceId}`;
-    const suffix = `${opts.guestId ? `guest${opts.guestId}_` : ''}${opts.preview ? 'プレビュー' : '本番'}`;
+    const suffix = erFilenameSuffix(opts, options);
     if (opts?.download !== false) downloadText(
       buildExportFilename('ER図', 'html', { appLabel: buildAppFilenameLabel(baseName, ''), suffix }),
       html,
@@ -234,8 +264,8 @@ export async function runExportERDiagramHtmlStandalone(opts, setStatus) {
     progressUi.close();
     const summary = summarizeCrawl(apps, options);
     setStatus(summary.note
-      ? `ER図HTMLを保存しました: ${apps.length}アプリ${summary.note}`
-      : `ER図HTMLを保存しました (${apps.length}アプリ)`, summary.tone);
+      ? `ER図HTMLを保存しました: ${apps.length}アプリ${summary.note}${offlineNote(options)}`
+      : `ER図HTMLを保存しました (${apps.length}アプリ)${offlineNote(options)}`, summary.tone);
   } catch (e) {
     // 中止はエラー表示にせず、進捗表示を閉じる（件数つきの説明はパネルのステータスとログに出る）
     if (isCancelStop(e)) progressUi.dismiss(); else progressUi.error(e.message || String(e));
@@ -286,17 +316,21 @@ export async function runExportERMarkdownStandalone(
   opts: any,
   setStatus: (msg: string, err?: ErStatusTone) => void = () => {}
 ) {
-  const appId = String(opts?.appId || '').trim();
-  const spaceId = String(opts?.spaceId || '').trim();
+  const appId = normalizeIdInputText(opts?.appId || '').trim();
+  const spaceId = normalizeIdInputText(opts?.spaceId || '').trim();
   let usedProgress = false;
   try {
     const { apps, options, fromBundles } = await resolveErAppsForExport(opts, setStatus, 'ER図仕様書');
     usedProgress = !fromBundles;
     if (usedProgress) progressUi.update(94, 'Markdown仕様書データ生成中...');
     const analysis = analyzeErDependencies(apps);
-    const markdown = buildErMarkdownSpec(apps, analysis, { generatedAt: opts?.generatedAt });
+    const offline: ErOfflineSource | null = options.offlineSource || null;
+    const markdown = buildErMarkdownSpec(apps, analysis, {
+      generatedAt: opts?.generatedAt,
+      ...(offline ? { sourceNote: `設定JSON${offline.fileName ? `「${offline.fileName}」` : ''}から作成（${describeOfflineFetchedAt(offline, (d) => d.toLocaleString('ja-JP'))} 取得。kintone には問い合わせていません）` } : {})
+    });
     const baseName = options.startAppIds[0] || appId || (spaceId ? `space${spaceId}` : String(apps[0]?.id || 'er'));
-    const suffix = `${opts?.guestId ? `guest${opts.guestId}_` : ''}${opts?.preview ? 'プレビュー' : '本番'}`;
+    const suffix = erFilenameSuffix(opts, options);
     if (opts?.download !== false) downloadText(
       buildExportFilename('ER図仕様書', 'md', { appLabel: buildAppFilenameLabel(baseName, ''), suffix }),
       markdown,
@@ -305,8 +339,8 @@ export async function runExportERMarkdownStandalone(
     if (usedProgress) progressUi.close();
     const summary = summarizeCrawl(apps, options);
     setStatus(summary.note
-      ? `ER図仕様書を保存しました: ${apps.length}アプリ${summary.note}`
-      : `ER図仕様書を保存しました (${apps.length}アプリ)`, summary.tone);
+      ? `ER図仕様書を保存しました: ${apps.length}アプリ${summary.note}${offlineNote(options)}`
+      : `ER図仕様書を保存しました (${apps.length}アプリ)${offlineNote(options)}`, summary.tone);
     return { apps, analysis, markdown };
   } catch (e: any) {
     if (usedProgress) {
@@ -320,8 +354,8 @@ export async function runExportERMermaidStandalone(
   opts: any,
   setStatus: (msg: string, err?: ErStatusTone) => void = () => {}
 ) {
-  const appId = String(opts?.appId || '').trim();
-  const spaceId = String(opts?.spaceId || '').trim();
+  const appId = normalizeIdInputText(opts?.appId || '').trim();
+  const spaceId = normalizeIdInputText(opts?.spaceId || '').trim();
   let usedProgress = false;
   try {
     const { apps, options, fromBundles } = await resolveErAppsForExport(opts, setStatus, 'ER図Mermaid');
@@ -329,7 +363,7 @@ export async function runExportERMermaidStandalone(
     if (usedProgress) progressUi.update(94, 'Mermaidデータ生成中...');
     const mermaid = buildErMermaidSource(apps, { showAllFields: opts?.showAllFields });
     const baseName = options.startAppIds[0] || appId || (spaceId ? `space${spaceId}` : String(apps[0]?.id || 'er'));
-    const suffix = `${opts?.guestId ? `guest${opts.guestId}_` : ''}${opts?.preview ? 'プレビュー' : '本番'}`;
+    const suffix = erFilenameSuffix(opts, options);
     if (opts?.download !== false) downloadText(
       buildExportFilename('ER図', 'mmd', { appLabel: buildAppFilenameLabel(baseName, ''), suffix }),
       mermaid,
@@ -338,8 +372,8 @@ export async function runExportERMermaidStandalone(
     if (usedProgress) progressUi.close();
     const summary = summarizeCrawl(apps, options);
     setStatus(summary.note
-      ? `ER図Mermaidを保存しました: ${apps.length}アプリ${summary.note}`
-      : `ER図Mermaidを保存しました (${apps.length}アプリ)`, summary.tone);
+      ? `ER図Mermaidを保存しました: ${apps.length}アプリ${summary.note}${offlineNote(options)}`
+      : `ER図Mermaidを保存しました (${apps.length}アプリ)${offlineNote(options)}`, summary.tone);
     return { apps, mermaid };
   } catch (e: any) {
     if (usedProgress) {
@@ -353,8 +387,8 @@ export async function runExportERRelationsCsvStandalone(
   opts: any,
   setStatus: (msg: string, err?: ErStatusTone) => void = () => {}
 ) {
-  const appId = String(opts?.appId || '').trim();
-  const spaceId = String(opts?.spaceId || '').trim();
+  const appId = normalizeIdInputText(opts?.appId || '').trim();
+  const spaceId = normalizeIdInputText(opts?.spaceId || '').trim();
   let usedProgress = false;
   try {
     const { apps, options, fromBundles } = await resolveErAppsForExport(opts, setStatus, 'ER図リレーション一覧CSV');
@@ -362,7 +396,7 @@ export async function runExportERRelationsCsvStandalone(
     if (usedProgress) progressUi.update(94, 'CSVデータ生成中...');
     const csv = buildErRelationsCsv(apps);
     const baseName = options.startAppIds[0] || appId || (spaceId ? `space${spaceId}` : String(apps[0]?.id || 'er'));
-    const suffix = `${opts?.guestId ? `guest${opts.guestId}_` : ''}${opts?.preview ? 'プレビュー' : '本番'}`;
+    const suffix = erFilenameSuffix(opts, options);
     if (opts?.download !== false) downloadText(
       buildExportFilename('ER図_リレーション一覧', 'csv', { appLabel: buildAppFilenameLabel(baseName, ''), suffix }),
       csv,
@@ -371,8 +405,8 @@ export async function runExportERRelationsCsvStandalone(
     if (usedProgress) progressUi.close();
     const summary = summarizeCrawl(apps, options);
     setStatus(summary.note
-      ? `ER図リレーション一覧CSVを保存しました: ${apps.length}アプリ${summary.note}`
-      : `ER図リレーション一覧CSVを保存しました (${apps.length}アプリ)`, summary.tone);
+      ? `ER図リレーション一覧CSVを保存しました: ${apps.length}アプリ${summary.note}${offlineNote(options)}`
+      : `ER図リレーション一覧CSVを保存しました (${apps.length}アプリ)${offlineNote(options)}`, summary.tone);
     return { apps, csv };
   } catch (e: any) {
     if (usedProgress) {

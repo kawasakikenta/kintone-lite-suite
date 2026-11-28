@@ -40,8 +40,8 @@ export function mountProcessLitePanel() {
 
   // ---- 入力 ----
   const cardApp = makeCard({ title: '対象アプリ', number: 1 });
-  const appInp = makeInput({ placeholder: 'アプリID', value: DEFAULT_APP_ID || '', width: 'id' });
-  const guestInp = makeInput({ placeholder: 'ゲストID（任意）', value: DEFAULT_GUEST_ID, width: 'guest' });
+  const appInp = makeInput({ placeholder: 'アプリID', value: DEFAULT_APP_ID || '', width: 'id', idInput: true });
+  const guestInp = makeInput({ placeholder: 'ゲストID（任意）', value: DEFAULT_GUEST_ID, width: 'guest', idInput: true });
   const prevCb = makeCheck({ label: 'プレビュー環境を参照', checked: false });
   const singleAppRow = makeRow([appInp, guestInp], { label: 'アプリ' });
   cardApp.body.appendChild(singleAppRow);

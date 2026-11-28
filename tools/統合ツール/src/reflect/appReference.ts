@@ -4,6 +4,7 @@
  */
 
 import { extractAppIdFromInput, extractGuestIdFromInput } from '../handlers/diffFocus.js';
+import { normalizeIdInputText } from '../utils.js';
 
 export interface AppReference { appId: string; guestId: string }
 
@@ -13,7 +14,7 @@ export interface AppReference { appId: string; guestId: string }
  * 読み取れない場合は null。
  */
 export function parseAppReference(text: string): AppReference | null {
-  const raw = String(text || '').trim();
+  const raw = normalizeIdInputText(text).trim();
   if (!raw) return null;
   if (/^[1-9]\d*$/.test(raw)) return { appId: raw, guestId: '' };
   const appId = extractAppIdFromInput(raw);
@@ -28,6 +29,6 @@ export function guestIdFromPagePath(pathname: string): string {
 
 /** 入力値が数字だけではなく、URL などから読み取りが必要かどうか。 */
 export function needsAppReferenceParse(text: string): boolean {
-  const raw = String(text || '').trim();
+  const raw = normalizeIdInputText(text).trim();
   return !!raw && !/^\d+$/.test(raw);
 }

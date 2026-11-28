@@ -44,7 +44,7 @@ export function mountSettingsExportLitePanel() {
   });
 
   // ---- アプリ検索 / スペース取込（検索用ゲストIDで照会し、表に行を追加） ----
-  const searchGuest = makeInput({ placeholder: '検索用ゲストID（任意）', width: 'guest' });
+  const searchGuest = makeInput({ placeholder: '検索用ゲストID（任意）', width: 'guest', idInput: true });
   const searchControl = createAppSearchControl(panel, {
     guestEl: searchGuest,
     targets: [{ apply: (appId, appName, guestId) => {
@@ -62,7 +62,7 @@ export function mountSettingsExportLitePanel() {
   });
 
   const prev = makeCheck({ label: 'プレビュー環境から取得' });
-  const spaceKw = makeInput({ placeholder: 'スペースID', width: 'narrow' });
+  const spaceKw = makeInput({ placeholder: 'スペースID', width: 'narrow', idInput: true });
   const spaceBtn = makeButton('スペース内アプリを表に追加', 'sub');
   const spaceRow = makeRow([spaceKw, searchGuest, spaceBtn], { label: 'スペース' });
 

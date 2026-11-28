@@ -11404,6 +11404,7 @@
   // src/constants.ts
   var TOOL_ID = "kintone-unified-suite-v2";
   var TOOL_VERSION = "2.5.0";
+  var TOOL_NAME = "kintone-lite-suite";
   var PLUGIN_CONFIG_INCLUDED_NOTE = "プラグインの設定値を含みます（API キーなどの機微な値を含む場合があります）";
   var CUSTOMIZE_BODY_SENSITIVE_NOTE = "JS/CSSファイルの本文を含みます（API トークンなどが書かれている場合があります）";
   function resolveDefaultAppId() {
@@ -11704,36 +11705,6 @@
     root = el;
   }
 
-  // src/handlers/diffFocus.ts
-  function extractAppIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    if (/^\d+$/.test(raw)) return raw;
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
-    if (queryMatch) return queryMatch[1];
-    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
-    if (guestPathMatch) return guestPathMatch[1];
-    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
-    if (pathMatch) return pathMatch[1];
-    return "";
-  }
-  function extractGuestIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
-    return guestPathMatch ? guestPathMatch[1] : "";
-  }
-
   // src/utils.ts
   function getToolWindowSafe() {
     try {
@@ -11802,6 +11773,9 @@
     if (items.length <= limit) return items.join("\n");
     return [...items.slice(0, limit), `…ほか ${items.length - limit} 件（合計 ${items.length} 件）`].join("\n");
   }
+  function normalizeIdInputText(value) {
+    return String(value ?? "").replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 65248)).replace(/，/g, ",");
+  }
   function deepClone(v) {
     return v == null ? v : JSON.parse(JSON.stringify(v));
   }
@@ -11851,6 +11825,9 @@
     if (err?.id) wrapped.id = err.id;
     if (err?.stack) wrapped.stack = err.stack;
     return wrapped;
+  }
+  function withoutApiContextLines(message) {
+    return String(message ?? "").split("\n").filter((line) => !/^\s*\[API\]\s/.test(line)).join("\n").trim();
   }
   function flattenCategories(categories) {
     const out = [];
@@ -12034,6 +12011,36 @@
       }
     }
     return legacyCopy(text);
+  }
+
+  // src/handlers/diffFocus.ts
+  function extractAppIdFromInput(value) {
+    const raw = normalizeIdInputText(value).trim();
+    if (!raw) return "";
+    if (/^\d+$/.test(raw)) return raw;
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
+    if (queryMatch) return queryMatch[1];
+    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
+    if (guestPathMatch) return guestPathMatch[1];
+    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
+    if (pathMatch) return pathMatch[1];
+    return "";
+  }
+  function extractGuestIdFromInput(value) {
+    const raw = normalizeIdInputText(value).trim();
+    if (!raw) return "";
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
+    return guestPathMatch ? guestPathMatch[1] : "";
   }
 
   // src/pluginConfigMarker.ts
@@ -12701,8 +12708,140 @@
     3204031479,
     3329325298
   ]);
+  function sha256Hex(text) {
+    const block = new Uint8Array(64);
+    const words = new Int32Array(64);
+    let blockLength = 0;
+    let byteLength = 0;
+    let h0 = 1779033703 | 0;
+    let h1 = 3144134277 | 0;
+    let h2 = 1013904242 | 0;
+    let h3 = 2773480762 | 0;
+    let h4 = 1359893119 | 0;
+    let h5 = 2600822924 | 0;
+    let h6 = 528734635 | 0;
+    let h7 = 1541459225 | 0;
+    const compress = () => {
+      for (let i = 0; i < 16; i += 1) {
+        const at = i * 4;
+        words[i] = block[at] << 24 | block[at + 1] << 16 | block[at + 2] << 8 | block[at + 3];
+      }
+      for (let i = 16; i < 64; i += 1) {
+        const x = words[i - 15];
+        const y = words[i - 2];
+        const s0 = (x >>> 7 | x << 25) ^ (x >>> 18 | x << 14) ^ x >>> 3;
+        const s1 = (y >>> 17 | y << 15) ^ (y >>> 19 | y << 13) ^ y >>> 10;
+        words[i] = words[i - 16] + s0 + words[i - 7] + s1 | 0;
+      }
+      let a = h0;
+      let b = h1;
+      let c = h2;
+      let d = h3;
+      let e = h4;
+      let f = h5;
+      let g = h6;
+      let h = h7;
+      for (let i = 0; i < 64; i += 1) {
+        const sum1 = (e >>> 6 | e << 26) ^ (e >>> 11 | e << 21) ^ (e >>> 25 | e << 7);
+        const choice = e & f ^ ~e & g;
+        const temp1 = h + sum1 + choice + SHA256_ROUND_CONSTANTS[i] + words[i] | 0;
+        const sum0 = (a >>> 2 | a << 30) ^ (a >>> 13 | a << 19) ^ (a >>> 22 | a << 10);
+        const majority = a & b ^ a & c ^ b & c;
+        const temp2 = sum0 + majority | 0;
+        h = g;
+        g = f;
+        f = e;
+        e = d + temp1 | 0;
+        d = c;
+        c = b;
+        b = a;
+        a = temp1 + temp2 | 0;
+      }
+      h0 = h0 + a | 0;
+      h1 = h1 + b | 0;
+      h2 = h2 + c | 0;
+      h3 = h3 + d | 0;
+      h4 = h4 + e | 0;
+      h5 = h5 + f | 0;
+      h6 = h6 + g | 0;
+      h7 = h7 + h | 0;
+    };
+    const push = (byte) => {
+      block[blockLength] = byte;
+      blockLength += 1;
+      if (blockLength === 64) {
+        compress();
+        blockLength = 0;
+      }
+    };
+    for (let i = 0; i < text.length; i += 1) {
+      let code = text.charCodeAt(i);
+      if (code < 128) {
+        push(code);
+        byteLength += 1;
+        continue;
+      }
+      if (code < 2048) {
+        push(192 | code >> 6);
+        push(128 | code & 63);
+        byteLength += 2;
+        continue;
+      }
+      if (code >= 55296 && code <= 56319 && i + 1 < text.length) {
+        const next = text.charCodeAt(i + 1);
+        if (next >= 56320 && next <= 57343) {
+          const point = 65536 + (code - 55296 << 10) + (next - 56320);
+          push(240 | point >> 18);
+          push(128 | point >> 12 & 63);
+          push(128 | point >> 6 & 63);
+          push(128 | point & 63);
+          byteLength += 4;
+          i += 1;
+          continue;
+        }
+      }
+      if (code >= 55296 && code <= 57343) code = 65533;
+      push(224 | code >> 12);
+      push(128 | code >> 6 & 63);
+      push(128 | code & 63);
+      byteLength += 3;
+    }
+    const bitLength = byteLength * 8;
+    push(128);
+    while (blockLength !== 56) push(0);
+    const high = Math.floor(bitLength / 4294967296);
+    const low = bitLength >>> 0;
+    [high >>> 24, high >>> 16 & 255, high >>> 8 & 255, high & 255, low >>> 24, low >>> 16 & 255, low >>> 8 & 255, low & 255].forEach(push);
+    return [h0, h1, h2, h3, h4, h5, h6, h7].map((value) => (value >>> 0).toString(16).padStart(8, "0")).join("");
+  }
+  var BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  function sha256Base64(text) {
+    const hex = sha256Hex(text);
+    const bytes = [];
+    for (let i = 0; i < hex.length; i += 2) bytes.push(parseInt(hex.slice(i, i + 2), 16));
+    let out = "";
+    for (let i = 0; i < bytes.length; i += 3) {
+      const [a, b = 0, c = 0] = bytes.slice(i, i + 3);
+      const triple = a << 16 | b << 8 | c;
+      out += BASE64_ALPHABET[triple >> 18 & 63] + BASE64_ALPHABET[triple >> 12 & 63];
+      out += i + 1 < bytes.length ? BASE64_ALPHABET[triple >> 6 & 63] : "=";
+      out += i + 2 < bytes.length ? BASE64_ALPHABET[triple & 63] : "=";
+    }
+    return out;
+  }
 
   // src/design/snapshot.ts
+  var DESIGN_SNAPSHOT_STATUS_LABELS = {
+    available: "取得済み",
+    empty: "空（0件）",
+    missing: "未取得",
+    "fetch-error": "取得失敗",
+    partial: "部分取得"
+  };
+  function designSnapshotStatusLabel(status) {
+    const key = String(status ?? "");
+    return Object.prototype.hasOwnProperty.call(DESIGN_SNAPSHOT_STATUS_LABELS, key) ? DESIGN_SNAPSHOT_STATUS_LABELS[key] : "未取得";
+  }
   var hasOwn = (value, key) => value != null && Object.prototype.hasOwnProperty.call(value, key);
   var isObject = (value) => value !== null && typeof value === "object";
   var isPlainObject = (value) => isObject(value) && !Array.isArray(value);
@@ -13124,6 +13263,40 @@
     };
   }
 
+  // src/design/doc-text.ts
+  var DesignRichText = class {
+    constructor(parts) {
+      __publicField(this, "parts");
+      this.parts = parts;
+    }
+  };
+  function richText(...parts) {
+    return new DesignRichText(parts);
+  }
+  function codeOf(value) {
+    return { code: `${value}` };
+  }
+  function isRichText(value) {
+    return value instanceof DesignRichText;
+  }
+  function joinRich(items, separator) {
+    const parts = [];
+    items.forEach((item, index) => {
+      if (index) parts.push(separator);
+      parts.push(...item);
+    });
+    return new DesignRichText(parts);
+  }
+  function mapJoinRich(list, fn, separator) {
+    const items = [];
+    for (let index = 0; index < list.length; index += 1) items.push(index in list ? fn(list[index], index) : []);
+    return joinRich(items, separator);
+  }
+  function richToMarkdown(value) {
+    if (!isRichText(value)) return value;
+    return value.parts.map((part) => typeof part === "string" ? part : `\`${part.code}\``).join("");
+  }
+
   // src/diff/export.ts
   var MD_FIELD_TYPE_LABELS = {
     SINGLE_LINE_TEXT: "文字列（1行）",
@@ -13273,17 +13446,25 @@
     const key = String(type || "").trim();
     return MD_FIELD_TYPE_LABELS[key] || key || "";
   }
-  function mdEntityList(entities) {
-    if (!Array.isArray(entities) || entities.length === 0) return "";
-    return entities.map((e) => {
+  function designFieldTypeLabel(type) {
+    return String(mdFieldTypeLabel(type));
+  }
+  function designEntityList(entities) {
+    if (!Array.isArray(entities) || entities.length === 0) return richText();
+    const items = entities.map((e) => {
       const entity = e?.entity || e;
-      if (!entity) return "";
+      if (!entity) return [];
       const typeLabel = MD_ENTITY_TYPE_LABELS[entity.type] || entity.type || "";
-      const code = entity.code ? `\`${entity.code}\`` : "";
-      const parts = [typeLabel, code].filter(Boolean);
-      const subs = e?.includeSubs ? "（配下含む）" : "";
-      return parts.join(": ") + subs;
-    }).filter(Boolean).join(" / ");
+      const parts = [];
+      if (typeLabel) parts.push(String(typeLabel));
+      if (entity.code) {
+        if (parts.length) parts.push(": ");
+        parts.push(codeOf(entity.code));
+      }
+      if (e?.includeSubs) parts.push("（配下含む）");
+      return parts;
+    }).filter((parts) => String(richToMarkdown(richText(...parts))) !== "");
+    return joinRich(items, " / ");
   }
   function mdBoolMark(value) {
     if (value === true) return "○";
@@ -13297,6 +13478,14 @@
     return `${head}
 ${sep}
 ${body}`;
+  }
+  function designArrayOrThrow(value) {
+    if (!Array.isArray(value)) throw new TypeError("設定の値が配列ではありません");
+    return value;
+  }
+  function mdDesignTable(table) {
+    if (!table) return "";
+    return mdTable(table.headers, table.rows.map((row) => row.map(richToMarkdown)));
   }
   function mdLongestBacktickRun(value) {
     let longest = 0;
@@ -13347,7 +13536,7 @@ ${body}`;
     entries.sort((a, b) => a.index - b.index);
     return entries.map((o) => decodeHtmlEntities(o.label)).filter(Boolean).join(" / ");
   }
-  function mdRenderAppSettings(sec) {
+  function designAppSettingsTable(sec) {
     const rows = [
       ["アプリ名", sec.name || ""],
       ["説明", stripHtmlToText(sec.description || "")],
@@ -13362,7 +13551,10 @@ ${body}`;
       ["会計年度開始月", sec.firstMonthOfFiscalYear != null ? String(sec.firstMonthOfFiscalYear) : ""],
       ["リビジョン", sec.revision != null ? String(sec.revision) : ""]
     ].filter((r) => r[1] !== "");
-    return mdTable(["項目", "値"], rows);
+    return { headers: ["項目", "値"], rows };
+  }
+  function mdRenderAppSettings(sec) {
+    return mdDesignTable(designAppSettingsTable(sec));
   }
   function mdAppRef(ref, ctx = {}) {
     const id = ref?.app != null && ref.app !== "" ? String(ref.app) : "";
@@ -13373,41 +13565,52 @@ ${body}`;
     const name = guest && own(`${id}::${guest}`) || own(id);
     return name ? `${name}（App ${id}）` : `App ${id}`;
   }
-  function mdFieldNotes(f, ctx = {}) {
-    if (!f || typeof f !== "object") return "";
+  function designFieldNotes(f, ctx = {}) {
+    if (!f || typeof f !== "object") return richText();
     const notes = [];
     const lookup = f.lookup;
     if (lookup && typeof lookup === "object") {
-      const app = mdAppRef(lookup.relatedApp, ctx);
-      const key = lookup.relatedKeyField ? ` キー \`${lookup.relatedKeyField}\`` : "";
+      const note = ["ルックアップ: ", mdAppRef(lookup.relatedApp, ctx)];
+      if (lookup.relatedKeyField) note.push(" キー ", codeOf(lookup.relatedKeyField));
       const mappingList = Array.isArray(lookup.fieldMappings) ? lookup.fieldMappings : [];
-      const copies = mappingList.map((m) => `\`${m?.field ?? ""}\` ← \`${m?.relatedField ?? ""}\``).join("、");
-      notes.push(`ルックアップ: ${app}${key}${mappingList.length ? ` / 転記 ${mappingList.length}項目（${copies}）` : ""}`);
+      if (mappingList.length) {
+        const copies = mapJoinRich(mappingList, (m) => [codeOf(m?.field ?? ""), " ← ", codeOf(m?.relatedField ?? "")], "、");
+        note.push(` / 転記 ${mappingList.length}項目（`, ...copies.parts, "）");
+      }
+      notes.push(note);
     }
     const ref = f.referenceTable;
     if (ref && typeof ref === "object") {
-      const app = mdAppRef(ref.relatedApp, ctx);
-      const cond = ref.condition?.field && ref.condition?.relatedField ? ` 条件 \`${ref.condition.field}\` = \`${ref.condition.relatedField}\`` : "";
+      const note = ["関連レコード: ", mdAppRef(ref.relatedApp, ctx)];
+      if (ref.condition?.field && ref.condition?.relatedField) note.push(" 条件 ", codeOf(ref.condition.field), " = ", codeOf(ref.condition.relatedField));
       const shownList = Array.isArray(ref.displayFields) ? ref.displayFields : [];
-      notes.push(`関連レコード: ${app}${cond}${shownList.length ? ` / 表示 ${shownList.length}項目（${shownList.map((code) => `\`${code}\``).join("、")}）` : ""}${ref.size ? ` / ${ref.size}件表示` : ""}`);
+      if (shownList.length) {
+        const shown = mapJoinRich(shownList, (code) => [codeOf(code)], "、");
+        note.push(` / 表示 ${shownList.length}項目（`, ...shown.parts, "）");
+      }
+      if (ref.size) note.push(` / ${ref.size}件表示`);
+      notes.push(note);
     }
-    if (f.unit) notes.push(`単位: ${decodeHtmlEntities(f.unit)}${f.unitPosition === "BEFORE" ? "（前）" : f.unitPosition === "AFTER" ? "（後）" : ""}`);
-    if (f.digit === true || f.digit === "true") notes.push("桁区切りあり");
-    if (f.displayScale !== void 0 && f.displayScale !== null && f.displayScale !== "") notes.push(`小数 ${f.displayScale}桁`);
-    if (f.format && f.type === "CALC") notes.push(`表示形式: ${f.format}`);
+    const push = (text) => notes.push([text]);
+    if (f.unit) push(`単位: ${decodeHtmlEntities(f.unit)}${f.unitPosition === "BEFORE" ? "（前）" : f.unitPosition === "AFTER" ? "（後）" : ""}`);
+    if (f.digit === true || f.digit === "true") push("桁区切りあり");
+    if (f.displayScale !== void 0 && f.displayScale !== null && f.displayScale !== "") push(`小数 ${f.displayScale}桁`);
+    if (f.format && f.type === "CALC") push(`表示形式: ${f.format}`);
     const range = (min, max) => min !== void 0 && min !== null && min !== "" || max !== void 0 && max !== null && max !== "" ? `${min ?? ""}〜${max ?? ""}` : "";
     const len = range(f.minLength, f.maxLength);
-    if (len) notes.push(`文字数 ${len}`);
+    if (len) push(`文字数 ${len}`);
     const val = range(f.minValue, f.maxValue);
-    if (val) notes.push(`値 ${val}`);
-    if (f.defaultNowValue === true || f.defaultNowValue === "true") notes.push("初期値: 現在日時");
-    if (f.protocol) notes.push(`リンク種別: ${f.protocol}`);
-    if (f.hideExpression === true || f.hideExpression === "true") notes.push("計算式を非表示");
-    if (f.noLabel === true || f.noLabel === "true") notes.push("ラベル非表示");
-    if (f.thumbnailSize) notes.push(`サムネイル ${f.thumbnailSize}px`);
-    return notes.join(" / ");
+    if (val) push(`値 ${val}`);
+    if (f.defaultNowValue === true || f.defaultNowValue === "true") push("初期値: 現在日時");
+    if (f.protocol) push(`リンク種別: ${f.protocol}`);
+    if (f.hideExpression === true || f.hideExpression === "true") push("計算式を非表示");
+    if (f.noLabel === true || f.noLabel === "true") push("ラベル非表示");
+    if (f.thumbnailSize) push(`サムネイル ${f.thumbnailSize}px`);
+    return joinRich(notes, " / ");
   }
-  function mdRenderFieldSettings(sec, _sections, ctx = {}) {
+  var DESIGN_FIELD_TABLE_HEADERS = ["コード", "フィールド名", "種別", "必須", "重複禁止", "初期値", "選択肢/式", "参照先/制約"];
+  var DESIGN_SUBTABLE_FIELD_TABLE_HEADERS = ["コード", "フィールド名", "種別", "必須", "初期値", "選択肢/式", "参照先/制約"];
+  function designFieldTables(sec, ctx = {}) {
     const props = sec?.properties || {};
     const rows = [];
     const subtables = [];
@@ -13421,36 +13624,43 @@ ${body}`;
         f.unique ? "○" : "",
         mdFormatDefaultValue(f.defaultValue),
         mdFieldOptions(f.options) || (f.expression ? `式: ${f.expression}` : ""),
-        mdFieldNotes(f, ctx)
+        designFieldNotes(f, ctx)
       ]);
       if (f.type === "SUBTABLE" && f.fields) {
         subtables.push(f);
       }
     });
     rows.sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+    return {
+      fields: { headers: DESIGN_FIELD_TABLE_HEADERS, rows },
+      subtables: subtables.map((tbl) => {
+        const label = stripHtmlToText(tbl.label || "");
+        const subRows = Object.values(tbl.fields || {}).map((f) => [
+          f.code || "",
+          stripHtmlToText(f.label || ""),
+          mdFieldTypeLabel(f.type),
+          f.required ? "○" : "",
+          mdFormatDefaultValue(f.defaultValue),
+          mdFieldOptions(f.options) || (f.expression ? `式: ${f.expression}` : ""),
+          designFieldNotes(f, ctx)
+        ]);
+        subRows.sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+        return { code: tbl.code, label, table: { headers: DESIGN_SUBTABLE_FIELD_TABLE_HEADERS, rows: subRows } };
+      })
+    };
+  }
+  function mdRenderFieldSettings(sec, _sections, ctx = {}) {
+    const tables = designFieldTables(sec, ctx);
     const parts = [];
-    parts.push(`- フィールド数: ${rows.length}`);
+    parts.push(`- フィールド数: ${tables.fields.rows.length}`);
     parts.push("");
-    parts.push(mdTable(
-      ["コード", "フィールド名", "種別", "必須", "重複禁止", "初期値", "選択肢/式", "参照先/制約"],
-      rows
-    ));
-    subtables.forEach((tbl) => {
+    parts.push(mdDesignTable(tables.fields));
+    tables.subtables.forEach((tbl) => {
       parts.push("");
-      const tableLabel = mdLine(stripHtmlToText(tbl.label || ""));
+      const tableLabel = mdLine(tbl.label);
       parts.push(`#### テーブル: \`${tbl.code}\`${tableLabel ? ` — ${tableLabel}` : ""}`);
       parts.push("");
-      const subRows = Object.values(tbl.fields || {}).map((f) => [
-        f.code || "",
-        stripHtmlToText(f.label || ""),
-        mdFieldTypeLabel(f.type),
-        f.required ? "○" : "",
-        mdFormatDefaultValue(f.defaultValue),
-        mdFieldOptions(f.options) || (f.expression ? `式: ${f.expression}` : ""),
-        mdFieldNotes(f, ctx)
-      ]);
-      subRows.sort((a, b) => String(a[0]).localeCompare(String(b[0])));
-      parts.push(mdTable(["コード", "フィールド名", "種別", "必須", "初期値", "選択肢/式", "参照先/制約"], subRows));
+      parts.push(mdDesignTable(tbl.table));
     });
     return parts.join("\n");
   }
@@ -13486,23 +13696,23 @@ ${body}`;
     layout.forEach((item) => lines.push(...mdRenderLayoutItem(item, 0, fields)));
     return lines.join("\n");
   }
-  function mdRenderViewSettings(sec) {
+  function designViewTable(sec) {
     const views = sec?.views || {};
     const entries = Object.entries(views).map(([name, v]) => ({ name, ...v }));
     entries.sort((a, b) => Number(a.index ?? 0) - Number(b.index ?? 0));
     const rows = entries.map((v) => {
       const builtinNote = v.builtinType ? mdLookupLabel(MD_VIEW_BUILTIN_LABELS, v.builtinType) || v.builtinType : "";
       const extras = [];
-      if (v.customView || v.html) extras.push("カスタムHTMLあり");
+      if (v.customView || v.html) extras.push(["カスタムHTMLあり"]);
       if (v.type === "CALENDAR") {
-        if (v.date) extras.push(`日付: \`${v.date}\``);
-        if (v.title) extras.push(`タイトル: \`${v.title}\``);
+        if (v.date) extras.push(["日付: ", codeOf(v.date)]);
+        if (v.title) extras.push(["タイトル: ", codeOf(v.title)]);
       }
-      if (v.device === "DESKTOP") extras.push("PC版のみ");
-      if (v.pager === false) extras.push("ページャー無効");
+      if (v.device === "DESKTOP") extras.push(["PC版のみ"]);
+      if (v.pager === false) extras.push(["ページャー無効"]);
       if (v.paginationStyle) {
         const paginationLabel = mdLookupLabel(MD_PAGINATION_LABELS, v.paginationStyle) || v.paginationStyle;
-        extras.push(`ページャー:${paginationLabel}`);
+        extras.push([`ページャー:${paginationLabel}`]);
       }
       return [
         v.name || "",
@@ -13512,12 +13722,15 @@ ${body}`;
         Array.isArray(v.fields) ? v.fields.join(" / ") : "",
         v.filterCond || "",
         v.sort || "",
-        extras.join(" / ")
+        joinRich(extras, " / ")
       ];
     });
-    return mdTable(["ビュー名", "種別", "表示順", "組み込み種別", "表示フィールド", "絞り込み条件", "ソート", "備考"], rows);
+    return { headers: ["ビュー名", "種別", "表示順", "組み込み種別", "表示フィールド", "絞り込み条件", "ソート", "備考"], rows };
   }
-  function mdRenderReportSettings(sec) {
+  function mdRenderViewSettings(sec) {
+    return mdDesignTable(designViewTable(sec));
+  }
+  function designReportTable(sec) {
     const reports = sec?.reports || {};
     const entries = Object.entries(reports).map(([name, r]) => ({ name, ...r }));
     entries.sort((a, b) => Number(a.index ?? 0) - Number(b.index ?? 0));
@@ -13534,46 +13747,56 @@ ${body}`;
       r.filterCond || "",
       r.periodicReport?.active ? "定期実行あり" : ""
     ]);
-    return mdTable(["レポート名", "チャート", "モード", "分類", "集計", "絞り込み条件", "定期実行"], rows);
+    return { headers: ["レポート名", "チャート", "モード", "分類", "集計", "絞り込み条件", "定期実行"], rows };
   }
-  function mdRenderProcessSettings(sec) {
-    const parts = [];
-    parts.push(`- プロセス管理: ${sec?.enable ? "有効" : "無効"}`);
-    parts.push("");
+  function mdRenderReportSettings(sec) {
+    return mdDesignTable(designReportTable(sec));
+  }
+  function designProcessTables(sec) {
+    const enabled = !!sec?.enable;
     const states = sec?.states || {};
     const stateEntries = Object.entries(states).map(([name, s]) => ({ name, ...s }));
     stateEntries.sort((a, b) => Number(a.index ?? 0) - Number(b.index ?? 0));
-    if (stateEntries.length) {
+    const stateTable = stateEntries.length ? {
+      headers: ["ステータス名", "表示順", "作業者の選び方", "作業者候補"],
+      rows: stateEntries.map((s) => [
+        s.name || "",
+        s.index ?? "",
+        mdProcessAssigneeTypeLabel(s.assignee?.type),
+        designEntityList(s.assignee?.entities)
+      ])
+    } : null;
+    const actions = Array.isArray(sec?.actions) ? sec.actions : [];
+    const actionTable = actions.length ? {
+      headers: ["アクション名", "遷移元（From）", "遷移先（To）", "絞り込み条件"],
+      rows: actions.map((a) => [
+        a.name || "",
+        Array.isArray(a.from) ? a.from.join(" / ") : a.from || "",
+        a.to || "",
+        a.filterCond || ""
+      ])
+    } : null;
+    return { enabled, states: stateTable, actions: actionTable };
+  }
+  function mdRenderProcessSettings(sec) {
+    const tables = designProcessTables(sec);
+    const parts = [];
+    parts.push(`- プロセス管理: ${tables.enabled ? "有効" : "無効"}`);
+    parts.push("");
+    if (tables.states) {
       parts.push("#### ステータス");
       parts.push("");
-      parts.push(mdTable(
-        ["ステータス名", "表示順", "作業者の選び方", "作業者候補"],
-        stateEntries.map((s) => [
-          s.name || "",
-          s.index ?? "",
-          mdProcessAssigneeTypeLabel(s.assignee?.type),
-          mdEntityList(s.assignee?.entities)
-        ])
-      ));
+      parts.push(mdDesignTable(tables.states));
       parts.push("");
     }
-    const actions = Array.isArray(sec?.actions) ? sec.actions : [];
-    if (actions.length) {
+    if (tables.actions) {
       parts.push("#### アクション");
       parts.push("");
-      parts.push(mdTable(
-        ["アクション名", "遷移元（From）", "遷移先（To）", "絞り込み条件"],
-        actions.map((a) => [
-          a.name || "",
-          Array.isArray(a.from) ? a.from.join(" / ") : a.from || "",
-          a.to || "",
-          a.filterCond || ""
-        ])
-      ));
+      parts.push(mdDesignTable(tables.actions));
     }
     return parts.join("\n");
   }
-  function mdRenderPluginSettings(sec) {
+  function designPluginTable(sec) {
     const plugins = sec?.plugins || [];
     const rows = plugins.map((p) => [
       p.id || "",
@@ -13582,167 +13805,240 @@ ${body}`;
       p.version || "",
       p.description || ""
     ]);
-    return mdTable(["プラグインID", "名称", "状態", "バージョン", "説明"], rows);
+    return { headers: ["プラグインID", "名称", "状態", "バージョン", "説明"], rows };
   }
-  function mdRenderCustomizeSettings(sec) {
-    const parts = [];
-    parts.push(`- 適用範囲（スコープ）: ${mdLookupLabel(MD_CUSTOMIZE_SCOPE_LABELS, sec?.scope) || "（未設定）"}`);
-    parts.push("");
+  function mdRenderPluginSettings(sec) {
+    return mdDesignTable(designPluginTable(sec));
+  }
+  function designCustomizeAreas(sec) {
+    const scopeLabel = mdLookupLabel(MD_CUSTOMIZE_SCOPE_LABELS, sec?.scope) || "（未設定）";
+    const areas = [];
     ["desktop", "mobile"].forEach((area) => {
       const zone = sec?.[area];
       if (!zone) return;
-      parts.push(`#### ${area === "desktop" ? "PC（デスクトップ）" : "モバイル"}`);
-      parts.push("");
+      const kinds = [];
       ["js", "css"].forEach((kind) => {
         const list = zone[kind];
         if (!Array.isArray(list) || list.length === 0) return;
-        parts.push(`- ${kind.toUpperCase()}（${kind === "js" ? "JavaScript" : "スタイルシート"}）:`);
-        list.forEach((item) => {
-          let src = "";
-          if (item.type === "URL") src = item.url || "";
-          else if (item.file) src = `ファイル: ${item.file.name || item.file.fileKey || ""}`;
-          const typeLabel = mdLookupLabel(MD_RESOURCE_TYPE_LABELS, item.type);
-          parts.push(`  - ${typeLabel || "(種別不明)"}: ${mdLine(src)}`);
+        kinds.push({
+          kind,
+          label: `${kind.toUpperCase()}（${kind === "js" ? "JavaScript" : "スタイルシート"}）`,
+          items: list.map((item) => {
+            let src = "";
+            if (item.type === "URL") src = item.url || "";
+            else if (item.file) src = `ファイル: ${item.file.name || item.file.fileKey || ""}`;
+            return { typeLabel: mdLookupLabel(MD_RESOURCE_TYPE_LABELS, item.type), src };
+          })
+        });
+      });
+      areas.push({ area, label: area === "desktop" ? "PC（デスクトップ）" : "モバイル", kinds });
+    });
+    return { scopeLabel, areas };
+  }
+  function mdRenderCustomizeSettings(sec) {
+    const data = designCustomizeAreas(sec);
+    const parts = [];
+    parts.push(`- 適用範囲（スコープ）: ${data.scopeLabel}`);
+    parts.push("");
+    data.areas.forEach((area) => {
+      parts.push(`#### ${area.label}`);
+      parts.push("");
+      area.kinds.forEach((kind) => {
+        parts.push(`- ${kind.label}:`);
+        kind.items.forEach((item) => {
+          parts.push(`  - ${item.typeLabel || "(種別不明)"}: ${mdLine(item.src)}`);
         });
       });
       parts.push("");
     });
     return parts.join("\n").trimEnd();
   }
-  function mdRenderActionSettings(sec, _sections, ctx = {}) {
+  function designActionTable(sec, ctx = {}) {
     const actions = sec?.actions || [];
     const list = Array.isArray(actions) ? actions : Object.values(actions);
     const rows = list.map((a) => [
       a.name || "",
       a.index ?? "",
       a.destApp ? a.destApp.app != null && a.destApp.app !== "" ? mdAppRef(a.destApp, ctx) : a.destApp.code || "" : "",
-      Array.isArray(a.entities) && a.entities.length ? mdEntityList(a.entities) : "すべてのユーザー",
+      Array.isArray(a.entities) && a.entities.length ? designEntityList(a.entities) : "すべてのユーザー",
       String((a.mappings || []).length),
       // コピー元 → コピー先（レコードの URL は srcType が RECORD_URL でコピー元のフィールドが無い）
-      (a.mappings || []).map((m) => `${m?.srcType === "RECORD_URL" ? "レコードのURL" : `\`${m?.srcField ?? ""}\``} → \`${m?.destField ?? ""}\``).join("\n"),
+      mapJoinRich(designArrayOrThrow(a.mappings || []), (m) => [
+        m?.srcType === "RECORD_URL" ? "レコードのURL" : codeOf(m?.srcField ?? ""),
+        " → ",
+        codeOf(m?.destField ?? "")
+      ], "\n"),
       a.filterCond || ""
     ]);
-    return mdTable(["アクション名", "表示順", "連携先アプリ", "利用できるユーザー", "マッピング数", "コピー項目（コピー元 → コピー先）", "実行条件"], rows);
+    return { headers: ["アクション名", "表示順", "連携先アプリ", "利用できるユーザー", "マッピング数", "コピー項目（コピー元 → コピー先）", "実行条件"], rows };
   }
-  function mdRenderAclRights(rights, columns) {
-    if (!Array.isArray(rights) || rights.length === 0) return "";
-    return mdTable(
-      ["対象", ...columns.map((c) => c.label)],
-      rights.map((r) => [
-        mdEntityList([{ entity: r.entity, includeSubs: r.includeSubs }]) || r.code || r.filterCond || "",
-        ...columns.map((c) => mdBoolMark(r[c.key]))
+  function mdRenderActionSettings(sec, _sections, ctx = {}) {
+    return mdDesignTable(designActionTable(sec, ctx));
+  }
+  function designAclTarget(r) {
+    const entities = designEntityList([{ entity: r.entity, includeSubs: r.includeSubs }]);
+    return richToMarkdown(entities) ? entities : r.code || r.filterCond || "";
+  }
+  var DESIGN_APP_ACL_COLUMNS = [
+    { key: "appEditable", label: "アプリ管理" },
+    { key: "recordViewable", label: "閲覧" },
+    { key: "recordAddable", label: "追加" },
+    { key: "recordEditable", label: "編集" },
+    { key: "recordDeletable", label: "削除" },
+    { key: "recordImportable", label: "読込" },
+    { key: "recordExportable", label: "書出" }
+  ];
+  function designAppAclTable(sec) {
+    const rights = sec?.rights;
+    if (!Array.isArray(rights) || rights.length === 0) return null;
+    return {
+      headers: ["対象", ...DESIGN_APP_ACL_COLUMNS.map((c) => c.label)],
+      rows: rights.map((r) => [
+        designAclTarget(r),
+        ...DESIGN_APP_ACL_COLUMNS.map((c) => mdBoolMark(r[c.key]))
       ])
-    );
+    };
   }
   function mdRenderAppAcl(sec) {
-    return mdRenderAclRights(sec?.rights, [
-      { key: "appEditable", label: "アプリ管理" },
-      { key: "recordViewable", label: "閲覧" },
-      { key: "recordAddable", label: "追加" },
-      { key: "recordEditable", label: "編集" },
-      { key: "recordDeletable", label: "削除" },
-      { key: "recordImportable", label: "読込" },
-      { key: "recordExportable", label: "書出" }
-    ]);
+    return mdDesignTable(designAppAclTable(sec));
+  }
+  function designFieldAclTables(sec) {
+    const rights = sec?.rights || [];
+    const out = [];
+    rights.forEach((r) => {
+      out.push({
+        code: r.code || "",
+        table: {
+          headers: ["対象", "アクセス権"],
+          rows: (r.entities || []).map((e) => [
+            designEntityList([{ entity: e.entity, includeSubs: e.includeSubs }]),
+            mdLookupLabel(MD_FIELD_ACCESSIBILITY_LABELS, e.accessibility)
+          ])
+        }
+      });
+    });
+    return out;
   }
   function mdRenderFieldAcl(sec) {
-    const rights = sec?.rights || [];
     const parts = [];
-    rights.forEach((r) => {
-      parts.push(`#### \`${r.code || ""}\``);
+    designFieldAclTables(sec).forEach((item) => {
+      parts.push(`#### \`${item.code}\``);
       parts.push("");
-      parts.push(mdTable(
-        ["対象", "アクセス権"],
-        (r.entities || []).map((e) => [
-          mdEntityList([{ entity: e.entity, includeSubs: e.includeSubs }]),
-          mdLookupLabel(MD_FIELD_ACCESSIBILITY_LABELS, e.accessibility)
-        ])
-      ));
+      parts.push(mdDesignTable(item.table));
       parts.push("");
     });
     return parts.join("\n").trimEnd();
+  }
+  function designRecordPermissionTables(sec) {
+    const rights = sec?.rights || [];
+    const out = [];
+    rights.forEach((r, index) => {
+      out.push({
+        index,
+        filterCond: r.filterCond,
+        table: {
+          headers: ["対象", "閲覧", "編集", "削除"],
+          rows: (r.entities || []).map((e) => [
+            designEntityList([{ entity: e.entity, includeSubs: e.includeSubs }]),
+            mdBoolMark(e.viewable),
+            mdBoolMark(e.editable),
+            mdBoolMark(e.deletable)
+          ])
+        }
+      });
+    });
+    return out;
   }
   function mdRenderRecordPermissions(sec) {
-    const rights = sec?.rights || [];
     const parts = [];
-    rights.forEach((r, idx) => {
-      parts.push(`#### 条件 ${idx + 1}${r.filterCond ? `: ${mdCode(r.filterCond)}` : ""}`);
+    designRecordPermissionTables(sec).forEach((item) => {
+      parts.push(`#### 条件 ${item.index + 1}${item.filterCond ? `: ${mdCode(item.filterCond)}` : ""}`);
       parts.push("");
-      parts.push(mdTable(
-        ["対象", "閲覧", "編集", "削除"],
-        (r.entities || []).map((e) => [
-          mdEntityList([{ entity: e.entity, includeSubs: e.includeSubs }]),
-          mdBoolMark(e.viewable),
-          mdBoolMark(e.editable),
-          mdBoolMark(e.deletable)
-        ])
-      ));
+      parts.push(mdDesignTable(item.table));
       parts.push("");
     });
     return parts.join("\n").trimEnd();
   }
-  function mdRenderNotifications(sec) {
+  function designNotificationTable(sec) {
     const list = sec?.notifications || [];
     const rows = list.map((n) => [
-      mdEntityList([{ entity: n.entity, includeSubs: n.includeSubs }]),
+      designEntityList([{ entity: n.entity, includeSubs: n.includeSubs }]),
       mdBoolMark(n.recordAdded),
       mdBoolMark(n.recordEdited),
       mdBoolMark(n.commentAdded),
       mdBoolMark(n.statusChanged),
       mdBoolMark(n.fileImported)
     ]);
+    return {
+      notifyToCommenter: sec?.notifyToCommenter != null ? !!sec.notifyToCommenter : null,
+      table: { headers: ["対象", "レコード追加", "レコード編集", "コメント", "ステータス変更", "ファイル取込"], rows }
+    };
+  }
+  function mdRenderNotifications(sec) {
+    const data = designNotificationTable(sec);
     const parts = [];
-    if (sec?.notifyToCommenter != null) {
-      parts.push(`- コメント投稿者へ通知: ${sec.notifyToCommenter ? "有効" : "無効"}`);
+    if (data.notifyToCommenter != null) {
+      parts.push(`- コメント投稿者へ通知: ${data.notifyToCommenter ? "有効" : "無効"}`);
       parts.push("");
     }
-    parts.push(mdTable(
-      ["対象", "レコード追加", "レコード編集", "コメント", "ステータス変更", "ファイル取込"],
-      rows
-    ));
+    parts.push(mdDesignTable(data.table));
     return parts.join("\n");
+  }
+  function designPerRecordNotificationTable(sec) {
+    const list = sec?.notifications || [];
+    return {
+      headers: ["タイトル", "絞り込み条件", "通知先"],
+      rows: list.map((n) => [n.title || "", n.filterCond || "", designEntityList(n.targets)])
+    };
   }
   function mdRenderPerRecordNotifications(sec) {
+    return mdDesignTable(designPerRecordNotificationTable(sec));
+  }
+  function designReminderNotificationTable(sec) {
     const list = sec?.notifications || [];
-    return mdTable(
-      ["タイトル", "絞り込み条件", "通知先"],
-      list.map((n) => [n.title || "", n.filterCond || "", mdEntityList(n.targets)])
-    );
+    return {
+      timezone: sec?.timezone,
+      table: {
+        headers: ["タイトル", "基準フィールド", "通知タイミング", "絞り込み条件", "通知先"],
+        rows: list.map((n) => {
+          const t = n.timing || {};
+          const timingParts = [];
+          if (t.daysLater != null && t.daysLater !== "") {
+            const d = Number(t.daysLater);
+            timingParts.push(!Number.isFinite(d) ? String(t.daysLater) : d === 0 ? "当日" : d > 0 ? `${d}日後` : `${Math.abs(d)}日前`);
+          }
+          if (t.hoursLater != null && t.hoursLater !== "") {
+            const h = Number(t.hoursLater);
+            timingParts.push(!Number.isFinite(h) ? String(t.hoursLater) : h === 0 ? "同時刻" : h > 0 ? `${h}時間後` : `${Math.abs(h)}時間前`);
+          }
+          if (t.time) timingParts.push(`${t.time}`);
+          return [n.title || "", t.code ? richText(codeOf(t.code)) : "", timingParts.join(" "), n.filterCond || "", designEntityList(n.targets)];
+        })
+      }
+    };
   }
   function mdRenderReminderNotifications(sec) {
-    const list = sec?.notifications || [];
+    const data = designReminderNotificationTable(sec);
     const parts = [];
-    if (sec?.timezone) {
-      parts.push(`- タイムゾーン: ${mdLine(sec.timezone)}`);
+    if (data.timezone) {
+      parts.push(`- タイムゾーン: ${mdLine(data.timezone)}`);
       parts.push("");
     }
-    parts.push(mdTable(
-      ["タイトル", "基準フィールド", "通知タイミング", "絞り込み条件", "通知先"],
-      list.map((n) => {
-        const t = n.timing || {};
-        const timingParts = [];
-        if (t.daysLater != null && t.daysLater !== "") {
-          const d = Number(t.daysLater);
-          timingParts.push(!Number.isFinite(d) ? String(t.daysLater) : d === 0 ? "当日" : d > 0 ? `${d}日後` : `${Math.abs(d)}日前`);
-        }
-        if (t.hoursLater != null && t.hoursLater !== "") {
-          const h = Number(t.hoursLater);
-          timingParts.push(!Number.isFinite(h) ? String(t.hoursLater) : h === 0 ? "同時刻" : h > 0 ? `${h}時間後` : `${Math.abs(h)}時間前`);
-        }
-        if (t.time) timingParts.push(`${t.time}`);
-        return [n.title || "", t.code ? `\`${t.code}\`` : "", timingParts.join(" "), n.filterCond || "", mdEntityList(n.targets)];
-      })
-    ));
+    parts.push(mdDesignTable(data.table));
     return parts.join("\n");
   }
+  function designCategoryTable(sec) {
+    return {
+      enabled: !!sec?.enabled,
+      table: { headers: ["カテゴリー", "表示順"], rows: flattenCategories(sec?.categories).map((c) => [c.path, c.index]) }
+    };
+  }
   function mdRenderCategories(sec) {
+    const data = designCategoryTable(sec);
     const parts = [];
-    parts.push(`- カテゴリー機能: ${sec?.enabled ? "有効" : "無効"}`);
+    parts.push(`- カテゴリー機能: ${data.enabled ? "有効" : "無効"}`);
     parts.push("");
-    parts.push(mdTable(
-      ["カテゴリー", "表示順"],
-      flattenCategories(sec?.categories).map((c) => [c.path, c.index])
-    ));
+    parts.push(mdDesignTable(data.table));
     return parts.join("\n");
   }
   var MD_SECTION_RENDERERS = {
@@ -13771,7 +14067,7 @@ ${body}`;
     });
     return all;
   }
-  function mdBundleSummary(bundle) {
+  function designSummaryTable(bundle) {
     const sections = bundle?.sections || {};
     const rows = [];
     const fields = sections.fieldSettings?.properties || {};
@@ -13807,9 +14103,13 @@ ${body}`;
     if (pluginCount) rows.push(["プラグイン数", String(pluginCount)]);
     if (notifCount) rows.push(["一般通知宛先数", String(notifCount)]);
     if (customizeCount) rows.push(["JS/CSSカスタマイズ数", String(customizeCount)]);
-    return rows.length ? mdTable(["項目", "件数"], rows) : "";
+    return { headers: ["項目", "件数"], rows };
   }
-  function mdDesignReviewPoints(bundle) {
+  function mdBundleSummary(bundle) {
+    return mdDesignTable(designSummaryTable(bundle));
+  }
+  var DESIGN_NO_REVIEW_POINTS = "特に目立つ確認ポイントはありません。";
+  function designReviewPoints(bundle) {
     const sections = bundle?.sections || {};
     const fields = mdAllFieldDefinitions(sections.fieldSettings?.properties || {});
     const points = [];
@@ -13820,24 +14120,41 @@ ${body}`;
       const zone = sections.customizeSettings?.[area] || {};
       return sum + (zone.js || []).length + (zone.css || []).length;
     }, 0);
-    if (lookupCount) points.push(`- ルックアップ設定が ${lookupCount} 件あります。参照先アプリIDとフィールドマッピングを確認してください。`);
-    if (calcCount) points.push(`- 計算式フィールドが ${calcCount} 件あります。参照フィールド変更時の影響を確認してください。`);
-    if (permissionCount) points.push(`- 権限設定エントリが ${permissionCount} 件あります。移行前後でユーザー/組織/グループの差異を確認してください。`);
-    if (customizeCount) points.push(`- JS/CSSカスタマイズが ${customizeCount} 件あります。URL・ファイル参照・読み込み順を確認してください。`);
-    if (sections.processSettings?.enable) points.push("- プロセス管理が有効です。ステータス、作業者、アクション条件を確認してください。");
-    return points.length ? points.join("\n") : "- 特に目立つ確認ポイントはありません。";
+    if (lookupCount) points.push(`ルックアップ設定が ${lookupCount} 件あります。参照先アプリIDとフィールドマッピングを確認してください。`);
+    if (calcCount) points.push(`計算式フィールドが ${calcCount} 件あります。参照フィールド変更時の影響を確認してください。`);
+    if (permissionCount) points.push(`権限設定エントリが ${permissionCount} 件あります。移行前後でユーザー/組織/グループの差異を確認してください。`);
+    if (customizeCount) points.push(`JS/CSSカスタマイズが ${customizeCount} 件あります。URL・ファイル参照・読み込み順を確認してください。`);
+    if (sections.processSettings?.enable) points.push("プロセス管理が有効です。ステータス、作業者、アクション条件を確認してください。");
+    return points;
+  }
+  function mdDesignReviewPoints(bundle) {
+    const points = designReviewPoints(bundle);
+    return points.length ? points.map((point) => `- ${point}`).join("\n") : `- ${DESIGN_NO_REVIEW_POINTS}`;
   }
   function mdSectionHasData(sec) {
     return !!sec && typeof sec === "object" && Object.keys(sec).some((key) => key !== "_fetchError" && key !== "_partial");
   }
-  function mdDesignSectionRows(bundle, snapshotByKey) {
+  function designOutputSectionTable(bundle, snapshotByKey) {
     const sections = bundle?.sections || {};
-    return SECTION_DEFS.filter((def) => sections[def.key]).map((def) => {
+    const rows = SECTION_DEFS.filter((def) => sections[def.key]).map((def) => {
       const sec = sections[def.key];
       if (sec?._fetchError && !mdSectionHasData(sec)) return [def.label, def.key, "取得失敗"];
       const count = snapshotByKey?.get(def.key)?.count;
       return [def.label, def.key, count == null ? "-" : String(count)];
     });
+    return { headers: ["セクション", "キー", "件数"], rows };
+  }
+  function designSectionPlan(sec, snapshotSection, hasRenderer) {
+    const fetchError = sec._fetchError ? String(sec._fetchError) : null;
+    if (sec._fetchError && !mdSectionHasData(sec)) return { fetchError, mode: "none", detail: "" };
+    if (snapshotSection?.status === "fetch-error" && !sec._fetchError) return { fetchError, mode: "fetch-error", detail: snapshotSection.detail };
+    if (snapshotSection?.status === "partial") return { fetchError, mode: "partial", detail: snapshotSection.detail };
+    if (snapshotSection?.status === "empty") return { fetchError, mode: "empty", detail: "" };
+    if (!hasRenderer) return { fetchError, mode: "unsupported", detail: "" };
+    return { fetchError, mode: "render", detail: "" };
+  }
+  function hasDesignSectionRenderer(key) {
+    return Object.prototype.hasOwnProperty.call(MD_SECTION_RENDERERS, key);
   }
   function mdFetchedAt(value) {
     const raw = String(value ?? "").trim();
@@ -13851,12 +14168,8 @@ ${body}`;
       return raw;
     }
   }
-  function bundleToMarkdown(bundle, options = {}) {
-    const includeRawJson = options.rawJson !== false;
+  function designDocumentInfo(bundle, options = {}) {
     const sections = bundle?.sections || {};
-    const renderContext = { appNames: options.appNames || {}, guestId: String(bundle?.guestId ?? "") };
-    const designSnapshot = buildDesignSnapshot(bundle);
-    const snapshotByKey = new Map(designSnapshot.sections.map((row) => [row.key, row]));
     const appName = decodeHtmlEntities(sections.appSettings?.name || "");
     const hasGuestId = Object.prototype.hasOwnProperty.call(bundle || {}, "guestId");
     const hasPreview = Object.prototype.hasOwnProperty.call(bundle || {}, "preview");
@@ -13864,35 +14177,54 @@ ${body}`;
     const previewKnown = hasPreview && bundle.preview !== null && bundle.preview !== void 0;
     const guestIdLabel = guestIdKnown ? bundle.guestId === "" ? "(通常空間)" : String(bundle.guestId) : "不明（設定JSONに記載なし）";
     const environmentLabel = previewKnown ? bundle.preview ? "プレビュー（未公開の設定）" : "本番（運用中の設定）" : "不明（設定JSONに記載なし）";
-    const lines = [];
-    lines.push("# kintone アプリ設計書");
-    lines.push("");
-    if (appName) {
-      lines.push(`> ${mdLine(appName)}`);
-      lines.push("");
-    }
-    const failedSections = SECTION_DEFS.filter((def) => sections[def.key]?._fetchError);
-    lines.push(mdTable(["項目", "値"], [
-      ["アプリID", bundle.appId],
-      ["アプリ名", appName || "（取得なし）"],
-      ["ゲストスペースID", guestIdLabel],
-      ["取得環境", environmentLabel],
-      ...options.fetchedAt === false ? [] : [["取得日時", mdFetchedAt(bundle.fetchedAt)]],
-      ["取得できなかったセクション", failedSections.length ? failedSections.map((def) => def.label).join("、") : "なし"]
-    ]));
-    lines.push("");
-    lines.push("## 取得状態");
-    lines.push("");
-    lines.push(mdTable(
-      ["セクション", "キー", "状態", "件数", "詳細"],
-      designSnapshot.sections.map((row) => [
+    const failedSectionLabels2 = SECTION_DEFS.filter((def) => sections[def.key]?._fetchError).map((def) => def.label);
+    return {
+      appName,
+      failedSectionLabels: failedSectionLabels2,
+      table: {
+        headers: ["項目", "値"],
+        rows: [
+          ["アプリID", bundle?.appId],
+          ["アプリ名", appName || "（取得なし）"],
+          ["ゲストスペースID", guestIdLabel],
+          ["取得環境", environmentLabel],
+          ...options.fetchedAt === false ? [] : [["取得日時", mdFetchedAt(bundle?.fetchedAt)]],
+          ["取得できなかったセクション", failedSectionLabels2.length ? failedSectionLabels2.join("、") : "なし"]
+        ]
+      }
+    };
+  }
+  function designStatusTable(snapshot) {
+    return {
+      headers: ["セクション", "キー", "状態", "件数", "詳細"],
+      rows: snapshot.sections.map((row) => [
         row.label,
         row.key,
         row.status,
         row.count == null ? "不明" : String(row.count),
         row.detail
       ])
-    ));
+    };
+  }
+  function bundleToMarkdown(bundle, options = {}) {
+    const includeRawJson = options.rawJson !== false;
+    const sections = bundle?.sections || {};
+    const renderContext = { appNames: options.appNames || {}, guestId: String(bundle?.guestId ?? "") };
+    const designSnapshot = buildDesignSnapshot(bundle);
+    const snapshotByKey = new Map(designSnapshot.sections.map((row) => [row.key, row]));
+    const info = designDocumentInfo(bundle, { fetchedAt: options.fetchedAt });
+    const lines = [];
+    lines.push("# kintone アプリ設計書");
+    lines.push("");
+    if (info.appName) {
+      lines.push(`> ${mdLine(info.appName)}`);
+      lines.push("");
+    }
+    lines.push(mdDesignTable(info.table));
+    lines.push("");
+    lines.push("## 取得状態");
+    lines.push("");
+    lines.push(mdDesignTable(designStatusTable(designSnapshot)));
     lines.push("");
     const available = SECTION_DEFS.filter((def) => sections[def.key]);
     if (available.length) {
@@ -13914,11 +14246,11 @@ ${body}`;
     lines.push("");
     lines.push(mdDesignReviewPoints(bundle));
     lines.push("");
-    const sectionRows = mdDesignSectionRows(bundle, snapshotByKey);
-    if (sectionRows.length) {
+    const sectionTable = designOutputSectionTable(bundle, snapshotByKey);
+    if (sectionTable.rows.length) {
       lines.push("## 出力セクション");
       lines.push("");
-      lines.push(mdTable(["セクション", "キー", "件数"], sectionRows));
+      lines.push(mdDesignTable(sectionTable));
       lines.push("");
     }
     for (const def of SECTION_DEFS) {
@@ -13928,18 +14260,19 @@ ${body}`;
       const snapshotSection = snapshotByKey.get(def.key);
       lines.push(`## ${def.label}`);
       lines.push("");
-      if (sec._fetchError) {
-        lines.push(`> ⚠ 取得できませんでした: ${mdLine(String(sec._fetchError))}`);
-        lines.push("");
-        if (!mdSectionHasData(sec)) continue;
-      }
       const renderer = MD_SECTION_RENDERERS[def.key];
+      const plan = designSectionPlan(sec, snapshotSection, !!renderer);
+      if (plan.fetchError !== null) {
+        lines.push(`> ⚠ 取得できませんでした: ${mdLine(plan.fetchError)}`);
+        lines.push("");
+        if (plan.mode === "none") continue;
+      }
       let rendered = "";
-      if (snapshotSection?.status === "fetch-error" && !sec._fetchError) {
-        lines.push(`（取得失敗: ${mdLine(snapshotSection.detail)}）`);
+      if (plan.mode === "fetch-error") {
+        lines.push(`（取得失敗: ${mdLine(plan.detail)}）`);
         if (!includeRawJson) lines.push("", "（原文JSONは rawJson:false のため省略されています）");
-      } else if (snapshotSection?.status === "partial") {
-        lines.push(`（部分取得: ${snapshotSection.detail}）`);
+      } else if (plan.mode === "partial") {
+        lines.push(`（部分取得: ${plan.detail}）`);
         if (renderer) {
           try {
             rendered = renderer(sec, sections, renderContext) || "";
@@ -13949,9 +14282,9 @@ ${body}`;
           if (rendered.trim()) lines.push("", rendered);
         }
         if (!includeRawJson) lines.push("", "（原文JSONは rawJson:false のため省略されています）");
-      } else if (snapshotSection?.status === "empty") {
+      } else if (plan.mode === "empty") {
         lines.push("（設定コレクションは空です）");
-      } else if (!renderer) {
+      } else if (plan.mode === "unsupported") {
         lines.push("（整形表示は未対応です。設定データは下の原文を参照してください）");
         if (!includeRawJson) lines.push("", "（原文JSONは rawJson:false のため省略されています）");
       } else {
@@ -14899,6 +15232,29 @@ ${body}`;
     }
     return wrap;
   }
+  function normalizeIdInputValue(el) {
+    const next = normalizeIdInputText(el.value);
+    if (next === el.value) return false;
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    el.value = next;
+    if (start !== null && el.ownerDocument?.activeElement === el) {
+      try {
+        el.setSelectionRange(start, end ?? start);
+      } catch {
+      }
+    }
+    return true;
+  }
+  function installIdInputNormalizer(el) {
+    el.addEventListener("input", (ev) => {
+      if (ev.isComposing) return;
+      normalizeIdInputValue(el);
+    });
+    el.addEventListener("compositionend", () => {
+      if (normalizeIdInputValue(el)) el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
   function makeInput(opts = {}) {
     const inp = document.createElement("input");
     inp.type = opts.type || "text";
@@ -14906,6 +15262,7 @@ ${body}`;
     if (opts.value) inp.value = opts.value;
     if (opts.ariaLabel) inp.setAttribute("aria-label", opts.ariaLabel);
     if (opts.noSubmit) inp.setAttribute("data-lp-no-submit", "");
+    if (opts.idInput) installIdInputNormalizer(inp);
     inp.className = "kus-lp__input" + (opts.width ? ` kus-lp__input--${opts.width}` : "");
     return inp;
   }
@@ -15173,9 +15530,9 @@ ${body}`;
       const seen = /* @__PURE__ */ new Set();
       const out = [];
       for (const r of rows) {
-        const appId = r.app.value.trim();
+        const appId = normalizeIdInputText(r.app.value).trim();
         if (!appId) continue;
-        const guestId = r.guest.value.trim();
+        const guestId = normalizeIdInputText(r.guest.value).trim();
         const key = `${appId}::${guestId}`;
         if (seen.has(key)) continue;
         seen.add(key);
@@ -15187,7 +15544,7 @@ ${body}`;
     }
     function getAllRows() {
       return rows.map((r) => {
-        const row = { appId: r.app.value.trim(), guestId: r.guest.value.trim() };
+        const row = { appId: normalizeIdInputText(r.app.value).trim(), guestId: normalizeIdInputText(r.guest.value).trim() };
         if (r.appName) row.appName = r.appName;
         return row;
       });
@@ -15217,7 +15574,7 @@ ${body}`;
       opts.onChange?.(getApps());
     }
     function parseAppToken(token, fallbackGuest) {
-      const trimmed = token.trim();
+      const trimmed = normalizeIdInputText(token).trim();
       if (!trimmed || /^\d+$/.test(trimmed)) return { appId: trimmed, guestId: fallbackGuest };
       const extractedApp = extractAppIdFromInput(trimmed);
       if (!extractedApp) return { appId: trimmed, guestId: fallbackGuest };
@@ -15226,11 +15583,12 @@ ${body}`;
       return { appId: extractedApp, guestId };
     }
     function distributeAppTokens(entry) {
-      const raw = entry.app.value;
+      normalizeIdInputValue(entry.guest);
+      const raw = normalizeIdInputText(entry.app.value);
       const guestVal = entry.guest.value.trim();
       if (!/[,、，\s]/.test(raw)) {
         const parsed = parseAppToken(raw, guestVal);
-        if (parsed.appId !== raw || parsed.guestId !== guestVal) {
+        if (parsed.appId !== entry.app.value || parsed.guestId !== guestVal) {
           entry.app.value = parsed.appId;
           entry.guest.value = parsed.guestId;
           setAppName(entry, "");
@@ -15286,8 +15644,8 @@ ${body}`;
       const tdGuest = document.createElement("td");
       const tdAct = document.createElement("td");
       tdAct.className = "kus-lp__apptable-acts";
-      const app = makeInput({ placeholder: opts.appPlaceholder || "アプリID（カンマ区切りで複数可）", ariaLabel: "アプリID" });
-      const guest = makeInput({ placeholder: opts.guestPlaceholder || "空欄=通常スペース", ariaLabel: "ゲストスペースID" });
+      const app = makeInput({ placeholder: opts.appPlaceholder || "アプリID（カンマ区切りで複数可）", ariaLabel: "アプリID", idInput: true });
+      const guest = makeInput({ placeholder: opts.guestPlaceholder || "空欄=通常スペース", ariaLabel: "ゲストスペースID", idInput: true });
       app.value = appId;
       guest.value = guestId;
       const name = document.createElement("div");
@@ -15445,7 +15803,7 @@ ${body}`;
       first: () => {
         const r = rows[0];
         if (!r) return { appId: "", guestId: "" };
-        const row = { appId: r.app.value.trim(), guestId: r.guest.value.trim() };
+        const row = { appId: normalizeIdInputText(r.app.value).trim(), guestId: normalizeIdInputText(r.guest.value).trim() };
         if (r.appName) row.appName = r.appName;
         return row;
       },
@@ -16925,6 +17283,771 @@ ${fence}`;
 `;
   }
 
+  // src/design/html-assets.ts
+  var LIGHT_VARS = "--bg:#f1f5f9;--surface:#ffffff;--surface2:#f1f5f9;--surface3:#e2e8f0;--border:#e2e8f0;--border-strong:#cbd5e1;--text:#0f172a;--text2:#334155;--dim:#475569;--accent:#2563eb;--accent-strong:#1d4ed8;--accent-soft:#dbeafe;--on-accent:#ffffff;--ok-bg:#ecfdf5;--ok-fg:#065f46;--ok-bd:#a7f3d0;--err-bg:#fef2f2;--err-fg:#991b1b;--err-bd:#fecaca;--warn-bg:#fffbeb;--warn-fg:#92400e;--warn-bd:#fde68a;--info-bg:#eff6ff;--info-fg:#1e3a8a;--info-bd:#bfdbfe;--req:#b91c1c;--shadow-sm:0 1px 3px rgba(15,23,42,0.08);--shadow-md:0 12px 28px rgba(15,23,42,0.16);--focus:0 0 0 3px rgba(37,99,235,.35);--backdrop:rgba(15,23,42,0.35);";
+  var DARK_VARS = "color-scheme:dark;--bg:#0b1220;--surface:#111827;--surface2:#1e293b;--surface3:#273449;--border:#334155;--border-strong:#475569;--text:#e2e8f0;--text2:#cbd5e1;--dim:#a3b1c6;--accent:#60a5fa;--accent-strong:#93c5fd;--accent-soft:#1e3a5f;--on-accent:#0b1220;--ok-bg:#064e3b;--ok-fg:#a7f3d0;--ok-bd:#047857;--err-bg:#3f1012;--err-fg:#fecaca;--err-bd:#7f1d1d;--warn-bg:#3b2a07;--warn-fg:#fde68a;--warn-bd:#92400e;--info-bg:#172554;--info-fg:#bfdbfe;--info-bd:#1e40af;--req:#f87171;--shadow-sm:0 1px 3px rgba(0,0,0,0.4);--shadow-md:0 12px 28px rgba(0,0,0,0.45);--focus:0 0 0 3px rgba(96,165,250,.45);--backdrop:rgba(0,0,0,0.55);";
+  var DESIGN_HTML_CSS = [
+    "*,*::before,*::after{box-sizing:border-box;}",
+    `:root{color-scheme:light;${LIGHT_VARS}--font:"Noto Sans JP","Hiragino Kaku Gothic ProN","Yu Gothic UI",Meiryo,system-ui,sans-serif;--mono:'Cascadia Mono',Consolas,'Yu Gothic UI','Hiragino Sans',monospace;--topbar-h:58px;--toc-w:272px;}`,
+    `@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){${DARK_VARS}}}`,
+    `:root[data-theme="dark"]{${DARK_VARS}}`,
+    "html{scroll-behavior:smooth;-webkit-text-size-adjust:100%;}",
+    "body{margin:0;font-family:var(--font);font-size:13.5px;line-height:1.6;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;}",
+    "button,input{font:inherit;color:inherit;}",
+    "button{cursor:pointer;}",
+    "[hidden]{display:none !important;}",
+    "a{color:var(--accent-strong);}",
+    "button:focus-visible,input:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--accent);outline-offset:2px;box-shadow:var(--focus);}",
+    "code{font-family:var(--mono);font-size:.92em;padding:0 4px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text);overflow-wrap:anywhere;}",
+    ".skip{position:absolute;left:8px;top:-48px;z-index:400;padding:8px 12px;border-radius:8px;background:var(--surface);border:1px solid var(--accent);}",
+    ".skip:focus{top:8px;}",
+    ".sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}",
+    // 上部の操作バー
+    ".topbar{position:sticky;top:0;z-index:100;display:flex;align-items:center;gap:8px;min-height:var(--topbar-h);padding:8px 16px;background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap;}",
+    ".brand{display:flex;flex-direction:column;min-width:0;flex:1 1 260px;}",
+    ".brand-title{margin:0;font-size:14px;font-weight:800;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+    ".brand-title small{font-size:12px;font-weight:600;color:var(--dim);margin-left:6px;}",
+    ".brand-sub{font-size:11.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+    ".tb{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:34px;padding:6px 12px;border:1px solid var(--border-strong);border-radius:8px;background:var(--surface);color:var(--text);font-size:12.5px;font-weight:600;white-space:nowrap;flex:0 0 auto;}",
+    ".tb:hover{background:var(--surface2);border-color:var(--accent);}",
+    '.tb[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-strong);}',
+    ".search-wrap{position:relative;display:flex;align-items:center;gap:8px;flex:1 1 280px;min-width:200px;max-width:460px;}",
+    ".search-wrap input{width:100%;min-height:34px;padding:6px 10px 6px 30px;border:1px solid var(--border-strong);border-radius:8px;background:var(--surface);color:var(--text);font-size:12.5px;}",
+    ".search-wrap input::placeholder{color:var(--dim);}",
+    '.search-wrap::before{content:"";position:absolute;left:11px;top:50%;width:9px;height:9px;margin-top:-6px;border:2px solid var(--dim);border-radius:50%;pointer-events:none;}',
+    '.search-wrap::after{content:"";position:absolute;left:20px;top:50%;width:6px;height:2px;margin-top:3px;background:var(--dim);transform:rotate(45deg);pointer-events:none;}',
+    ".search-meta{flex:0 0 auto;font-size:11.5px;color:var(--dim);white-space:nowrap;font-variant-numeric:tabular-nums;text-decoration:none;}",
+    ".search-meta.is-active{color:var(--accent-strong);font-weight:700;}",
+    ".tb-actions{display:flex;align-items:center;gap:6px;margin-left:auto;}",
+    // 本体と目次
+    ".layout{display:grid;grid-template-columns:var(--toc-w) minmax(0,1fr);align-items:start;max-width:1600px;margin:0 auto;}",
+    ".toc{position:sticky;top:var(--topbar-h);max-height:calc(100vh - var(--topbar-h));overflow-y:auto;padding:16px 10px 24px 16px;}",
+    ".toc-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 4px 8px;}",
+    ".toc-title{margin:0;font-size:12px;font-weight:800;color:var(--dim);letter-spacing:.04em;}",
+    ".toc-close{display:none;}",
+    ".toc ol{list-style:none;margin:0;padding:0;}",
+    ".toc-group{margin:12px 4px 4px;font-size:11px;font-weight:800;color:var(--dim);}",
+    ".toc a{display:flex;align-items:center;gap:6px;min-height:32px;padding:4px 8px;border-radius:8px;color:var(--text2);text-decoration:none;font-size:12.5px;}",
+    ".toc a:hover{background:var(--surface);color:var(--text);}",
+    '.toc a[aria-current="true"]{background:var(--accent-soft);color:var(--accent-strong);font-weight:700;}',
+    ".toc-label{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
+    ".toc-count{flex:0 0 auto;font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums;}",
+    ".toc-backdrop{display:none;}",
+    "main{min-width:0;padding:20px 28px 48px;}",
+    // 見出し（文書の先頭）
+    ".doc-head{margin:0 0 16px;padding:20px 22px;background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-sm);}",
+    ".doc-kicker{margin:0;font-size:12px;font-weight:700;color:var(--dim);letter-spacing:.04em;}",
+    ".doc-title{margin:2px 0 12px;font-size:24px;font-weight:800;line-height:1.35;overflow-wrap:anywhere;}",
+    ".facts{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px 16px;margin:0;}",
+    ".fact{min-width:0;padding:8px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface2);}",
+    ".fact dt{font-size:11px;font-weight:700;color:var(--dim);}",
+    ".fact dd{margin:2px 0 0;font-weight:700;overflow-wrap:anywhere;}",
+    ".fact--wide{grid-column:1 / -1;}",
+    ".notice{margin:12px 0 0;padding:10px 12px;border-radius:10px;border:1px solid var(--border-strong);background:var(--surface2);overflow-wrap:anywhere;}",
+    ".notice--err{background:var(--err-bg);color:var(--err-fg);border-color:var(--err-bd);}",
+    ".notice--warn{background:var(--warn-bg);color:var(--warn-fg);border-color:var(--warn-bd);}",
+    ".notice--info{background:var(--info-bg);color:var(--info-fg);border-color:var(--info-bd);}",
+    ".notice ul{margin:6px 0 0;padding-left:20px;}",
+    ".notice a{color:inherit;font-weight:700;}",
+    // セクション
+    ".doc-section{margin:0 0 16px;padding:18px 20px;background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-sm);scroll-margin-top:calc(var(--topbar-h) + 12px);}",
+    ".sec-head{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;margin:0 0 10px;}",
+    ".sec-head h2{margin:0;font-size:18px;font-weight:800;line-height:1.35;}",
+    ".sec-key{font-family:var(--mono);font-size:11.5px;color:var(--dim);}",
+    ".doc-section h3{margin:16px 0 8px;font-size:14px;font-weight:800;overflow-wrap:anywhere;}",
+    ".doc-section p{margin:6px 0;}",
+    ".sec-note{color:var(--dim);}",
+    ".badge{display:inline-flex;align-items:center;gap:3px;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:700;line-height:18px;white-space:nowrap;border:1px solid var(--border-strong);background:var(--surface2);color:var(--dim);}",
+    ".badge--ok{background:var(--ok-bg);color:var(--ok-fg);border-color:var(--ok-bd);}",
+    ".badge--err{background:var(--err-bg);color:var(--err-fg);border-color:var(--err-bd);}",
+    ".badge--warn{background:var(--warn-bg);color:var(--warn-fg);border-color:var(--warn-bd);}",
+    ".badge--missing{border-style:dashed;}",
+    ".badge--req{background:var(--err-bg);color:var(--req);border-color:var(--err-bd);}",
+    // 表
+    ".table-wrap{margin:8px 0 4px;border:1px solid var(--border);border-radius:10px;overflow-x:auto;background:var(--surface);}",
+    "table.data-table{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px;}",
+    ".data-table th{background:var(--surface2);text-align:left;font-weight:700;color:var(--text2);border-bottom:1px solid var(--border-strong);padding:8px 10px;white-space:nowrap;}",
+    ".data-table td{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:top;overflow-wrap:anywhere;}",
+    ".data-table tbody tr:last-child td{border-bottom:0;}",
+    ".data-table tbody tr:hover td{background:var(--surface2);}",
+    ".data-table td.col-code{font-family:var(--mono);font-size:12px;white-space:nowrap;}",
+    ".data-table td.col-nowrap{white-space:nowrap;}",
+    ".data-table td.col-mark,.data-table th.col-mark{text-align:center;white-space:nowrap;width:1%;}",
+    ".data-table td.col-num,.data-table th.col-num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;}",
+    ".data-table tr.is-flash td{background:var(--accent-soft);}",
+    ".field-table td:nth-child(2){font-weight:700;}",
+    ".search-empty{margin:10px 0;padding:10px 12px;border:1px dashed var(--border-strong);border-radius:10px;color:var(--dim);}",
+    // 件数のタイル
+    ".tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin:4px 0;padding:0;}",
+    ".tile{padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface2);}",
+    ".tile dt{font-size:11.5px;color:var(--dim);font-weight:700;}",
+    ".tile dd{margin:2px 0 0;font-size:20px;font-weight:800;font-variant-numeric:tabular-nums;}",
+    ".points{margin:4px 0;padding-left:20px;}",
+    ".points li{margin:4px 0;}",
+    ".plain-list{margin:4px 0;padding-left:20px;}",
+    ".plain-list li{margin:3px 0;overflow-wrap:anywhere;}",
+    // レイアウト
+    ".lay{display:flex;flex-direction:column;gap:6px;margin:6px 0;}",
+    ".lay-row{display:flex;flex-wrap:wrap;gap:6px;align-items:stretch;}",
+    ".lay-cell{display:flex;flex-direction:column;gap:2px;min-width:120px;max-width:100%;padding:6px 9px;border:1px solid var(--border-strong);border-radius:8px;background:var(--surface);}",
+    ".lay-cell.w-m{min-width:180px;}",
+    ".lay-cell.w-l{min-width:260px;}",
+    ".lay-name{font-weight:700;overflow-wrap:anywhere;}",
+    ".lay-meta{display:flex;flex-wrap:wrap;gap:4px 8px;font-size:11px;color:var(--dim);}",
+    ".lay-cell--deco{border-style:dashed;background:transparent;color:var(--dim);}",
+    ".lay-empty{color:var(--dim);font-size:12px;padding:4px 0;}",
+    ".lay-box{padding:8px 10px;border:1px solid var(--border-strong);border-radius:10px;background:var(--surface2);}",
+    ".lay-box-title{margin:0 0 6px;font-weight:700;overflow-wrap:anywhere;}",
+    // 原文 JSON
+    "details.raw{margin:12px 0 0;border:1px solid var(--border);border-radius:10px;background:var(--surface2);}",
+    "details.raw summary{cursor:pointer;padding:8px 12px;font-size:12px;font-weight:700;color:var(--text2);}",
+    "details.raw pre{margin:0;padding:10px 12px;max-height:480px;overflow:auto;border-top:1px solid var(--border);font-family:var(--mono);font-size:11.5px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;}",
+    ".doc-foot{margin:24px 0 0;font-size:11.5px;color:var(--dim);}",
+    // 狭い画面: 目次は引き出し（スクリプトが動くときだけ。動かないときは本文の上に並べる）
+    "@media (max-width:1023px){",
+    ".layout{display:block;}",
+    ".toc{position:static;max-height:none;padding:12px 16px 0;}",
+    "html.js .toc{position:fixed;left:0;top:0;bottom:0;z-index:220;width:min(320px,88vw);max-height:none;padding:14px 12px 24px;background:var(--surface);border-right:1px solid var(--border-strong);box-shadow:var(--shadow-md);transform:translateX(-102%);visibility:hidden;transition:transform .2s,visibility .2s;}",
+    "html.js.toc-open .toc{transform:none;visibility:visible;}",
+    "html.js .toc-close{display:inline-flex;}",
+    "html.js.toc-open .toc-backdrop{display:block;position:fixed;inset:0;z-index:210;background:var(--backdrop);}",
+    "main{padding:16px 16px 40px;}",
+    "}",
+    "@media (min-width:1024px){#toc-toggle{display:none !important;}}",
+    "@media (max-width:760px){",
+    ":root{--topbar-h:96px;}",
+    ".brand{flex:1 1 0;}",
+    ".search-wrap{order:5;flex:1 1 100%;max-width:none;}",
+    ".tb-actions .tb-label{display:none;}",
+    "}",
+    "@media (max-width:640px){",
+    "body{font-size:13px;}",
+    ".topbar{padding:6px 10px;gap:6px;}",
+    ".brand-sub{display:none;}",
+    "main{padding:12px 10px 32px;}",
+    ".doc-head,.doc-section{padding:14px 12px;border-radius:12px;}",
+    ".doc-title{font-size:20px;}",
+    ".facts{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;}",
+    ".fact{padding:6px 8px;}",
+    ".brand-title{font-size:13px;}",
+    ".brand-title small{display:block;margin-left:0;overflow:hidden;text-overflow:ellipsis;}",
+    // 表は 1 行を 1 枚のカードにして、列名を各値の前に出す（ER図の表と同じ）
+    ".data-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);}",
+    ".data-table,.data-table tbody,.data-table tr,.data-table td{display:block;width:100%;}",
+    ".data-table tr{padding:8px 10px;border-bottom:1px solid var(--border-strong);}",
+    ".data-table tbody tr:last-child{border-bottom:0;}",
+    ".data-table td{display:grid;grid-template-columns:92px minmax(0,1fr);gap:8px;padding:3px 0;border-bottom:0;text-align:left !important;white-space:normal !important;}",
+    ".data-table td::before{content:attr(data-label);font-size:11px;font-weight:700;color:var(--dim);}",
+    ".data-table td:empty{display:none;}",
+    ".data-table td > .badge{justify-self:start;}",
+    ".data-table td.col-mark,.data-table td.col-num{width:100%;}",
+    ".data-table tbody tr:hover td{background:transparent;}",
+    ".table-wrap{overflow-x:visible;}",
+    ".lay-cell,.lay-cell.w-m,.lay-cell.w-l{min-width:0;flex:1 1 140px;}",
+    "}",
+    "@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto;}*,*::before,*::after{transition-duration:.01ms !important;}}",
+    // 絞り込みは画面だけに効かせる（印刷は全件を出す）
+    "@media screen{.is-filtered,.print-only{display:none !important;}}",
+    // 印刷: 操作の部品と目次を出さず、先頭の見出しと各セクションの資料にする
+    "@media print{",
+    `:root,:root[data-theme="dark"]{color-scheme:light;${LIGHT_VARS}}`,
+    "html{scroll-behavior:auto;}",
+    "body{background:#ffffff;color:#0f172a;font-size:9.5pt;}",
+    ".topbar,.toc,.toc-backdrop,.skip,details.raw,.search-empty,.no-print{display:none !important;}",
+    ".layout{display:block;max-width:none;}",
+    "main{padding:0;}",
+    ".doc-head,.doc-section{box-shadow:none;border:0;border-radius:0;padding:0;margin:0 0 12pt;background:transparent;}",
+    ".doc-section{break-before:auto;}",
+    ".doc-head{padding-bottom:8pt;border-bottom:1.5pt solid #0f172a;}",
+    ".doc-title{font-size:18pt;margin:2pt 0 8pt;}",
+    ".facts{grid-template-columns:repeat(3,minmax(0,1fr));gap:4pt 10pt;}",
+    ".fact{padding:3pt 6pt;background:transparent;border-color:#cbd5e1;break-inside:avoid;}",
+    ".sec-head{break-after:avoid;padding-bottom:3pt;border-bottom:1pt solid #cbd5e1;}",
+    ".sec-head h2{font-size:13pt;}",
+    ".doc-section h3{font-size:10.5pt;break-after:avoid;}",
+    ".table-wrap{overflow:visible;border-color:#cbd5e1;border-radius:0;}",
+    "table.data-table{font-size:8.5pt;}",
+    ".data-table thead{display:table-header-group;}",
+    ".data-table tr{break-inside:avoid;}",
+    ".data-table th{background:#f1f5f9;}",
+    ".data-table th,.data-table td{border:0.5pt solid #cbd5e1;padding:2pt 4pt;}",
+    ".tiles{grid-template-columns:repeat(6,minmax(0,1fr));}",
+    ".tile{padding:3pt 6pt;background:transparent;}",
+    ".tile dd{font-size:12pt;}",
+    ".lay-cell,.lay-box{break-inside:avoid;background:transparent;}",
+    "code{background:transparent;border-color:#cbd5e1;}",
+    "a{color:inherit;text-decoration:none;}",
+    "}"
+  ].join("\n");
+  var DESIGN_HTML_SCRIPT = [
+    "(function () {",
+    "  'use strict';",
+    "  var doc = document;",
+    "  var root = doc.documentElement;",
+    "  root.classList.add('js');",
+    "  Array.prototype.forEach.call(doc.querySelectorAll('[data-js-only]'), function (el) { el.hidden = false; });",
+    "  function byId(id) { return doc.getElementById(id); }",
+    "  function pad(n) { return (n < 10 ? '0' : '') + n; }",
+    "  function nowText() { var d = new Date(); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); }",
+    // 配色: 開いたときは OS の設定に従う。切り替えはこの画面を開いている間だけ（保存しない）
+    "  var themeBtn = byId('theme-btn');",
+    "  var media = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;",
+    "  function isDark() { var t = root.getAttribute('data-theme'); if (t) return t === 'dark'; return !!(media && media.matches); }",
+    "  function syncTheme() {",
+    "    if (!themeBtn) return;",
+    "    var dark = isDark();",
+    "    themeBtn.setAttribute('aria-pressed', String(dark));",
+    "    themeBtn.setAttribute('aria-label', dark ? '明るい配色に切り替える' : '暗い配色に切り替える');",
+    "    var label = themeBtn.querySelector('.tb-label');",
+    "    if (label) label.textContent = dark ? '明るい配色' : '暗い配色';",
+    "  }",
+    "  if (themeBtn) themeBtn.addEventListener('click', function () { root.setAttribute('data-theme', isDark() ? 'light' : 'dark'); syncTheme(); });",
+    "  if (media && media.addEventListener) media.addEventListener('change', syncTheme);",
+    "  syncTheme();",
+    // 印刷: 印刷日時を見出しに入れる
+    "  var printBtn = byId('print-btn');",
+    "  if (printBtn) printBtn.addEventListener('click', function () { window.print(); });",
+    "  window.addEventListener('beforeprint', function () {",
+    "    var at = byId('printed-at');",
+    "    if (at) { at.textContent = nowText(); var fact = at.closest('.fact'); if (fact) fact.hidden = false; }",
+    "  });",
+    // 目次の引き出し（狭い画面）
+    "  var toc = byId('toc');",
+    "  var tocBtn = byId('toc-toggle');",
+    "  var tocClose = byId('toc-close');",
+    "  var backdrop = byId('toc-backdrop');",
+    "  var narrow = window.matchMedia ? window.matchMedia('(max-width: 1023px)') : null;",
+    "  function tocOpen() { return root.classList.contains('toc-open'); }",
+    "  function setToc(open, returnFocus) {",
+    "    root.classList.toggle('toc-open', open);",
+    "    if (tocBtn) tocBtn.setAttribute('aria-expanded', String(open));",
+    "    if (open) { var first = toc && toc.querySelector('a'); if (first) first.focus(); }",
+    "    else if (returnFocus && tocBtn) tocBtn.focus();",
+    "  }",
+    "  if (tocBtn) tocBtn.addEventListener('click', function () { setToc(!tocOpen(), true); });",
+    "  if (tocClose) tocClose.addEventListener('click', function () { setToc(false, true); });",
+    "  if (backdrop) backdrop.addEventListener('click', function () { setToc(false, true); });",
+    "  if (toc) toc.addEventListener('click', function (event) {",
+    "    var link = event.target && event.target.closest ? event.target.closest('a') : null;",
+    "    if (link && narrow && narrow.matches) setToc(false, false);",
+    "  });",
+    "  doc.addEventListener('keydown', function (event) { if (event.key === 'Escape' && tocOpen()) { event.preventDefault(); setToc(false, true); } });",
+    "  if (narrow && narrow.addEventListener) narrow.addEventListener('change', function () { if (!narrow.matches && tocOpen()) setToc(false, false); });",
+    // いま読んでいるセクションを目次で示す
+    `  var links = toc ? Array.prototype.slice.call(toc.querySelectorAll('a[href^="#"]')) : [];`,
+    "  var linkById = {};",
+    "  links.forEach(function (a) { linkById[a.getAttribute('href').slice(1)] = a; });",
+    "  var targets = links.map(function (a) { return byId(a.getAttribute('href').slice(1)); }).filter(Boolean);",
+    // 上部の操作バーの少し下を見出しが越えた、最後のセクションを「いま読んでいる」とする
+    "  var currentId = null;",
+    "  var scheduled = false;",
+    "  function markCurrent() {",
+    "    scheduled = false;",
+    "    var bar = doc.querySelector('.topbar');",
+    "    var line = (bar ? bar.getBoundingClientRect().bottom : 0) + 96;",
+    "    var current = targets.length ? targets[0].id : null;",
+    "    for (var i = 0; i < targets.length; i += 1) { if (targets[i].getBoundingClientRect().top <= line) current = targets[i].id; else break; }",
+    "    if (window.innerHeight + window.scrollY >= doc.documentElement.scrollHeight - 2 && targets.length) current = targets[targets.length - 1].id;",
+    "    if (current === currentId) return;",
+    "    currentId = current;",
+    "    links.forEach(function (a) { if (a === linkById[current]) a.setAttribute('aria-current', 'true'); else a.removeAttribute('aria-current'); });",
+    "  }",
+    "  if (targets.length) {",
+    "    window.addEventListener('scroll', function () { if (!scheduled) { scheduled = true; window.requestAnimationFrame(markCurrent); } }, { passive: true });",
+    "    window.addEventListener('resize', markCurrent);",
+    "    markCurrent();",
+    "  }",
+    // フィールドの絞り込み（フィールド名・コード。全角・半角と大文字・小文字を区別しない）
+    "  var input = byId('field-search');",
+    "  var meta = byId('field-search-meta');",
+    "  var empty = byId('field-search-empty');",
+    "  var rows = Array.prototype.slice.call(doc.querySelectorAll('tr[data-search]'));",
+    "  var blocks = Array.prototype.slice.call(doc.querySelectorAll('[data-search-block]'));",
+    "  function norm(text) { text = String(text || ''); try { text = text.normalize('NFKC'); } catch (e) { /* 古いブラウザ */ } return text.toLowerCase(); }",
+    "  function applySearch() {",
+    "    if (!input) return;",
+    "    var terms = norm(input.value).split(/\\s+/).filter(Boolean);",
+    "    var shown = 0;",
+    "    rows.forEach(function (tr) {",
+    "      var hay = tr.getAttribute('data-search') || '';",
+    "      var hit = terms.every(function (term) { return hay.indexOf(term) >= 0; });",
+    "      tr.classList.toggle('is-filtered', !hit);",
+    "      if (hit) shown += 1;",
+    "    });",
+    "    blocks.forEach(function (block) { block.classList.toggle('is-filtered', terms.length > 0 && !block.querySelector('tr[data-search]:not(.is-filtered)')); });",
+    "    if (meta) {",
+    "      meta.textContent = terms.length ? ('一致 ' + shown + ' / ' + rows.length + ' 件') : (rows.length + ' 件');",
+    "      meta.classList.toggle('is-active', terms.length > 0);",
+    "    }",
+    "    if (empty) empty.hidden = !(terms.length && shown === 0);",
+    "  }",
+    "  if (input) {",
+    "    input.addEventListener('input', applySearch);",
+    "    input.addEventListener('keydown', function (event) {",
+    "      if (event.key === 'Escape' && input.value) { event.preventDefault(); input.value = ''; applySearch(); }",
+    "      else if (event.key === 'Enter') {",
+    "        event.preventDefault();",
+    "        var first = doc.querySelector('tr[data-search]:not(.is-filtered)');",
+    "        if (first) { first.scrollIntoView({ block: 'center' }); first.classList.add('is-flash'); setTimeout(function () { first.classList.remove('is-flash'); }, 1200); }",
+    "      }",
+    "    });",
+    "    applySearch();",
+    "  }",
+    "})();"
+  ].join("\n");
+
+  // src/design/html.ts
+  var TrustedMarkup = class {
+    constructor(html) {
+      __publicField(this, "html");
+      this.html = html;
+    }
+  };
+  function textHtml(value) {
+    return esc(decodeHtmlEntities(value)).replace(/\r\n|\r|\n/g, "<br>");
+  }
+  function oneLine(value) {
+    return decodeHtmlEntities(value).replace(/\s*[\r\n]+\s*/g, " ").trim();
+  }
+  function cellHtml(cell) {
+    if (cell instanceof TrustedMarkup) return cell.html;
+    if (isRichText(cell)) {
+      return cell.parts.map((part) => typeof part === "string" ? textHtml(part) : `<code>${textHtml(part.code)}</code>`).join("");
+    }
+    return textHtml(cell);
+  }
+  function normalizeDesignSearchText(value) {
+    let text = String(value ?? "");
+    try {
+      text = text.normalize("NFKC");
+    } catch {
+    }
+    return text.toLowerCase();
+  }
+  var MARK_HEADERS = /* @__PURE__ */ new Set(["必須", "重複禁止", "アプリ管理", "閲覧", "追加", "編集", "削除", "読込", "書出", "レコード追加", "レコード編集", "コメント", "ステータス変更", "ファイル取込"]);
+  var NUM_HEADERS = /* @__PURE__ */ new Set(["表示順", "件数", "マッピング数"]);
+  var CODE_HEADERS = /* @__PURE__ */ new Set(["コード", "プラグインID", "キー"]);
+  var NOWRAP_HEADERS = /* @__PURE__ */ new Set(["種別", "状態", "チャート", "モード"]);
+  function tableHtml(table, options = {}) {
+    if (!table || !table.rows || table.rows.length === 0) return "";
+    const columnClass = table.headers.map((header) => MARK_HEADERS.has(header) ? "col-mark" : NUM_HEADERS.has(header) ? "col-num" : CODE_HEADERS.has(header) ? "col-code" : NOWRAP_HEADERS.has(header) ? "col-nowrap" : "");
+    const head = table.headers.map((header, index) => `<th scope="col"${columnClass[index] === "col-mark" || columnClass[index] === "col-num" ? ` class="${columnClass[index]}"` : ""}>${esc(header)}</th>`).join("");
+    const body = table.rows.map((row) => {
+      if (!Array.isArray(row)) return "";
+      const cells = row.map((cell, index) => {
+        const html = cellHtml(cell);
+        return `<td data-label="${esc(table.headers[index] ?? "")}"${columnClass[index] ? ` class="${columnClass[index]}"` : ""}>${html}</td>`;
+      }).join("");
+      return `<tr${options.rowAttributes ? options.rowAttributes(row) : ""}>${cells}</tr>`;
+    }).join("");
+    return `<div class="table-wrap"${options.searchBlock ? " data-search-block" : ""}><table class="data-table${options.className ? ` ${options.className}` : ""}"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+  }
+  var fieldRowAttributes = (row) => ` data-search="${esc(normalizeDesignSearchText(`${String(row[0] ?? "")} ${String(row[1] ?? "")}`))}"`;
+  function lead(label, value) {
+    return `<p class="sec-lead"><b>${esc(label)}</b>: ${value}</p>`;
+  }
+  function onOff(value) {
+    return `<span class="badge${value ? " badge--ok" : ""}">${value ? "有効" : "無効"}</span>`;
+  }
+  function ownLabel(map, code) {
+    const key = String(code ?? "");
+    if (!map || typeof map !== "object" || !Object.prototype.hasOwnProperty.call(map, key)) return "";
+    const field = map[key];
+    return field && typeof field === "object" ? oneLine(stripHtmlToText(field.label || "")) : "";
+  }
+  function fieldLabelOf(sections, code) {
+    const properties = sections?.fieldSettings?.properties;
+    const top = ownLabel(properties, code);
+    if (top) return top;
+    if (!properties || typeof properties !== "object") return "";
+    for (const field of Object.values(properties)) {
+      if (field?.type === "SUBTABLE") {
+        const child = ownLabel(field.fields, code);
+        if (child) return child;
+      }
+    }
+    return "";
+  }
+  function renderFields(sec, _sections, ctx) {
+    const tables = designFieldTables(sec, ctx);
+    const subtableFieldCount = tables.subtables.reduce((sum, item) => sum + item.table.rows.length, 0);
+    const parts = [];
+    parts.push(lead("フィールド数", `${tables.fields.rows.length}${subtableFieldCount ? `（テーブル内フィールド数: ${subtableFieldCount}）` : ""}`));
+    parts.push(tableHtml(tables.fields, { className: "field-table", rowAttributes: fieldRowAttributes, searchBlock: true }));
+    tables.subtables.forEach((item) => {
+      const label = oneLine(item.label);
+      parts.push(`<div class="subtable" data-search-block><h3>テーブル: <code>${textHtml(item.code)}</code>${label ? ` — ${esc(label)}` : ""}</h3>`);
+      parts.push(tableHtml(item.table, { className: "field-table", rowAttributes: fieldRowAttributes }));
+      parts.push("</div>");
+    });
+    parts.push('<p class="search-empty" id="field-search-empty" hidden>一致するフィールドはありません。フィールド名・コードの一部で絞り込めます。</p>');
+    return parts.join("");
+  }
+  function widthClass(width) {
+    const value = Number.parseFloat(String(width ?? ""));
+    if (!Number.isFinite(value)) return "";
+    return value >= 280 ? " w-l" : value >= 150 ? " w-m" : "";
+  }
+  function layoutCellHtml(cell, fields) {
+    if (!cell || typeof cell !== "object") return "";
+    if (cell.type === "LABEL") {
+      return `<div class="lay-cell lay-cell--deco${widthClass(cell.size?.width)}"><span class="lay-name">[ラベル]${esc(oneLine(stripHtmlToText(cell.label || "")))}</span></div>`;
+    }
+    if (cell.type === "SPACER") return `<div class="lay-cell lay-cell--deco"><span class="lay-name">[スペース${cell.elementId ? `:${esc(oneLine(cell.elementId))}` : ""}]</span></div>`;
+    if (cell.type === "HR") return '<div class="lay-cell lay-cell--deco"><span class="lay-name">[罫線]</span></div>';
+    const code = String(cell.code ?? "");
+    const field = fields && typeof fields === "object" && Object.prototype.hasOwnProperty.call(fields, code) ? fields[code] : null;
+    const name = field ? oneLine(stripHtmlToText(field.label || "")) : "";
+    const type = designFieldTypeLabel(field?.type || cell.type);
+    const width = cell.size?.width;
+    const meta = [
+      `<code>${textHtml(code)}</code>`,
+      type ? `<span>${esc(type)}</span>` : "",
+      width != null && width !== "" ? `<span>幅 ${esc(String(width))}</span>` : "",
+      field?.required ? '<span class="badge badge--req">必須</span>' : ""
+    ].filter(Boolean).join("");
+    return `<div class="lay-cell${widthClass(width)}"><span class="lay-name">${esc(name || code || "（コードなし）")}</span><span class="lay-meta">${meta}</span></div>`;
+  }
+  function layoutItemHtml(item, fields, depth) {
+    if (!item || typeof item !== "object" || depth > 20) return "";
+    if (item.type === "ROW") {
+      const cells = (Array.isArray(item.fields) ? item.fields : []).map((cell) => layoutCellHtml(cell, fields)).join("");
+      return `<div class="lay-row">${cells || '<span class="lay-empty">（空）</span>'}</div>`;
+    }
+    if (item.type === "SUBTABLE") {
+      const code = String(item.code ?? "");
+      const table = fields && typeof fields === "object" && Object.prototype.hasOwnProperty.call(fields, code) ? fields[code] : null;
+      const label = table ? oneLine(stripHtmlToText(table.label || "")) : "";
+      const columns = (Array.isArray(item.fields) ? item.fields : []).map((cell) => layoutCellHtml(cell, table?.fields || {})).join("");
+      return `<div class="lay-box"><p class="lay-box-title">テーブル: <code>${textHtml(code)}</code>${label ? ` — ${esc(label)}` : ""}</p>${columns ? `<div class="lay-row">${columns}</div>` : ""}</div>`;
+    }
+    if (item.type === "GROUP") {
+      const code = String(item.code ?? "");
+      const label = oneLine(stripHtmlToText(item.label || (fields && typeof fields === "object" && Object.prototype.hasOwnProperty.call(fields, code) ? fields[code]?.label : "") || ""));
+      const children = (Array.isArray(item.layout) ? item.layout : []).map((child) => layoutItemHtml(child, fields, depth + 1)).join("");
+      return `<div class="lay-box"><p class="lay-box-title">グループ: <code>${textHtml(code)}</code>${label ? ` — ${esc(label)}` : ""}</p>${children ? `<div class="lay">${children}</div>` : ""}</div>`;
+    }
+    return "";
+  }
+  function renderLayout(sec, sections) {
+    const layout = sec?.layout || [];
+    if (!Array.isArray(layout)) throw new TypeError("レイアウトが配列ではありません");
+    const fields = sections?.fieldSettings?.properties || {};
+    const items = layout.map((item) => layoutItemHtml(item, fields, 0)).join("");
+    return items ? `<div class="lay">${items}</div>` : "";
+  }
+  function renderProcess(sec) {
+    const tables = designProcessTables(sec);
+    const parts = [lead("プロセス管理", onOff(tables.enabled))];
+    if (tables.states) parts.push("<h3>ステータス</h3>", tableHtml(tables.states));
+    if (tables.actions) parts.push("<h3>アクション</h3>", tableHtml(tables.actions));
+    return parts.join("");
+  }
+  function renderCustomize(sec) {
+    const data = designCustomizeAreas(sec);
+    const parts = [lead("適用範囲（スコープ）", textHtml(data.scopeLabel))];
+    data.areas.forEach((area) => {
+      parts.push(`<h3>${esc(area.label)}</h3>`);
+      area.kinds.forEach((kind) => {
+        parts.push(`<p><b>${esc(kind.label)}</b></p><ul class="plain-list">`);
+        kind.items.forEach((item) => {
+          parts.push(`<li><b>${textHtml(item.typeLabel || "(種別不明)")}</b>: ${textHtml(oneLine(item.src))}</li>`);
+        });
+        parts.push("</ul>");
+      });
+    });
+    return parts.join("");
+  }
+  function renderFieldAcl(sec, sections) {
+    return designFieldAclTables(sec).map((item) => {
+      const label = fieldLabelOf(sections, item.code);
+      return `<h3><code>${textHtml(item.code)}</code>${label ? ` — ${esc(label)}` : ""}</h3>${tableHtml(item.table)}`;
+    }).join("");
+  }
+  function renderRecordPermissions(sec) {
+    return designRecordPermissionTables(sec).map((item) => `<h3>条件 ${item.index + 1}${item.filterCond ? `: <code>${textHtml(oneLine(item.filterCond))}</code>` : ""}</h3>${tableHtml(item.table)}`).join("");
+  }
+  function renderNotifications(sec) {
+    const data = designNotificationTable(sec);
+    return `${data.notifyToCommenter != null ? lead("コメント投稿者へ通知", onOff(data.notifyToCommenter)) : ""}${tableHtml(data.table)}`;
+  }
+  function renderReminders(sec) {
+    const data = designReminderNotificationTable(sec);
+    return `${data.timezone ? lead("タイムゾーン", esc(oneLine(data.timezone))) : ""}${tableHtml(data.table)}`;
+  }
+  function renderCategories(sec) {
+    const data = designCategoryTable(sec);
+    return `${lead("カテゴリー機能", onOff(data.enabled))}${tableHtml(data.table)}`;
+  }
+  var DESIGN_HTML_SECTION_RENDERERS = {
+    appSettings: (sec) => tableHtml(designAppSettingsTable(sec)),
+    fieldSettings: renderFields,
+    layoutSettings: renderLayout,
+    viewSettings: (sec) => tableHtml(designViewTable(sec)),
+    reportSettings: (sec) => tableHtml(designReportTable(sec)),
+    processSettings: renderProcess,
+    pluginSettings: (sec) => tableHtml(designPluginTable(sec)),
+    customizeSettings: renderCustomize,
+    actionSettings: (sec, _sections, ctx) => tableHtml(designActionTable(sec, ctx)),
+    appAcl: (sec) => tableHtml(designAppAclTable(sec)),
+    fieldAcl: renderFieldAcl,
+    recordPermissions: renderRecordPermissions,
+    notifications: renderNotifications,
+    perRecordNotifications: (sec) => tableHtml(designPerRecordNotificationTable(sec)),
+    reminderNotifications: renderReminders,
+    categories: renderCategories
+  };
+  var TOC_GROUPS = [
+    { label: "基本", keys: ["appSettings", "appInfo", "fieldSettings", "layoutSettings", "formSettings", "viewSettings", "reportSettings"] },
+    { label: "プロセス", keys: ["processSettings"] },
+    { label: "カスタマイズ・連携", keys: ["pluginSettings", "customizeSettings", "actionSettings"] },
+    { label: "権限", keys: ["appAcl", "fieldAcl", "recordPermissions"] },
+    { label: "通知", keys: ["notifications", "perRecordNotifications", "reminderNotifications"] },
+    { label: "その他", keys: ["categories"] }
+  ];
+  function statusBadge(row) {
+    if (!row) return "";
+    const label = designSnapshotStatusLabel(row.status);
+    const tone = row.status === "fetch-error" ? " badge--err" : row.status === "partial" ? " badge--warn" : row.status === "missing" ? " badge--missing" : row.status === "available" ? " badge--ok" : "";
+    return `<span class="badge${tone}" data-status="${esc(row.status)}">${esc(label)}</span>`;
+  }
+  function countBadge(row) {
+    if (!row) return "";
+    if (row.status === "available") return row.count == null ? "" : `<span class="badge">${esc(String(row.count))}件</span>`;
+    return statusBadge(row);
+  }
+  function cssString(value) {
+    let out = '"';
+    for (const ch of value) out += /[0-9A-Za-z]/.test(ch) ? ch : `\\${(ch.codePointAt(0) || 63).toString(16)} `;
+    return `${out}"`;
+  }
+  function truncate(value, max) {
+    const chars = Array.from(value);
+    return chars.length > max ? `${chars.slice(0, max - 1).join("")}…` : value;
+  }
+  function readableTime(date) {
+    const two = (n) => String(n).padStart(2, "0");
+    return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}`;
+  }
+  function rawJsonHtml(sec) {
+    let body = "";
+    try {
+      body = JSON.stringify(sec, null, 2);
+    } catch {
+      body = String(sec);
+    }
+    if (body == null) body = String(sec);
+    return `<details class="raw"><summary>APIレスポンス（生データ）</summary><pre>${esc(body)}</pre></details>`;
+  }
+  function sectionHtml(def, sec, sections, ctx, row) {
+    const renderer = DESIGN_HTML_SECTION_RENDERERS[def.key];
+    const plan = designSectionPlan(sec, row, hasDesignSectionRenderer(def.key));
+    const parts = [];
+    parts.push(`<section class="doc-section" id="sec-${def.key}" aria-labelledby="h-${def.key}">`);
+    parts.push(`<div class="sec-head"><h2 id="h-${def.key}">${esc(def.label)}</h2>${countBadge(row)}<span class="sec-key">${esc(def.key)}</span></div>`);
+    if (plan.fetchError !== null) {
+      parts.push(`<div class="notice notice--err" role="note">⚠ 取得できませんでした: ${esc(oneLine(withoutApiContextLines(plan.fetchError)))}</div>`);
+      if (plan.mode === "none") {
+        parts.push("</section>");
+        return parts.join("");
+      }
+    }
+    const render = () => {
+      if (!renderer) return "";
+      try {
+        return renderer(sec, sections, ctx) || "";
+      } catch {
+        return "";
+      }
+    };
+    if (plan.mode === "fetch-error") {
+      parts.push(`<p class="sec-note">（取得失敗: ${esc(oneLine(plan.detail))}）</p>`);
+    } else if (plan.mode === "partial") {
+      parts.push(`<div class="notice notice--warn" role="note">（部分取得: ${textHtml(plan.detail)}）</div>`);
+      parts.push(render());
+    } else if (plan.mode === "empty") {
+      parts.push('<p class="sec-note">（設定コレクションは空です）</p>');
+    } else if (plan.mode === "unsupported") {
+      parts.push('<p class="sec-note">（整形表示は未対応です。設定データは下の原文を参照してください）</p>');
+    } else {
+      const rendered = render();
+      parts.push(rendered.trim() ? rendered : '<p class="sec-note">（整形表示できる項目はありません。設定データは下の原文を参照してください）</p>');
+    }
+    parts.push(rawJsonHtml(sec));
+    parts.push("</section>");
+    return parts.join("");
+  }
+  function reasonOf(row) {
+    const first = withoutApiContextLines(row.detail).split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "";
+    return first.replace(/^取得失敗:\s*/, "");
+  }
+  function cspFor(css, script) {
+    return [
+      "default-src 'none'",
+      script === null ? "script-src 'none'" : `script-src 'sha256-${sha256Base64(script)}'`,
+      `style-src 'sha256-${sha256Base64(css)}'`,
+      "img-src 'none'",
+      "font-src 'none'",
+      "connect-src 'none'",
+      "object-src 'none'",
+      "base-uri 'none'",
+      "form-action 'none'",
+      "frame-src 'none'",
+      "require-trusted-types-for 'script'"
+    ].join("; ");
+  }
+  var BATCH_DESIGN_OVERVIEW_HEADERS = ["アプリID", "アプリ名", "ゲストスペース", "取得元", "状態", "出力ファイル", "備考・エラー"];
+  function buildBatchDesignHtmlOverview(model) {
+    const css = DESIGN_HTML_CSS;
+    const rows = model.rows.map((row) => {
+      const files = row.files.map((file) => `<a href="${esc(encodeURIComponent(file))}">${esc(file)}</a>`).join("<br>");
+      const status = `<span class="badge${!row.ok ? " badge--err" : row.status === "成功" ? " badge--ok" : " badge--warn"}">${esc(row.status)}</span>`;
+      const cells = [esc(row.appId), esc(oneLine(row.appName)), esc(row.guest), esc(row.source), status, files, esc(oneLine(row.remarks))];
+      return `<tr>${cells.map((cell, index) => `<td data-label="${esc(BATCH_DESIGN_OVERVIEW_HEADERS[index])}"${index === 0 ? ' class="col-code"' : ""}>${cell}</td>`).join("")}</tr>`;
+    }).join("");
+    const table = `<div class="table-wrap"><table class="data-table"><thead><tr>${BATCH_DESIGN_OVERVIEW_HEADERS.map((header) => `<th scope="col">${esc(header)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>`;
+    const facts = model.facts.map(([label, value]) => `<div class="fact"><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join("");
+    const notes = model.notes.length ? `<div class="notice notice--warn" role="note"><ul>${model.notes.map((note) => `<li>${esc(note)}</li>`).join("")}</ul></div>` : "";
+    return `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="${cspFor(css, null)}">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<meta name="generator" content="${esc(`${TOOL_NAME} ${TOOL_VERSION}`)}">
+<title>設計書 HTML 一括出力サマリ</title>
+<style>${css}</style>
+</head>
+<body>
+<main id="main">
+<header class="doc-head"><p class="doc-kicker">kintone 設計書</p><h1 class="doc-title">設計書 HTML 一括出力サマリ</h1><dl class="facts">${facts}</dl>${notes}</header>
+<section class="doc-section" aria-labelledby="h-apps"><div class="sec-head"><h2 id="h-apps">アプリ一覧</h2></div><p class="sec-note">アプリごとの設計書は、この ZIP の中の HTML ファイルです。ZIP を展開してから開いてください。</p>${table}</section>
+<footer class="doc-foot">${esc(TOOL_NAME)} ${esc(TOOL_VERSION)} で作成しました。この HTML は通信せずにブラウザだけで読めます。</footer>
+</main>
+</body>
+</html>
+`;
+  }
+  function buildDesignHtml(inputBundle, options = {}) {
+    const bundle = stripSensitiveSupplements(inputBundle).bundle;
+    const sections = bundle?.sections || {};
+    const ctx = { appNames: options.appNames || {}, guestId: String(bundle?.guestId ?? "") };
+    const snapshot = buildDesignSnapshot(bundle);
+    const rowByKey = new Map(snapshot.sections.map((row) => [row.key, row]));
+    const info = designDocumentInfo(bundle);
+    const appId = String(bundle?.appId ?? "").trim();
+    const appName = oneLine(info.appName);
+    const generatedAt = options.generatedAt instanceof Date && !Number.isNaN(options.generatedAt.getTime()) ? options.generatedAt : /* @__PURE__ */ new Date();
+    const knownKeys = new Set(SECTION_DEFS.map((def) => def.key));
+    const knownRows = snapshot.sections.filter((row) => knownKeys.has(row.key));
+    const incompleteRows = knownRows.filter((row) => row.status === "fetch-error" || row.status === "partial" || row.status === "missing");
+    const countOf = (status) => knownRows.filter((row) => row.status === status).length;
+    const shown = SECTION_DEFS.filter((def) => Object.prototype.hasOwnProperty.call(sections, def.key) && sections[def.key] != null);
+    const shownKeys = new Set(shown.map((def) => def.key));
+    const fieldRowCount = (() => {
+      if (!shownKeys.has("fieldSettings")) return 0;
+      try {
+        const tables = designFieldTables(sections.fieldSettings, ctx);
+        return tables.fields.rows.length + tables.subtables.reduce((sum, item) => sum + item.table.rows.length, 0);
+      } catch {
+        return 0;
+      }
+    })();
+    const acquisitionParts = [
+      countOf("fetch-error") ? `取得失敗 ${countOf("fetch-error")}` : "",
+      countOf("partial") ? `部分取得 ${countOf("partial")}` : "",
+      countOf("missing") ? `未取得 ${countOf("missing")}` : ""
+    ].filter(Boolean);
+    const acquisition = acquisitionParts.length ? `<span class="badge ${countOf("fetch-error") ? "badge--err" : "badge--warn"}">基本設定${SECTION_DEFS.length}種：未完了</span> ${esc(acquisitionParts.join("・"))}` : `<span class="badge badge--ok">基本設定${SECTION_DEFS.length}種：完了</span>`;
+    const facts = [];
+    for (const [label, value] of info.table.rows) {
+      if (label === "アプリ名" || label === "取得できなかったセクション") continue;
+      facts.push(`<div class="fact"><dt>${esc(label)}</dt><dd>${textHtml(value)}</dd></div>`);
+    }
+    facts.push(`<div class="fact"><dt>取得状態</dt><dd>${acquisition}</dd></div>`);
+    if (options.source) facts.push(`<div class="fact"><dt>取得元</dt><dd>${options.source === "settings-json" ? "読み込んだ設定JSON" : "アプリから取得"}</dd></div>`);
+    facts.push(`<div class="fact"><dt>作成日時</dt><dd>${esc(readableTime(generatedAt))}</dd></div>`);
+    facts.push('<div class="fact print-only" hidden><dt>印刷日時</dt><dd id="printed-at"></dd></div>');
+    facts.push(`<div class="fact fact--wide"><dt>取得できなかったセクション</dt><dd>${info.failedSectionLabels.length ? esc(info.failedSectionLabels.join("、")) : "なし"}</dd></div>`);
+    const incompleteNotice = incompleteRows.length ? `<div class="notice ${countOf("fetch-error") ? "notice--err" : "notice--warn"}" role="note"><b>取得できていない設定があります（${esc(acquisitionParts.join("・"))}）。</b>取得できていない設定の値は、0件や無効を意味しません。<ul>${incompleteRows.map((row) => {
+      const label = shownKeys.has(row.key) ? `<a href="#sec-${esc(row.key)}">${esc(row.label)}</a>` : `<a href="#sec-status">${esc(row.label)}</a>`;
+      const reason = reasonOf(row);
+      return `<li>${label}（${esc(designSnapshotStatusLabel(row.status))}）${reason ? `: ${esc(reason)}` : ""}</li>`;
+    }).join("")}</ul></div>` : "";
+    const head = `<header class="doc-head" id="sec-head"><p class="doc-kicker">kintone アプリ設計書</p><h1 class="doc-title">${esc(appName || "（取得なし）")}</h1><dl class="facts">${facts.join("")}</dl>${incompleteNotice}</header>`;
+    const statusTable = designStatusTable(snapshot);
+    statusTable.rows = statusTable.rows.map((row, index) => {
+      const next = [...row];
+      next[2] = new TrustedMarkup(statusBadge(snapshot.sections[index]));
+      return next;
+    });
+    const overview = [];
+    overview.push(`<section class="doc-section" id="sec-status" aria-labelledby="h-status"><div class="sec-head"><h2 id="h-status">取得状態</h2></div>${tableHtml(statusTable)}</section>`);
+    const summary = designSummaryTable(bundle);
+    if (summary.rows.length) {
+      overview.push(`<section class="doc-section" id="sec-summary" aria-labelledby="h-summary"><div class="sec-head"><h2 id="h-summary">サマリー</h2></div><dl class="tiles">${summary.rows.map((row) => `<div class="tile"><dt>${textHtml(row[0])}</dt><dd>${textHtml(row[1])}</dd></div>`).join("")}</dl></section>`);
+    }
+    const points = designReviewPoints(bundle);
+    overview.push(`<section class="doc-section" id="sec-review" aria-labelledby="h-review"><div class="sec-head"><h2 id="h-review">確認ポイント</h2></div><ul class="points">${(points.length ? points : [DESIGN_NO_REVIEW_POINTS]).map((point) => `<li>${esc(point)}</li>`).join("")}</ul></section>`);
+    const body = shown.map((def) => sectionHtml(def, sections[def.key], sections, ctx, rowByKey.get(def.key))).join("");
+    const tocLink = (id, label, extra = "") => `<li><a href="#${esc(id)}"><span class="toc-label">${esc(label)}</span>${extra}</a></li>`;
+    const tocCount = (row) => {
+      if (!row) return "";
+      if (row.status === "available") return row.count == null ? "" : `<span class="toc-count">${esc(String(row.count))}</span>`;
+      return statusBadge(row);
+    };
+    const tocParts = [];
+    tocParts.push(`<ol>${tocLink("sec-head", "アプリの情報")}${tocLink("sec-status", "取得状態")}${summary.rows.length ? tocLink("sec-summary", "サマリー") : ""}${tocLink("sec-review", "確認ポイント")}</ol>`);
+    for (const group of TOC_GROUPS) {
+      const defs = shown.filter((def) => group.keys.includes(def.key));
+      if (!defs.length) continue;
+      tocParts.push(`<p class="toc-group">${esc(group.label)}</p><ol>${defs.map((def) => tocLink(`sec-${def.key}`, def.label, tocCount(rowByKey.get(def.key)))).join("")}</ol>`);
+    }
+    const toc = `<nav class="toc" id="toc" aria-label="目次"><div class="toc-head"><p class="toc-title">目次</p><button type="button" class="tb toc-close" id="toc-close" aria-label="目次を閉じる">×</button></div>${tocParts.join("")}</nav>`;
+    const envShort = bundle && Object.prototype.hasOwnProperty.call(bundle, "preview") && bundle.preview != null ? bundle.preview ? "プレビュー" : "本番" : "";
+    const sub = [appId ? `App ${appId}` : "", envShort, options.source === "settings-json" ? "設定JSONから作成" : ""].filter(Boolean).join(" · ");
+    const search = fieldRowCount ? `<div class="search-wrap" role="search" data-js-only hidden><label class="sr-only" for="field-search">フィールド名・コードで絞り込む</label><input id="field-search" type="search" placeholder="フィールド名・コードで絞り込み" autocomplete="off" spellcheck="false" aria-describedby="field-search-meta"><a class="search-meta" id="field-search-meta" href="#sec-fieldSettings" aria-live="polite">${fieldRowCount} 件</a></div>` : "";
+    const topbar = `<header class="topbar"><button type="button" class="tb" id="toc-toggle" aria-controls="toc" aria-expanded="false" data-js-only hidden><span aria-hidden="true">☰</span><span class="tb-label">目次</span></button><div class="brand"><p class="brand-title">kintone アプリ設計書<small>${esc(appName)}</small></p><p class="brand-sub">${esc(sub)}</p></div>${search}<div class="tb-actions" data-js-only hidden><button type="button" class="tb" id="theme-btn" aria-pressed="false" aria-label="暗い配色に切り替える" title="配色を切り替える（保存しません）"><span aria-hidden="true">◐</span><span class="tb-label">暗い配色</span></button><button type="button" class="tb" id="print-btn" title="印刷（目次と操作の部品は印刷しません）"><span aria-hidden="true">⎙</span><span class="tb-label">印刷</span></button></div></header>`;
+    const foot = `<footer class="doc-foot">${esc(TOOL_NAME)} ${esc(TOOL_VERSION)} で、kintone の設定を読み取って作成しました（${esc(readableTime(generatedAt))}）。プラグインの設定値と JS/CSS ファイルの本文は載せていません。この HTML は通信せずにブラウザだけで読めます。</footer>`;
+    const pageTitle = truncate(`kintone アプリ設計書 ${appName || ""}${appId ? `（App ${appId}）` : ""}`, 90);
+    const css = `${DESIGN_HTML_CSS}
+@media print{@page{size:A4 landscape;margin:12mm 10mm;@top-left{content:${cssString(pageTitle)};font-size:8pt;color:#475569;}@bottom-right{content:counter(page) " / " counter(pages);font-size:8pt;color:#475569;}}}`;
+    const script = DESIGN_HTML_SCRIPT;
+    const contentSecurityPolicy = cspFor(css, script);
+    const title = `設計書 ${appName || ""}${appId ? `（App ${appId}）` : ""}`.trim();
+    return `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="${contentSecurityPolicy}">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<meta name="generator" content="${esc(`${TOOL_NAME} ${TOOL_VERSION}`)}">
+<title>${esc(title)}</title>
+<style>${css}</style>
+</head>
+<body>
+<a class="skip" href="#main">本文へ移動</a>
+${topbar}
+<div class="layout">
+${toc}
+<div class="toc-backdrop" id="toc-backdrop"></div>
+<main id="main" tabindex="-1">
+${head}
+${overview.join("\n")}
+${body}
+${foot}
+</main>
+</div>
+<script>${script}<\/script>
+</body>
+</html>
+`;
+  }
+
   // src/tabs/sheetLib.ts
   var loading = null;
   function loadSheetLib() {
@@ -18193,13 +19316,7 @@ ${fence}`;
       const snapshotSectionMap = new Map(designSnapshot.sections.map((row) => [row.key, row]));
       const snapshotCounts = designSnapshot.counts || {};
       const displayCount = (value) => value == null ? "未取得" : String(value);
-      const statusLabel = (value) => ({
-        available: "取得済み",
-        empty: "空（0件）",
-        missing: "未取得",
-        "fetch-error": "取得失敗",
-        partial: "部分取得"
-      })[value] || "未取得";
+      const statusLabel = designSnapshotStatusLabel;
       const hasFailedAPI = (name) => UI.failedAPIs.some((entry) => entry?.name === name);
       const sectionRow = (key) => snapshotSectionMap.get(key) || {
         key,
@@ -20153,6 +21270,10 @@ ${detail}`);
     const appNames = await resolveReferencedAppNames(bundle, { known: source?.appNameLookup, live: !source?.importedBundle, guestId: String(source?.guestId || "") });
     return designMarkdownOf(bundle, { appNames });
   }
+  async function designHtmlWithReferenceNames(bundle, source) {
+    const appNames = await resolveReferencedAppNames(bundle, { known: source?.appNameLookup, live: !source?.importedBundle, guestId: String(source?.guestId || "") });
+    return buildDesignHtml(bundle, { appNames, source: source?.importedBundle ? "settings-json" : "kintone" });
+  }
   var DESIGN_JSON_SENSITIVE_NOTICE = `${PLUGIN_CONFIG_INCLUDED_NOTE}。${CUSTOMIZE_BODY_SENSITIVE_NOTE}。共有する前に内容を確認してください`;
   function designJsonSensitiveNotice(bundle) {
     const { pluginConfigs, customizeBodies } = stripSensitiveSupplements(bundle);
@@ -20160,13 +21281,15 @@ ${detail}`);
     return notes.length ? `取扱注意: ${notes.join("。")}。共有する前に内容を確認してください` : "";
   }
   async function runDesignExportStandalone(kind, source, setStatus) {
-    if (kind !== "md" && kind !== "json" && kind !== "ai-md") throw new Error("設計書の出力形式は md、json または ai-md を指定してください");
+    if (kind !== "md" && kind !== "json" && kind !== "ai-md" && kind !== "html") throw new Error("設計書の出力形式は md、json、ai-md または html を指定してください");
     const bundle = await resolveDesignBundle(source, "source", setStatus, "", kind === "ai-md", kind === "json");
     state.lastSourceBundle = bundle;
     const appLabel = appLabelFromBundle(bundle);
     const sensitiveNotice = kind === "json" ? designJsonSensitiveNotice(bundle) : "";
     if (kind === "json") {
       downloadText(buildExportFilename("設計書", "json", { appLabel }), JSON.stringify(bundle, null, 2), "application/json");
+    } else if (kind === "html") {
+      downloadText(buildExportFilename("設計書", "html", { appLabel }), await designHtmlWithReferenceNames(bundle, source), "text/html");
     } else {
       const baseLabel = kind === "ai-md" ? "設計書_AI向けMarkdown" : "設計書";
       const markdown = kind === "ai-md" ? buildDesignAiMarkdown(bundle) : await designMarkdownWithReferenceNames(bundle, source);
@@ -20174,7 +21297,8 @@ ${detail}`);
     }
     const note = failedSectionNote(failedSectionLabels(bundle));
     const completionNote = designBundleCompletionNote(bundle);
-    setStatus(`${kind === "ai-md" ? "AI向けMarkdown" : "設計書"}出力完了（App ${bundle.appId}）${note ? `。${note}` : ""}${completionNote}${kind === "ai-md" ? designBundleSourceNote(bundle) : ""}${sensitiveNotice ? `。${sensitiveNotice}` : ""}`, !!note || !!completionNote);
+    const done = kind === "html" ? `HTML設計書を保存しました（App ${bundle.appId}）` : `${kind === "ai-md" ? "AI向けMarkdown" : "設計書"}出力完了（App ${bundle.appId}）`;
+    setStatus(`${done}${note ? `。${note}` : ""}${completionNote}${kind === "ai-md" ? designBundleSourceNote(bundle) : ""}${sensitiveNotice ? `。${sensitiveNotice}` : ""}`, !!note || !!completionNote);
   }
   async function runDesignCopyMdStandalone(source, setStatus) {
     const bundle = await resolveDesignBundle(source, "source", setStatus, "", false, false);
@@ -20322,55 +21446,84 @@ ${lines.join("\n")}`), { partialSuccess: true });
     const raw = error instanceof Error ? error.message : String(error ?? "不明なエラー");
     return raw.split(/\r?\n/)[0].trim() || "不明なエラー";
   }
-  function buildBatchDesignMdOverview(input) {
+  function batchDesignOverviewModel(input) {
     const notRunApps = input.failedApps.filter((f) => /未実行（中止）/.test(f.error));
     const actualFailedApps = input.failedApps.filter((f) => !/未実行（中止）/.test(f.error));
-    const formatLabel = input.format === "ai-md" ? "AI向けMarkdown (ai-md)" : input.format === "both" ? "設計書Markdown + AI向けMarkdown (both)" : "設計書Markdown (md)";
+    const formatLabel = input.format === "ai-md" ? "AI向けMarkdown (ai-md)" : input.format === "both" ? "設計書Markdown + AI向けMarkdown (both)" : input.format === "html" ? "設計書HTML (html)" : "設計書Markdown (md)";
+    const notes = [];
+    if (input.cancelled) notes.push("利用者の操作で中止したため、未実行のアプリは含まれていません。");
+    if (actualFailedApps.length) notes.push("取得に失敗したアプリがあります。下の表のエラー内容を確認してください。");
+    const rows = [];
+    for (const item of input.items) {
+      const remarks = [];
+      if (item.missingSections.length) remarks.push(`未取得: ${item.missingSections.join(", ")}`);
+      if (item.failedSections.length) remarks.push(`取得失敗: ${item.failedSections.join(", ")}`);
+      if (item.partialSections.length) remarks.push(`部分取得: ${item.partialSections.join(", ")}`);
+      rows.push({
+        appId: item.appId,
+        appName: item.appName,
+        guest: item.guestId || "(通常空間)",
+        source: item.source === "settings-json" ? "設定JSON" : "API",
+        status: item.complete ? "成功" : "一部未取得・失敗あり",
+        ok: true,
+        files: item.files,
+        remarks: remarks.join(" / ")
+      });
+    }
+    for (const failed of input.failedApps) {
+      const isNotRun = /未実行（中止）/.test(failed.error);
+      rows.push({
+        appId: failed.appId,
+        appName: "",
+        guest: failed.guestId || "(通常空間)",
+        source: "-",
+        status: isNotRun ? "未実行（中止）" : "失敗",
+        ok: false,
+        files: [],
+        remarks: failed.error
+      });
+    }
+    return {
+      facts: [
+        ["生成日時", input.generatedAt],
+        ["出力形式", formatLabel],
+        ["参照環境", input.preview ? "プレビュー" : "本番"],
+        ["対象アプリ数", `${input.total}件（成功 ${input.items.length} / 失敗 ${actualFailedApps.length}${notRunApps.length ? ` / 未実行（中止） ${notRunApps.length}` : ""}）`]
+      ],
+      notes,
+      rows
+    };
+  }
+  function buildBatchDesignMdOverview(model) {
     const lines = [
       "# kintone 設計書 Markdown 一括出力サマリ",
       "",
-      `- 生成日時: ${input.generatedAt}`,
-      `- 出力形式: ${formatLabel}`,
-      `- 参照環境: ${input.preview ? "プレビュー" : "本番"}`,
-      `- 対象アプリ数: ${input.total}件（成功 ${input.items.length} / 失敗 ${actualFailedApps.length}${notRunApps.length ? ` / 未実行（中止） ${notRunApps.length}` : ""}）`
+      ...model.facts.map(([label, value]) => `- ${label}: ${value}`),
+      ...model.notes.map((note) => `- 注意: ${note}`)
     ];
-    if (input.cancelled) {
-      lines.push("- 注意: 利用者の操作で中止したため、未実行のアプリは含まれていません。");
-    }
-    if (actualFailedApps.length) {
-      lines.push("- 注意: 取得に失敗したアプリがあります。下の表のエラー内容を確認してください。");
-    }
     lines.push(
       "",
       "## アプリ一覧",
       "",
-      "| アプリID | アプリ名 | ゲストスペース | 取得元 | 状態 | 出力ファイル | 備考・エラー |",
-      "| --- | --- | --- | --- | --- | --- | --- |"
+      `| ${BATCH_DESIGN_OVERVIEW_HEADERS.join(" | ")} |`,
+      `| ${BATCH_DESIGN_OVERVIEW_HEADERS.map(() => "---").join(" | ")} |`
     );
-    for (const item of input.items) {
-      const notes = [];
-      if (item.missingSections.length) notes.push(`未取得: ${item.missingSections.join(", ")}`);
-      if (item.failedSections.length) notes.push(`取得失敗: ${item.failedSections.join(", ")}`);
-      if (item.partialSections.length) notes.push(`部分取得: ${item.partialSections.join(", ")}`);
-      lines.push(
-        `| ${escapeOverviewCell(item.appId)} | ${escapeOverviewCell(item.appName)} | ${escapeOverviewCell(item.guestId || "(通常空間)")} | ${item.source === "settings-json" ? "設定JSON" : "API"} | ${item.complete ? "成功" : "一部未取得・失敗あり"} | ${escapeOverviewCell(item.files.join(", "))} | ${escapeOverviewCell(notes.join(" / "))} |`
-      );
-    }
-    for (const failed of input.failedApps) {
-      const isNotRun = /未実行（中止）/.test(failed.error);
-      lines.push(
-        `| ${escapeOverviewCell(failed.appId)} |  | ${escapeOverviewCell(failed.guestId || "(通常空間)")} | - | ${isNotRun ? "未実行（中止）" : "失敗"} |  | ${escapeOverviewCell(failed.error)} |`
-      );
+    for (const row of model.rows) {
+      const cells = row.ok ? [escapeOverviewCell(row.appId), escapeOverviewCell(row.appName), escapeOverviewCell(row.guest), row.source, row.status, escapeOverviewCell(row.files.join(", ")), escapeOverviewCell(row.remarks)] : [escapeOverviewCell(row.appId), "", escapeOverviewCell(row.guest), row.source, row.status, "", escapeOverviewCell(row.remarks)];
+      lines.push(`| ${cells.join(" | ")} |`);
     }
     lines.push("");
     return lines.join("\n");
   }
   async function runBatchDesignExportMdZipStandalone(source, setStatus) {
     const format = source?.format ?? "md";
-    if (format !== "md" && format !== "ai-md" && format !== "both") {
-      throw new Error("一括Markdown出力の形式は md、ai-md または both を指定してください");
+    if (format !== "md" && format !== "ai-md" && format !== "both" && format !== "html") {
+      throw new Error("一括出力の形式は md、ai-md、both または html を指定してください");
     }
     const preview = !!source?.preview;
+    const isHtml = format === "html";
+    const zipLabel = isHtml ? "設計書HTML ZIP" : "設計書Markdown ZIP";
+    const overviewName = isHtml ? "overview.html" : "overview.md";
     let rawApps;
     if (Array.isArray(source?.apps)) {
       const validationError = validateDesignExportTargets(source.apps);
@@ -20409,10 +21562,10 @@ ${lines.join("\n")}`), { partialSuccess: true });
     }
     const referencedAppNameCache = /* @__PURE__ */ new Map();
     const importedCount = targets.filter((t) => t.bundle).length;
-    setStatus(`設計書Markdown ZIP出力を開始（${targets.length}件${importedCount ? ` / うち設定JSON ${importedCount}件` : ""}）...`);
+    setStatus(`${zipLabel}出力を開始（${targets.length}件${importedCount ? ` / うち設定JSON ${importedCount}件` : ""}）...`);
     const JSZipCtor = await loadJSZipLite();
     const zip = new JSZipCtor();
-    const usedFilenames = /* @__PURE__ */ new Set(["overview.md", "_manifest.json"]);
+    const usedFilenames = /* @__PURE__ */ new Set([overviewName, "_manifest.json"]);
     const items = [];
     const failedApps = [];
     const scopes = SECTION_DEFS.map((s) => s.key);
@@ -20427,7 +21580,7 @@ ${lines.join("\n")}`), { partialSuccess: true });
       try {
         let mdBundle = null;
         let aiBundle = null;
-        if (format === "md") {
+        if (format === "md" || format === "html") {
           mdBundle = await resolveDesignBundle(
             { appId: target.appId, guestId: target.guestId, preview, importedBundle: target.bundle },
             "source",
@@ -20493,6 +21646,13 @@ ${lines.join("\n")}`), { partialSuccess: true });
         const files = [];
         let mdFile;
         let aiMdFile;
+        let htmlFile;
+        if (format === "html") {
+          htmlFile = uniqueMdZipEntryName(usedFilenames, `${guestPrefix}設計書_${appLabel}.html`);
+          const appNames = await resolveReferencedAppNames(mdBundle, { known: knownAppNames, live: !target.bundle, guestId: target.guestId, cache: referencedAppNameCache });
+          zip.file(htmlFile, buildDesignHtml(mdBundle, { appNames, source: target.bundle ? "settings-json" : "kintone" }));
+          files.push(htmlFile);
+        }
         if (format === "md" || format === "both") {
           mdFile = uniqueMdZipEntryName(usedFilenames, `${guestPrefix}設計書_${appLabel}.md`);
           const appNames = await resolveReferencedAppNames(mdBundle, { known: knownAppNames, live: !target.bundle, guestId: target.guestId, cache: referencedAppNameCache });
@@ -20520,6 +21680,7 @@ ${lines.join("\n")}`), { partialSuccess: true });
           files,
           ...mdFile ? { mdFile } : {},
           ...aiMdFile ? { aiMdFile } : {},
+          ...htmlFile ? { htmlFile } : {},
           complete,
           missingSections,
           failedSections,
@@ -20551,18 +21712,18 @@ ${lines.join("\n")}`), { partialSuccess: true });
     if (successCount === 0 && cancelled) {
       const priorFailures = failedApps.filter((f) => !/未実行（中止）/.test(f.error));
       throw createCancelReport(0, targets.length, [
-        "設計書Markdown ZIPは保存していません。",
+        `${zipLabel}は保存していません。`,
         ...priorFailures.map((f) => `App ${f.appId}: 中止前に失敗（${f.error}）`)
       ]);
     }
     if (successCount === 0) {
       const detail = failedApps.map((f) => `- App ${f.appId}: ${f.error}`).join("\n");
-      throw new Error(`設計書Markdown ZIPの生成に失敗しました
+      throw new Error(`${zipLabel}の生成に失敗しました
 ${detail}`);
     }
     const generatedAt = (/* @__PURE__ */ new Date()).toISOString();
     const guestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];
-    const overviewMd = buildBatchDesignMdOverview({
+    const overviewModel = batchDesignOverviewModel({
       generatedAt,
       format,
       preview,
@@ -20585,11 +21746,11 @@ ${detail}`);
       items,
       failedApps
     };
-    zip.file("overview.md", overviewMd);
+    zip.file(overviewName, isHtml ? buildBatchDesignHtmlOverview(overviewModel) : buildBatchDesignMdOverview(overviewModel));
     zip.file("_manifest.json", JSON.stringify(manifestPayload, null, 2));
-    setStatus("設計書Markdown ZIPファイルを生成中...");
+    setStatus(`${zipLabel}ファイルを生成中...`);
     const blob = await zip.generateAsync({ type: "blob" });
-    const baseLabel = format === "ai-md" ? "設計書_AI向けMarkdown一括" : format === "both" ? "設計書_Markdown一括(通常+AI)" : "設計書_Markdown一括";
+    const baseLabel = format === "ai-md" ? "設計書_AI向けMarkdown一括" : format === "both" ? "設計書_Markdown一括(通常+AI)" : isHtml ? "設計書_HTML一括" : "設計書_Markdown一括";
     const zipName = buildExportFilename(baseLabel, "zip", {
       appLabel: `${successCount}件`,
       suffix: preview ? "プレビュー" : ""
@@ -20599,7 +21760,7 @@ ${detail}`);
       const notRun = failedApps.filter((f) => /未実行（中止）/.test(f.error));
       const failed = failedApps.filter((f) => !/未実行（中止）/.test(f.error));
       throw createCancelReport(successCount, targets.length, [
-        `生成できた ${successCount} アプリ分の設計書Markdown ZIPを保存しました（詳細は ZIP 内の overview.md / _manifest.json）。`,
+        `生成できた ${successCount} アプリ分の${zipLabel}を保存しました（詳細は ZIP 内の ${overviewName} / _manifest.json）。`,
         ...failed.map((f) => `失敗 App ${f.appId}: ${f.error}`),
         ...notRun.length ? [`未実行（中止）: ${notRun.map((f) => `App ${f.appId}`).join(", ")}`] : []
       ]);
@@ -20614,9 +21775,9 @@ ${detail}`);
       if (incompleteApps.length > 0) {
         parts.push(`一部セクション未取得・失敗あり ${incompleteApps.length}件`);
       }
-      setStatus(`設計書Markdown ZIPを保存しました。${parts.join("。")}。詳細は ZIP 内の overview.md / _manifest.json を確認してください`, true);
+      setStatus(`${zipLabel}を保存しました。${parts.join("。")}。詳細は ZIP 内の ${overviewName} / _manifest.json を確認してください`, true);
     } else {
-      setStatus(`設計書Markdown ZIP出力完了（${successCount}件）`);
+      setStatus(isHtml ? `${zipLabel}を保存しました（${successCount}件）` : `${zipLabel}出力完了（${successCount}件）`);
     }
     return {
       schemaVersion: 1,
@@ -21119,14 +22280,14 @@ ${detail}`);
     ensureStyles2();
     const { details, body } = makeDetails(opts.title || "アプリを検索（名前・コード・ID）", { open: !!opts.open });
     const keyword = makeInput({ placeholder: "アプリ名 / アプリID / URL", width: "wide", noSubmit: true });
-    const guest = makeInput({ placeholder: "ゲストID（任意）", width: "guest", noSubmit: true });
+    const guest = makeInput({ placeholder: "ゲストID（任意）", width: "guest", noSubmit: true, idInput: true });
     if (opts.guestEl?.value.trim()) guest.value = opts.guestEl.value.trim();
     const searchBtn = makeButton("検索", "sub", { icon: "🔍" });
     const allBtn = makeButton("環境内の全アプリ", "sub");
     allBtn.title = "接続先で閲覧できるアプリをすべて候補に表示します（検索語とスペースIDは使いません）";
     const searchMode = makeSelect([["name", "名前 / ID / URL"], ["code", "アプリコード（完全一致）"]]);
     searchMode.setAttribute("aria-label", "検索方法");
-    const space = makeInput({ placeholder: "スペースID（任意）", width: "guest", noSubmit: true, ariaLabel: "検索対象スペースID" });
+    const space = makeInput({ placeholder: "スペースID（任意）", width: "guest", noSubmit: true, ariaLabel: "検索対象スペースID", idInput: true });
     body.appendChild(makeRow([searchMode, space], { label: "検索方法" }));
     body.appendChild(makeRow([keyword, guest, searchBtn], { label: "検索語" }));
     body.appendChild(makeRow([allBtn], { label: "全アプリ" }));
@@ -21421,7 +22582,7 @@ ${detail}`);
     cardTarget.body.appendChild(appTable.element);
     const prev = makeCheck({ label: "プレビュー環境から取得" });
     cardTarget.body.appendChild(makeRow([prev.label], { label: "取得環境" }));
-    cardTarget.body.appendChild(makeNote("出力は対象アプリ表の1行目が対象です（ZIP 一括出力だけは全行）。Excel は人が読む用、AI向けMarkdown は AI に渡す用です。", "help"));
+    cardTarget.body.appendChild(makeNote("出力は対象アプリ表の1行目が対象です（ZIP 一括出力だけは全行）。Excel・HTML は人が読む用（HTML はブラウザだけで読めます）、AI向けMarkdown は AI に渡す用です。", "help"));
     cardTarget.body.appendChild(makeNote("アプリごとに別のゲストスペースを指定できます。各行の「↑コピー」で上の行を複製できます。", "help"));
     panel.body.insertBefore(cardTarget.card, panel.status);
     const cardImport = makeCard({ title: "設定JSON読込（任意）", soft: true });
@@ -21594,7 +22755,9 @@ ${detail}`);
     const bCopy = makeButton("Markdown クリップボード", "sub", { icon: "⎘" });
     const bAiCopy = makeButton("AI向けMarkdown コピー", "sub", { icon: "⎘" });
     const bXlsx = makeButton("Excel (.xlsx) 保存", "primary", { icon: "↓" });
+    const bHtml = makeButton("HTML 保存", "primary", { icon: "↓" });
     grid.appendChild(bMd);
+    grid.appendChild(bHtml);
     grid.appendChild(bAiMd);
     grid.appendChild(bXlsx);
     grid.appendChild(bJson);
@@ -21606,6 +22769,12 @@ ${detail}`);
       if (!requireFirstApp()) return;
       liteRun(panel, "設計書 Markdown 生成中…", async () => {
         await runDesignExportStandalone("md", { ...source(), appNameLookup: appNameLookup() }, (m, e) => panel.setStatus(m, e ? "err" : "busy"));
+      });
+    });
+    bHtml.addEventListener("click", () => {
+      if (!requireFirstApp()) return;
+      liteRun(panel, "設計書 HTML 生成中…", async () => {
+        await runDesignExportStandalone("html", { ...source(), appNameLookup: appNameLookup() }, (m, e) => panel.setStatus(m, e ? "err" : "busy"));
       });
     });
     bAiMd.addEventListener("click", () => {
@@ -21680,6 +22849,7 @@ ${detail}`);
     const bMdZip = makeMdZipButton("Markdown ZIP", "md");
     const bAiMdZip = makeMdZipButton("AI向けMarkdown ZIP", "ai-md");
     const bBothZip = makeMdZipButton("Markdown＋AI向けMarkdown ZIP", "both");
+    const bHtmlZip = makeMdZipButton("HTML ZIP", "html");
     panel.body.insertBefore(cardBatch.card, panel.status);
     const cardOutputInfo = makeCard({ title: "まとめて出力・設計差分について", soft: true });
     cardOutputInfo.body.appendChild(makeNote("ZIP 一括出力: シート選択は最初の1アプリで1回だけ表示し、以降の全アプリに同じ選択を適用します。設定JSONを読み込んだアプリは kintone から取得しません。"));
@@ -21736,6 +22906,8 @@ ${detail}`);
         { id: "xlsx", label: "Excel設計書を保存", description: "1行目のアプリの設計書をExcel（.xlsx）で保存します。", button: bXlsx, validate: firstTargetRequired, summary: () => singleSummary("Excel (.xlsx)") },
         { id: "zip", label: "全対象をExcel ZIPで保存", description: "全対象アプリの設計書をExcelにして、1つのZIPで保存します。", button: bBatchZip, validate: () => validateDesignExportTargets(appTable.getApps().map((r, i) => ({ ...r, bundle: findImportedBundle(r.appId, r.guestId, i) })), "対象アプリ表: "), summary: () => [["対象", summarizeList(appTable.getApps().map((r, i) => connectionSummary(r.appId, r.guestId, hasImportedBundle(r.appId, r.guestId, i) ? "読込済みJSON" : prev.checkbox.checked ? "プレビュー" : "本番")))], ["出力", appTable.count() + " アプリのExcelをZIPに保存"], ["取得環境", `${prev.checkbox.checked ? "プレビュー" : "本番"}から取得します。設定JSONを読み込んだアプリはその内容を使用します。`], ...appTable.count() >= 50 ? [["件数が多い場合", "アプリごとに順に取得するため、時間とメモリを使います。途中で「中止」でき、その場合ZIPは保存しません。"]] : []] },
         { id: "ai-md", label: "AI向けMarkdownを保存", description: "1行目のアプリの設定を、AIに渡す用のMarkdownファイルで保存します。", button: bAiMd, validate: firstTargetRequired, summary: () => singleSummary("AI向けMarkdown（AIへの受け渡し）") },
+        { id: "html", label: "HTML設計書を保存", description: "1行目のアプリの設計書を、ブラウザだけで読めるHTMLファイル（目次・絞り込み・印刷つき）で保存します。", button: bHtml, validate: firstTargetRequired, summary: () => singleSummary("HTML（ブラウザで読む設計書）") },
+        { id: "html-zip", label: "全対象をHTML ZIPで保存", description: "全対象アプリの設計書をHTMLにして、1つのZIPで保存します（一覧は overview.html）。", button: bHtmlZip, validate: batchTargetsRequired, summary: () => mdZipSummary("HTML") },
         { id: "md", label: "Markdown設計書を保存", description: "1行目のアプリの設計書をMarkdownファイルで保存します。", button: bMd, validate: firstTargetRequired, summary: () => singleSummary("Markdown") },
         { id: "ai-copy", label: "AI向けMarkdownをコピー", description: "1行目のアプリの設定を、AIに渡す用のMarkdownとしてコピーします。", button: bAiCopy, validate: firstTargetRequired, summary: () => singleSummary("AI向けMarkdown（クリップボード）") },
         { id: "json", label: "設計書JSONを保存", description: "1行目のアプリの設定をJSONファイルで保存します。", button: bJson, validate: firstTargetRequired, summary: () => [...singleSummary("JSON"), ["取扱注意", DESIGN_JSON_SENSITIVE_NOTICE]] },

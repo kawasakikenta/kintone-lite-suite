@@ -129,14 +129,14 @@ export function createAppSearchControl(panel: LitePanelHandle, opts: AppSearchOp
   const { details, body } = makeDetails(opts.title || 'アプリを検索（名前・コード・ID）', { open: !!opts.open });
 
   const keyword = makeInput({ placeholder: 'アプリ名 / アプリID / URL', width: 'wide', noSubmit: true });
-  const guest = makeInput({ placeholder: 'ゲストID（任意）', width: 'guest', noSubmit: true });
+  const guest = makeInput({ placeholder: 'ゲストID（任意）', width: 'guest', noSubmit: true, idInput: true });
   if (opts.guestEl?.value.trim()) guest.value = opts.guestEl.value.trim();
   const searchBtn = makeButton('検索', 'sub', { icon: '🔍' });
   const allBtn = makeButton('環境内の全アプリ', 'sub');
   allBtn.title = '接続先で閲覧できるアプリをすべて候補に表示します（検索語とスペースIDは使いません）';
   const searchMode = makeSelect([['name', '名前 / ID / URL'], ['code', 'アプリコード（完全一致）']]);
   searchMode.setAttribute('aria-label', '検索方法');
-  const space = makeInput({ placeholder: 'スペースID（任意）', width: 'guest', noSubmit: true, ariaLabel: '検索対象スペースID' });
+  const space = makeInput({ placeholder: 'スペースID（任意）', width: 'guest', noSubmit: true, ariaLabel: '検索対象スペースID', idInput: true });
   body.appendChild(makeRow([searchMode, space], { label: '検索方法' }));
   body.appendChild(makeRow([keyword, guest, searchBtn], { label: '検索語' }));
   body.appendChild(makeRow([allBtn], { label: '全アプリ' }));

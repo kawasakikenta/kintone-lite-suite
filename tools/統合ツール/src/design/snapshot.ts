@@ -11,6 +11,23 @@ export type DesignSnapshotSectionStatus =
   | 'fetch-error'
   | 'partial';
 
+/** 取得状態の表示名（設計書の Excel・HTML で同じ言葉にする）。 */
+export const DESIGN_SNAPSHOT_STATUS_LABELS: Readonly<Record<DesignSnapshotSectionStatus, string>> = {
+  available: '取得済み',
+  empty: '空（0件）',
+  missing: '未取得',
+  'fetch-error': '取得失敗',
+  partial: '部分取得'
+};
+
+/** 取得状態の表示名。知らない値は「未取得」。 */
+export function designSnapshotStatusLabel(status: unknown): string {
+  const key = String(status ?? '');
+  return Object.prototype.hasOwnProperty.call(DESIGN_SNAPSHOT_STATUS_LABELS, key)
+    ? DESIGN_SNAPSHOT_STATUS_LABELS[key as DesignSnapshotSectionStatus]
+    : '未取得';
+}
+
 export interface DesignSnapshotSection {
   key: string;
   label: string;
