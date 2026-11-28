@@ -116,8 +116,8 @@ ER 図の HTML は、Cytoscape.js 3.28.1・Dagre 0.8.5・cytoscape-dagre 2.5.0 �
 | 同梱の仕組み | `src/tabs/er-libraries.ts` が `cytoscape.min.js`・`dagre.min.js`・`cytoscape-dagre.js` を `?raw` で取り込む。`build.js` は `rawTextPlugin.js`（esbuild プラグイン）で、単体テスト（Vitest）は標準の `?raw` で同じ書き方を解決する |
 | ライセンス | 3 本とも MIT。`cytoscape.min.js` の著作権コメントはそのまま残す。`dagre.min.js` は graphlib・lodash を含むため、dagre・graphlib・lodash・cytoscape-dagre の LICENSE の全文を、各ライブラリの前のコメントに付ける |
 | 取り込む先 | `ER図.js` だけ（他の 11 本には入らない）。サイズは 約 0.47 MB → 約 1.1 MB。生成する HTML は 約 0.67 MB 増える |
-| CSP | `script-src 'unsafe-inline'`（外部ホストなし）。インラインに埋め込む文字列は `</script` を無害にしてから入れる（`escapeInlineScriptSource`） |
-| 保存し直し | 図の画面の「出力 → 編集済みHTMLを保存」は、画面の DOM を複製して保存するため、同梱したライブラリも保存した HTML に入り、そのまま単体で開ける |
+| CSP | `script-src` は、埋め込んだスクリプト（描画ライブラリ 3 つ・起動スクリプト・図の本体）の内容の SHA-256 だけを許可する（`'unsafe-inline'`・`'unsafe-eval'` を使わない。`script-src-attr 'none'`）。ハッシュは図を作るたびに `page.ts` が計算する（中身は HTML を読み込んだ後と同じ形・改行は LF にそろえる。ライブラリのハッシュは使い回す）。画面の操作は `onclick` などのイベント属性を使わず、`data-action`・`data-change`・`data-input`・`data-keydown` に書いた操作の名前を `viewer-actions.js` が document で受けて、表にある操作だけを呼ぶ（動的に作る HTML も同じ）。図の本体は `type="text/plain"` で置き、起動スクリプトが描画ライブラリを確かめてから同じ中身の script 要素を作って動かす。style は style 属性を多く使うため `'unsafe-inline'` のまま。インラインに埋め込む文字列は `</script` を無害にしてから入れる（`escapeInlineScriptSource`）。Trusted Types（`require-trusted-types-for`）は付けない（画面の部品を `innerHTML` で組み立てる箇所が多く、素通しのポリシーを置くだけになるため。差し込まれた文字列からスクリプトが動く経路は、ハッシュだけの `script-src` で止まる） |
+| 保存し直し | 図の画面の「出力 → 編集済みHTMLを保存」は、画面の DOM を複製して保存するため、同梱したライブラリも保存した HTML に入り、そのまま単体で開ける。編集の状態は実行しない JSON（`<script id="er-edit-state" type="application/json">`）として図の本体の前に置き、開き直したときに JSON として読む。実行するスクリプトの中身は保存しても変わらないため、CSP（ハッシュ）は元の図と同じまま使える。以前の版の編集済みHTML（状態を `window.__ER_EDIT_STATE__` へ代入するスクリプトで持つ。このリポジトリの以前の版で保存したものを含む）は、その HTML 自身の CSP で開ける。「編集済みHTMLから取り込む」は両方の置き方を文字列として読む |
 | 初期化に失敗したとき | ブラウザの制限などで描画ライブラリが使えないときは、取得済みのアプリ一覧の表を出す（CDN は前提にしない） |
 
 ### 4.3 プラットフォーム API とブラウザ標準機能
