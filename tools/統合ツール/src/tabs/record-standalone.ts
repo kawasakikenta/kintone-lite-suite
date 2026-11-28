@@ -32,14 +32,15 @@ export { parseCsvText, validateCsvImportHeader, coerceCsvImportValue, splitCsvLi
 /**
  * Paste-friendly parser used by every record-management operation.
  * Commas (including Japanese commas), spaces and newlines are accepted,
- * full-width digits (１０１) become ASCII digits, and
+ * full-width digits (１０１) become ASCII digits, leading zeros are dropped (07 and 7 can name the same app, as kintone reads the ID as a number), and
  * duplicate IDs are removed without changing the user's order.
  */
 export function parseRecordAppIds(value: unknown): string[] {
   const tokens = normalizeIdInputText(value).split(/[\s,\u3001\uFF0C]+/).filter(Boolean);
   const invalid = tokens.filter((id) => !/^\d+$/.test(id) || Number(id) <= 0);
   if (invalid.length) throw new Error(`アプリIDは正の数値で入力してください: ${invalid.join(', ')}`);
-  return [...new Set(tokens)];
+  // 先頭の 0 を外してから重複をまとめる（データ品質チェックと同じ）。アプリIDを数値として読む kintone では「07」も App 7 を指しうるため、外さないと「7, 07」が別のアプリとして残り、同じアプリへ 2 回書き込む（CSV取込・コピーの追加は二重に登録される）。
+  return [...new Set(tokens.map((id) => id.replace(/^0+/, '')))];
 }
 
 /** Validate one app/guest pair before constructing a REST path. */
