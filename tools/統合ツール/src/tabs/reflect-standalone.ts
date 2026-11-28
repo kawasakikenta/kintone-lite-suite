@@ -3,7 +3,7 @@
 import { buildExportFilename, buildAppFilenameLabel, extractAppNameFromBundle, deepClone } from '../utils.js';
 import { apiGet, apiPost, apiPut, buildApiPrefix, decorateRevisionConflict, fetchAppDeployStatus, fetchBundle, pickRevision, isRevisionConflictError, uploadKintoneFile } from '../api.js';
 import { captureReflectBaseline, assertReflectBaselineMatches, assertCompleteReflectBackup, isCompleteReflectSection, type ReflectBaseline } from '../reflect/standalonePreflight.js';
-import { embedCustomizeFileContents, resolveCustomizeFiles, type CustomizeFileDownloader, type CustomizeFileResolution } from '../reflect/customizeFiles.js';
+import { BACKUP_FILE_BODY_NOTICE, embedCustomizeFileContents, hasEmbeddedFileBodies, resolveCustomizeFiles, type CustomizeFileDownloader, type CustomizeFileResolution } from '../reflect/customizeFiles.js';
 import { findLookupMapCandidates, hasLookupCandidates, type LookupMapCandidates } from '../reflect/lookupCandidates.js';
 import { reflectFieldLabels } from '../reflect/changeSummary.js';
 import { buildReflectSectionPlan, reflectInspectionScopes, reflectSelectionBlockers, listProcessFieldCodes, listReflectFieldCodes, listReflectSystemFieldCodes, type ReflectSectionPlan } from '../reflect/standalonePlan.js';
@@ -398,6 +398,7 @@ export async function runApplyPreviewStandalone(
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
     logs.push('バックアップ取得完了（保存を開始しました）');
+    if (hasEmbeddedFileBodies(bundle.sections?.customizeSettings)) logs.push(BACKUP_FILE_BODY_NOTICE);
   }
   const prefix = buildApiPrefix(opts.targetGuestId || '', true);
   /**

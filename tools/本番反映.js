@@ -1493,6 +1493,11 @@ ${base}`
   function customizeSlotKey(platform, kind, fileKey) {
     return `${platform}/${kind}/${fileKey}`;
   }
+  var BACKUP_FILE_BODY_NOTICE = "取扱注意: バックアップに JS/CSS ファイルの本体を入れました。本文に API トークンなどが含まれる場合があるため、保管と共有に注意してください";
+  function hasEmbeddedFileBodies(value) {
+    if (!value || typeof value !== "object") return false;
+    return JSON.stringify(value).includes('"_content":{');
+  }
   var PLATFORMS = ["desktop", "mobile"];
   var KINDS = ["js", "css"];
   var DOWNLOAD_CONCURRENCY = 4;
@@ -3836,6 +3841,7 @@ ${base}`
       }
       backup = { fileName, appCount: targets.length, generatedAt: built.file.generatedAt, environment: built.file.environment, unavailableFiles: built.unavailableFiles, content: built.file };
       log(`バックアップを保存しました（${fileName}、${targets.length} アプリ、${revert ? "中止前のプレビュー" : "反映前の本番"}）`);
+      if (hasEmbeddedFileBodies(built.file)) log(BACKUP_FILE_BODY_NOTICE);
       if (batchMode === "atomic") {
         const guestId = outcomes[0].guestId;
         throwIfCancelled();
@@ -9160,6 +9166,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 5e3);
       logs.push("バックアップ取得完了（保存を開始しました）");
+      if (hasEmbeddedFileBodies(bundle.sections?.customizeSettings)) logs.push(BACKUP_FILE_BODY_NOTICE);
     }
     const prefix = buildApiPrefix(opts.targetGuestId || "", true);
     const bodyWithUploads = async (operation) => {
