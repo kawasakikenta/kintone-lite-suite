@@ -33,7 +33,8 @@ describe('thirdPartyNotices（配布物へ同梱した npm パッケージのラ
       plugins: [rawTextPlugin]
     });
     expect(bundledPackages(er.metafile)).toEqual([]);
-  });
+    // xlsx-js-style の配布ファイル（約 1 MB）と ER図の描画ライブラリを esbuild にかけるため、ほかの処理と並ぶと 5 秒を超えることがある
+  }, 30000);
 
   it('パッケージごとに名前・版・ライセンス名と LICENSE の全文（Apache License 2.0 を含む）を入れ、コメントを途中で閉じない', () => {
     const comment = thirdPartyNoticeComment(['xlsx-js-style'], toolDir);
