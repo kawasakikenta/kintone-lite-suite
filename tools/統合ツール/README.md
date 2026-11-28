@@ -104,6 +104,7 @@ tools/統合ツール/
 │   ├── utils.ts              # 汎用ユーティリティ（escape, clone, normalize, download等）
 │   ├── kintoneGuard.ts       # kintone 画面判定ガード（全エントリ共通）
 │   ├── handlers/             # 差分行のフォーカス移動
+│   ├── design/               # 設計書のスナップショット、AI向けMarkdown、HTML の設計書（html.ts）、機微な値の除外
 │   │
 │   ├── diff/                 # 差分エンジン
 │   │   ├── engine.ts         # コア差分アルゴリズム（deepDiff, LCS, objectKey/複合キー比較）
@@ -188,7 +189,7 @@ tools/統合ツール/
 
 | タブ | 主な用途 | 代表機能 |
 |------|----------|----------|
-| 設計書 | 設定情報を設計資料として保存 | JSON/Markdown/Excel 出力、差分レポート |
+| 設計書 | 設定情報を設計資料として保存 | JSON/Markdown/Excel/HTML 出力（HTML はブラウザだけで読め、目次・絞り込み・印刷つき）、差分レポート |
 | ER図 | データ構造・参照関係の可視化 | ルックアップ/関連レコード追跡、依存関係マップ、構造分析 |
 | プロセス図 | 業務フローの可視化 | Mermaid フロー図生成、状態遷移シミュレーション |
 
