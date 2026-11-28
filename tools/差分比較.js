@@ -11563,8 +11563,10 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     ));
     const commonShortcutBlocked = !!(e.isComposing || e.repeat || inInteractiveTarget);
     if (!commonShortcutBlocked && !e.ctrlKey && !e.metaKey && !e.altKey && getActiveReportTab() === 'diff') {
-      if (e.key === 'j') { e.preventDefault(); moveDiffFocus(1); return; }
-      if (e.key === 'k') { e.preventDefault(); moveDiffFocus(-1); return; }
+      // 大文字（Shift・Caps Lock）でも同じ（パネルの結果明細・R キーと同じ扱い）
+      const navKey = String(e.key || '').toLowerCase();
+      if (navKey === 'j') { e.preventDefault(); moveDiffFocus(1); return; }
+      if (navKey === 'k') { e.preventDefault(); moveDiffFocus(-1); return; }
     }
     const reviewShortcutBlocked = !!(
       commonShortcutBlocked
