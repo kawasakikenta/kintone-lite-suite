@@ -124,6 +124,28 @@ export const SECTION_DEFS: readonly SectionDef[] = [
 
 export const SETTINGS_EXPORT_SCOPE_DEFS = SECTION_DEFS;
 
+/**
+ * 別のセクションの再掲になるセクションと、その再掲元。
+ * /form.json（formSettings）は、/app/form/fields.json と /app/form/layout.json と同じ内容を別の形で返す。
+ */
+export const REPRINT_SECTION_SOURCES: Readonly<Record<string, readonly string[]>> = {
+  formSettings: ['fieldSettings', 'layoutSettings']
+};
+
+/**
+ * 比較したセクションのうち、再掲として扱うもの。再掲元をすべて比較しているときだけ再掲とみなす
+ * （再掲元のどちらかを比較していなければ、そのセクションにしか無い内容がある）。
+ * 差分の上限の数え方（engine）、Excel の変更一覧からの除外、画面の注記で同じ判定を使う。
+ */
+export function reprintSectionKeys(comparedSectionKeys: Iterable<string>): Set<string> {
+  const compared = new Set(comparedSectionKeys);
+  const reprints = new Set<string>();
+  for (const [key, sources] of Object.entries(REPRINT_SECTION_SOURCES)) {
+    if (compared.has(key) && sources.length && sources.every((source) => compared.has(source))) reprints.add(key);
+  }
+  return reprints;
+}
+
 export { FEATURE_DEFS } from './featureDefs.mjs';
 
 export interface TabConnectionNeed {

@@ -12,7 +12,7 @@
 //   (d) 件数が画面・HTML・Excel・Markdown で食い違わないか
 //   (e) 「環境固有IDを比較から除外」や正規化プリセットが説明どおりに効くか
 //   (f) 取得失敗・不完全の表示が正しいか
-//   (g) フィールド 300・差分 1000 件規模で固まらないか（所要時間を計測）
+//   (g) フィールド 300・差分 1000 件規模で固まらないか（所要時間を計測）。旧フォーム設定の再掲を足すと 1000 件を超える比較でも後ろのセクションまで走査するか
 //   （1対多）比較先 200〜500 件の比較後に保持しているデータ量
 //
 // 直した問題は通常の検査（失敗させるもの）にしてある。まだ直していない製品の不具合・使いにくさは
@@ -708,7 +708,12 @@ scenario('incomplete: プラグイン設定・JS/CSS 本文の取得失敗と本
 
 // ---- 4. 規模 ----
 scenario('scale: フィールド 300・差分 1000 件規模', async () => {
-  for (const [label, changes, expectIncomplete] of [['フィールド 300・差分 約 760 件', 1, false], ['フィールド 300・差分 1000 件に到達', 3, true]]) {
+  for (const [label, changes, expectIncomplete] of [
+    ['フィールド 300・差分 約 760 件', 1, false],
+    // フィールドの差 約 630 件。旧フォーム設定の再掲（同じ件数）を足すと 1000 件を超えるが、再掲は別枠で数えるので後ろのセクションまで走査する
+    ['フィールド 300・フィールドの差 約 630 件（再掲を足すと 1000 件超）', 2, false],
+    ['フィールド 300・差分 1000 件に到達', 3, true]
+  ]) {
     const config = businessConfig();
     config.apps['101'].prod = world.businessApp('dev', { bulk: 300, changesPerField: changes });
     config.apps['202'].prod = world.businessApp('prod', { bulk: 300 });
@@ -722,12 +727,18 @@ scenario('scale: フィールド 300・差分 1000 件規模', async () => {
     const saved = await exportOutputs(page, path.join(OUT, `scale-${changes}`), `scale-${changes}`);
     const exportMs = Date.now() - t0 - expandMs;
     assert.equal(panel.completeness, expectIncomplete ? 'incomplete' : 'complete', `${label}: 完全性の表示が想定と違います`);
-    if (expectIncomplete) {
-      assert.equal(panel.total, 1000, `${label}: 差分の上限（1000 件）で止まっていません`);
-      assert.ok(panel.alerts.some((text) => /差分上限 1,000 件に到達/.test(text)), `${label}: 上限到達が示されていません`);
-    }
     assert.ok(panel.rows.length <= 200, `${label}: 画面に ${panel.rows.length} 行を一度に描画しています（200 行ずつのはず）`);
-    checkOutputsAgree(`scale-${changes}`, panel, saved);
+    const { md } = checkOutputsAgree(`scale-${changes}`, panel, saved);
+    const formRows = md.bySection.formSettings || 0;
+    if (expectIncomplete) {
+      // 旧フォーム設定（再掲）は別枠で数えるので、上限 1000 件に数えるのは再掲以外の行
+      assert.equal(panel.total - formRows, 1000, `${label}: 再掲以外の差分が上限（1000 件）で止まっていません（全体 ${panel.total} / 再掲 ${formRows}）`);
+      assert.ok(panel.alerts.some((text) => /差分上限 1,000 件に到達/.test(text)), `${label}: 上限到達が示されていません`);
+    } else {
+      for (const sectionKey of ['viewSettings', 'reportSettings', 'processSettings', 'categories']) {
+        assert.ok((md.bySection[sectionKey] || 0) > 0, `${label}: ${sectionKey} の差が出ていません（再掲が上限を使って未走査になっていないか）`);
+      }
+    }
     metrics[`scale${changes}`] = { label, fields: 300 + 45, diffs: panel.total, compareMs: elapsed, expandCollapseMs: expandMs, exportsMs: exportMs, xlsxBytes: fs.statSync(saved.xlsx.file).size, htmlBytes: fs.statSync(saved.html.file).size, mdBytes: fs.statSync(saved.md.file).size };
     assert.ok(elapsed < 20000, `${label}: 比較に ${elapsed}ms かかりました`);
     assert.ok(exportMs < 30000, `${label}: 出力に ${exportMs}ms かかりました`);

@@ -346,6 +346,17 @@
     } },
     { key: "categories", label: "カテゴリ設定", endpoint: "/app/categories.json", put: true, putBuilder: (d) => ({ categories: d.categories || d }) }
   ];
+  var REPRINT_SECTION_SOURCES = {
+    formSettings: ["fieldSettings", "layoutSettings"]
+  };
+  function reprintSectionKeys(comparedSectionKeys) {
+    const compared = new Set(comparedSectionKeys);
+    const reprints = /* @__PURE__ */ new Set();
+    for (const [key, sources] of Object.entries(REPRINT_SECTION_SOURCES)) {
+      if (compared.has(key) && sources.length && sources.every((source) => compared.has(source))) reprints.add(key);
+    }
+    return reprints;
+  }
   var META_KEYS = /* @__PURE__ */ new Set(["revision", "creator", "createdAt", "modifier", "modifiedAt"]);
   var DEFAULT_SUBTAB_STATE = Object.freeze({
     diff: "conditions",
@@ -3050,8 +3061,21 @@
     const fetchIssues = [];
     const limitHitSectionKeys = [];
     const unscannedSectionKeys = [];
+    const reprints = reprintSectionKeys(sections);
+    const sharedBudget = { count: 0, reached: false };
+    const reprintBudget = { count: 0, reached: false };
+    let activeBudget = sharedBudget;
+    const useDiffBudget = (budget) => {
+      if (budget === activeBudget) return;
+      activeBudget.count = Number(rows.__diffCount || 0);
+      activeBudget.reached = rows.__diffLimitReached === true;
+      rows.__diffCount = budget.count;
+      rows.__diffLimitReached = budget.reached;
+      activeBudget = budget;
+    };
     for (const sec of sections) {
       const label = (SECTION_DEFS.find((x) => x.key === sec) || {}).label || sec;
+      useDiffBudget(reprints.has(sec) ? reprintBudget : sharedBudget);
       const limitHitBefore = hasReachedDiffLimit(rows);
       const s = sourceBundle.sections[sec];
       const t = targetBundle.sections[sec];
@@ -17606,20 +17630,11 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     const labels = [...new Set((scopes || []).map((key) => customerSectionLabel(key)).filter(Boolean))];
     return labels.length ? labels.join("、") : "比較した設定範囲";
   }
-  var CUSTOMER_REDUNDANT_SECTION_KEYS = ["formSettings"];
-  var CUSTOMER_REDUNDANT_SECTION_SOURCES = {
-    formSettings: ["fieldSettings", "layoutSettings"]
-  };
   var CUSTOMER_REDUNDANT_SECTION_NOTE = {
     formSettings: "03 フォームフィールドと 04 フォームレイアウトに同じ変更が載っています（旧 /form.json の再掲）。"
   };
   function customerRedundantSectionKeys(comparedSectionKeys) {
-    const redundant = /* @__PURE__ */ new Set();
-    for (const key of CUSTOMER_REDUNDANT_SECTION_KEYS) {
-      const sources = CUSTOMER_REDUNDANT_SECTION_SOURCES[key] || [];
-      if (sources.length && sources.every((source) => comparedSectionKeys.has(source))) redundant.add(key);
-    }
-    return redundant;
+    return reprintSectionKeys(comparedSectionKeys);
   }
   function customerChangeType(row) {
     if (row.moved || row.type === "moved") return "並び順変更";

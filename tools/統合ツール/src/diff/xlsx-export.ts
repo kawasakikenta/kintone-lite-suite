@@ -1,6 +1,6 @@
 'use strict';
 
-import { SECTION_DEFS } from '../constants.js';
+import { SECTION_DEFS, reprintSectionKeys } from '../constants.js';
 import {
   downloadBlob,
   buildExportFilename,
@@ -2939,24 +2939,13 @@ function customerScopeLabel(scopes: string[] | undefined): string {
  * 反映もできない読み取り専用APIのため、両方を比較したときは同じ変更が二重に並ぶ。
  * 主要シートと件数からは外し、専用シートに参考として残す。
  */
-const CUSTOMER_REDUNDANT_SECTION_KEYS = ['formSettings'] as const;
-
-const CUSTOMER_REDUNDANT_SECTION_SOURCES: Record<string, string[]> = {
-  formSettings: ['fieldSettings', 'layoutSettings']
-};
-
 const CUSTOMER_REDUNDANT_SECTION_NOTE: Record<string, string> = {
   formSettings: '03 フォームフィールドと 04 フォームレイアウトに同じ変更が載っています（旧 /form.json の再掲）。'
 };
 
-/** 再掲として主要シートから外すセクション。再掲元をどちらも比較していない場合は外さない。 */
+/** 再掲として主要シートから外すセクション。再掲元をどちらも比較していない場合は外さない（判定は engine の上限の別枠と同じ）。 */
 function customerRedundantSectionKeys(comparedSectionKeys: Set<string>): Set<string> {
-  const redundant = new Set<string>();
-  for (const key of CUSTOMER_REDUNDANT_SECTION_KEYS) {
-    const sources = CUSTOMER_REDUNDANT_SECTION_SOURCES[key] || [];
-    if (sources.length && sources.every((source) => comparedSectionKeys.has(source))) redundant.add(key);
-  }
-  return redundant;
+  return reprintSectionKeys(comparedSectionKeys);
 }
 
 function customerChangeType(row: DiffXlsxRow): CustomerDiffItem['changeType'] {
