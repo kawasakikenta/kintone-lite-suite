@@ -104,7 +104,7 @@ flowchart TB
   S1["1. 入力検査（validateLiteDiffStart）<br/>App ID・ゲストIDは正の整数のみ、比較元と比較先の同一接続先は不可<br/>配列番号を含む位置依存の無視ルールが1件でもあれば比較を開始しない"]
   S2["2. 設定取得 または 設定JSON読込（api.fetchBundle / settingsBundleImport）<br/>18セクションを並列3で GET。失敗は _fetchError にして続行<br/>JSON読込は App ID を照合し、含まれないセクションも _fetchError にする"]
   S3["3. 複製（diff-standalone）<br/>取得・読込したバンドルを deepClone してから比較する（前処理の混入防止）"]
-  S4["4. セクション単位の判定（computeDiffRows）<br/>_fetchError → fetchIssues に記録して比較しない。片側のみ → ルート1行の追加/削除<br/>実差分1,000件に到達した後の両側セクションは未走査（unscanned）として記録"]
+  S4["4. セクション単位の判定（computeDiffRows）<br/>_fetchError → fetchIssues に記録して比較しない。片側のみ → ルート1行の追加/削除<br/>実差分1,000件に到達した後の両側セクションは未走査（unscanned）として記録（再掲の formSettings は別枠の1,000件）"]
   S5["5. セクション固有の前処理（engine.preprocess*）<br/>プロセス状態の改名吸収、JS/CSS fileKey → 本文、プラグイン config 取込、<br/>アプリアクション mappings の内容順整列"]
   S6["6. 正規化プリセット（normalizeSectionForCompare）<br/>有効プリセットの ignoreKeys を再帰除去、順序無視なら配列を JSON 文字列順に整列、<br/>環境固有IDは意味が確定するパスだけ除外（識別子キーは保護）"]
   S7["7. 構造比較（無視ルール適用）（collectDeepDiffs）<br/>署名一致なら same、不一致なら再帰比較。配列は 複合キー → 単一キー → 並び替え → LCS → 添字"]
@@ -159,7 +159,7 @@ flowchart TB
 
 | 定数 | 値 | 判定と記録 |
 | --- | --- | --- |
-| `ARRAY_DIFF_LIMIT` | 1,000 | `pushDiffRow` は `__diffCount >= 1000` で行を棄却し `__diffDropped` とセクション別件数を加算。各コレクタは `getCollectedDiffCount >= 1000` で列挙自体を打ち切る（`__diffLimitReached`）。ちょうど 1,000 件も `partial` |
+| `ARRAY_DIFF_LIMIT` | 1,000 | `pushDiffRow` は `__diffCount >= 1000` で行を棄却し `__diffDropped` とセクション別件数を加算。各コレクタは `getCollectedDiffCount >= 1000` で列挙自体を打ち切る（`__diffLimitReached`）。ちょうど 1,000 件も `partial`。再掲のセクション（`reprintSectionKeys`: フィールド設定とレイアウト設定を一緒に比べたときの `formSettings`）は、`computeDiffRows` がセクションごとに `__diffCount` / `__diffLimitReached` を入れ替えて別枠の 1,000 件で数え、ほかのセクションの上限に数えない（行の並びはセクションの順のまま）|
 | `SAME_ROW_LIMIT` | 3,000 | 同一行は超過分を `droppedSame` に記録。実差分の完全性には影響しない |
 | `ARRAY_LCS_MAX_CELLS` | 60,000 | `n × m > 60,000` で LCS を諦めて添字比較。`matchingNotices` に `lcs-size-limit`（完全性には含めない） |
 | `MATCHING_NOTICE_LIMIT` | 50 | 超過分は `omitted` 件数のみ。両側 1 件以下の配列は記録しない。同一パスは 1 件、`lcs-size-limit` が識別子系の理由を上書き |
@@ -391,6 +391,7 @@ COMPOSITE_ARRAY_RULES のパス正規表現
 | ラベル内 HTML | `stringifyRowValueForDiff` が `layoutSettings` 配下と `.label` 文字列の HTML タグを除去。JS/CSS 本文（`file._body`）は文字列のまま行差分をかける |
 | 収録上限 | `DIFF_HTML_MAX_EXPORT_ROWS` = 2,000（表示専用展開後）。優先順は 実差分 → 表示専用行 → 同一行。省略件数を不完全警告に載せる |
 | 内容識別子 | `contentIdentifier` = `SHA256-` ＋ SHA-256 の先頭 16 桁（64 ビット）を大文字で。`docs/diff-comparison-logic.md` §13.1 も同じ値（64 ビット）に修正済み |
+| 比較結果ID | `result-id.ts` の `computeDiffResultId`。比較元・比較先の App ID / ゲスト ID / 環境、比較条件（セクション・`canonicalIgnoreRules` で正規化した無視ルール・有効な正規化）、取得の状態（取得失敗のセクションと側、本文未検証のファイル、実差分の部分走査・未走査）、全件の実差分行（セクションキー・パス・種類・移動位置・左右の値）を、型を区別しキーを並べ替えた決定的な文字列にして SHA-256（16 進 64 桁、短い表示は先頭 12 桁）。行・無視ルールは並べ替えてから入れ、生成日時・表示名・エラー本文・同一行は入れない。画面の比較結果（1対1・1対多の比較先ごと・ペアごと。フォルダ・ZIP のペアも同じ）ごとに `diffResultIdOf` で 1 回だけ計算し、HTML・Excel・Markdown の context に `resultId` として渡す（絞り込み出力も全件の値）。HTML から作る反映 JSON には入れない |
 | 反映 JSON の可否 | `canBuildReflectJson` = `withCompared` かつ 不完全警告が 0 件（実差分の打ち切り、取得失敗、本文未検証、HTML 収録上限のいずれもなし）かつ プロセス状態改名が 0 件（収録行の改名通知数と、バンドルから直接 `detectProcessStateRenames` した件数の大きい方）。同一証跡だけの省略では無効にしない。生成される JSON は比較元の値を比較先へ送る方向（変更前→変更後で比較したときはロールバック方向） |
 | レビュー状態 JSON | `kind: 'kintone-diff-review-state'`、`version: 1`、上限 2 MiB（ファイルサイズと文字数の両方）、`reportFingerprint`（比較元・比較先の App ID / ゲスト ID / 環境と行内容から生成）が一致しないと読込拒否。行キーは `review-v1-{内容ハッシュ}-{出現順}` で、行の追加削除でずれない |
 | 能動的 HTML | インライン JS を含むが外部通信と kintone API 実行はしない。フィンガープリントは照合用で改ざん防止の署名ではない |
@@ -533,6 +534,7 @@ COMPOSITE_ARRAY_RULES のパス正規表現
 | フォルダ解析・manifest 整合・自動対応 | `src/diff/batch-folder-import.ts` | `tests/diff/batch-folder-import.test.ts` |
 | 自己完結 HTML・変更の要点・レビュー状態・反映 JSON | `src/diff/export.ts` | `tests/diff/html-export.test.ts`、`run-diff-lite-compare.cjs` |
 | 機密値の伏せ字・マスク・内容識別子 | `src/diff/export-safety.ts` | `tests/diff/export-safety.test.ts` |
+| 比較結果ID | `src/diff/result-id.ts` | `tests/diff/result-id.test.ts` |
 | Excel（顧客用 / 社内用）と自前 XLSX ビルダー・一括 ZIP | `src/diff/xlsx-export.ts`、`xlsx-builder.ts`、`xlsx-batch-export.ts`、`src/archive/stored-zip.ts` | `tests/diff/xlsx-export.test.ts`、`xlsx-builder.test.ts`、`xlsx-batch-export.test.ts`、`tests/archive/stored-zip.test.ts` |
 | AI 向け Markdown | `src/diff/markdown-export.ts` | `tests/diff/markdown-export.test.ts` |
 | 比較条件プロファイル | `src/diff/comparison-profile.ts` | `tests/diff/comparison-profile.test.ts` |

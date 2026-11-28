@@ -1,6 +1,6 @@
 'use strict';
 
-import { SECTION_DEFS, META_KEYS, DIFF_NORMALIZATION_PRESETS, DEFAULT_IGNORE_KEYS, DiffNormalizationPreset } from '../constants.js';
+import { SECTION_DEFS, META_KEYS, DIFF_NORMALIZATION_PRESETS, DEFAULT_IGNORE_KEYS, DiffNormalizationPreset, reprintSectionKeys } from '../constants.js';
 import { state, ui } from '../state.js';
 import { deepClone, describeAclEntity, describeNotificationTargets, setOwnValue, stableStringify } from '../utils.js';
 import type { DiffRow, DiffFetchIssue } from './types.js';
@@ -334,6 +334,29 @@ function compileWildcardMatcher(token: string): WildcardMatcher {
   return { test: (value: string) => matchWildcard(token, String(value)) };
 }
 
+/** 無視ルールの入力を 1 規則ずつに分ける。 */
+function splitIgnoreRuleText(text): string[] {
+  return String(text || '')
+    // 空白はビュー名・カテゴリ名など正規のパス構成要素になり得る。
+    // 区切りはUIで案内している改行・カンマ・セミコロンに限定する。
+    .split(/[\n\r,、，;；]+/)
+    .map(trimIgnoreToken)
+    .filter(Boolean);
+}
+
+/**
+ * 無視ルールの入力を、同じ働きをする入力どうしが同じ値になる形にする（比較結果の識別子の入力）。
+ * 区切り・前後の空白・並び・重複、完全パス以外の大小文字の違いは、比較の結果を変えないので消す。
+ */
+export function canonicalIgnoreRules(text): string[] {
+  const rules = new Set<string>();
+  for (const rawToken of splitIgnoreRuleText(text)) {
+    const exactPath = decodeExactIgnorePathRule(rawToken);
+    rules.add(exactPath ? `exact:${exactPath}` : `rule:${normalizeIgnoreToken(rawToken)}`);
+  }
+  return [...rules].sort();
+}
+
 export function parseIgnoreRules(text) {
   const keySet = new Set(DEFAULT_IGNORE_KEYS);
   // 利用者が入力したキー名だけ。プラグイン設定のような利用者データの中では、既定のメタ情報キーを使わずこちらで判定する。
@@ -342,12 +365,7 @@ export function parseIgnoreRules(text) {
   const exactPathSet = new Set<string>();
   const keyPatterns: WildcardMatcher[] = [];
   const pathPatterns: WildcardMatcher[] = [];
-  String(text || '')
-    // 空白はビュー名・カテゴリ名など正規のパス構成要素になり得る。
-    // 区切りはUIで案内している改行・カンマ・セミコロンに限定する。
-    .split(/[\n\r,、，;；]+/)
-    .map(trimIgnoreToken)
-    .filter(Boolean)
+  splitIgnoreRuleText(text)
     .forEach((rawToken) => {
       const exactPath = decodeExactIgnorePathRule(rawToken);
       if (exactPath) {
@@ -1844,8 +1862,24 @@ export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeys
   // 両側に値がある後続セクションは、上限到達後に正規化や署名計算まで進めない。
   // 「走査した結果、追加省略 0 件」ではなく「未走査で件数不明」と区別して報告する。
   const unscannedSectionKeys: string[] = [];
+  // 再掲のセクション（フィールド設定・レイアウト設定と一緒に比べる旧フォーム設定）の行は、ほかのセクションと
+  // 同じ上限に数えると、同じ変更の二重計上で後ろのセクションが未走査になる。再掲の行は別枠の上限（同じ件数）で数える。
+  // 上限の判定はどれも rows の __diffCount / __diffLimitReached を見るため、セクションごとに数える枠を入れ替える。
+  const reprints = reprintSectionKeys(sections);
+  const sharedBudget = { count: 0, reached: false };
+  const reprintBudget = { count: 0, reached: false };
+  let activeBudget = sharedBudget;
+  const useDiffBudget = (budget: { count: number; reached: boolean }) => {
+    if (budget === activeBudget) return;
+    activeBudget.count = Number((rows as any).__diffCount || 0);
+    activeBudget.reached = (rows as any).__diffLimitReached === true;
+    (rows as any).__diffCount = budget.count;
+    (rows as any).__diffLimitReached = budget.reached;
+    activeBudget = budget;
+  };
   for (const sec of sections) {
     const label = (SECTION_DEFS.find((x) => x.key === sec) || ({} as any)).label || sec;
+    useDiffBudget(reprints.has(sec) ? reprintBudget : sharedBudget);
     const limitHitBefore = hasReachedDiffLimit(rows);
     const s = sourceBundle.sections[sec];
     const t = targetBundle.sections[sec];

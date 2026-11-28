@@ -51,6 +51,16 @@ import {
   SENSITIVE_SAME_VALUE_REDACTION,
   sha256Base64
 } from './export-safety.js';
+// 比較結果ID（result-id.ts は export-safety.js の後に読む。ほかの配布物のモジュールの並びを変えないため）
+import {
+  DIFF_RESULT_ID_DESCRIPTION,
+  DIFF_RESULT_ID_FILTERED_NOTE,
+  DIFF_RESULT_ID_LABEL,
+  DIFF_RESULT_ID_MATCH_NOTE,
+  DIFF_RESULT_ID_UNAVAILABLE,
+  DIFF_RESULT_ID_VALUE_NOTE,
+  resolveDiffResultIdForExport
+} from './result-id.js';
 import { buildDesignSnapshot } from '../design/snapshot.js';
 import {
   codeOf,
@@ -3177,8 +3187,24 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     truncated: exportSelection.summary.truncated,
     rowSelection: reportRowSelection
   }, preparedReviewRows.reviewKeys);
+  // 比較結果ID は全件の比較結果のもの。絞り込んだ出力では、呼び出し側が渡した値か全件の行（allRows）から求める。
+  const resultId = resolveDiffResultIdForExport({
+    resultId: options.resultId,
+    exportMode: options.exportMode || 'all',
+    rows,
+    allRows: options.allRows,
+    sourceBundle,
+    targetBundle,
+    scopes,
+    ignoreKeys,
+    normalizationPresetState: options.normalizationState,
+    fetchIssues,
+    partialIssues,
+    truncation: engineTruncation
+  });
   const reportMeta = {
     generatedAt: new Date().toISOString(),
+    resultId: resultId ? { full: resultId.full, short: resultId.short, version: resultId.version, scope: 'all' } : null,
     scopes: scopes || [],
     sectionText,
     ignoreKeys: String(ignoreKeys || ''),
@@ -3304,6 +3330,9 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   const appliedIgnoreSummary = appliedIgnoreTokens.length
     ? `比較時の無視キー ${appliedIgnoreTokens.length}件: ${appliedIgnoreTokens.map(formatIgnoreRuleForDisplay).join('、')}`
     : '比較時の無視キー 0件（なし）';
+  const resultIdDetailHtml = resultId
+    ? `<code class="report-result-id-full" data-result-id-full>${esc(resultId.full)}</code><span class="report-result-id-note">${esc(reportMeta.exportMode !== 'all' ? DIFF_RESULT_ID_FILTERED_NOTE : DIFF_RESULT_ID_MATCH_NOTE)} ${esc(DIFF_RESULT_ID_DESCRIPTION)}${esc(DIFF_RESULT_ID_VALUE_NOTE)}</span>`
+    : esc(DIFF_RESULT_ID_UNAVAILABLE);
   const appliedNormalizationSummary = reportMeta.normalizationLabels.length
     ? `比較時の正規化 ${reportMeta.normalizationLabels.length}件: ${reportMeta.normalizationLabels.join('、')}`
     : '比較時の正規化 0件（なし）';
@@ -8808,6 +8837,9 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .diff-human-overview-empty-example{padding:5px 0;border:0}
     .report-meta-line{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px 14px;min-width:0;padding-top:10px;border-top:1px solid var(--border);color:var(--muted);font-size:11px;line-height:1.5}
     .report-meta-line>span{min-width:0;overflow-wrap:anywhere}
+    .report-result-id code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;font-weight:700;color:var(--fg)}
+    .report-result-id-full{display:block;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--fg);overflow-wrap:anywhere;word-break:break-all;user-select:all}
+    .report-result-id-note{display:block;margin-top:4px;color:var(--muted)}
     .report-workspace{display:grid;grid-template-columns:minmax(248px,282px) minmax(0,1fr);align-items:start;gap:16px;margin-top:16px;margin-bottom:36px}
     .report-workspace>aside{position:sticky;top:12px;width:auto;min-width:0;height:calc(100vh - 24px);max-height:calc(100vh - 24px);border:1px solid var(--border);border-radius:16px;background:var(--sidebar);overflow:auto;box-shadow:none;backdrop-filter:none}
     .report-workspace>main{min-width:0;padding:0;overflow:visible}
@@ -9117,8 +9149,9 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     <div class="report-meta-line">
       <details class="report-source-details">
         <summary>比較対象・出力条件（${(scopes || []).length}セクション）</summary>
-        <dl><dt>生成日時</dt><dd><time datetime="${esc(reportMeta.generatedAt)}">${esc(reportMeta.generatedAt.replace('T', ' ').replace(/\.\d+Z$/, ' UTC'))}</time></dd><dt>比較対象</dt><dd>${esc(sectionText || '-')}</dd><dt>出力範囲</dt><dd>${esc(reportMeta.exportLabel)} · ${esc(comparedContentModeNote)}</dd></dl>
+        <dl><dt>生成日時</dt><dd><time datetime="${esc(reportMeta.generatedAt)}">${esc(reportMeta.generatedAt.replace('T', ' ').replace(/\.\d+Z$/, ' UTC'))}</time></dd><dt>比較対象</dt><dd>${esc(sectionText || '-')}</dd><dt>出力範囲</dt><dd>${esc(reportMeta.exportLabel)} · ${esc(comparedContentModeNote)}</dd><dt>${esc(DIFF_RESULT_ID_LABEL)}（全件）</dt><dd>${resultIdDetailHtml}</dd></dl>
       </details>
+      <span class="report-result-id" data-result-id="${esc(resultId?.full || '')}">${esc(DIFF_RESULT_ID_LABEL)}: ${resultId ? `<code>${esc(resultId.short)}</code>` : esc(DIFF_RESULT_ID_UNAVAILABLE)}${reportMeta.exportMode !== 'all' ? '（全件の比較結果）' : ''}</span>
       <span data-applied-ignore>${esc(appliedIgnoreSummary)}</span>
       <span data-applied-normalization>${esc(appliedNormalizationSummary)}</span>
     </div>

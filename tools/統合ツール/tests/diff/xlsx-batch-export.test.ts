@@ -189,6 +189,12 @@ describe('diff/xlsx-batch-export', () => {
       D5: '差分あり', E5: '一部未取得', G5: '4', H5: '1', I5: '1', J5: '1', K5: '1',
       L5: '名称が異なります', M5: '002_固都税管理_vs_固都税 路線価管理_App101→App202.xlsx'
     });
+    // 比較結果ID（先頭 12 桁）は、個別 Excel の比較概要と同じ値で、比較ごとに違う。
+    expect(summaryCells.N3).toBe('比較結果ID');
+    expect(summaryCells.N4).toMatch(/^[0-9a-f]{12}$/);
+    expect(summaryCells.N5).toMatch(/^[0-9a-f]{12}$/);
+    expect(summaryCells.N4).not.toBe(summaryCells.N5);
+    expect(Object.values(firstWorksheetCells(archiveEntries[1].data)).some((text) => text.startsWith(`${summaryCells.N4}\n完全な値: ${summaryCells.N4}`))).toBe(true);
     // 未取得があっても、確認できた範囲の差分件数は一括表で判断できる。
     expect(summaryCells.A2).toContain('差分あり 1件');
     expect(summaryCells.A2).toContain('一部未取得 1件');

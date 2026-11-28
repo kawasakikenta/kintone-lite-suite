@@ -1197,6 +1197,111 @@ describe('diff/engine', () => {
       });
     });
 
+    // 旧フォーム設定（/form.json）はフィールド設定・レイアウト設定の再掲。再掲の行が上限を使い切ると、
+    // 後ろのセクション（一覧・グラフ・プロセス管理）の本物の差が「未走査」になって見えなくなる。
+    describe('legacy form settings repeated from field and layout settings', () => {
+      const FIELD_COUNT = 600;
+      const layout = [{ type: 'ROW', fields: [{ type: 'SINGLE_LINE_TEXT', code: 'f0', size: { width: '120' } }] }];
+      const side = (suffix: string, variant: { view: string; chart: string; filter: string }, options: { formFieldCount?: number } = {}) => {
+        const properties: Record<string, any> = {};
+        for (let i = 0; i < FIELD_COUNT; i += 1) {
+          properties[`f${i}`] = { code: `f${i}`, type: 'SINGLE_LINE_TEXT', label: `項目${i}${suffix}` };
+        }
+        const formFieldCount = options.formFieldCount ?? FIELD_COUNT;
+        return {
+          fieldSettings: { properties },
+          layoutSettings: { layout },
+          formSettings: {
+            properties: Array.from({ length: formFieldCount }, (_, i) => ({ code: `f${i}`, type: 'SINGLE_LINE_TEXT', label: `項目${i}${suffix}` })),
+            layout
+          },
+          viewSettings: { views: { 一覧: { type: variant.view, name: '一覧', index: '0' } } },
+          reportSettings: { reports: { 集計: { chartType: variant.chart, name: '集計', index: '0' } } },
+          processSettings: {
+            enable: true,
+            states: { 未処理: { name: '未処理', index: '0' }, 完了: { name: '完了', index: '1' } },
+            actions: [{ name: '完了にする', from: '未処理', to: '完了', filterCond: variant.filter }]
+          }
+        };
+      };
+      const ALL = ['fieldSettings', 'layoutSettings', 'formSettings', 'viewSettings', 'reportSettings', 'processSettings'];
+      const realRows = (result: any) => result.rows.filter((row: any) => row.type !== 'same' && !row._displayOnly);
+      const sectionCount = (result: any, sectionKey: string) => realRows(result).filter((row: any) => row.sectionKey === sectionKey).length;
+
+      it('scans the sections after the repeated form settings when the field differences alone fit in the limit', () => {
+        const result = computeDiffRows(
+          makeBundle(side('', { view: 'LIST', chart: 'BAR', filter: '' })),
+          makeBundle(side('（改）', { view: 'CALENDAR', chart: 'PIE', filter: 'f0 = "1"' })),
+          ALL,
+          ''
+        );
+
+        expect(sectionCount(result, 'fieldSettings')).toBe(FIELD_COUNT);
+        expect(sectionCount(result, 'formSettings')).toBe(FIELD_COUNT);
+        expect(sectionCount(result, 'viewSettings')).toBeGreaterThan(0);
+        expect(sectionCount(result, 'reportSettings')).toBeGreaterThan(0);
+        expect(sectionCount(result, 'processSettings')).toBeGreaterThan(0);
+        expect(result.truncation.actualDiffIncomplete).toBe(false);
+        expect(hasIncompleteActualDiffTruncation(result.truncation)).toBe(false);
+        expect(result.truncation.sections).toEqual([]);
+        // 行の並びはセクションの順のまま（再掲を後ろへ回さない）
+        const order = [...new Set(realRows(result).map((row: any) => row.sectionKey))];
+        expect(order).toEqual(['fieldSettings', 'formSettings', 'viewSettings', 'reportSettings', 'processSettings']);
+      });
+
+      it('gives the repeated form settings their own limit', () => {
+        const result = computeDiffRows(
+          makeBundle(side('', { view: 'LIST', chart: 'BAR', filter: '' }, { formFieldCount: 1200 })),
+          makeBundle(side('（改）', { view: 'CALENDAR', chart: 'PIE', filter: 'f0 = "1"' }, { formFieldCount: 1200 })),
+          ALL,
+          ''
+        );
+
+        expect(sectionCount(result, 'formSettings')).toBe(1000);
+        expect(sectionCount(result, 'viewSettings')).toBeGreaterThan(0);
+        expect(sectionCount(result, 'processSettings')).toBeGreaterThan(0);
+        expect(result.truncation.sections).toEqual([
+          expect.objectContaining({ sectionKey: 'formSettings', scanStatus: 'partial' })
+        ]);
+        expect(hasIncompleteActualDiffTruncation(result.truncation)).toBe(true);
+      });
+
+      it('keeps counting the form settings in the shared limit when it is not a repeat (layout settings not compared)', () => {
+        const sections = ['fieldSettings', 'formSettings', 'viewSettings', 'reportSettings', 'processSettings'];
+        const result = computeDiffRows(
+          makeBundle(side('', { view: 'LIST', chart: 'BAR', filter: '' })),
+          makeBundle(side('（改）', { view: 'CALENDAR', chart: 'PIE', filter: 'f0 = "1"' })),
+          sections,
+          ''
+        );
+
+        expect(realRows(result)).toHaveLength(1000);
+        expect(result.truncation.sections).toEqual(expect.arrayContaining([
+          expect.objectContaining({ sectionKey: 'formSettings', scanStatus: 'partial' }),
+          expect.objectContaining({ sectionKey: 'viewSettings', scanStatus: 'unscanned' })
+        ]));
+      });
+
+      it('still scans the repeated form settings with its own limit after the shared limit is used up', () => {
+        const big = (suffix: string) => {
+          const sides = side(suffix, { view: 'LIST', chart: 'BAR', filter: '' });
+          for (let i = FIELD_COUNT; i < 1100; i += 1) {
+            sides.fieldSettings.properties[`f${i}`] = { code: `f${i}`, type: 'SINGLE_LINE_TEXT', label: `項目${i}${suffix}` };
+          }
+          return sides;
+        };
+        const result = computeDiffRows(makeBundle(big('')), makeBundle(big('（改）')), ALL, '');
+
+        expect(sectionCount(result, 'fieldSettings')).toBe(1000);
+        expect(sectionCount(result, 'formSettings')).toBe(FIELD_COUNT);
+        expect(result.truncation.sections).toEqual(expect.arrayContaining([
+          expect.objectContaining({ sectionKey: 'fieldSettings', scanStatus: 'partial' }),
+          expect.objectContaining({ sectionKey: 'processSettings', scanStatus: 'unscanned' })
+        ]));
+        expect(result.truncation.sections.find((section: any) => section.sectionKey === 'formSettings')).toBeUndefined();
+      });
+    });
+
     it('reports no truncation for small diffs', () => {
       const result = computeDiffRows(
         makeBundle({ fieldSettings: { properties: { a: { code: 'a', type: 'SINGLE_LINE_TEXT' } } } }),

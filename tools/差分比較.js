@@ -346,6 +346,17 @@
     } },
     { key: "categories", label: "カテゴリ設定", endpoint: "/app/categories.json", put: true, putBuilder: (d) => ({ categories: d.categories || d }) }
   ];
+  var REPRINT_SECTION_SOURCES = {
+    formSettings: ["fieldSettings", "layoutSettings"]
+  };
+  function reprintSectionKeys(comparedSectionKeys) {
+    const compared = new Set(comparedSectionKeys);
+    const reprints = /* @__PURE__ */ new Set();
+    for (const [key, sources] of Object.entries(REPRINT_SECTION_SOURCES)) {
+      if (compared.has(key) && sources.length && sources.every((source) => compared.has(source))) reprints.add(key);
+    }
+    return reprints;
+  }
   var META_KEYS = /* @__PURE__ */ new Set(["revision", "creator", "createdAt", "modifier", "modifiedAt"]);
   var DEFAULT_SUBTAB_STATE = Object.freeze({
     diff: "conditions",
@@ -2661,6 +2672,17 @@
   function compileWildcardMatcher(token) {
     return { test: (value) => matchWildcard(token, String(value)) };
   }
+  function splitIgnoreRuleText(text2) {
+    return String(text2 || "").split(/[\n\r,、，;；]+/).map(trimIgnoreToken).filter(Boolean);
+  }
+  function canonicalIgnoreRules(text2) {
+    const rules = /* @__PURE__ */ new Set();
+    for (const rawToken of splitIgnoreRuleText(text2)) {
+      const exactPath = decodeExactIgnorePathRule(rawToken);
+      rules.add(exactPath ? `exact:${exactPath}` : `rule:${normalizeIgnoreToken(rawToken)}`);
+    }
+    return [...rules].sort();
+  }
   function parseIgnoreRules(text2) {
     const keySet = new Set(DEFAULT_IGNORE_KEYS);
     const userKeySet = /* @__PURE__ */ new Set();
@@ -2668,7 +2690,7 @@
     const exactPathSet = /* @__PURE__ */ new Set();
     const keyPatterns = [];
     const pathPatterns = [];
-    String(text2 || "").split(/[\n\r,、，;；]+/).map(trimIgnoreToken).filter(Boolean).forEach((rawToken) => {
+    splitIgnoreRuleText(text2).forEach((rawToken) => {
       const exactPath = decodeExactIgnorePathRule(rawToken);
       if (exactPath) {
         exactPathSet.add(exactPath);
@@ -3894,8 +3916,21 @@
     const fetchIssues = [];
     const limitHitSectionKeys = [];
     const unscannedSectionKeys = [];
+    const reprints = reprintSectionKeys(sections);
+    const sharedBudget = { count: 0, reached: false };
+    const reprintBudget = { count: 0, reached: false };
+    let activeBudget = sharedBudget;
+    const useDiffBudget = (budget) => {
+      if (budget === activeBudget) return;
+      activeBudget.count = Number(rows.__diffCount || 0);
+      activeBudget.reached = rows.__diffLimitReached === true;
+      rows.__diffCount = budget.count;
+      rows.__diffLimitReached = budget.reached;
+      activeBudget = budget;
+    };
     for (const sec of sections) {
       const label = (SECTION_DEFS.find((x) => x.key === sec) || {}).label || sec;
+      useDiffBudget(reprints.has(sec) ? reprintBudget : sharedBudget);
       const limitHitBefore = hasReachedDiffLimit(rows);
       const s = sourceBundle.sections[sec];
       const t = targetBundle.sections[sec];
@@ -6486,6 +6521,146 @@
     return row?.type === "same" && SENSITIVE_DIFF_SECTION_KEYS.has(sectionKeyOf(row));
   }
 
+  // src/diff/result-id.ts
+  var DIFF_RESULT_ID_VERSION = 1;
+  var DIFF_RESULT_ID_SHORT_LENGTH = 12;
+  var DIFF_RESULT_ID_LABEL = "比較結果ID";
+  var DIFF_RESULT_ID_DESCRIPTION = "比較元・比較先のアプリ（アプリID・ゲストスペースID・本番／プレビュー）、比較条件（セクション・無視ルール・正規化）、取得の状態、全件の差分行（セクション・場所・種類・変更前後の値）から計算した SHA-256 です。生成日時・出力範囲・表示の言語は値に影響しません。";
+  var DIFF_RESULT_ID_VALUE_NOTE = "差分行の値（JS/CSS の本文・プラグインの設定値を含む）も計算に使います。識別子の説明には値を載せていません。";
+  var DIFF_RESULT_ID_MATCH_NOTE = "同じ比較から保存した画面・HTML・Excel・Markdown には同じ値が入ります。";
+  var DIFF_RESULT_ID_FILTERED_NOTE = "全件の比較結果の識別子です。この出力は絞り込んだ範囲だけを収録しています。";
+  var DIFF_RESULT_ID_UNAVAILABLE = "未計算（全件の比較結果が渡されていないため）";
+  function formatDiffResultIdText(id, options = {}) {
+    if (!id) return DIFF_RESULT_ID_UNAVAILABLE;
+    return [
+      id.short,
+      `完全な値: ${id.full}`,
+      options.filtered ? DIFF_RESULT_ID_FILTERED_NOTE : DIFF_RESULT_ID_MATCH_NOTE
+    ].join("\n");
+  }
+  function canonicalValue(value, seen) {
+    if (value === void 0) return "u";
+    if (value === null) return "n";
+    if (typeof value === "string") return `s${JSON.stringify(value)}`;
+    if (typeof value === "boolean") return value ? "b1" : "b0";
+    if (typeof value === "number") return `d${Object.is(value, -0) ? "0" : String(value)}`;
+    if (typeof value === "bigint") return `i${String(value)}`;
+    if (typeof value !== "object") return `x${JSON.stringify(String(value))}`;
+    if (seen.has(value)) return "c";
+    seen.add(value);
+    let out;
+    if (Array.isArray(value)) {
+      out = `a[${value.map((item) => canonicalValue(item, seen)).join(",")}]`;
+    } else {
+      const record = value;
+      out = `o{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalValue(record[key], seen)}`).join(",")}}`;
+    }
+    seen.delete(value);
+    return out;
+  }
+  var canonical = (value) => canonicalValue(value, /* @__PURE__ */ new Set());
+  function sectionKeyOfRow(row) {
+    const explicit = String(row?.sectionKey || "").trim();
+    if (explicit) return explicit;
+    return String(row?.path || "").split(/[.[]/, 1)[0] || "";
+  }
+  function endpointMaterial(bundle) {
+    return {
+      appId: String(bundle?.appId ?? "").trim(),
+      guestId: String(bundle?.guestId ?? "").trim(),
+      preview: !!bundle?.preview
+    };
+  }
+  function rowMaterial(row) {
+    return canonical({
+      section: sectionKeyOfRow(row),
+      path: String(row?.path || ""),
+      type: String(row?.type || ""),
+      moved: !!row?.moved,
+      movedFrom: row?.movedFrom,
+      movedTo: row?.movedTo,
+      arrayKey: String(row?.arrayKey || ""),
+      arrayKeyValue: row?.arrayKeyValue,
+      left: row?.left,
+      right: row?.right
+    });
+  }
+  function scanStatusOf(section) {
+    return String(section?.scanStatus || (section?.scanned === false ? "unscanned" : section?.partiallyScanned ? "partial" : "complete"));
+  }
+  function truncationMaterial(truncation) {
+    const sections = Array.isArray(truncation?.sections) ? truncation.sections : [];
+    return sections.map((section) => ({
+      section: String(section?.sectionKey || ""),
+      status: scanStatusOf(section),
+      droppedDiff: Number(section?.droppedDiff || 0)
+    })).filter((item) => item.status !== "complete" || item.droppedDiff > 0).map((item) => canonical(item)).sort();
+  }
+  function fetchIssueMaterial(issues) {
+    return [...new Set(issues.map((issue) => canonical({
+      section: String(issue?.sectionKey || ""),
+      side: String(issue?.side || "")
+    })))].sort();
+  }
+  function partialIssueMaterial(issues) {
+    return issues.map((issue) => canonical({
+      section: String(issue?.sectionKey || ""),
+      side: String(issue?.side || ""),
+      files: (Array.isArray(issue?.files) ? issue.files : []).map((file) => canonical({
+        fileKey: String(file?.fileKey || ""),
+        fileName: String(file?.fileName || ""),
+        reason: String(file?.reason || "")
+      })).sort()
+    })).sort();
+  }
+  function buildDiffResultIdMaterial(input) {
+    const normalizationState = input.normalizationPresetState || {};
+    const rows = Array.isArray(input.rows) ? input.rows : [];
+    const material = {
+      format: "kintone-diff-result-id",
+      version: DIFF_RESULT_ID_VERSION,
+      source: endpointMaterial(input.sourceBundle),
+      target: endpointMaterial(input.targetBundle),
+      conditions: {
+        sections: [...new Set((input.scopes || []).map((key) => String(key)))].sort(),
+        ignoreRules: canonicalIgnoreRules(input.ignoreKeys || ""),
+        // engine と同じく、真と見なせる値の正規化だけが比較に効く。
+        normalization: Object.keys(DIFF_NORMALIZATION_PRESETS).filter((key) => !!normalizationState[key]).sort()
+      },
+      fetchIssues: fetchIssueMaterial(Array.isArray(input.fetchIssues) ? input.fetchIssues : []),
+      partialIssues: partialIssueMaterial(Array.isArray(input.partialIssues) ? input.partialIssues : []),
+      truncation: truncationMaterial(input.truncation),
+      rows: rows.filter((row) => row && row.type !== "same" && !row._displayOnly).map(rowMaterial).sort()
+    };
+    return canonical(material);
+  }
+  function computeDiffResultId(input) {
+    const full = sha256Hex(buildDiffResultIdMaterial(input));
+    return { full, short: full.slice(0, DIFF_RESULT_ID_SHORT_LENGTH), version: DIFF_RESULT_ID_VERSION };
+  }
+  var resultIdCache = /* @__PURE__ */ new WeakMap();
+  function diffResultIdOf(result) {
+    const cached = resultIdCache.get(result);
+    if (cached) return cached;
+    const id = computeDiffResultId(result);
+    resultIdCache.set(result, id);
+    return id;
+  }
+  function readDiffResultId(value) {
+    const record = value;
+    const full = String(record?.full || "");
+    if (!/^[0-9a-f]{64}$/.test(full)) return null;
+    return { full, short: full.slice(0, DIFF_RESULT_ID_SHORT_LENGTH), version: Number(record?.version) || DIFF_RESULT_ID_VERSION };
+  }
+  function resolveDiffResultIdForExport(options) {
+    const provided = readDiffResultId(options.resultId);
+    if (provided) return provided;
+    const isAll = !options.exportMode || String(options.exportMode).toLowerCase() === "all";
+    const rows = Array.isArray(options.allRows) ? options.allRows : isAll ? options.rows : null;
+    if (!Array.isArray(rows)) return null;
+    return computeDiffResultId({ ...options, rows });
+  }
+
   // src/diff/export.ts
   function stringifyForDiff(value) {
     if (value === void 0) return "（未定義）";
@@ -7220,8 +7395,23 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       truncated: exportSelection.summary.truncated,
       rowSelection: reportRowSelection
     }, preparedReviewRows.reviewKeys);
+    const resultId = resolveDiffResultIdForExport({
+      resultId: options.resultId,
+      exportMode: options.exportMode || "all",
+      rows,
+      allRows: options.allRows,
+      sourceBundle,
+      targetBundle,
+      scopes,
+      ignoreKeys,
+      normalizationPresetState: options.normalizationState,
+      fetchIssues,
+      partialIssues,
+      truncation: engineTruncation
+    });
     const reportMeta = {
       generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      resultId: resultId ? { full: resultId.full, short: resultId.short, version: resultId.version, scope: "all" } : null,
       scopes: scopes || [],
       sectionText,
       ignoreKeys: String(ignoreKeys || ""),
@@ -7320,6 +7510,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     ).join("");
     const appliedIgnoreTokens = [...new Set(String(reportMeta.ignoreKeys || "").split(/[\n\r,、，;；]+/).map((token) => token.trim()).filter(Boolean))];
     const appliedIgnoreSummary = appliedIgnoreTokens.length ? `比較時の無視キー ${appliedIgnoreTokens.length}件: ${appliedIgnoreTokens.map(formatIgnoreRuleForDisplay).join("、")}` : "比較時の無視キー 0件（なし）";
+    const resultIdDetailHtml = resultId ? `<code class="report-result-id-full" data-result-id-full>${esc(resultId.full)}</code><span class="report-result-id-note">${esc(reportMeta.exportMode !== "all" ? DIFF_RESULT_ID_FILTERED_NOTE : DIFF_RESULT_ID_MATCH_NOTE)} ${esc(DIFF_RESULT_ID_DESCRIPTION)}${esc(DIFF_RESULT_ID_VALUE_NOTE)}</span>` : esc(DIFF_RESULT_ID_UNAVAILABLE);
     const appliedNormalizationSummary = reportMeta.normalizationLabels.length ? `比較時の正規化 ${reportMeta.normalizationLabels.length}件: ${reportMeta.normalizationLabels.join("、")}` : "比較時の正規化 0件（なし）";
     const contentDisclosureHtml = includesComparedContent ? `<div class="report-content-disclosure report-content-disclosure--caution" data-content-disclosure="withCompared" role="note" aria-label="収録内容と反映方向"><strong>取扱注意: 比較設定込み</strong><span>比較設定・フィールド詳細・設定証跡JSONを収録しています。反映JSONは、比較元の設定値で比較先を上書きする方向です。${canBuildReflectJson ? "" : `反映JSONは利用できません。${esc(reflectJsonBlockedReason)}`}</span></div>` : '<div class="report-content-disclosure" data-content-disclosure="diffOnly" role="note" aria-label="収録内容の注意"><strong>差分行のみ（全設定は未収録）</strong><span>全設定スナップショットは収録していませんが、変更された差分行の比較元・比較先の値は収録しています。Excelにも同じ差分値が収録され、取得不完全時はエラー等の原文も含まれるため、共有前に内容を確認してください。</span></div>';
     const stateRenameSafetyNoticeHtml = !stateRenameNoticeCount ? "" : visibleStateRenameNoticeCount === stateRenameNoticeCount ? `<div class="warn">ℹ プロセスの状態名変更が ${stateRenameNoticeCount} 件あります。変更件数に含めていますが、プロセス管理はセクション全体を置き換えるAPIのため、このレポートでは反映JSON全体を無効にしています。管理画面で手動確認してください。</div>` : `<div class="warn">ℹ 比較設定全体でプロセスの状態名変更を ${stateRenameNoticeCount} 件検出しました。この出力範囲には ${visibleStateRenameNoticeCount} 件を収録しているため、画面の変更件数は出力範囲に含まれる改名だけを数えています。プロセス管理はセクション全体を置き換えるAPIのため、このレポートでは反映JSON全体を無効にしています。管理画面で手動確認してください。</div>`;
@@ -12797,6 +12988,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .diff-human-overview-empty-example{padding:5px 0;border:0}
     .report-meta-line{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px 14px;min-width:0;padding-top:10px;border-top:1px solid var(--border);color:var(--muted);font-size:11px;line-height:1.5}
     .report-meta-line>span{min-width:0;overflow-wrap:anywhere}
+    .report-result-id code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;font-weight:700;color:var(--fg)}
+    .report-result-id-full{display:block;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--fg);overflow-wrap:anywhere;word-break:break-all;user-select:all}
+    .report-result-id-note{display:block;margin-top:4px;color:var(--muted)}
     .report-workspace{display:grid;grid-template-columns:minmax(248px,282px) minmax(0,1fr);align-items:start;gap:16px;margin-top:16px;margin-bottom:36px}
     .report-workspace>aside{position:sticky;top:12px;width:auto;min-width:0;height:calc(100vh - 24px);max-height:calc(100vh - 24px);border:1px solid var(--border);border-radius:16px;background:var(--sidebar);overflow:auto;box-shadow:none;backdrop-filter:none}
     .report-workspace>main{min-width:0;padding:0;overflow:visible}
@@ -13104,8 +13298,9 @@ ${preparedReviewRows.reviewKeys.length ? `<div class="report-review-start" data-
     <div class="report-meta-line">
       <details class="report-source-details">
         <summary>比較対象・出力条件（${(scopes || []).length}セクション）</summary>
-        <dl><dt>生成日時</dt><dd><time datetime="${esc(reportMeta.generatedAt)}">${esc(reportMeta.generatedAt.replace("T", " ").replace(/\.\d+Z$/, " UTC"))}</time></dd><dt>比較対象</dt><dd>${esc(sectionText || "-")}</dd><dt>出力範囲</dt><dd>${esc(reportMeta.exportLabel)} · ${esc(comparedContentModeNote)}</dd></dl>
+        <dl><dt>生成日時</dt><dd><time datetime="${esc(reportMeta.generatedAt)}">${esc(reportMeta.generatedAt.replace("T", " ").replace(/\.\d+Z$/, " UTC"))}</time></dd><dt>比較対象</dt><dd>${esc(sectionText || "-")}</dd><dt>出力範囲</dt><dd>${esc(reportMeta.exportLabel)} · ${esc(comparedContentModeNote)}</dd><dt>${esc(DIFF_RESULT_ID_LABEL)}（全件）</dt><dd>${resultIdDetailHtml}</dd></dl>
       </details>
+      <span class="report-result-id" data-result-id="${esc(resultId?.full || "")}">${esc(DIFF_RESULT_ID_LABEL)}: ${resultId ? `<code>${esc(resultId.short)}</code>` : esc(DIFF_RESULT_ID_UNAVAILABLE)}${reportMeta.exportMode !== "all" ? "（全件の比較結果）" : ""}</span>
       <span data-applied-ignore>${esc(appliedIgnoreSummary)}</span>
       <span data-applied-normalization>${esc(appliedNormalizationSummary)}</span>
     </div>
@@ -15720,14 +15915,14 @@ ${details.map((line) => `・${line}`).join("\n")}` : text2;
   function sectionLabelOf(key) {
     return SECTION_LABEL_BY_KEY2.get(key) || key || "(未分類)";
   }
-  function sectionKeyOfRow(row) {
+  function sectionKeyOfRow2(row) {
     return String(row.sectionKey || row.section || "(その他)");
   }
   function namedEntityPathOfRow(row) {
     const tail = row.entityPathTail;
     if (typeof tail !== "string") return null;
     const path = String(row.path || "");
-    const firstTokenSplit = splitNamedEntityPath(sectionKeyOfRow(row), path, null);
+    const firstTokenSplit = splitNamedEntityPath(sectionKeyOfRow2(row), path, null);
     if (!firstTokenSplit || !path.endsWith(tail)) return null;
     const prefixLength = path.length - firstTokenSplit.name.length - firstTokenSplit.tail.length;
     const root2 = path.slice(0, path.length - tail.length);
@@ -15744,7 +15939,7 @@ ${details.map((line) => `・${line}`).join("\n")}` : text2;
   function groupRowsBySection(rows) {
     const map = /* @__PURE__ */ new Map();
     for (const r of rows) {
-      const key = sectionKeyOfRow(r);
+      const key = sectionKeyOfRow2(r);
       let list = map.get(key);
       if (!list) {
         list = [];
@@ -16203,7 +16398,7 @@ ${details.map((line) => `・${line}`).join("\n")}` : text2;
     return value.replace(/(種別:\s*)([A-Z][A-Z0-9_]*)\b/g, (_match, prefix, type) => `${prefix}${FIELD_TYPE_LABELS[type] || type}`);
   }
   function technicalSheetNameForRow(row) {
-    return sectionSheetName(sectionKeyOfRow(row));
+    return sectionSheetName(sectionKeyOfRow2(row));
   }
   function decodedListValue(row, side) {
     try {
@@ -16613,7 +16808,8 @@ ${details.map((line) => `・${line}`).join("\n")}` : text2;
       ["正規化設定", normalizationLabel(ctx.normalizationPresetState), "自動判定", "重要度、業務への影響、対応要否は自動判定しません"],
       ["フィールド差分", fieldStatus, "", fieldLinkTarget?.label || ""],
       ["使い方", fieldCount ? "①「変更対象一覧」で対象を絞る　②「フィールド差分要約・詳細」で変更内容を確認　③「差分一覧」で確認状況と対応判断を入力　※パスは技術明細シートにのみ掲載" : "①「変更対象一覧」で対象を絞る　②「差分一覧」で変更前後を確認　③黄色い4列に確認状況・対応判断・担当者・コメントを入力　※パスは技術明細シートにのみ掲載", "", rows.length ? "③ レビュー入力へ" : ""],
-      ["レポート識別子 (reportFingerprint)", reportFingerprint, "", ""]
+      // レポート識別子は HTML のレビュー状態との照合用（出力範囲ごとに変わる）。比較結果ID は全件の比較結果の照合用。
+      ["レポート識別子 (reportFingerprint)", reportFingerprint, DIFF_RESULT_ID_LABEL, formatDiffResultIdText(xlsxResultId(ctx), { filtered: ctx.exportMode === "filtered" })]
     ];
     const guideTitleRow = sheetRows.length;
     sheetRows.push(["シート案内", "", "", ""]);
@@ -16731,7 +16927,11 @@ ${details.map((line) => `・${line}`).join("\n")}` : text2;
     cellStyles[overviewRow.fieldStatus] = ["info", fieldStatusIncomplete ? "kpiDanger" : "kpiGood"];
     if (fieldLinkTarget) cellStyles[overviewRow.fieldStatus][3] = "hyperlink";
     if (rows.length) cellStyles[overviewRow.usage][3] = "hyperlink";
-    cellStyles[overviewRow.reportFingerprint] = ["info", "normal"];
+    cellStyles[overviewRow.reportFingerprint] = ["info", "normal", "info", "normal"];
+    rowHeights[overviewRow.reportFingerprint] = readableDiffRowHeight([
+      { value: sheetRows[overviewRow.reportFingerprint][1], width: 54 },
+      { value: sheetRows[overviewRow.reportFingerprint][3], width: 54 }
+    ], 120);
     for (const index of warningRows) cellStyles[index][0] = "warning";
     const merges = [
       "A1:D1",
@@ -16817,7 +17017,7 @@ ${details.map((line) => `・${line}`).join("\n")}` : text2;
   function buildTechnicalRefs(rows) {
     const sectionCounts = /* @__PURE__ */ new Map();
     return rows.map((row) => {
-      const key = sectionKeyOfRow(row);
+      const key = sectionKeyOfRow2(row);
       const indexInSection = sectionCounts.get(key) || 0;
       sectionCounts.set(key, indexInSection + 1);
       return {
@@ -17047,7 +17247,7 @@ ${details.map((line) => `・${line}`).join("\n")}` : text2;
     const grouped = /* @__PURE__ */ new Map();
     for (const [rowIndex, row] of (ctx.rows || []).entries()) {
       if (!row || row._displayOnly || row.type === "same" || structuredFieldRows.has(rowIndex)) continue;
-      const sectionKey = sectionKeyOfRow(row);
+      const sectionKey = sectionKeyOfRow2(row);
       const parts = customerItemParts(row, ctx.sourceBundle, ctx.targetBundle);
       const viewName = sectionKey === "viewSettings" ? coarseViewName(row, ctx.sourceBundle, ctx.targetBundle) : null;
       const targetName = sectionKey === "fieldSettings" ? "未識別のフィールド差分" : sectionKey === "viewSettings" && !viewName ? "未識別の一覧差分" : viewName || parts.target || customerSectionLabel(sectionKey);
@@ -17897,20 +18097,11 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     const labels = [...new Set((scopes || []).map((key) => customerSectionLabel(key)).filter(Boolean))];
     return labels.length ? labels.join("、") : "比較した設定範囲";
   }
-  var CUSTOMER_REDUNDANT_SECTION_KEYS = ["formSettings"];
-  var CUSTOMER_REDUNDANT_SECTION_SOURCES = {
-    formSettings: ["fieldSettings", "layoutSettings"]
-  };
   var CUSTOMER_REDUNDANT_SECTION_NOTE = {
     formSettings: "03 フォームフィールドと 04 フォームレイアウトに同じ変更が載っています（旧 /form.json の再掲）。"
   };
   function customerRedundantSectionKeys(comparedSectionKeys) {
-    const redundant = /* @__PURE__ */ new Set();
-    for (const key of CUSTOMER_REDUNDANT_SECTION_KEYS) {
-      const sources = CUSTOMER_REDUNDANT_SECTION_SOURCES[key] || [];
-      if (sources.length && sources.every((source) => comparedSectionKeys.has(source))) redundant.add(key);
-    }
-    return redundant;
+    return reprintSectionKeys(comparedSectionKeys);
   }
   function customerChangeType(row) {
     if (row.moved || row.type === "moved") return "並び順変更";
@@ -18046,7 +18237,7 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     deletable: "削除"
   };
   function customerAclValueSummary(row, value) {
-    if (!["appAcl", "fieldAcl", "recordPermissions"].includes(sectionKeyOfRow(row))) return null;
+    if (!["appAcl", "fieldAcl", "recordPermissions"].includes(sectionKeyOfRow2(row))) return null;
     const summarize = (entry) => {
       if (Array.isArray(entry)) {
         if (!entry.length) return "権限設定なし";
@@ -18141,7 +18332,7 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     return !!value && typeof value === "object" && !Array.isArray(value) && ("srcField" in value || "srcType" in value || "destField" in value);
   }
   function isAppActionRootRow(row) {
-    const named = sectionKeyOfRow(row) === "actionSettings" ? namedEntityPathOfRow(row) : null;
+    const named = sectionKeyOfRow2(row) === "actionSettings" ? namedEntityPathOfRow(row) : null;
     if (named) return named.tail === "";
     const path = String(row.path || "");
     if (/^actionSettings\.actions(?:\[[^\]]+\]|\.[^.]+)$/.test(path)) return true;
@@ -18177,7 +18368,7 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
   }
   function customerActionItemParts(row, sourceBundle, targetBundle) {
     const path = String(row.path || "");
-    if (sectionKeyOfRow(row) !== "actionSettings" || !/^actionSettings\.actions(?:\.|\[)/.test(path)) {
+    if (sectionKeyOfRow2(row) !== "actionSettings" || !/^actionSettings\.actions(?:\.|\[)/.test(path)) {
       return null;
     }
     const actionNames = (bundle) => {
@@ -18394,7 +18585,7 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     return { target: `一覧「${viewName}」`, settingItem };
   }
   function customerItemParts(row, sourceBundle, targetBundle) {
-    const sectionKey = sectionKeyOfRow(row);
+    const sectionKey = sectionKeyOfRow2(row);
     const sectionLabel2 = customerSectionLabel(sectionKey);
     const path = String(row.path || "").trim();
     if (row._stateRenameNotice) return { target: "プロセス管理", settingItem: "ステータス名" };
@@ -18658,7 +18849,7 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     return label || null;
   }
   function customerOneBasedIndexLabel(row, value) {
-    if (!CUSTOMER_ONE_BASED_INDEX_SECTIONS.has(sectionKeyOfRow(row))) return null;
+    if (!CUSTOMER_ONE_BASED_INDEX_SECTIONS.has(sectionKeyOfRow2(row))) return null;
     if (!/(?:^|\.)index$/.test(String(row.path || ""))) return null;
     const raw = typeof value === "number" ? value : String(value ?? "").trim();
     if (typeof raw === "string" && !/^\d+$/.test(raw)) return null;
@@ -18668,7 +18859,7 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
   }
   function customerContextualEnumLabel(row, value) {
     if (typeof value !== "string") return null;
-    const sectionKey = sectionKeyOfRow(row);
+    const sectionKey = sectionKeyOfRow2(row);
     const path = String(row.path || "");
     const leaf = path.match(/(?:^|\.)([^.[\]]+)$/)?.[1] || "";
     if (sectionKey === "fieldAcl" && leaf === "accessibility") {
@@ -18748,7 +18939,7 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     return value;
   }
   function customerComplexValueSummary(row, side, value) {
-    const fieldInfo = sectionKeyOfRow(row) === "fieldSettings" ? extractFieldPathInfo(String(row.path || "")) : null;
+    const fieldInfo = sectionKeyOfRow2(row) === "fieldSettings" ? extractFieldPathInfo(String(row.path || "")) : null;
     const fieldSummary = fieldInfo && (fieldInfo.isFieldRoot || fieldInfo.isSubFieldRoot) ? conciseFieldDefinition(value) : null;
     if (fieldSummary) return fieldSummary;
     const aclSummary = customerAclValueSummary(row, value);
@@ -18838,7 +19029,7 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
   }
   function buildCustomerDiffItems(ctx, includeTableChildren = false) {
     const sourceRows = includeTableChildren ? expandSubtableRowsForDisplay(ctx.rows || []) : ctx.rows || [];
-    const actualRows = sourceRows.filter((row) => row.type !== "same" && (!row._displayOnly || includeTableChildren && row._expandedFromTable === true) && !(sectionKeyOfRow(row) === "pluginSettings" && String(row.path || "").trim() === "pluginSettings" && row.type === "changed"));
+    const actualRows = sourceRows.filter((row) => row.type !== "same" && (!row._displayOnly || includeTableChildren && row._expandedFromTable === true) && !(sectionKeyOfRow2(row) === "pluginSettings" && String(row.path || "").trim() === "pluginSettings" && row.type === "changed"));
     const items = [];
     const groupedRows = groupRowsBySection(actualRows);
     const comparedSectionKeys = /* @__PURE__ */ new Set([...ctx.scopes || [], ...groupedRows.keys()]);
@@ -19254,6 +19445,9 @@ ${reviewChangeSummary(row, sourceValue, targetValue)}`;
     const date = new Date(normalized);
     return Number.isFinite(date.getTime()) ? humanDateTime(date.toISOString()) : "未記録";
   }
+  function xlsxResultId(ctx) {
+    return resolveDiffResultIdForExport(ctx);
+  }
   function buildCustomerSummarySheet(ctx, items, apiGroups, availability) {
     const redundantItems = items.filter((item) => item.redundant);
     const counts = summarizeCustomerCoarseTargets(buildCustomerCoarseTargets(ctx, items));
@@ -19278,7 +19472,8 @@ ${targetName}`, "", ""],
       [`${counts.actual}件`, "", `${counts.added}件`, `${counts.removed}件`, `${counts.contentChanged}件`, `${counts.moved}件`],
       ["比較範囲", "", "", "", "", ""],
       ["比較した設定領域", customerScopeLabel(comparedScopes), "", "", "", ""],
-      ["比較日時", customerDateTime(ctx.comparedAt), "", "", "", ""]
+      ["比較日時", customerDateTime(ctx.comparedAt), "", "", "", ""],
+      [DIFF_RESULT_ID_LABEL, formatDiffResultIdText(xlsxResultId(ctx), { filtered }), "", "", "", ""]
     ];
     const resultTitleRow = 2;
     const metricLabelRow = 3;
@@ -19286,6 +19481,7 @@ ${targetName}`, "", ""],
     const scopeTitleRow = 5;
     const scopeRow = 6;
     const comparedAtRow = 7;
+    const resultIdRow = 8;
     const sensitiveLabels = customerSensitiveSheetLabels(items);
     const sensitiveNoteRow = sensitiveLabels.length ? rows.length : -1;
     if (sensitiveNoteRow >= 0) {
@@ -19375,6 +19571,8 @@ ${targetName}`, "", ""],
     cellStyles[scopeRow][1] = "info";
     cellStyles[comparedAtRow][0] = "summaryLabel";
     cellStyles[comparedAtRow][1] = "info";
+    cellStyles[resultIdRow][0] = "summaryLabel";
+    cellStyles[resultIdRow][1] = "info";
     if (sensitiveNoteRow >= 0) {
       cellStyles[sensitiveNoteRow][0] = "summaryLabel";
       cellStyles[sensitiveNoteRow][1] = "warning";
@@ -19435,7 +19633,7 @@ ${targetName}`, "", ""],
         if (index === resultTitleRow || index === scopeTitleRow) return 30;
         if (index === metricLabelRow) return 26;
         if (index === metricValueRow) return 38;
-        if (index === scopeRow || index === comparedAtRow) {
+        if (index === scopeRow || index === comparedAtRow || index === resultIdRow) {
           return readableDiffRowHeight([{ value: row[1], width: 72 }], 58);
         }
         if (index === sensitiveNoteRow) return readableDiffRowHeight([{ value: row[1], width: 72 }], 58);
@@ -19463,6 +19661,7 @@ ${targetName}`, "", ""],
         `A${scopeTitleRow + 1}:F${scopeTitleRow + 1}`,
         `B${scopeRow + 1}:F${scopeRow + 1}`,
         `B${comparedAtRow + 1}:F${comparedAtRow + 1}`,
+        `B${resultIdRow + 1}:F${resultIdRow + 1}`,
         ...sensitiveNoteRow >= 0 ? [`B${sensitiveNoteRow + 1}:F${sensitiveNoteRow + 1}`] : [],
         ...fullAppNameRow >= 0 ? [`B${fullAppNameRow + 1}:F${fullAppNameRow + 1}`] : [],
         ...redundantNoteRow >= 0 ? [`B${redundantNoteRow + 1}:F${redundantNoteRow + 1}`] : [],
@@ -20120,6 +20319,10 @@ ${item.target}` : item.target;
             text: "比較元・比較先のアプリ名、比較日時、比較した設定領域、変更対象の件数（追加・削除・変更・並び順変更）と、機能別の差分明細件数をまとめた表紙です。"
           },
           {
+            label: DIFF_RESULT_ID_LABEL,
+            text: `比較概要の「${DIFF_RESULT_ID_LABEL}」は、同じ比較から出たファイルかを照合する値です。${DIFF_RESULT_ID_MATCH_NOTE}${DIFF_RESULT_ID_DESCRIPTION}${DIFF_RESULT_ID_VALUE_NOTE}`
+          },
+          {
             label: "確認できなかった範囲",
             text: `取得に失敗した、または一部しか確認できなかった設定領域がある場合にだけ作られるシートです。${issuesNote}`
           },
@@ -20293,7 +20496,7 @@ ${item.target}` : item.target;
     const technicalRefs = buildTechnicalRefs(rows);
     const differenceRefsBySection = /* @__PURE__ */ new Map();
     rows.forEach((row, index) => {
-      const key = sectionKeyOfRow(row);
+      const key = sectionKeyOfRow2(row);
       const refs = differenceRefsBySection.get(key) || [];
       refs.push(differenceRefs[index]);
       differenceRefsBySection.set(key, refs);
@@ -20684,7 +20887,8 @@ ${item.target}` : item.target;
       coverageDetail: incomplete ? customerIncompleteScopeSuffix(item.context) || "詳細は各Excelの「確認できなかった範囲」を確認" : "",
       counts,
       pairNameStatus: pairNameStatus(rawSourceName, rawTargetName),
-      filename
+      filename,
+      resultIdShort: resolveDiffResultIdForExport(item.context)?.short || ""
     };
   }
   function failedSummaryRow(item, index, message) {
@@ -20702,7 +20906,8 @@ ${item.target}` : item.target;
 原因: ${message}`,
       counts: null,
       pairNameStatus: pairNameStatus(rawSourceName, rawTargetName),
-      filename: ""
+      filename: "",
+      resultIdShort: ""
     };
   }
   function summaryStatusStyle(status) {
@@ -20727,9 +20932,9 @@ ${item.target}` : item.target;
     if (summary.coverage === "一部未取得") return "review";
     return alternate ? "zebra" : "normal";
   }
-  var BATCH_SUMMARY_COLUMN_COUNT = 13;
-  var BATCH_SUMMARY_COLUMN_LAST = "M";
-  var BATCH_SUMMARY_COLUMN_WIDTHS = [7, 32, 32, 16, 13, 30, 10, 10, 10, 10, 14, 22, 44];
+  var BATCH_SUMMARY_COLUMN_COUNT = 14;
+  var BATCH_SUMMARY_COLUMN_LAST = "N";
+  var BATCH_SUMMARY_COLUMN_WIDTHS = [7, 32, 32, 16, 13, 30, 10, 10, 10, 10, 14, 22, 44, 16];
   var BATCH_SUMMARY_DATA_ROW_HEIGHT = 32;
   var BATCH_SUMMARY_DATA_ROW_MAX_HEIGHT = 220;
   var BATCH_SUMMARY_DATA_LINE_HEIGHT = 17;
@@ -20790,7 +20995,8 @@ ${item.target}` : item.target;
         "変更",
         "並び順変更",
         "アプリ名",
-        "Excelファイル"
+        "Excelファイル",
+        "比較結果ID"
       ],
       ...summaryRows.map((row) => [
         row.sequence,
@@ -20805,7 +21011,8 @@ ${item.target}` : item.target;
         row.counts?.changed ?? "—",
         row.counts?.moved ?? "—",
         row.pairNameStatus,
-        row.filename || "—"
+        row.filename || "—",
+        row.resultIdShort || "—"
       ])
     ];
     const headerRowIndex = 2;
@@ -20830,12 +21037,14 @@ ${item.target}` : item.target;
         neutralCenterStyle,
         neutralCenterStyle,
         summaryPairNameStyle(summary.pairNameStatus),
+        neutralStyle,
         neutralStyle
       ];
       if (!summary.counts) {
         for (let column = 6; column <= 10; column += 1) cellStyles[index][column] = "diffAbsent";
       }
       if (!summary.filename) cellStyles[index][12] = "diffAbsent";
+      if (!summary.resultIdShort) cellStyles[index][13] = "diffAbsent";
     }
     return buildXlsxBlob([{
       name: "一括比較結果",
@@ -21411,6 +21620,21 @@ ${fence}`;
     const keys = rows.filter((row) => row && !row._displayOnly && row.type !== "same").map((row) => String(row.sectionKey || String(row.path || "").split(/[.[]/, 1)[0] || "").trim()).filter((key) => SENSITIVE_DIFF_SECTION_KEYS.has(key));
     return [...new Set(keys)];
   }
+  function markdownResultId(ctx) {
+    return resolveDiffResultIdForExport(ctx);
+  }
+  function resultIdLines(ctx, exportMode) {
+    const id = markdownResultId(ctx);
+    return [
+      "## 比較結果の識別子",
+      id ? `- resultId: ${markdownCode(id.full)}` : `- resultId: ${markdownInline(DIFF_RESULT_ID_UNAVAILABLE)}`,
+      ...id ? [`- resultIdShort: ${markdownCode(id.short)}`, `- resultIdVersion: ${id.version}`] : [],
+      `- resultIdScope: ${markdownCode("all")}（全件の比較結果。exportRange とは別）`,
+      `- 説明: ${markdownInline(`${DIFF_RESULT_ID_MATCH_NOTE}${DIFF_RESULT_ID_DESCRIPTION}${DIFF_RESULT_ID_VALUE_NOTE}`)}`,
+      ...exportMode === "filtered" ? [`- 注意: ${markdownInline(DIFF_RESULT_ID_FILTERED_NOTE)}`] : [],
+      ""
+    ];
+  }
   function incompleteForContext(ctx) {
     return hasActualDiffTruncation(ctx.truncation) || (ctx.fetchIssues || []).length > 0 || (ctx.partialIssues || []).length > 0;
   }
@@ -21450,6 +21674,7 @@ ${fence}`;
       "- 判定の根拠: added=比較先（AFTER）のみ、removed=比較元（BEFORE）のみ、changed=両側にあり内容が異なる、moved=順序が異なる（件数は相互排他的）",
       "- businessImpact: 未判定（この出力は差分の事実を収録し、業務影響・反映要否を自動推定しない）",
       "",
+      ...resultIdLines(ctx, exportMode),
       "## 比較方向（source-before → target-after）",
       ...endpointBlock("BEFORE / 比較元（変更前）", ctx.sourceBundle, "比較元"),
       ...endpointBlock("AFTER / 比較先（変更後）", ctx.targetBundle, "比較先"),
@@ -21504,6 +21729,10 @@ ${fence}`;
     return { filename, markdown: `${lines.join("\n").replace(/\n{3,}/g, "\n\n")}
 ` };
   }
+  function batchResultIdCell(ctx) {
+    const id = markdownResultId(ctx);
+    return id ? markdownCode(id.short) : "-";
+  }
   function cleanMarkdownEntryToken(value, maxLength = 40) {
     const cleaned = String(value ?? "").replace(/[\\/:*?"<>|`]/g, "_").replace(UNSAFE_FILENAME_CHARS, " ").replace(/\s+/g, "_").replace(/_+/g, "_").replace(/^[._]+|[._]+$/g, "");
     if (!cleaned) return "";
@@ -21549,7 +21778,7 @@ ${fence}`;
       if (!exported) {
         const failure = failures[failures.length - 1];
         indexRows.push(
-          `| ${index + 1} | ${markdownTableCell(item.label || `比較 ${index + 1}`)} | ${markdownTableCell(endpointName(ctx.sourceBundle, "比較元"))} | ${markdownTableCell(endpointName(ctx.targetBundle, "比較先"))} | \`export-failed\` | ${markdownTableCell(`生成失敗: ${failure?.error || "原因不明"}`)} | - | - | （未作成） |`
+          `| ${index + 1} | ${markdownTableCell(item.label || `比較 ${index + 1}`)} | ${markdownTableCell(endpointName(ctx.sourceBundle, "比較元"))} | ${markdownTableCell(endpointName(ctx.targetBundle, "比較先"))} | \`export-failed\` | ${markdownTableCell(`生成失敗: ${failure?.error || "原因不明"}`)} | - | - | （未作成） | - |`
         );
         return;
       }
@@ -21573,7 +21802,7 @@ ${fence}`;
       const stateLabel = incomplete ? "要確認（一部未取得）" : counts.actual > 0 ? "差分あり" : "差分なし";
       const breakdown = `追加 ${counts.added} / 削除 ${counts.removed} / 変更 ${counts.changed} / 移動 ${counts.moved}`;
       indexRows.push(
-        `| ${index + 1} | ${markdownTableCell(item.label || `比較 ${index + 1}`)} | ${markdownTableCell(endpointName(ctx.sourceBundle, "比較元"))} | ${markdownTableCell(endpointName(ctx.targetBundle, "比較先"))} | \`${concl.code}\` | ${stateLabel} | ${counts.actual} | ${breakdown} | \`${entryName}\` |`
+        `| ${index + 1} | ${markdownTableCell(item.label || `比較 ${index + 1}`)} | ${markdownTableCell(endpointName(ctx.sourceBundle, "比較元"))} | ${markdownTableCell(endpointName(ctx.targetBundle, "比較先"))} | \`${concl.code}\` | ${stateLabel} | ${counts.actual} | ${breakdown} | \`${entryName}\` | ${batchResultIdCell(ctx)} |`
       );
     });
     const indexLines = [
@@ -21590,8 +21819,8 @@ ${fence}`;
       "",
       "## 比較結果一覧",
       "",
-      "| No. | 比較ラベル | 比較元（変更前） | 比較先（変更後） | 結論 | 状態 | 実差分数 | 内訳（追加/削除/変更/移動） | 個別ファイル |",
-      "| ---: | --- | --- | --- | --- | --- | ---: | --- | --- |",
+      "| No. | 比較ラベル | 比較元（変更前） | 比較先（変更後） | 結論 | 状態 | 実差分数 | 内訳（追加/削除/変更/移動） | 個別ファイル | 比較結果ID（先頭12桁） |",
+      "| ---: | --- | --- | --- | --- | --- | ---: | --- | --- | --- |",
       ...indexRows,
       "",
       "---",
@@ -21653,7 +21882,10 @@ ${fence}`;
       exportContentLabel,
       normalizationState: ctx.normalizationPresetState || {},
       warning: warningInfoLite(rows, fetchIssues, partialIssues),
-      truncation: ctx.truncation || null
+      truncation: ctx.truncation || null,
+      // 比較結果ID（全件の比較結果のもの）。絞り込んだ出力でも同じ値を載せる。
+      resultId: ctx.resultId || null,
+      allRows: ctx.allRows
     });
     const filename = buildExportFilename("差分", "html", { appLabel: diffPairLabel(ctx.sourceBundle, ctx.targetBundle) });
     return { filename, html };
@@ -22977,6 +23209,12 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-alert{margin:0 12px 10px;padding:8px 10px;border:1px solid #fdba74;border-radius:7px;background:#fff7ed;color:#9a3412;font:600 12.5px/1.55 -apple-system,Segoe UI,sans-serif}
 .kus-dl-legend{margin:14px 12px 0;padding:11px 2px 13px;border-top:1px solid #e2e8f0;color:#475569;font:13px/1.7 -apple-system,Segoe UI,sans-serif}
 .kus-dl-legend span{display:block}
+.kus-dl-result-id{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;margin:0 12px 12px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;color:#334155;font:12.5px/1.6 -apple-system,Segoe UI,sans-serif}
+.kus-dl-result-id__label{font-weight:700;color:#0f172a}
+.kus-dl-result-id code{font:700 12.5px/1.5 ui-monospace,Menlo,monospace;color:#0f172a}
+.kus-dl-result-id__full{flex:1 1 100%;min-width:0;color:#475569;overflow-wrap:anywhere;word-break:break-all}
+.kus-dl-result-id__full code{font-weight:400;user-select:all}
+.kus-dl-result-id__note{flex:1 1 100%;color:#475569}
 .kus-dl-overview__actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin:0 12px 14px;padding:0 2px}
 .kus-dl-overview__actions-note{flex:1 1 220px;min-width:0;color:#475569;font:12.5px/1.6 -apple-system,Segoe UI,sans-serif}
 .kus-dl-result__summary{margin:0 2px 7px;font-family:-apple-system,Segoe UI,sans-serif;font-size:12.5px;color:#64748b;display:flex;flex-wrap:wrap;gap:6px 12px}
@@ -23515,6 +23753,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     return {
       ...cache,
       rows,
+      allRows: cache.rows,
+      resultId: diffResultIdOf(cache),
       exportMode,
       exportLabel,
       exportContentMode: safeContentMode,
@@ -23525,6 +23765,8 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     return {
       audience: options?.audience === "internal" ? "internal" : "customer",
       rows,
+      allRows: cache.rows,
+      resultId: diffResultIdOf(cache),
       fetchIssues: cache.fetchIssues || [],
       partialIssues: cache.partialIssues || [],
       truncation: cache.truncation || null,
@@ -23544,6 +23786,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     return {
       rows,
       allRows: cache.rows,
+      resultId: diffResultIdOf(cache),
       fetchIssues: cache.fetchIssues || [],
       partialIssues: cache.partialIssues || [],
       truncation: cache.truncation || null,
@@ -24037,8 +24280,14 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     if (sections.length) lines.push(`セクション別: ${sections.map((section) => `${section.label} ${section.countLabel}`).join("、")}`);
     liteDiffAlertMessages(cache).forEach((message) => lines.push(`注意: ${message}`));
     lines.push(`比較条件: ${conditions.ignore} ${conditions.normalization}`);
+    const resultId = diffResultIdOf(cache);
+    lines.push(`${DIFF_RESULT_ID_LABEL}: ${resultId.short}（完全な値: ${resultId.full}）`);
     return `${lines.join("\n")}
 `;
+  }
+  function renderLiteDiffResultIdHtml(cache) {
+    const resultId = diffResultIdOf(cache);
+    return `<div class="kus-dl-result-id" role="note" data-kus-dl-result-id="${esc(resultId.full)}"><span class="kus-dl-result-id__label">${esc(DIFF_RESULT_ID_LABEL)}</span><code class="kus-dl-result-id__short">${esc(resultId.short)}</code><span class="kus-dl-result-id__full">完全な値: <code>${esc(resultId.full)}</code></span><span class="kus-dl-result-id__note">${esc(DIFF_RESULT_ID_MATCH_NOTE)}</span></div>`;
   }
   function renderLiteDiffOverviewHtml(cache, options = {}) {
     const { counts, contentChanged, incomplete, hasNoticeOnlyChanges, title: verdictTitle, text: verdictText } = liteDiffVerdict(cache);
@@ -24069,14 +24318,14 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       matchingNoticesHtml = `<div class="kus-dl-alert" role="note"><strong>対応付けの注意 ${totalNoticeCount}件</strong>${noticeLines}${omittedLine}</div>`;
     }
     const formReprintCount = (sections.find((section) => section.key === "formSettings")?.rows || []).filter((row) => !row._displayOnly && row.type !== "same").length;
-    const comparedWithOrigin = (cache.scopes || []).some((key) => key === "fieldSettings" || key === "layoutSettings");
+    const comparedWithOrigin = reprintSectionKeys(cache.scopes || []).has("formSettings");
     const formReprintNote = formReprintCount > 0 && comparedWithOrigin ? `<span>フォーム設定の ${formReprintCount} 件は、フィールド設定・レイアウト設定の変更の再掲です（Excelの変更一覧には含めません）。</span>` : "";
     const announceAttrs = options.announce === false ? "" : ' role="status"';
     const alertAttrs = options.announce === false ? "" : ' role="alert"';
     const completeness = incomplete ? "incomplete" : "complete";
     const alertsHtml = alerts.map((message) => `<div class="kus-dl-alert"${alertAttrs}>${esc(message)}</div>`).join("");
     const { ignore: ignoreCondition, normalization: normalizationCondition } = liteDiffConditionTexts(cache);
-    return `<section id="kus-dl-overview" class="kus-dl-overview" data-kus-dl-overview tabindex="-1" aria-label="比較結果サマリー"><div class="kus-dl-overview__direction"><div class="kus-dl-side"><span class="kus-dl-side__role">比較元</span><span class="kus-dl-side__name" title="${esc(source.name)}">${esc(source.name)}</span><span class="kus-dl-side__env">${esc(source.environment)}</span></div><span class="kus-dl-overview__arrow" aria-label="から">→</span><div class="kus-dl-side kus-dl-side--target"><span class="kus-dl-side__role">比較先</span><span class="kus-dl-side__name" title="${esc(target.name)}">${esc(target.name)}</span><span class="kus-dl-side__env">${esc(target.environment)}</span></div></div><div class="kus-dl-verdict ${verdictClass}" data-kus-dl-completeness="${completeness}"${announceAttrs}><span class="kus-dl-verdict__eyebrow">${incomplete ? "確認が必要" : "取得に問題なし"}</span><strong>${esc(verdictTitle)}</strong><span>${esc(verdictText)}</span></div>` + alertsHtml + `<div class="kus-dl-metrics"><div class="kus-dl-metric"><span class="kus-dl-metric__num">${counts.actual}</span><span class="kus-dl-metric__label">差分</span><span class="kus-dl-metric__hint">同一を除く</span></div>` + metric("added", "比較先のみ", "追加として検出", counts.added) + metric("removed", "比較元のみ", "削除として検出", counts.removed) + metric("changed", "内容が異なる", "変更として検出", contentChanged) + metric("moved", "並び順", "移動として検出", counts.moved) + "</div>" + (sectionButtons ? `<div class="kus-dl-section-nav"><span class="kus-dl-section-nav__label">セクションで絞り込む</span>${sectionButtons}</div>` : "") + matchingNoticesHtml + `<div class="kus-dl-alert kus-dl-conditions" role="note"><strong>適用した比較条件</strong><span>${esc(ignoreCondition)} ${esc(normalizationCondition)}</span></div><div class="kus-dl-legend"><span>「比較先のみ」は追加、「比較元のみ」は削除として検出しています。</span><span>比較方向は上の矢印で確認できます。</span>${formReprintNote}</div><div class="kus-dl-overview__actions"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-copy-summary>結果の要約をコピー</button><span class="kus-dl-overview__actions-note">比較方向・件数・セクション別の件数・注意を数行の文でコピーします（設定の値は含めません）。</span></div></section>`;
+    return `<section id="kus-dl-overview" class="kus-dl-overview" data-kus-dl-overview tabindex="-1" aria-label="比較結果サマリー"><div class="kus-dl-overview__direction"><div class="kus-dl-side"><span class="kus-dl-side__role">比較元</span><span class="kus-dl-side__name" title="${esc(source.name)}">${esc(source.name)}</span><span class="kus-dl-side__env">${esc(source.environment)}</span></div><span class="kus-dl-overview__arrow" aria-label="から">→</span><div class="kus-dl-side kus-dl-side--target"><span class="kus-dl-side__role">比較先</span><span class="kus-dl-side__name" title="${esc(target.name)}">${esc(target.name)}</span><span class="kus-dl-side__env">${esc(target.environment)}</span></div></div><div class="kus-dl-verdict ${verdictClass}" data-kus-dl-completeness="${completeness}"${announceAttrs}><span class="kus-dl-verdict__eyebrow">${incomplete ? "確認が必要" : "取得に問題なし"}</span><strong>${esc(verdictTitle)}</strong><span>${esc(verdictText)}</span></div>` + alertsHtml + `<div class="kus-dl-metrics"><div class="kus-dl-metric"><span class="kus-dl-metric__num">${counts.actual}</span><span class="kus-dl-metric__label">差分</span><span class="kus-dl-metric__hint">同一を除く</span></div>` + metric("added", "比較先のみ", "追加として検出", counts.added) + metric("removed", "比較元のみ", "削除として検出", counts.removed) + metric("changed", "内容が異なる", "変更として検出", contentChanged) + metric("moved", "並び順", "移動として検出", counts.moved) + "</div>" + (sectionButtons ? `<div class="kus-dl-section-nav"><span class="kus-dl-section-nav__label">セクションで絞り込む</span>${sectionButtons}</div>` : "") + matchingNoticesHtml + `<div class="kus-dl-alert kus-dl-conditions" role="note"><strong>適用した比較条件</strong><span>${esc(ignoreCondition)} ${esc(normalizationCondition)}</span></div><div class="kus-dl-legend"><span>「比較先のみ」は追加、「比較元のみ」は削除として検出しています。</span><span>比較方向は上の矢印で確認できます。</span>${formReprintNote}</div>` + renderLiteDiffResultIdHtml(cache) + `<div class="kus-dl-overview__actions"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-copy-summary>結果の要約をコピー</button><span class="kus-dl-overview__actions-note">比較方向・件数・セクション別の件数・注意を数行の文でコピーします（設定の値は含めません）。</span></div></section>`;
   }
   function renderRowsHtml(rows, useCharDiff, summary, allFilteredRows = rows, options = {}) {
     if (!rows.length) return `<div class="kus-dl-empty">該当する差分はありません${summary ? ` — ${summary}` : ""}</div>`;

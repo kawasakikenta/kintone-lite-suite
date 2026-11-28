@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildLiteDiffSummaryText, renderLiteDiffOverviewHtml } from '../../src/entries/diff-lite-ui';
+import { computeDiffResultId } from '../../src/diff/result-id';
 
 function cache(rows: any[], overrides: Record<string, any> = {}): any {
   return {
@@ -25,7 +26,9 @@ const rows = [
 
 describe('差分比較: 結果の要約をコピー', () => {
   it('比較方向・判定・内訳・差分のあるセクションの件数・比較条件を、画面の概要と同じ文で数行にする', () => {
-    const text = buildLiteDiffSummaryText(cache(rows));
+    const source = cache(rows);
+    const text = buildLiteDiffSummaryText(source);
+    const id = computeDiffResultId(source);
     expect(text.split('\n')).toEqual([
       '差分比較の結果',
       '比較元: 顧客管理（開発）（App 101）（本番 / 通常スペース）',
@@ -34,8 +37,10 @@ describe('差分比較: 結果の要約をコピー', () => {
       '取得: 問題なし',
       'セクション別: アプリ設定 1件、フィールド設定 2件',
       '比較条件: 無視ルールは適用していません。 正規化は適用していません。',
+      `比較結果ID: ${id.short}（完全な値: ${id.full}）`,
       ''
     ]);
+    expect(id.full).toMatch(/^[0-9a-f]{64}$/);
     // 画面の概要と同じ見出しと内訳
     const overview = renderLiteDiffOverviewHtml(cache(rows), { announce: false });
     expect(overview).toContain('差分が 3 件見つかりました');
