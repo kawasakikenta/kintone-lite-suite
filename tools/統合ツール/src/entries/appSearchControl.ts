@@ -40,7 +40,7 @@ const RESULT_CSS = `
 .kus-as__name{color:var(--c-text);word-break:break-all}
 .kus-as__meta{margin-top:3px;color:var(--c-text-2);font-size:12.5px;line-height:1.5}
 .kus-as__assign{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
-.kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:12px}
+.kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:12.5px}
 .kus-as__assign .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
 .kus-as__bulk{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--c-border);background:var(--c-surface)}
 .kus-as__bulk .kus-lp__btn{padding:4px 10px;font-size:12.5px}

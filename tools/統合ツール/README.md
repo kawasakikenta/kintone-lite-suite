@@ -160,6 +160,8 @@ tools/統合ツール/
 ├── tests/                    # vitest ユニットテスト（diff/design/record/reflect）
 ├── scripts/                  # 検査スクリプト（check-no-browser-storage）
 ├── build.js                  # esbuild バンドルスクリプト
+├── thirdPartyNotices.js      # 同梱した npm パッケージのライセンス全文を配布物の先頭へ入れる
+├── rawTextPlugin.js          # `?raw` でファイルを文字列として取り込む（ER図の描画ライブラリ・ライセンス文）
 ├── vitest.config.mjs         # 単体テストでも ER図の画面の CSS を `?raw` で読めるようにする
 ├── package.json
 └── README.md
@@ -173,6 +175,7 @@ tools/統合ツール/
 - 出力形式: IIFE（即時実行関数）
 - CSS: カスタム esbuild プラグインで `.css` ファイルを JS 文字列としてインライン化し、実行時に `<style>` タグとして注入
 - ターゲット: ES2020
+- ライセンス表記: esbuild で同梱した npm パッケージ（xlsx-js-style。入れ子の `node_modules` のパッケージも含む）の LICENSE の全文は、`thirdPartyNotices.js` が配布物の先頭（自動生成の注意書きの直後）へ入れます。LICENSE ファイルが無いパッケージを同梱するとビルドを止めます。ER図の HTML に埋め込む描画ライブラリの表記は `src/tabs/er-libraries.ts` が付けます
 - 外部依存: ZIP 作成は自前実装、設計書 Excel は xlsx-js-style を `設計書作成.js` にだけ同梱。ER図の描画ライブラリ（Cytoscape.js・Dagre・cytoscape-dagre）は `ER図.js` に同梱し、生成する HTML へ埋め込む。実行時に CDN から読み込むのはプロセス図の Mermaid だけ（固定版を SRI で検証）
 
 ## 機能一覧（整理版）

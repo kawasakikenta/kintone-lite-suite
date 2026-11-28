@@ -19,7 +19,8 @@ import {
   getIssueSideLabel,
   getThemeDisplayLabel,
   renderSectionIconHtml,
-  extractAppNameFromBundle
+  extractAppNameFromBundle,
+  withoutApiContextLines
 } from '../utils.js';
 import { state, ui } from '../state.js';
 import {
@@ -2241,11 +2242,12 @@ export interface DesignSectionPlan {
 }
 
 export function designSectionPlan(sec: any, snapshotSection: { status?: string; detail?: string } | undefined, hasRenderer: boolean): DesignSectionPlan {
-  const fetchError = sec._fetchError ? String(sec._fetchError) : null;
+  // 理由は kintone の応答の文だけにする（内部の通信情報の行は生データにだけ残す。Markdown・HTML とも）
+  const fetchError = sec._fetchError ? mdUserFacingError(sec._fetchError) : null;
   // 付随情報（JS/CSS本文・プラグイン設定など）だけ失敗した場合は、取得できた本体を捨てずに続けて出す
   if (sec._fetchError && !mdSectionHasData(sec)) return { fetchError, mode: 'none', detail: '' };
-  if (snapshotSection?.status === 'fetch-error' && !sec._fetchError) return { fetchError, mode: 'fetch-error', detail: snapshotSection.detail as string };
-  if (snapshotSection?.status === 'partial') return { fetchError, mode: 'partial', detail: snapshotSection.detail as string };
+  if (snapshotSection?.status === 'fetch-error' && !sec._fetchError) return { fetchError, mode: 'fetch-error', detail: mdUserFacingError(snapshotSection.detail) };
+  if (snapshotSection?.status === 'partial') return { fetchError, mode: 'partial', detail: mdUserFacingError(snapshotSection.detail) };
   if (snapshotSection?.status === 'empty') return { fetchError, mode: 'empty', detail: '' };
   if (!hasRenderer) return { fetchError, mode: 'unsupported', detail: '' };
   return { fetchError, mode: 'render', detail: '' };
@@ -2254,6 +2256,12 @@ export function designSectionPlan(sec: any, snapshotSection: { status?: string; 
 /** 設計書の本文を持つセクションのキー（それ以外は「整形表示は未対応」として原文だけを出す）。 */
 export function hasDesignSectionRenderer(key: string): boolean {
   return Object.prototype.hasOwnProperty.call(MD_SECTION_RENDERERS, key);
+}
+
+/** 設計書の本文に出す取得失敗の理由。kintone の応答の文だけにし、内部の通信情報（[API] GET … の行）は生データにだけ残す。 */
+function mdUserFacingError(value: unknown): string {
+  const raw = String(value ?? '');
+  return withoutApiContextLines(raw) || raw;
 }
 
 function mdFetchedAt(value: unknown): string {
@@ -2332,7 +2340,7 @@ export function designStatusTable(snapshot: ReturnType<typeof buildDesignSnapsho
       row.key,
       row.status,
       row.count == null ? '不明' : String(row.count),
-      row.detail
+      mdUserFacingError(row.detail)
     ])
   };
 }
@@ -7842,8 +7850,10 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     ));
     const commonShortcutBlocked = !!(e.isComposing || e.repeat || inInteractiveTarget);
     if (!commonShortcutBlocked && !e.ctrlKey && !e.metaKey && !e.altKey && getActiveReportTab() === 'diff') {
-      if (e.key === 'j') { e.preventDefault(); moveDiffFocus(1); return; }
-      if (e.key === 'k') { e.preventDefault(); moveDiffFocus(-1); return; }
+      // 大文字（Shift・Caps Lock）でも同じ（パネルの結果明細・R キーと同じ扱い）
+      const navKey = String(e.key || '').toLowerCase();
+      if (navKey === 'j') { e.preventDefault(); moveDiffFocus(1); return; }
+      if (navKey === 'k') { e.preventDefault(); moveDiffFocus(-1); return; }
     }
     const reviewShortcutBlocked = !!(
       commonShortcutBlocked

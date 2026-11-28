@@ -56,7 +56,8 @@ const RESPONSIVE_VIEWPORTS = [
   { width: 1024, height: 768 },
   { width: 1440, height: 900 }
 ];
-const ZOOM_RESET_SELECTOR = 'button[aria-label="表示倍率を100%にリセット"][onclick="zoomReset()"]';
+// 以前の版は onclick 属性、作業ツリー版は data-action（CSP でイベント属性を許可しないため）で操作を受ける
+const ZOOM_RESET_SELECTOR = 'button[aria-label="表示倍率を100%にリセット"]:is([onclick="zoomReset()"],[data-action="zoom-reset"])';
 // 図を画面に収めるボタン。作業ツリー版はズーム操作の中の「図を画面に合わせる」、以前の版は操作バーの「図全体を表示」
 const FIT_SELECTORS = ['button[aria-label="図を画面に合わせる"]', 'button[aria-label="図全体を表示"]'];
 const MALICIOUS_APP_NAME = '攻撃テスト</title><img id="er-xss-image" src="x" onerror="window.__ER_XSS_EXECUTED__=1"><script id="er-xss-script">window.__ER_XSS_EXECUTED__=2</script>';
@@ -216,6 +217,20 @@ async function installMockKintone(page, fixture) {
   }, { mock: fixture, currentAppId: SOURCE_APP_ID });
 }
 
+/**
+ * 図を開くブラウザのコンテキスト。CSP の違反（securitypolicyviolation）を console.error に出し、collectPageErrors が
+ * ページのエラーとして数える（作業ツリー版は違反 0 件であること）。別タブ（「ER図を開く」の blob URL）にも効くよう、コンテキストに付ける。
+ */
+async function newViewerContext(browser, options) {
+  const context = await browser.newContext(options);
+  await context.addInitScript(() => {
+    document.addEventListener('securitypolicyviolation', (event) => {
+      console.error(`[CSP] ${event.effectiveDirective || event.violatedDirective} ${event.blockedURI} ${event.sample || ''}`);
+    }, true);
+  });
+  return context;
+}
+
 function collectPageErrors(page, label) {
   const errors = [];
   page.on('pageerror', (error) => errors.push(`${label}: pageerror: ${error.message}`));
@@ -290,6 +305,13 @@ function hasExternalScript(html) {
   return /<script\b[^>]*\ssrc\s*=/i.test(html);
 }
 
+/** CSP の script-src の値（作業ツリー版は埋め込んだスクリプトの 'sha256-…' だけ）。 */
+function cspScriptSources(html) {
+  const csp = (html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]*)"/) || [])[1] || '';
+  const scriptSrc = (csp.split(';').map((part) => part.trim()).find((part) => part.startsWith('script-src ')) || '');
+  return scriptSrc.split(/\s+/).slice(1);
+}
+
 /** CSP の script-src に許可している外部ホスト（同梱版は空）。 */
 function cspScriptHosts(html) {
   const csp = (html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]*)"/) || [])[1] || '';
@@ -355,7 +377,7 @@ async function configureViewerRoutes(page, routing, blockLibraries) {
 }
 
 async function generateDiagramHtml(browser, variant, bundleSource, fixture, outDir) {
-  const context = await browser.newContext({
+  const context = await newViewerContext(browser, {
     acceptDownloads: true,
     viewport: { width: 1200, height: 900 }
   });
@@ -609,7 +631,7 @@ async function exerciseZoomControls(page) {
 }
 
 async function inspectDiagramZoom(browser, variant, htmlFile, routing, outDir) {
-  const context = await browser.newContext({ viewport: BROWSER_ZOOM_BASE_VIEWPORT });
+  const context = await newViewerContext(browser, { viewport: BROWSER_ZOOM_BASE_VIEWPORT });
   const page = await context.newPage();
   const errors = collectPageErrors(page, `${variant}-diagram-zoom`);
   await configureViewerRoutes(page, routing, false);
@@ -651,7 +673,7 @@ async function inspectBrowserZoom(browser, variant, htmlFile, routing, outDir) {
       width: Math.round(BROWSER_ZOOM_BASE_VIEWPORT.width / scale),
       height: Math.round(BROWSER_ZOOM_BASE_VIEWPORT.height / scale)
     };
-    const context = await browser.newContext({
+    const context = await newViewerContext(browser, {
       viewport,
       screen: BROWSER_ZOOM_BASE_VIEWPORT,
       deviceScaleFactor: scale
@@ -719,7 +741,7 @@ async function exerciseFullDensity(page, screenshotFile) {
 }
 
 async function captureViewport(browser, variant, htmlFile, viewport, routing, outDir, options = {}) {
-  const context = await browser.newContext({ viewport });
+  const context = await newViewerContext(browser, { viewport });
   const page = await context.newPage();
   const label = `${variant}-${viewport.width}x${viewport.height}`;
   const errors = collectPageErrors(page, label);
@@ -774,7 +796,7 @@ function unknownLayoutHash() {
 }
 
 async function inspectUnknownLayout(browser, variant, htmlFile, routing, outDir) {
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const context = await newViewerContext(browser, { viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
   const errors = collectPageErrors(page, `${variant}-unknown-layout`);
   await configureViewerRoutes(page, routing, false);
@@ -819,7 +841,7 @@ async function inspectLibraryFallback(browser, variant, htmlFile, routing, outDi
     target = htmlFile.replace(/\.html$/, '-library-broken.html');
     fs.writeFileSync(target, broken, 'utf8');
   }
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const context = await newViewerContext(browser, { viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
   const errors = collectPageErrors(page, `${variant}-library-fallback`);
   await configureViewerRoutes(page, routing, true);
@@ -880,7 +902,7 @@ async function inspectLibraryFallback(browser, variant, htmlFile, routing, outDi
 async function inspectOfflineRender(browser, variant, htmlFile, outDir) {
   const html = fs.readFileSync(htmlFile, 'utf8');
   const routing = makeRouting({}, true);
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const context = await newViewerContext(browser, { viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
   const errors = collectPageErrors(page, `${variant}-offline`);
   await configureViewerRoutes(page, routing, false);
@@ -899,6 +921,7 @@ async function inspectOfflineRender(browser, variant, htmlFile, outDir) {
     blockedRequests: routing.blocked,
     externalScript: hasExternalScript(html),
     cspScriptHosts: cspScriptHosts(html),
+    cspScriptSources: cspScriptSources(html),
     htmlBytes: Buffer.byteLength(html),
     screenshot: path.basename(screenshotFile)
   };
@@ -910,7 +933,7 @@ async function inspectOfflineRender(browser, variant, htmlFile, outDir) {
  */
 async function inspectEditedHtmlSave(browser, variant, htmlFile, outDir) {
   const routing = makeRouting({}, true);
-  const context = await browser.newContext({ acceptDownloads: true, viewport: { width: 1440, height: 900 } });
+  const context = await newViewerContext(browser, { acceptDownloads: true, viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
   const errors = collectPageErrors(page, `${variant}-edited-save`);
   await configureViewerRoutes(page, routing, false);
@@ -927,7 +950,7 @@ async function inspectEditedHtmlSave(browser, variant, htmlFile, outDir) {
 
   const saved = fs.readFileSync(savedFile, 'utf8');
   const reopenRouting = makeRouting({}, true);
-  const reopenContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const reopenContext = await newViewerContext(browser, { viewport: { width: 1440, height: 900 } });
   const reopen = await reopenContext.newPage();
   const reopenErrors = collectPageErrors(reopen, `${variant}-edited-reopen`);
   await configureViewerRoutes(reopen, reopenRouting, false);
@@ -948,7 +971,9 @@ async function inspectEditedHtmlSave(browser, variant, htmlFile, outDir) {
     externalScript: hasExternalScript(saved),
     cspScriptHosts: cspScriptHosts(saved),
     libraryScripts: [...saved.matchAll(/<script id="(er-lib-[a-z-]+)">/g)].map((match) => match[1]),
-    keepsEditState: saved.includes('__ER_EDIT_STATE__'),
+    // 作業ツリー版は実行しない JSON（type="application/json"）、以前の版は代入のスクリプトで持つ
+    keepsEditState: saved.includes('<script id="er-edit-state" type="application/json">') || saved.includes('__ER_EDIT_STATE__'),
+    keepsCsp: cspScriptSources(saved).join(' ') === cspScriptSources(fs.readFileSync(htmlFile, 'utf8')).join(' '),
     restored
   };
 }
@@ -959,7 +984,7 @@ async function inspectEditedHtmlSave(browser, variant, htmlFile, outDir) {
  */
 async function inspectOpenFlowOffline(browser, variant, bundleSource, fixture, outDir) {
   const routing = makeRouting({}, true);
-  const context = await browser.newContext({ viewport: { width: 1200, height: 900 } });
+  const context = await newViewerContext(browser, { viewport: { width: 1200, height: 900 } });
   await context.route('**/*', async (route) => {
     const url = route.request().url();
     if (url.startsWith('https://mock.cybozu.com/')) {
@@ -1106,6 +1131,12 @@ function validateAfter(after) {
   const failures = [];
   const errors = runtimeErrors(after);
   if (errors.length) failures.push(`pageerror/console error が ${errors.length}件あります:\n    ${errors.join('\n    ')}`);
+  const cspViolations = errors.filter((message) => message.includes(': console: [CSP] '));
+  if (cspViolations.length) failures.push(`CSP の違反が ${cspViolations.length}件あります（埋め込んだスクリプト以外・イベント属性は動きません）`);
+  const scriptSources = after.offline.cspScriptSources || [];
+  if (!scriptSources.length || scriptSources.some((token) => !/^'sha256-[A-Za-z0-9+/]+=*'$/.test(token))) {
+    failures.push(`CSP の script-src が埋め込んだスクリプトのハッシュだけになっていません: ${scriptSources.join(' ')}`);
+  }
   if (!after.desktop.canvasReady || !after.mobile.canvasReady) failures.push('デスクトップまたはモバイルで ER 図 canvas が生成されません');
 
   const full = after.desktop.fullDensity || {};
@@ -1141,6 +1172,7 @@ function validateAfter(after) {
     failures.push('保存した編集済みHTMLが単体で動く形（描画ライブラリ3件を同梱・外部 script なし）になっていません');
   }
   if (saved && (!saved.keepsEditState || saved.restored.lookupHidden !== true)) failures.push('保存した編集済みHTMLを開き直しても、保存時の表示状態（非表示にした関連の種類）が戻りません');
+  if (saved && !saved.keepsCsp) failures.push('保存した編集済みHTMLの CSP（script-src のハッシュ）が、元の図と違います');
   if (saved?.blockedRequests.length) failures.push(`編集済みHTMLの保存・開き直しで外部への通信が試みられました: ${saved.blockedRequests.join(', ')}`);
   if (!after.libraryFallback.visible) failures.push('描画ライブラリを初期化できないときの案内（取得済みアプリの表）が見つかりません');
   if (!after.libraryFallback.headingReachable || after.libraryFallback.lingeringControls.length) {

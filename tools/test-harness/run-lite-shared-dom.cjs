@@ -527,6 +527,12 @@ async function main() {
     await page.getByRole('radio', { name: '操作D' }).check();
     assert.equal(await page.locator('#popup-test-more-actions').evaluate(dialog => dialog.open), false, '選ぶと閉じる');
     assert.equal(await page.getByRole('button', { name: /操作D/ }).getAttribute('aria-pressed'), 'true', '選んだ操作を表面に示す');
+    // 選んである操作をもう一度選んだとき（change が起きない）も、ポップアップを閉じて表面へ戻る
+    await page.getByRole('button', { name: /操作D/ }).click();
+    assert.equal(await page.locator('#popup-test-more-actions').evaluate(dialog => dialog.open), true);
+    await page.getByRole('radio', { name: '操作D' }).click();
+    assert.equal(await page.locator('#popup-test-more-actions').evaluate(dialog => dialog.open), false, '選んである操作をもう一度選んでも閉じる');
+    assert.equal(await page.locator('#popup-test-more-actions input[aria-label="操作D"]').isChecked(), true, '選択は変わらない');
     await page.getByRole('button', { name: '詳細設定…' }).click();
     const advancedDialog = page.locator('#popup-test-advanced');
     assert.equal(await advancedDialog.evaluate(dialog => dialog.open), true, '詳細設定のポップアップが開く');

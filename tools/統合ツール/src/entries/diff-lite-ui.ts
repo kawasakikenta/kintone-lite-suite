@@ -440,7 +440,7 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-pair-breakdown strong,.kus-dl-pair-breakdown small{display:block}
 .kus-dl-pair-breakdown small{margin-top:2px;color:#64748b;white-space:nowrap}
 .kus-dl-pair-save{display:flex;gap:4px;justify-content:flex-end}
-.kus-dl-pair-save .kus-lp__btn{min-height:36px!important;padding:5px 7px!important;font-size:12px}
+.kus-dl-pair-save .kus-lp__btn{min-height:36px!important;padding:5px 7px!important;font-size:12.5px}
 .kus-dl-batch-save{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px;margin-top:12px;padding:12px 14px;border:1px solid #bfdbfe;border-radius:11px;background:#eff6ff;font-family:-apple-system,Segoe UI,sans-serif}
 .kus-dl-batch-save__text{min-width:0;color:#1e3a8a}
 .kus-dl-batch-save__text strong,.kus-dl-batch-save__text small{display:block}
@@ -497,7 +497,7 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-pair-side__fields{display:grid;grid-template-columns:minmax(125px,1fr) minmax(82px,.55fr);gap:7px;align-items:start}
 .kus-dl-pair-side__fields .kus-dl-target-field{min-width:0}
 .kus-dl-pair-side__fields .kus-lp__input{width:100%;box-sizing:border-box}
-.kus-dl-pair-field-label{display:block;margin:0 0 4px;color:#475569;font-size:12px;font-weight:750;line-height:1.35}
+.kus-dl-pair-field-label{display:block;margin:0 0 4px;color:#475569;font-size:12.5px;font-weight:750;line-height:1.35}
 .kus-dl-pair-guest-field{min-width:0}
 .kus-dl-pair-side__preview{grid-column:1/-1;min-height:34px!important}
 .kus-dl-pair-arrow{display:flex;align-items:center;justify-content:center;color:#2563eb;font-size:22px;font-weight:900}
@@ -505,7 +505,7 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-pair-actions .kus-lp__btn{width:100%;min-height:36px!important;padding:6px 8px!important;font-size:12.5px}
 .kus-dl-pair-row__error{grid-column:2/-1;margin:0;padding:7px 9px;border:1px solid #fdba74;border-radius:7px;background:#fff7ed;color:#9a3412;font-size:12.5px;font-weight:700;line-height:1.5}
 .kus-dl-pair-row__match{grid-column:2/-1;margin:0;padding:6px 9px;border:1px solid #bfdbfe;border-radius:7px;background:#eff6ff;color:#1e3a8a;font-size:12.5px;font-weight:700;line-height:1.5}
-.kus-dl-pair-side__file{display:block;margin:8px 0 0;padding:6px 8px;border:1px solid #cbd5e1;border-radius:7px;background:#fff;color:#475569;font-size:12px;line-height:1.45;overflow-wrap:anywhere}
+.kus-dl-pair-side__file{display:block;margin:8px 0 0;padding:6px 8px;border:1px solid #cbd5e1;border-radius:7px;background:#fff;color:#475569;font-size:12.5px;line-height:1.45;overflow-wrap:anywhere}
 .kus-dl-pair-toolbar{display:flex;flex-wrap:wrap;gap:7px;align-items:center}
 .kus-dl-pair-folder{display:grid;gap:10px;padding:13px;border:1px solid #93c5fd;border-radius:12px;background:#f8fbff;font-family:-apple-system,Segoe UI,sans-serif}
 .kus-dl-pair-folder__head strong{display:block;color:#10253f;font-size:14px}
@@ -515,23 +515,23 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-pair-folder__side--target{border-left-color:#2563eb;background:#eff6ff}
 .kus-dl-pair-folder__side strong{display:block;margin-bottom:7px;color:#334155;font-size:12.5px}
 .kus-dl-pair-folder__actions{display:flex;flex-wrap:wrap;gap:6px}
-.kus-dl-pair-folder__summary{margin:7px 0 0;color:#64748b;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
-.kus-dl-pair-folder__error{margin:0;padding:8px 10px;border:1px solid #fecaca;border-radius:8px;background:#fef2f2;color:#991b1b;font-size:12px;font-weight:700;line-height:1.5;overflow-wrap:anywhere}
+.kus-dl-pair-folder__summary{margin:7px 0 0;color:#64748b;font-size:12.5px;line-height:1.5;overflow-wrap:anywhere}
+.kus-dl-pair-folder__error{margin:0;padding:8px 10px;border:1px solid #fecaca;border-radius:8px;background:#fef2f2;color:#991b1b;font-size:12.5px;font-weight:700;line-height:1.5;overflow-wrap:anywhere}
 .kus-dl-pair-folder__mapping{border:1px solid #cbd5e1;border-radius:9px;background:#fff;overflow:hidden}
 .kus-dl-pair-folder__mapping-scroll{max-width:100%;overflow-x:auto}
-.kus-dl-pair-folder__mapping table{width:100%;min-width:700px;border-collapse:collapse;font-size:12px}
+.kus-dl-pair-folder__mapping table{width:100%;min-width:700px;border-collapse:collapse;font-size:12.5px}
 .kus-dl-pair-folder__mapping th,.kus-dl-pair-folder__mapping td{padding:7px 8px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:middle}
 .kus-dl-pair-folder__mapping th{background:#f1f5f9;color:#475569;font-weight:800}
 .kus-dl-pair-folder__mapping select{box-sizing:border-box;width:100%;min-height:38px;border:1px solid #94a3b8;border-radius:7px;background:#fff;color:#0f172a}
 .kus-dl-pair-folder__app{display:block;color:#10253f;font-weight:800}
 .kus-dl-pair-folder__meta{display:block;margin-top:2px;color:#64748b;line-height:1.4;overflow-wrap:anywhere}
-.kus-dl-pair-folder__badge{display:inline-flex;padding:3px 6px;border-radius:999px;background:#fee2e2;color:#991b1b;font-size:11.5px;font-weight:850;white-space:nowrap}
+.kus-dl-pair-folder__badge{display:inline-flex;padding:3px 6px;border-radius:999px;background:#fee2e2;color:#991b1b;font-size:12.5px;font-weight:850;white-space:nowrap}
 .kus-dl-pair-folder__badge--app-name{background:#dcfce7;color:#166534}
 .kus-dl-pair-folder__badge--app-id,.kus-dl-pair-folder__badge--position{background:#fef3c7;color:#92400e}
 .kus-dl-pair-folder__badge--manual{background:#dbeafe;color:#1e40af}
 .kus-dl-pair-folder__foot{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:7px;padding:9px 10px;background:#f8fafc}
 .kus-dl-pair-folder__review{min-width:0;color:#475569;font-size:12.5px;font-weight:700;line-height:1.5}
-.kus-dl-pair-folder__unused{margin:0;padding:8px 10px;border-top:1px solid #e2e8f0;color:#9a3412;font-size:12px;line-height:1.5}
+.kus-dl-pair-folder__unused{margin:0;padding:8px 10px;border-top:1px solid #e2e8f0;color:#9a3412;font-size:12.5px;line-height:1.5}
 .kus-dl-pair-editor .kus-dl-pair-bulk{margin:0}
 .kus-dl-pair-bulk__body{display:grid;gap:8px;padding:10px;border-top:1px solid #e2e8f0}
 .kus-dl-pair-bulk__body textarea{box-sizing:border-box;width:100%}
@@ -704,7 +704,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
   .kus-dl-pair-folder__mapping tr{display:grid;border:1px solid #cbd5e1;border-radius:9px;background:#fff;overflow:hidden}
   .kus-dl-pair-folder__mapping td{display:grid;grid-template-columns:88px minmax(0,1fr);gap:8px;align-items:center;padding:8px;border-bottom:1px solid #e2e8f0}
   .kus-dl-pair-folder__mapping td:last-child{border-bottom:0}
-  .kus-dl-pair-folder__mapping td::before{content:attr(data-label);color:#64748b;font-size:11.5px;font-weight:800;line-height:1.35}
+  .kus-dl-pair-folder__mapping td::before{content:attr(data-label);color:#64748b;font-size:12.5px;font-weight:800;line-height:1.35}
   .kus-dl-pair-folder__mapping select{min-width:0}
   .kus-dl-pair-folder__foot{grid-template-columns:1fr}
   .kus-dl-pair-folder__foot .kus-lp__btn{width:100%}
@@ -3465,7 +3465,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
 
   // ---- 出力（再出力用。初回は比較実行時に自動保存される） ----
   const cardOut = makeCard({ title: '出力', soft: true });
-  cardOut.body.appendChild(makeNote('HTML は人が確認するレビュー用で、1対1・1対多の比較が終わると自動保存されます。Excel は一覧・共有用で、全件または画面で絞り込んだ範囲を保存できます（長い原文も省略せず収録します）。', 'help'));
+  cardOut.body.appendChild(makeNote('HTML は人が確認するレビュー用で、1対1・1対多の比較が終わると自動保存されます。Excel は一覧・共有用で、全件または画面で絞り込んだ範囲を保存できます（長い値もセルの上限 32,767 文字まで収録します）。', 'help'));
   cardOut.body.appendChild(makeNote('AI向け Markdown は、比較方向・条件・取得の完全性・変更前後の値と型を含み、差分の事実をAIへ渡す用途で使います。', 'help'));
   cardOut.body.appendChild(makeNote('「レビュー用（変更箇所のみ）」の HTML にも比較元・比較先の値は含まれます。「社内用」の HTML はフィールド詳細や反映 JSON も収録するため、取り扱いに注意してください。', 'help'));
   const htmlContentMode = makeSelect([
@@ -3493,7 +3493,8 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   const grid = document.createElement('div');
   grid.className = 'kus-lp__btn-grid';
   const bXlsx = makeButton('Excel を保存 (.xlsx)', 'primary', { icon: '↓' });
-  const bHtml = makeButton('レビュー用 HTML を再出力', 'sub', { icon: '↓' });
+  // 「HTML内容」で選んだ内容（レビュー用・社内用）で出力するため、ボタン名には内容を書かない
+  const bHtml = makeButton('HTML を再出力', 'sub', { icon: '↓' });
   const bMd = makeButton('AI向け Markdown を保存 (.md)', 'sub', { icon: '↓' });
   bXlsx.dataset.kusDlExport = 'xlsx';
   bHtml.dataset.kusDlExport = 'html';

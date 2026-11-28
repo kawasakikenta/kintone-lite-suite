@@ -608,7 +608,8 @@ function batchDesignOverviewModel(input: {
   }
   return {
     facts: [
-      ['生成日時', input.generatedAt],
+      // ISO（UTC）だけだと日本の時刻と 9 時間ずれて読めるため、端末の時刻を先に書き、ISO は括弧で添える
+      ['生成日時', Number.isNaN(new Date(input.generatedAt).getTime()) ? input.generatedAt : `${readableTimestamp(new Date(input.generatedAt))}（${input.generatedAt}）`],
       ['出力形式', formatLabel],
       ['参照環境', input.preview ? 'プレビュー' : '本番'],
       ['対象アプリ数', `${input.total}件（成功 ${input.items.length} / 失敗 ${actualFailedApps.length}${notRunApps.length ? ` / 未実行（中止） ${notRunApps.length}` : ''}）`]

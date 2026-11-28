@@ -171,7 +171,15 @@ async function main() {
         await tool.button('内容を確認する').click();
         const confirm = await tool.stage(1).innerText();
         await tool.button(action).click();
-        if (dialog) { await page.waitForTimeout(300); await tool.button('エクスポート').click(); }
+        if (dialog) {
+          await page.waitForTimeout(300);
+          // シートを選ぶ画面も、パネルと同じく文字は 12.5px 以上
+          const small = await page.evaluate(() => [...document.querySelector('#kex-export').closest('[role=dialog]').querySelectorAll('*')]
+            .filter(el => [...el.childNodes].some(n => n.nodeType === 3 && n.textContent.trim()) && parseFloat(getComputedStyle(el).fontSize) < 12.5)
+            .map(el => `${getComputedStyle(el).fontSize} ${el.textContent.trim().slice(0, 12)}`).slice(0, 5));
+          assert.deepEqual(small, [], 'Excel のシートを選ぶ画面に 12.5px 未満の文字がある');
+          await tool.button('エクスポート').click();
+        }
         await tool.idle();
         const status = await tool.status();
         await tool.button('対象・条件を変更').click();
@@ -320,6 +328,10 @@ async function main() {
     await settings.shot('settings-zip-result-320');
     await settings.page.setViewportSize(viewport);
     assert.ok(measured.page <= measured.width + 1 && measured.table <= 1, `結果表: 320px で横にはみ出さない ${JSON.stringify(measured)}`);
+    const smallText = await settings.page.evaluate(() => [...document.querySelectorAll('.kus-lp__panel-html *')]
+      .filter(el => [...el.childNodes].some(n => n.nodeType === 3 && n.textContent.trim()) && parseFloat(getComputedStyle(el).fontSize) < 12.5)
+      .map(el => `${getComputedStyle(el).fontSize} ${el.tagName}`).slice(0, 3));
+    assert.deepEqual(smallText, [], '結果表: 文字は 12.5px 以上（パネルの補足の下限）');
   }
   const zipFile = (await settings.files()).find(file => file.name.endsWith('.zip'));
   const settingsZip = readZip(zipFile.buffer);
@@ -622,6 +634,32 @@ async function main() {
   assert.deepEqual(await dt.violations(), []);
   assert.deepEqual(dt.errors, []);
   await dt.close();
+  // 別のアプリどうしの差分バンドル JSON（比較元・比較先）: 開いたアプリ（401）が表の 1 行目にあっても、
+  // 読み込んだ比較元・比較先を 1・2 行目にして比べる（開いたアプリを kintone から取得して比べない）
+  const settingsApps = JSON.parse(fullJsonFile.buffer.toString('utf8')).apps;
+  const pairSource = settingsApps.find(app => app.appId === '301');
+  const pairTarget = settingsApps.find(app => app.appId === '302');
+  const pairTool = await openTool(DESIGN_TOOL, 'kus-design-lite');
+  await pairTool.page.evaluate(() => { window.__k.rejectAll = true; window.__k.calls.length = 0; });
+  const tableIds = () => pairTool.page.locator('.kus-lp__apptable input[aria-label="アプリID"]').evaluateAll(inputs => inputs.map(input => input.value).filter(Boolean));
+  assert.deepEqual(await tableIds(), ['401'], '開いたアプリが表の 1 行目');
+  await pairTool.button('詳細設定…').click();
+  await pairTool.page.locator('input.kus-lp__file').setInputFiles({ name: 'pair.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ source: pairSource, target: pairTarget })) });
+  await pairTool.page.waitForTimeout(600);
+  await pairTool.page.getByRole('button', { name: '詳細設定を閉じる', exact: true }).click();
+  assert.deepEqual((await tableIds()).slice(0, 2), ['301', '302'], '差分バンドル JSON の比較元・比較先を表の 1・2 行目にする');
+  assert.ok((await tableIds()).includes('401'), 'それまでの行も残す');
+  await pairTool.clearFiles();
+  const pairRun = await pairTool.run('2アプリの設計差分を保存');
+  assert.match(pairRun.confirm, /比較元\s*#301 · 読込済みJSON[\s\S]*比較先\s*#302 · 読込済みJSON/, '確認画面: 読み込んだ比較元・比較先を比べる');
+  const pairReport = (await pairTool.files())[0].buffer.toString('utf8');
+  assert.match(pairReport, /\| 比較元（追加・更新後の姿） \| App 301 顧客マスタ · 読み込んだ設定JSON \|/);
+  assert.match(pairReport, /\| 比較先（現在の設定） \| App 302 商品マスタ · 読み込んだ設定JSON \|/);
+  assert.equal((await pairTool.calls()).length, 0, '差分バンドル JSON から作るときは kintone に問い合わせない');
+  ok('設計書の差分レポート: 別のアプリどうしの差分バンドル JSON は、開いたアプリがあっても読み込んだ比較元・比較先を比べる');
+  assert.deepEqual(await pairTool.violations(), []);
+  assert.deepEqual(pairTool.errors, []);
+  await pairTool.close();
 
   console.log('== 画面（320〜1440px・キーボード） ==');
   for (const [toolFile, panelId, name] of [[SETTINGS_TOOL, 'kus-settings-export-lite', 'settings'], [DESIGN_TOOL, 'kus-design-lite', 'design']]) {

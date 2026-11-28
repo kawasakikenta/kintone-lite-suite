@@ -16,8 +16,20 @@ function normalizeDensityName(name){
   const normalized=String(name||"").trim();
   return ER_DENSITY_NAMES.has(normalized)?normalized:"standard";
 }
-// 「編集済みHTMLを保存」で埋め込まれた編集状態（手動追加・配置・表示設定）。以前の版で保存した形式もそのまま読む
-const ER_EDIT_STATE = window.__ER_EDIT_STATE__ || null;
+// 「編集済みHTMLを保存」で埋め込まれた編集状態（手動追加・配置・表示設定）。以前の版で保存した形式（stateVersion なし）の中身もそのまま読む。
+// 状態は実行しない JSON の script 要素（type="application/json"）に置く。CSP で許可するスクリプトは保存しても変わらない
+const ER_EDIT_STATE = readEmbeddedEditState();
+function readEmbeddedEditState(){
+  const el=document.getElementById("er-edit-state");
+  if(!el||String(el.getAttribute("type")||"").toLowerCase()!=="application/json") return null;
+  try{
+    const state=JSON.parse(el.textContent||"");
+    return state&&typeof state==="object"&&!Array.isArray(state)?state:null;
+  }catch(err){
+    console.error("[ER] 保存した編集状態を読み取れません",err);
+    return null;
+  }
+}
 if(ER_EDIT_STATE && ER_EDIT_STATE.options){
   if(ER_EDIT_STATE.options.layoutName) ER_OPTIONS.layoutName = normalizeLayoutName(ER_EDIT_STATE.options.layoutName);
   if(ER_EDIT_STATE.options.fieldDensity) ER_OPTIONS.fieldDensity = normalizeDensityName(ER_EDIT_STATE.options.fieldDensity);

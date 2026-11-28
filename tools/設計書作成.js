@@ -9,6 +9,213 @@
 //   cd tools/統合ツール && npm run build で再生成してください。
 // ■ このファイルを直接編集しても次回ビルドで上書きされます。
 // ==========================================================================
+/*!
+Third-party software bundled in this file:
+
+xlsx-js-style 1.2.0 (Apache-2.0)
+
+Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "{}"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright (C) 2012-present   SheetJS LLC
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
 "use strict";
 (() => {
   var __create = Object.create;
@@ -14145,16 +14352,20 @@ ${body}`;
     return { headers: ["セクション", "キー", "件数"], rows };
   }
   function designSectionPlan(sec, snapshotSection, hasRenderer) {
-    const fetchError = sec._fetchError ? String(sec._fetchError) : null;
+    const fetchError = sec._fetchError ? mdUserFacingError(sec._fetchError) : null;
     if (sec._fetchError && !mdSectionHasData(sec)) return { fetchError, mode: "none", detail: "" };
-    if (snapshotSection?.status === "fetch-error" && !sec._fetchError) return { fetchError, mode: "fetch-error", detail: snapshotSection.detail };
-    if (snapshotSection?.status === "partial") return { fetchError, mode: "partial", detail: snapshotSection.detail };
+    if (snapshotSection?.status === "fetch-error" && !sec._fetchError) return { fetchError, mode: "fetch-error", detail: mdUserFacingError(snapshotSection.detail) };
+    if (snapshotSection?.status === "partial") return { fetchError, mode: "partial", detail: mdUserFacingError(snapshotSection.detail) };
     if (snapshotSection?.status === "empty") return { fetchError, mode: "empty", detail: "" };
     if (!hasRenderer) return { fetchError, mode: "unsupported", detail: "" };
     return { fetchError, mode: "render", detail: "" };
   }
   function hasDesignSectionRenderer(key) {
     return Object.prototype.hasOwnProperty.call(MD_SECTION_RENDERERS, key);
+  }
+  function mdUserFacingError(value) {
+    const raw = String(value ?? "");
+    return withoutApiContextLines(raw) || raw;
   }
   function mdFetchedAt(value) {
     const raw = String(value ?? "").trim();
@@ -14202,7 +14413,7 @@ ${body}`;
         row.key,
         row.status,
         row.count == null ? "不明" : String(row.count),
-        row.detail
+        mdUserFacingError(row.detail)
       ])
     };
   }
@@ -14423,7 +14634,7 @@ ${body}`;
 .kus-lp__hero-main{min-width:0;flex:1}
 .kus-lp__hero-actions{display:flex;align-items:center;gap:6px;flex-shrink:0;cursor:auto}
 /* 狭い画面では経過時間の文字を隠し（スピナーは残す）ボタンを詰めて、タイトルが 1 文字ずつ折り返すのを防ぐ */
-@media(max-width:560px){.kus-lp__elapsed{font-size:0;gap:0}.kus-lp__hero-actions{gap:4px}.kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{padding:6px 8px;font-size:12px}.kus-lp__toggle{min-width:30px}}
+@media(max-width:560px){.kus-lp__elapsed{font-size:0;gap:0}.kus-lp__hero-actions{gap:4px}.kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{padding:6px 8px;font-size:12.5px}.kus-lp__toggle{min-width:30px}}
 .kus-lp__elapsed{
   font-size:12.5px;font-weight:600;color:rgba(255,255,255,.9);white-space:nowrap;
   font-variant-numeric:tabular-nums;display:inline-flex;align-items:center;gap:5px;
@@ -16072,6 +16283,9 @@ ${body}`;
         radio.addEventListener("change", () => {
           refreshMore();
           moreDialog?.close();
+        });
+        radio.addEventListener("click", () => {
+          if (radio.checked) moreDialog?.close();
         });
       } else {
         choices.appendChild(label);
@@ -18265,10 +18479,10 @@ ${foot}
           const checked = remembered ? remembered.has(d.key) : d.default;
           return `<label style="display:flex;align-items:center;gap:6px;margin:3px 0;font-size:13px;cursor:${d.required ? "default" : "pointer"};"><input type="checkbox" value="${escapeHtmlAttr(d.key)}" ${checked ? "checked" : ""} ${d.required ? "disabled" : ""}>${escapeHtmlAttr(d.label)}${d.required ? " (必須)" : ""}</label>`;
         }).join("");
-        return `<div style="margin-bottom:10px;"><div style="font-size:11px;font-weight:bold;color:#2E5C8A;letter-spacing:.04em;margin:2px 0 4px;border-bottom:1px solid #e2e8f0;padding-bottom:2px;">${escapeHtmlAttr(cat.label)}</div>${rows}</div>`;
+        return `<div style="margin-bottom:10px;"><div style="font-size:12.5px;font-weight:bold;color:#2E5C8A;letter-spacing:.04em;margin:2px 0 4px;border-bottom:1px solid #e2e8f0;padding-bottom:2px;">${escapeHtmlAttr(cat.label)}</div>${rows}</div>`;
       }).join("");
       const presetBtns = EXPORT_SHEET_PRESETS.map(
-        (p) => `<button type="button" class="kex-preset" data-preset="${escapeHtmlAttr(p.id)}" style="font-size:11px;padding:4px 10px;border:1px solid #c2d1de;border-radius:999px;background:#eef4f8;color:#24506f;cursor:pointer;">${escapeHtmlAttr(p.label)}</button>`
+        (p) => `<button type="button" class="kex-preset" data-preset="${escapeHtmlAttr(p.id)}" style="font-size:12.5px;padding:4px 10px;border:1px solid #c2d1de;border-radius:999px;background:#eef4f8;color:#24506f;cursor:pointer;">${escapeHtmlAttr(p.label)}</button>`
       ).join("");
       const rememberedTypeExclusion = loadPersistedFieldTypeExclusion();
       const usedTypeCats = EXPORT_FIELD_TYPE_CATEGORIES.filter((c) => EXPORT_FIELD_TYPE_DEFS.some((d) => d.cat === c.key));
@@ -18276,12 +18490,12 @@ ${foot}
         const items = EXPORT_FIELD_TYPE_DEFS.filter((d) => d.cat === cat.key);
         const rows = items.map((d) => {
           const checked = rememberedTypeExclusion ? !rememberedTypeExclusion.has(d.key) : true;
-          return `<label style="display:inline-flex;align-items:center;gap:5px;margin:2px 8px 2px 0;font-size:12px;cursor:pointer;"><input type="checkbox" class="kex-ftype" value="${escapeHtmlAttr(d.key)}" ${checked ? "checked" : ""}>${escapeHtmlAttr(d.label)}</label>`;
+          return `<label style="display:inline-flex;align-items:center;gap:5px;margin:2px 8px 2px 0;font-size:12.5px;cursor:pointer;"><input type="checkbox" class="kex-ftype" value="${escapeHtmlAttr(d.key)}" ${checked ? "checked" : ""}>${escapeHtmlAttr(d.label)}</label>`;
         }).join("");
-        return `<div style="margin-bottom:6px;"><div style="font-size:11px;font-weight:bold;color:#2E5C8A;margin:2px 0 3px;">${escapeHtmlAttr(cat.label)}</div><div style="display:flex;flex-wrap:wrap;">${rows}</div></div>`;
+        return `<div style="margin-bottom:6px;"><div style="font-size:12.5px;font-weight:bold;color:#2E5C8A;margin:2px 0 3px;">${escapeHtmlAttr(cat.label)}</div><div style="display:flex;flex-wrap:wrap;">${rows}</div></div>`;
       }).join("");
-      const fieldTypeSectionHtml = `<details id="kex-ftype-details" style="margin-top:8px;border:1px solid #eee;border-radius:6px;background:#fafafa;"><summary style="cursor:pointer;font-size:12px;font-weight:bold;color:#2E5C8A;padding:6px 8px;">「項目定義」シートに出力するフィールドタイプ</summary><div style="padding:4px 10px 8px;"><div style="font-size:11px;color:#666;margin-bottom:6px;">チェックしたタイプのみ項目定義シートに出力します（ラベル・罫線などの除外に利用）。<button type="button" id="kex-ftype-all" style="font-size:10px;padding:2px 8px;margin-left:6px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全選択</button><button type="button" id="kex-ftype-none" style="font-size:10px;padding:2px 8px;margin-left:4px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全解除</button></div>${fieldTypeGroupsHtml}</div></details>`;
-      overlay.innerHTML = `<div role="dialog" aria-modal="true" aria-label="${escapeHtmlAttr(title)}" tabindex="-1" style="background:#fff;border-radius:12px;padding:28px;box-sizing:border-box;min-width:min(360px,calc(100vw - 32px));max-width:min(480px,calc(100vw - 32px));max-height:84vh;display:flex;flex-direction:column;box-shadow:0 4px 24px rgba(0,0,0,0.3);outline:none;"><div style="font-size:18px;font-weight:bold;color:#2E5C8A;margin-bottom:8px;">${escapeHtmlAttr(title)}</div><div style="font-size:12px;color:#666;margin-bottom:10px;">出力するシートを選択してください（前回設定を自動反映 / Esc=キャンセル, Ctrl+Enter=エクスポート）</div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;align-items:center;"><span style="font-size:11px;color:#94a3b8;margin-right:2px;">プリセット:</span>${presetBtns}</div><div style="display:flex;gap:8px;margin-bottom:8px;"><button type="button" id="kex-select-all" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全選択</button><button type="button" id="kex-select-none" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全解除</button><span id="kex-count" style="margin-left:auto;align-self:center;font-size:12px;font-weight:bold;color:#2E5C8A;"></span></div><div id="kex-sheet-options" style="flex:1;overflow-y:auto;padding:8px;background:#fafafa;border-radius:6px;border:1px solid #eee;">${groupsHtml}</div>${fieldTypeSectionHtml}<div id="kex-warn" style="font-size:11px;color:#b91c1c;min-height:16px;margin-top:6px;"></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px;"><button type="button" id="kex-cancel" style="padding:8px 20px;border:1px solid #ccc;border-radius:6px;background:#fff;cursor:pointer;font-size:13px;">キャンセル</button><button type="button" id="kex-export" style="padding:8px 20px;border:none;border-radius:6px;background:#4A90E2;color:#fff;cursor:pointer;font-size:13px;font-weight:bold;">エクスポート</button></div></div>`;
+      const fieldTypeSectionHtml = `<details id="kex-ftype-details" style="margin-top:8px;border:1px solid #eee;border-radius:6px;background:#fafafa;"><summary style="cursor:pointer;font-size:12.5px;font-weight:bold;color:#2E5C8A;padding:6px 8px;">「項目定義」シートに出力するフィールドタイプ</summary><div style="padding:4px 10px 8px;"><div style="font-size:12.5px;color:#666;margin-bottom:6px;">チェックしたタイプのみ項目定義シートに出力します（ラベル・罫線などの除外に利用）。<button type="button" id="kex-ftype-all" style="font-size:12.5px;padding:2px 8px;margin-left:6px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全選択</button><button type="button" id="kex-ftype-none" style="font-size:12.5px;padding:2px 8px;margin-left:4px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全解除</button></div>${fieldTypeGroupsHtml}</div></details>`;
+      overlay.innerHTML = `<div role="dialog" aria-modal="true" aria-label="${escapeHtmlAttr(title)}" tabindex="-1" style="background:#fff;border-radius:12px;padding:28px;box-sizing:border-box;min-width:min(360px,calc(100vw - 32px));max-width:min(480px,calc(100vw - 32px));max-height:84vh;display:flex;flex-direction:column;box-shadow:0 4px 24px rgba(0,0,0,0.3);outline:none;"><div style="font-size:18px;font-weight:bold;color:#2E5C8A;margin-bottom:8px;">${escapeHtmlAttr(title)}</div><div style="font-size:12.5px;color:#666;margin-bottom:10px;">出力するシートを選択してください（前回設定を自動反映 / Esc=キャンセル, Ctrl+Enter=エクスポート）</div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;align-items:center;"><span style="font-size:12.5px;color:#64748b;margin-right:2px;">プリセット:</span>${presetBtns}</div><div style="display:flex;gap:8px;margin-bottom:8px;"><button type="button" id="kex-select-all" style="font-size:12.5px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全選択</button><button type="button" id="kex-select-none" style="font-size:12.5px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全解除</button><span id="kex-count" style="margin-left:auto;align-self:center;font-size:12.5px;font-weight:bold;color:#2E5C8A;"></span></div><div id="kex-sheet-options" style="flex:1;overflow-y:auto;padding:8px;background:#fafafa;border-radius:6px;border:1px solid #eee;">${groupsHtml}</div>${fieldTypeSectionHtml}<div id="kex-warn" style="font-size:12.5px;color:#b91c1c;min-height:16px;margin-top:6px;"></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px;"><button type="button" id="kex-cancel" style="padding:8px 20px;border:1px solid #ccc;border-radius:6px;background:#fff;cursor:pointer;font-size:13px;">キャンセル</button><button type="button" id="kex-export" style="padding:8px 20px;border:none;border-radius:6px;background:#4A90E2;color:#fff;cursor:pointer;font-size:13px;font-weight:bold;">エクスポート</button></div></div>`;
       doc.body.appendChild(overlay);
       const box = overlay.querySelector('[role="dialog"]');
       const optionBoxes = () => Array.from(overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]'));
@@ -18404,7 +18618,7 @@ ${foot}
           doc.body.appendChild(el);
         }
         el.style.zIndex = getExporterOverlayZIndex();
-        el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px clamp(16px,6vw,48px);box-sizing:border-box;text-align:center;min-width:min(440px,calc(100vw - 32px));max-width:calc(100vw - 32px);"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📦 設計書一括エクスポーター (ZIP)</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${escapeHtmlAttr(String(msg ?? ""))}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div><div style="margin-top:10px;text-align:right;"><button id="kex-cancel-batch" style="font-size:12px;padding:6px 12px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;">中止</button></div></div>`;
+        el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px clamp(16px,6vw,48px);box-sizing:border-box;text-align:center;min-width:min(440px,calc(100vw - 32px));max-width:calc(100vw - 32px);"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📦 設計書一括エクスポーター (ZIP)</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${escapeHtmlAttr(String(msg ?? ""))}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12.5px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:12.5px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div><div style="margin-top:10px;text-align:right;"><button id="kex-cancel-batch" style="font-size:12.5px;padding:6px 12px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;">中止</button></div></div>`;
       },
       update(msg, step) {
         if (step != null) currentStep = step;
@@ -18739,7 +18953,7 @@ ${foot}
           doc.body.appendChild(el);
         }
         el.style.zIndex = getExporterOverlayZIndex2();
-        el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px clamp(16px,6vw,48px);box-sizing:border-box;text-align:center;min-width:min(400px,calc(100vw - 32px));max-width:calc(100vw - 32px);"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📊 kintone 設計書エクスポーター v2.1</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${escapeHtmlAttr(String(msg ?? ""))}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div><div style="margin-top:10px;text-align:right;"><button id="kex-cancel-batch" style="font-size:12px;padding:6px 12px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;">中止</button></div></div>`;
+        el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px clamp(16px,6vw,48px);box-sizing:border-box;text-align:center;min-width:min(400px,calc(100vw - 32px));max-width:calc(100vw - 32px);"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📊 kintone 設計書エクスポーター v2.1</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${escapeHtmlAttr(String(msg ?? ""))}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12.5px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:12.5px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div><div style="margin-top:10px;text-align:right;"><button id="kex-cancel-batch" style="font-size:12.5px;padding:6px 12px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;">中止</button></div></div>`;
       },
       update(msg, step) {
         if (step !== void 0) UI.currentStep = step;
@@ -21485,7 +21699,8 @@ ${lines.join("\n")}`), { partialSuccess: true });
     }
     return {
       facts: [
-        ["生成日時", input.generatedAt],
+        // ISO（UTC）だけだと日本の時刻と 9 時間ずれて読めるため、端末の時刻を先に書き、ISO は括弧で添える
+        ["生成日時", Number.isNaN(new Date(input.generatedAt).getTime()) ? input.generatedAt : `${readableTimestamp(new Date(input.generatedAt))}（${input.generatedAt}）`],
         ["出力形式", formatLabel],
         ["参照環境", input.preview ? "プレビュー" : "本番"],
         ["対象アプリ数", `${input.total}件（成功 ${input.items.length} / 失敗 ${actualFailedApps.length}${notRunApps.length ? ` / 未実行（中止） ${notRunApps.length}` : ""}）`]
@@ -22255,7 +22470,7 @@ ${detail}`);
 .kus-as__name{color:var(--c-text);word-break:break-all}
 .kus-as__meta{margin-top:3px;color:var(--c-text-2);font-size:12.5px;line-height:1.5}
 .kus-as__assign{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
-.kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:12px}
+.kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:12.5px}
 .kus-as__assign .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
 .kus-as__bulk{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--c-border);background:var(--c-surface)}
 .kus-as__bulk .kus-lp__btn{padding:4px 10px;font-size:12.5px}
@@ -22600,7 +22815,7 @@ ${detail}`);
     cardTarget.body.appendChild(makeNote("アプリごとに別のゲストスペースを指定できます。各行の「↑コピー」で上の行を複製できます。", "help"));
     panel.body.insertBefore(cardTarget.card, panel.status);
     const cardImport = makeCard({ title: "設定JSON読込（任意）", soft: true });
-    cardImport.body.appendChild(makeNote("「設定一括取得」で保存した JSON（「設定をZIPで保存」の ZIP も可）を読み込むと、そのアプリは kintone から取得せず、JSON の内容だけで設計書を作ります。読み込んだアプリは対象アプリ表に追加されます。", "help"));
+    cardImport.body.appendChild(makeNote("「設定一括取得」で保存した JSON（「設定をZIPで保存」の ZIP も可）を読み込むと、そのアプリは kintone から取得せず、JSON の内容だけで設計書を作ります。読み込んだアプリは対象アプリ表に追加されます（比較元・比較先を持つ差分用の JSON は、設計差分で比べる1・2行目に入ります）。", "help"));
     const importFile = document.createElement("input");
     importFile.type = "file";
     importFile.accept = ".json,.zip,application/json,application/zip";
@@ -22676,12 +22891,14 @@ ${detail}`);
       importedBundles.clear();
       importedSlotBundles.clear();
       let added = 0;
+      let placedNote = "";
       const loadedLabels = [];
       const warnings = [...zipWarnings];
       if (raw && typeof raw === "object" && raw.source && raw.target) {
         const srcBundles = pickAllSettingsBundles(raw, "source", true, true);
         const tgtBundles = pickAllSettingsBundles(raw, "target", true, true);
         const pair = [srcBundles[0], tgtBundles[0]].filter(Boolean);
+        const pairRows = [];
         pair.forEach((b, idx) => {
           const appId = storeImportedBundle(b, idx);
           if (!appId) {
@@ -22689,16 +22906,17 @@ ${detail}`);
             return;
           }
           const guestId = String(b?.guestId || "").trim();
-          const appName = extractAppNameFromBundle(b);
           loadedLabels.push(`#${appId}${guestId ? `(guest:${guestId})` : ""}`);
-          const res = appTable.putApp(appId, guestId, { appName });
-          if (res.action === "added" || res.action === "filled") {
-            added += 1;
-          } else if (idx === 1 && appTable.getAllRows().filter((r) => r.appId).length < 2) {
-            appTable.addRow(appId, guestId, { appName });
-            added += 1;
-          }
+          pairRows.push({ appId, guestId, appName: extractAppNameFromBundle(b) });
         });
+        if (pairRows.length) {
+          const before = appTable.getAllRows().filter((r) => r.appId);
+          const sameApp = (a, b) => a.appId === b.appId && (a.guestId || "") === (b.guestId || "");
+          const rest = before.filter((r) => !pairRows.some((p) => sameApp(p, r)));
+          added = Math.max(0, pairRows.length + rest.length - before.length);
+          appTable.setApps([...pairRows, ...rest]);
+          if (pairRows.length === 2) placedNote = "比較元・比較先を対象アプリ表の1・2行目にしました（設計差分はこの2行を比べます）。";
+        }
       } else {
         const bundles = pickAllSettingsBundles(raw, void 0, true, true);
         let missingAppId = 0;
@@ -22736,7 +22954,7 @@ ${detail}`);
       importStatus.setAttribute("data-import-status", "loaded");
       importStatus.textContent = `読込中: ${file.name} (App ${loadedLabels.join(", ")})`;
       cardImport.card.dispatchEvent(new Event("input", { bubbles: true }));
-      panel.setStatus(`設定JSON「${file.name}」から${loadedLabels.length}件のアプリ設定を読み込みました（対象アプリ表に新規追加 ${added}件）。読み込んだアプリは kintone から取得しません。${warnings.length ? `注意: ${warnings.join("。")}` : ""}`, warnings.length ? "warn" : "ok");
+      panel.setStatus(`設定JSON「${file.name}」から${loadedLabels.length}件のアプリ設定を読み込みました（対象アプリ表に新規追加 ${added}件）。読み込んだアプリは kintone から取得しません。${placedNote}${warnings.length ? `注意: ${warnings.join("。")}` : ""}`, warnings.length ? "warn" : "ok");
     }));
     clearImportBtn.addEventListener("click", () => {
       importedBundles.clear();

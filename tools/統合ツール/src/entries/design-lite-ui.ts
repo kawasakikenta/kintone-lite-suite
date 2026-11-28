@@ -28,7 +28,8 @@ import {
   makeCard,
   makeDetails,
   makeNote,
-  liteRun
+  liteRun,
+  type AppTableRow
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
 
@@ -79,7 +80,7 @@ export function mountDesignLitePanel() {
 
   // ---- 設定JSON読込（任意）：設定一括取得の出力（apps 配列）を取り込んで、API取得なしで設計書を作る ----
   const cardImport = makeCard({ title: '設定JSON読込（任意）', soft: true });
-  cardImport.body.appendChild(makeNote('「設定一括取得」で保存した JSON（「設定をZIPで保存」の ZIP も可）を読み込むと、そのアプリは kintone から取得せず、JSON の内容だけで設計書を作ります。読み込んだアプリは対象アプリ表に追加されます。', 'help'));
+  cardImport.body.appendChild(makeNote('「設定一括取得」で保存した JSON（「設定をZIPで保存」の ZIP も可）を読み込むと、そのアプリは kintone から取得せず、JSON の内容だけで設計書を作ります。読み込んだアプリは対象アプリ表に追加されます（比較元・比較先を持つ差分用の JSON は、設計差分で比べる1・2行目に入ります）。', 'help'));
   const importFile = document.createElement('input');
   importFile.type = 'file';
   importFile.accept = '.json,.zip,application/json,application/zip';
@@ -165,6 +166,7 @@ export function mountDesignLitePanel() {
     importedBundles.clear();
     importedSlotBundles.clear();
     let added = 0;
+    let placedNote = '';
     const loadedLabels: string[] = [];
     const warnings: string[] = [...zipWarnings];
 
@@ -172,6 +174,7 @@ export function mountDesignLitePanel() {
       const srcBundles = pickAllSettingsBundles(raw, 'source', true, true);
       const tgtBundles = pickAllSettingsBundles(raw, 'target', true, true);
       const pair = [srcBundles[0], tgtBundles[0]].filter(Boolean);
+      const pairRows: AppTableRow[] = [];
       pair.forEach((b, idx) => {
         const appId = storeImportedBundle(b, idx);
         if (!appId) {
@@ -179,16 +182,19 @@ export function mountDesignLitePanel() {
           return;
         }
         const guestId = String((b as any)?.guestId || '').trim();
-        const appName = extractAppNameFromBundle(b);
         loadedLabels.push(`#${appId}${guestId ? `(guest:${guestId})` : ''}`);
-        const res = appTable.putApp(appId, guestId, { appName });
-        if (res.action === 'added' || res.action === 'filled') {
-          added += 1;
-        } else if (idx === 1 && appTable.getAllRows().filter((r) => r.appId).length < 2) {
-          appTable.addRow(appId, guestId, { appName });
-          added += 1;
-        }
+        pairRows.push({ appId, guestId, appName: extractAppNameFromBundle(b) });
       });
+      if (pairRows.length) {
+        // 設計差分は表の 1 行目（比較元）と 2 行目（比較先）を比べるため、読み込んだ比較元・比較先を先頭の 2 行にする。
+        // 開いたアプリなど、それまでの行は後ろに残す（比較元・比較先と同じアプリの行は重ねない）。
+        const before = appTable.getAllRows().filter((r) => r.appId);
+        const sameApp = (a: AppTableRow, b: AppTableRow) => a.appId === b.appId && (a.guestId || '') === (b.guestId || '');
+        const rest = before.filter((r) => !pairRows.some((p) => sameApp(p, r)));
+        added = Math.max(0, pairRows.length + rest.length - before.length);
+        appTable.setApps([...pairRows, ...rest]);
+        if (pairRows.length === 2) placedNote = '比較元・比較先を対象アプリ表の1・2行目にしました（設計差分はこの2行を比べます）。';
+      }
     } else {
       const bundles = pickAllSettingsBundles(raw, undefined, true, true);
       // アプリIDの無いバンドルは使えず、同じアプリID・ゲストIDが複数あると後のものだけが残るため、
@@ -225,7 +231,7 @@ export function mountDesignLitePanel() {
     importStatus.setAttribute('data-import-status', 'loaded');
     importStatus.textContent = `読込中: ${file.name} (App ${loadedLabels.join(', ')})`;
     cardImport.card.dispatchEvent(new Event('input', { bubbles: true }));
-    panel.setStatus(`設定JSON「${file.name}」から${loadedLabels.length}件のアプリ設定を読み込みました（対象アプリ表に新規追加 ${added}件）。読み込んだアプリは kintone から取得しません。${warnings.length ? `注意: ${warnings.join('。')}` : ''}`, warnings.length ? 'warn' : 'ok');
+    panel.setStatus(`設定JSON「${file.name}」から${loadedLabels.length}件のアプリ設定を読み込みました（対象アプリ表に新規追加 ${added}件）。読み込んだアプリは kintone から取得しません。${placedNote}${warnings.length ? `注意: ${warnings.join('。')}` : ''}`, warnings.length ? 'warn' : 'ok');
   }));
   clearImportBtn.addEventListener('click', () => {
     importedBundles.clear();
