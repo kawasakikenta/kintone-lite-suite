@@ -61,9 +61,23 @@ export function escapeInlineScriptSource(source: string): string {
   return String(source).replace(/<\/(script)/gi, '<\\/$1');
 }
 
-/** 生成 HTML の head へ置く、ライブラリを埋め込んだ script 要素の並び。 */
-export function buildErLibraryScripts(): string {
-  return ER_BUNDLED_LIBRARIES
-    .map((lib) => `<script id="${lib.id}">${escapeInlineScriptSource(lib.source)}\n<\/script>`)
-    .join('\n');
+/** HTML に置く script 要素の id と中身。 */
+export interface ErInlineScript {
+  readonly id: string;
+  /** script 要素の中身。ブラウザが HTML を読み込んだ後の文字列と同じ形（改行は LF）にそろえてある。CSP のハッシュはこの文字列から計算する */
+  readonly text: string;
+}
+
+let inlineLibraryScripts: readonly ErInlineScript[] | null = null;
+
+/** 生成 HTML の head へ置く、ライブラリを埋め込んだ script 要素の並び（読み込む順）。 */
+export function erLibraryInlineScripts(): readonly ErInlineScript[] {
+  if (!inlineLibraryScripts) {
+    inlineLibraryScripts = Object.freeze(ER_BUNDLED_LIBRARIES.map((lib) => Object.freeze({
+      id: lib.id,
+      // HTML の読み込みでは CR LF・CR が LF になる。ハッシュが合うよう、埋め込む前にそろえる
+      text: `${escapeInlineScriptSource(lib.source)}\n`.replace(/\r\n?/g, '\n')
+    })));
+  }
+  return inlineLibraryScripts;
 }

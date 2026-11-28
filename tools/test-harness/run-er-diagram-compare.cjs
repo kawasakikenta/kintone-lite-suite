@@ -56,7 +56,8 @@ const RESPONSIVE_VIEWPORTS = [
   { width: 1024, height: 768 },
   { width: 1440, height: 900 }
 ];
-const ZOOM_RESET_SELECTOR = 'button[aria-label="表示倍率を100%にリセット"][onclick="zoomReset()"]';
+// 以前の版は onclick 属性、作業ツリー版は data-action（CSP でイベント属性を許可しないため）で操作を受ける
+const ZOOM_RESET_SELECTOR = 'button[aria-label="表示倍率を100%にリセット"]:is([onclick="zoomReset()"],[data-action="zoom-reset"])';
 // 図を画面に収めるボタン。作業ツリー版はズーム操作の中の「図を画面に合わせる」、以前の版は操作バーの「図全体を表示」
 const FIT_SELECTORS = ['button[aria-label="図を画面に合わせる"]', 'button[aria-label="図全体を表示"]'];
 const MALICIOUS_APP_NAME = '攻撃テスト</title><img id="er-xss-image" src="x" onerror="window.__ER_XSS_EXECUTED__=1"><script id="er-xss-script">window.__ER_XSS_EXECUTED__=2</script>';

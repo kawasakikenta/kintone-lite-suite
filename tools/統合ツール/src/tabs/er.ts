@@ -7,7 +7,7 @@ import { isRunCancelledError } from '../runControl.js';
 import { createCancelReport } from './run-cancel-summary.js';
 import { getToolDocument } from '../ui/dialog.js';
 import { analyzeErDependencies } from './er-analysis.js';
-import { buildErLibraryScripts, escapeInlineScriptSource } from './er-libraries.js';
+import { erLibraryInlineScripts, escapeInlineScriptSource } from './er-libraries.js';
 import { buildErAppModel, buildFailedErAppModel, ER_FIELD_TYPE_LABELS, ER_MD_MERMAID_MAX_CHARS } from './er-model.js';
 import { ER_VIEWER_SCRIPT, renderErViewerPage } from './er-viewer/page.js';
 import { buildErModelFromOfflineSource, describeOfflineFetchedAt, type ErOfflineSource } from './er-offline.js';
@@ -478,7 +478,7 @@ export const buildHTML = (apps, options: any = {}) => {
     generatedText: formatErGeneratedAt(generatedAt),
     ...(sourceLabel ? { sourceText: sourceLabel } : {}),
     connectionText,
-    libraryScripts: buildErLibraryScripts(),
+    libraryScripts: erLibraryInlineScripts(),
     appCount: safeApps.length,
     relationCount: summary.relations,
     summary,

@@ -165,9 +165,9 @@ function renderAppDetail(app){
   document.getElementById("detail-meta").innerHTML = detailBadgesHtml(app)
     + '<div class="app-meta">' + facts.join(" ・ ") + '</div>'
     + '<div class="detail-actions">'
-    + (node.length && !node.hasClass("app-manual-hidden") ? '<button type="button" class="tb tb-primary" data-app="' + escapeHtml(String(app.id)) + '" onclick="showAroundApp(this.dataset.app)">このアプリのまわりを表示</button>' : '')
-    + '<button type="button" class="tb" title="図での名前と枠の色を変えます（kintone のアプリ名は変わりません）" data-app="' + escapeHtml(String(app.id)) + '" onclick="openEditApp(this.dataset.app)">名前・色を編集</button>'
-    + (hiddenCnt ? '<button type="button" class="tb" title="このアプリで隠した項目をすべて戻します" data-app="' + escapeHtml(String(app.id)) + '" onclick="restoreHiddenFields(this.dataset.app)">隠した項目 ' + hiddenCnt + ' 件を戻す</button>' : '')
+    + (node.length && !node.hasClass("app-manual-hidden") ? '<button type="button" class="tb tb-primary" data-app="' + escapeHtml(String(app.id)) + '" data-action="show-around">このアプリのまわりを表示</button>' : '')
+    + '<button type="button" class="tb" title="図での名前と枠の色を変えます（kintone のアプリ名は変わりません）" data-app="' + escapeHtml(String(app.id)) + '" data-action="edit-app">名前・色を編集</button>'
+    + (hiddenCnt ? '<button type="button" class="tb" title="このアプリで隠した項目をすべて戻します" data-app="' + escapeHtml(String(app.id)) + '" data-action="restore-fields">隠した項目 ' + hiddenCnt + ' 件を戻す</button>' : '')
     + '</div>'
     + '<div class="detail-chip-row">'
     + '<span class="meta-pill" title="表示中 / 総数（表示数はカードの項目の設定によります）">' + fieldPillText + '</span>'
@@ -196,15 +196,15 @@ function renderAppDetail(app){
       const edgeId = "e_" + app.id + "_" + item.ri;
       const edge = cy.getElementById(edgeId);
       const edgeHidden = edge.length && edge.hasClass("rel-manual-hidden");
-      const relEditBtn = '<button type="button" class="row-edit" title="この関連線を編集（名前・種類）" aria-label="この関連線を編集" data-edge="' + escapeHtml(edgeId) + '" data-app="' + escapeHtml(String(app.id)) + '" onclick="openEditRelationRow(this);event.stopPropagation();">✎</button>';
+      const relEditBtn = '<button type="button" class="row-edit" title="この関連線を編集（名前・種類）" aria-label="この関連線を編集" data-edge="' + escapeHtml(edgeId) + '" data-app="' + escapeHtml(String(app.id)) + '" data-action="edit-relation-row">✎</button>';
       const edgeBtn = edge.length
-        ? relEditBtn + '<button type="button" class="row-del' + (edgeHidden ? ' row-del--restore' : '') + '" title="' + (edgeHidden ? 'この関連線を戻す' : 'この関連線を図から削除') + '" aria-label="' + (edgeHidden ? 'この関連線を戻す' : 'この関連線を図から削除') + '" data-edge="' + escapeHtml(edgeId) + '" data-app="' + escapeHtml(String(app.id)) + '" onclick="toggleRelationEdgeFromRow(this);event.stopPropagation();">' + (edgeHidden ? '↺' : '✕') + '</button>'
+        ? relEditBtn + '<button type="button" class="row-del' + (edgeHidden ? ' row-del--restore' : '') + '" title="' + (edgeHidden ? 'この関連線を戻す' : 'この関連線を図から削除') + '" aria-label="' + (edgeHidden ? 'この関連線を戻す' : 'この関連線を図から削除') + '" data-edge="' + escapeHtml(edgeId) + '" data-app="' + escapeHtml(String(app.id)) + '" data-action="toggle-relation-row">' + (edgeHidden ? '↺' : '✕') + '</button>'
         : '';
       relHtml += '<div class="field-row' + (edgeHidden ? ' field-row--hidden' : '') + '">'
         + '<span class="field-icon kind-' + escapeHtml(rel.kind) + '" aria-hidden="true">→</span>'
         + '<div class="field-main">'
         + '<div class="field-name"><span class="kind-badge kind-' + escapeHtml(rel.kind) + '"><i></i>' + escapeHtml(relationKindJp(rel.kind)) + '</span> ' + escapeHtml(relationLabel) + '</div>'
-        + '<div class="field-sub wrap">参照先: <button type="button" class="link-btn" data-app="' + escapeHtml(String(rel.toApp)) + '" onclick="focusApp(this.dataset.app)">' + escapeHtml(targetLabel) + '</button>' + (relationMeta.length ? ' / ' + escapeHtml(relationMeta.join(' / ')) : '') + '</div>'
+        + '<div class="field-sub wrap">参照先: <button type="button" class="link-btn" data-app="' + escapeHtml(String(rel.toApp)) + '" data-action="focus-app">' + escapeHtml(targetLabel) + '</button>' + (relationMeta.length ? ' / ' + escapeHtml(relationMeta.join(' / ')) : '') + '</div>'
         + relationDetailHtml(rel)
         + '</div>'
         + edgeBtn
@@ -227,7 +227,7 @@ function renderAppDetail(app){
       const relationName=rel.kind==="REF"?(rel.controlFieldLabel||rel.fromDisplay||rel.fromLabel||"関連レコード一覧"):(rel.fromDisplay || rel.fromLabel || rel.from || relationKindJp(rel.kind));
       const meta=[];
       if(rel.toField) meta.push((rel.kind==="REF"?"結合先: ":"参照先の項目: ") + labelWithCode(fieldLabelByCode(app,rel.toField),rel.toField));
-      relHtml += '<button type="button" class="field-row detail-relation-button" data-app="' + escapeHtml(String(item.sourceApp.id)) + '" onclick="focusApp(this.dataset.app)">'
+      relHtml += '<button type="button" class="field-row detail-relation-button" data-app="' + escapeHtml(String(item.sourceApp.id)) + '" data-action="focus-app">'
         + '<span class="field-icon kind-' + escapeHtml(rel.kind) + '" aria-hidden="true">←</span>'
         + '<div class="field-main"><div class="field-name">' + escapeHtml(sourceLabel) + '</div><div class="field-sub">' + escapeHtml(relationKindJp(rel.kind) + ": " + relationName + (meta.length ? " / " + meta.join(" / ") : "")) + '</div>' + relationDetailHtml(rel) + '</div>'
         + '<span class="field-type">被参照</span></button>';
@@ -255,8 +255,8 @@ function renderAppDetail(app){
         + '<div class="field-sub">' + escapeHtml(meta.join(' / ')) + '</div>'
         + '</div>'
         + '<span class="field-type">' + escapeHtml(fieldTypeJpLabel(field.type)) + '</span>'
-        + '<button type="button" class="row-edit" title="この項目を編集（名前・種類・区分）" aria-label="この項目を編集" data-app="' + escapeHtml(String(app.id)) + '" data-key="' + escapeHtml(encodeURIComponent(fieldHideKey(app, field))) + '" onclick="openEditFieldRow(this);event.stopPropagation();">✎</button>'
-        + '<button type="button" class="row-del" title="この項目を図から隠す" aria-label="この項目を図から隠す" data-app="' + escapeHtml(String(app.id)) + '" data-key="' + escapeHtml(encodeURIComponent(fieldHideKey(app, field))) + '" onclick="hideFieldFromRow(this);event.stopPropagation();">✕</button>'
+        + '<button type="button" class="row-edit" title="この項目を編集（名前・種類・区分）" aria-label="この項目を編集" data-app="' + escapeHtml(String(app.id)) + '" data-key="' + escapeHtml(encodeURIComponent(fieldHideKey(app, field))) + '" data-action="edit-field-row">✎</button>'
+        + '<button type="button" class="row-del" title="この項目を図から隠す" aria-label="この項目を図から隠す" data-app="' + escapeHtml(String(app.id)) + '" data-key="' + escapeHtml(encodeURIComponent(fieldHideKey(app, field))) + '" data-action="hide-field-row">✕</button>'
         + '</div>';
     });
   };
@@ -267,7 +267,7 @@ function renderAppDetail(app){
   renderGroup("サブテーブル", fieldGroups.subtable, "tag-sub", "表");
   renderGroup("そのほかの項目", fieldGroups.normal, "", "");
   const fieldFilterHtml = visibleFields.length > 8
-    ? '<input class="detail-filter" type="search" placeholder="このアプリの項目を絞り込む" aria-label="このアプリの項目を絞り込む" oninput="filterDetailFields(this.value)">'
+    ? '<input class="detail-filter" type="search" placeholder="このアプリの項目を絞り込む" aria-label="このアプリの項目を絞り込む" data-input="detail-filter">'
     : '';
   document.getElementById("detail-fields").innerHTML = '<div class="detail-section">' + fieldFilterHtml + (fieldHtml || '<div class="field-group-title">項目</div><div class="field-sub">表示できる項目はありません（カードの項目の設定を「詳細」にすると増えます）。</div>') + '</div>';
 
@@ -289,7 +289,7 @@ function renderGhostDetail(node){
     +'<div class="analysis-note is-warn" role="status"><strong>図の外にある参照先です</strong><br>探索の深さ・閲覧権限・削除済みなどのため、このアプリの設定は取得していません。下は、取得したアプリ側に残っている参照の情報です。</div>';
   let relationHtml='<div class="field-group-title">この参照先へ向かう関連 ('+inbound.length+')</div>';
   inbound.forEach((item)=>{
-    relationHtml+='<button type="button" class="field-row detail-relation-button" data-app="'+escapeHtml(String(item.sourceApp.id))+'" onclick="focusApp(this.dataset.app)">'
+    relationHtml+='<button type="button" class="field-row detail-relation-button" data-app="'+escapeHtml(String(item.sourceApp.id))+'" data-action="focus-app">'
       +'<span class="field-icon" aria-hidden="true">←</span><div class="field-main"><div class="field-name">'+escapeHtml(item.sourceApp.name+' (App '+item.sourceApp.id+')')+'</div>'
       +'<div class="field-sub">'+escapeHtml(relationKindJp(item.rel.kind)+": "+exportRelationLabel(item.rel))+'</div>'+relationDetailHtml(item.rel)+'</div><span class="field-type">参照元</span></button>';
   });
@@ -311,8 +311,8 @@ function renderEdgeDetail(edge){
   document.getElementById("detail-meta").innerHTML='<div class="detail-badges"><span class="kind-badge kind-'+escapeHtml(edge.data("kind"))+'"><i></i>'+escapeHtml(relationKindJp(edge.data("kind")))+'</span></div>'
     +'<div class="app-meta">'+(members.length>1?members.length+" 本の関連線を 1 本にまとめて表示しています":"関連線 1 本")+'</div>'
     +'<div class="detail-actions">'
-    +(source?'<button type="button" class="tb" data-app="'+escapeHtml(String(source.id))+'" onclick="focusApp(this.dataset.app)">参照元を見る</button>':'')
-    +'<button type="button" class="tb" data-app="'+escapeHtml(String(target?target.id:edge.target().data("targetAppId")))+'" onclick="focusApp(this.dataset.app)">参照先を見る</button>'
+    +(source?'<button type="button" class="tb" data-app="'+escapeHtml(String(source.id))+'" data-action="focus-app">参照元を見る</button>':'')
+    +'<button type="button" class="tb" data-app="'+escapeHtml(String(target?target.id:edge.target().data("targetAppId")))+'" data-action="focus-app">参照先を見る</button>'
     +'</div>';
   let html='<div class="field-group-title">関連線 ('+members.length+')</div>';
   members.forEach(e=>{
@@ -325,8 +325,8 @@ function renderEdgeDetail(edge){
       +'<div class="field-main"><div class="field-name">'+escapeHtml(relSourceFieldText(rel))+(rel.isCustom?'<span class="tag tag-sub">手動</span>':'')+'</div>'
       +'<div class="field-sub">'+escapeHtml(relTargetFieldText(rel,target)?"参照先の項目: "+relTargetFieldText(rel,target):relationKindJp(rel.kind))+'</div>'
       +relationDetailHtml(rel)+'</div>'
-      +'<button type="button" class="row-edit" title="この関連線を編集（名前・種類）" aria-label="この関連線を編集" data-edge="'+escapeHtml(e.id())+'" data-app="'+escapeHtml(String(found.app.id))+'" onclick="openEditRelationRow(this);event.stopPropagation();">✎</button>'
-      +'<button type="button" class="row-del'+(hidden?' row-del--restore':'')+'" title="'+(hidden?'この関連線を戻す':'この関連線を図から削除')+'" aria-label="'+(hidden?'この関連線を戻す':'この関連線を図から削除')+'" data-edge="'+escapeHtml(e.id())+'" data-app="'+escapeHtml(String(found.app.id))+'" onclick="toggleRelationEdgeFromRow(this);event.stopPropagation();">'+(hidden?'↺':'✕')+'</button>'
+      +'<button type="button" class="row-edit" title="この関連線を編集（名前・種類）" aria-label="この関連線を編集" data-edge="'+escapeHtml(e.id())+'" data-app="'+escapeHtml(String(found.app.id))+'" data-action="edit-relation-row">✎</button>'
+      +'<button type="button" class="row-del'+(hidden?' row-del--restore':'')+'" title="'+(hidden?'この関連線を戻す':'この関連線を図から削除')+'" aria-label="'+(hidden?'この関連線を戻す':'この関連線を図から削除')+'" data-edge="'+escapeHtml(e.id())+'" data-app="'+escapeHtml(String(found.app.id))+'" data-action="toggle-relation-row">'+(hidden?'↺':'✕')+'</button>'
       +'</div>';
   });
   document.getElementById("detail-relations").innerHTML=html;
@@ -451,7 +451,7 @@ function goToRelationEdge(edgeId){
 // ─── 構造チェック ───
 function analysisItem(title, meta, ids, tone){
   const safeIds=(ids||[]).map(id=>String(id).replace(/[^0-9-]/g,"")).filter(Boolean).join(",");
-  return '<button type="button" class="analysis-item'+(tone?' analysis-item--'+tone:'')+'" data-analysis-ids="'+safeIds+'" onclick="focusAnalysisApps(this.dataset.analysisIds)"><strong>'+escapeHtml(title)+'</strong><span>'+escapeHtml(meta)+'</span></button>';
+  return '<button type="button" class="analysis-item'+(tone?' analysis-item--'+tone:'')+'" data-analysis-ids="'+safeIds+'" data-action="analysis-focus"><strong>'+escapeHtml(title)+'</strong><span>'+escapeHtml(meta)+'</span></button>';
 }
 function renderAnalysisPanel(){
   const host=document.getElementById("analysis-content");
@@ -662,7 +662,7 @@ function refreshAppList(){
     if(row.removed) sub.push('<span>図から削除済み</span>');
     else if(!row.inScope) sub.push('<span>図の外</span>');
     const label=a.name+'、'+(a.isCustom?'手動追加':'App '+a.id)+'、参照 '+row.out+'、被参照 '+row.inc+(row.inScope?'':'、図の外');
-    return '<button type="button" role="listitem" class="'+classes.join(' ')+'" data-app="'+escapeHtml(String(a.id))+'" onclick="focusApp(this.dataset.app)" aria-label="'+escapeHtml(label)+'"><span class="ali-top"><span class="ali-name">'+escapeHtml(a.name)+'</span>'+badges.join('')+'</span><span class="ali-sub">'+sub.join('')+'</span></button>';
+    return '<button type="button" role="listitem" class="'+classes.join(' ')+'" data-app="'+escapeHtml(String(a.id))+'" data-action="focus-app" aria-label="'+escapeHtml(label)+'"><span class="ali-top"><span class="ali-name">'+escapeHtml(a.name)+'</span>'+badges.join('')+'</span><span class="ali-sub">'+sub.join('')+'</span></button>';
   };
   let html="";
   if(!rows.length) html='<div class="analysis-empty">条件に合うアプリはありません。</div>';
@@ -704,17 +704,17 @@ function refreshScopeBar(){
   let html="";
   if(viewScope.mode==="all"){
     html+='<span class="scope-label">全体を表示<small class="scope-count">'+total+' アプリ</small></span>';
-    if(canShowStartScope()) html+='<button type="button" class="tb" id="scope-start-btn" onclick="showStartScope()">起点まわりだけ表示</button>';
+    if(canShowStartScope()) html+='<button type="button" class="tb" id="scope-start-btn" data-action="scope-start">起点まわりだけ表示</button>';
   }else{
     const start=isStartScope(viewScope);
     const rootNames=viewScope.roots.map(id=>{const a=findApp(id);return a?a.name:("App "+id);});
     const title=start?"起点まわり":("「"+rootNames[0]+"」"+(rootNames.length>1?" ほか "+(rootNames.length-1)+" 件":"")+" のまわり");
     html+='<span class="scope-label" title="'+escapeHtml(rootNames.join("、"))+'">'+escapeHtml(title)+'<small class="scope-count">'+shown+' / '+total+' アプリ</small></span>';
     html+='<span class="scope-depth" role="group" aria-label="関連をたどる段数"><span>深さ</span>'
-      +[1,2].map(d=>'<button type="button" id="scope-depth-'+d+'" aria-pressed="'+(viewScope.depth===d)+'" onclick="setScopeDepth('+d+')" title="'+(d===1?'直接の関連先まで':'関連先の関連先まで')+'">'+d+'</button>').join("")
+      +[1,2].map(d=>'<button type="button" id="scope-depth-'+d+'" aria-pressed="'+(viewScope.depth===d)+'" data-action="scope-depth" data-depth="'+d+'" title="'+(d===1?'直接の関連先まで':'関連先の関連先まで')+'">'+d+'</button>').join("")
       +'</span>';
-    html+='<button type="button" class="tb tb-primary" id="scope-all-btn" onclick="showAllScope()">全体を表示</button>';
-    if(!start&&canShowStartScope()) html+='<button type="button" class="tb" id="scope-start-btn" onclick="showStartScope()">起点まわり</button>';
+    html+='<button type="button" class="tb tb-primary" id="scope-all-btn" data-action="scope-all">全体を表示</button>';
+    if(!start&&canShowStartScope()) html+='<button type="button" class="tb" id="scope-start-btn" data-action="scope-start">起点まわり</button>';
   }
   if(ER_OPTIONS.reverseScanNote) html+='<span class="meta-pill meta-pill--warn" title="'+escapeHtml(ER_OPTIONS.reverseScanNote)+'">⚠ 逆引き走査が不完全</span>';
   bar.innerHTML=html;
@@ -786,7 +786,7 @@ function tableHeadHtml(columns,state,tableName){
     if(col.sortable===false) return '<th scope="col" class="plain'+(col.num?' num':'')+'">'+(col.label?escapeHtml(col.label):'<span class="sr-only">'+escapeHtml(col.srLabel||"")+'</span>')+'</th>';
     const sorted=state.sort===col.key;
     const aria=sorted?(state.dir>0?"ascending":"descending"):"none";
-    return '<th scope="col"'+(col.num?' class="num"':'')+' aria-sort="'+aria+'"><button type="button" class="sort-btn" onclick="sortTable(\''+tableName+'\',\''+col.key+'\')">'+escapeHtml(col.label)+'</button></th>';
+    return '<th scope="col"'+(col.num?' class="num"':'')+' aria-sort="'+aria+'"><button type="button" class="sort-btn" data-action="sort" data-table="'+escapeHtml(tableName)+'" data-sort="'+escapeHtml(col.key)+'">'+escapeHtml(col.label)+'</button></th>';
   }).join('')+'</tr></thead>';
 }
 function sortTable(tableName,key){
@@ -868,8 +868,8 @@ function renderAppsTable(){
   const chips=document.getElementById("apps-checks");
   if(chips) chips.innerHTML=APP_CHECKS.map(c=>{
     const n=all.filter(c.test).length;
-    return '<button type="button" class="check-chip'+(n?' has-items':'')+'" aria-pressed="'+(state.check===c.key)+'" onclick="setAppsCheck(\''+c.key+'\')">'+escapeHtml(c.label)+' <b>'+n+'</b></button>';
-  }).join('')+'<button type="button" class="check-chip" onclick="toggleAnalysisPanel(true);showDiagramView()">構造チェックの詳細</button>';
+    return '<button type="button" class="check-chip'+(n?' has-items':'')+'" aria-pressed="'+(state.check===c.key)+'" data-action="apps-check" data-check="'+escapeHtml(c.key)+'">'+escapeHtml(c.label)+' <b>'+n+'</b></button>';
+  }).join('')+'<button type="button" class="check-chip" data-action="analysis-open">構造チェックの詳細</button>';
   const count=document.getElementById("apps-count");
   if(count) count.textContent=all.length+" 件中 "+rows.length+" 件";
   const status=document.getElementById("apps-status");
@@ -888,13 +888,13 @@ function renderAppsTable(){
     if(r.unresolved) flags.push("未取得の参照先あり");
     return '<tr'+(Number(activeAppId)===Number(r.id)?' class="is-selected"':'')+'>'
       +'<td class="num" data-label="App ID">'+(r.app.isCustom?'-':escapeHtml(r.id))+'</td>'
-      +'<td data-label="アプリ名"><button type="button" class="row-link" data-app="'+escapeHtml(String(r.id))+'" onclick="focusApp(this.dataset.app)">'+escapeHtml(r.name)+'</button> '+badges.join(' ')+(r.app.isCustom?'':'<div class="cell-sub">探索の深さ '+(r.app.depth||0)+'</div>')+'</td>'
+      +'<td data-label="アプリ名"><button type="button" class="row-link" data-app="'+escapeHtml(String(r.id))+'" data-action="focus-app">'+escapeHtml(r.name)+'</button> '+badges.join(' ')+(r.app.isCustom?'':'<div class="cell-sub">探索の深さ '+(r.app.depth||0)+'</div>')+'</td>'
       +'<td data-label="スペース">'+(r.space?'#'+escapeHtml(r.space):'<span class="cell-sub">-</span>')+'</td>'
       +'<td class="num" data-label="項目数">'+r.fields+'</td>'
       +'<td class="num" data-label="参照する">'+r.out+'</td>'
       +'<td class="num" data-label="参照される">'+r.inc+'</td>'
       +'<td data-label="状態">'+statusBadge+(r.issues.length?'<div class="cell-note">'+r.issues.map(escapeHtml).join('<br>')+'</div>':'')+(flags.length?'<div class="cell-sub">'+escapeHtml(flags.join(' ・ '))+'</div>':'')+'</td>'
-      +'<td class="cell-action" data-label=""><button type="button" class="tb row-go" data-app="'+escapeHtml(String(r.id))+'" onclick="focusApp(this.dataset.app)" aria-label="'+escapeHtml(r.name)+' を図で見る">図で見る</button></td>'
+      +'<td class="cell-action" data-label=""><button type="button" class="tb row-go" data-app="'+escapeHtml(String(r.id))+'" data-action="focus-app" aria-label="'+escapeHtml(r.name)+' を図で見る">図で見る</button></td>'
       +'</tr>';
   }).join('');
   host.innerHTML='<table class="data-table"><caption class="sr-only">アプリ一覧（'+rows.length+' 件）</caption>'+tableHeadHtml(APP_TABLE_COLUMNS,state,"apps")+'<tbody>'+body+'</tbody></table>';
@@ -961,7 +961,7 @@ function renderRelationsTable(){
   const kinds=document.getElementById("relations-kinds");
   if(kinds) kinds.innerHTML=["LOOKUP","REF","ACTION"].map(kind=>{
     const n=all.filter(r=>r.kind===kind).length;
-    return '<button type="button" class="check-chip" aria-pressed="'+(!!state.kinds[kind])+'" onclick="toggleRelationTableKind(\''+kind+'\')"><span class="kind-badge kind-'+kind+'"><i></i>'+escapeHtml(relationKindJp(kind))+'</span> <b>'+n+'</b></button>';
+    return '<button type="button" class="check-chip" aria-pressed="'+(!!state.kinds[kind])+'" data-action="relation-table-kind" data-kind="'+escapeHtml(kind)+'"><span class="kind-badge kind-'+kind+'"><i></i>'+escapeHtml(relationKindJp(kind))+'</span> <b>'+n+'</b></button>';
   }).join('');
   const select=document.getElementById("relations-state");
   if(select&&select.value!==state.state) select.value=state.state;
@@ -969,7 +969,7 @@ function renderRelationsTable(){
   if(count) count.textContent=all.length+" 件中 "+rows.length+" 件";
   if(!rows.length){ host.innerHTML='<div class="table-empty">条件に合う関連はありません。検索や絞り込みを変えてください。</div>'; return; }
   const appCell=(app,id,label)=>app
-    ?'<button type="button" class="row-link" data-app="'+escapeHtml(String(app.id))+'" onclick="focusApp(this.dataset.app)">'+escapeHtml(app.name)+'</button><div class="cell-sub">'+(app.isCustom?'手動追加':'App '+escapeHtml(app.id))+'</div>'
+    ?'<button type="button" class="row-link" data-app="'+escapeHtml(String(app.id))+'" data-action="focus-app">'+escapeHtml(app.name)+'</button><div class="cell-sub">'+(app.isCustom?'手動追加':'App '+escapeHtml(app.id))+'</div>'
     :'<span class="badge badge-ghost">？ 未取得</span><div class="cell-sub">App '+escapeHtml(id)+'</div>';
   const body=rows.map(r=>{
     const notes=[];
@@ -985,7 +985,7 @@ function renderRelationsTable(){
       +'<td data-label="参照先の項目"><span class="cell-note">'+escapeHtml(r.targetField||"-")+'</span></td>'
       +'<td data-label="コピー・表示する項目"><span class="cell-note">'+escapeHtml(r.fieldsText||"-")+'</span></td>'
       +'<td data-label="絞り込み条件"><span class="cell-note">'+escapeHtml(r.filter||"-")+'</span></td>'
-      +'<td class="cell-action" data-label=""><button type="button" class="tb row-go" data-edge="'+escapeHtml(r.edgeId)+'" onclick="goToRelationEdge(this.dataset.edge)" aria-label="'+escapeHtml(r.sourceName+' → '+r.targetName)+' の線を図で見る">図で見る</button></td>'
+      +'<td class="cell-action" data-label=""><button type="button" class="tb row-go" data-edge="'+escapeHtml(r.edgeId)+'" data-action="go-edge" aria-label="'+escapeHtml(r.sourceName+' → '+r.targetName)+' の線を図で見る">図で見る</button></td>'
       +'</tr>';
   }).join('');
   host.innerHTML='<table class="data-table"><caption class="sr-only">関連一覧（'+rows.length+' 件）</caption>'+tableHeadHtml(RELATION_TABLE_COLUMNS,state,"relations")+'<tbody>'+body+'</tbody></table>';
