@@ -656,7 +656,8 @@
   }
   var QUERY_KEYWORDS = /* @__PURE__ */ new Set(["and", "or", "not", "in", "like", "order", "by", "asc", "desc", "limit", "offset"]);
   var NUMBER_TOKEN = /^[+-]?\d+(?:\.\d+)?$/;
-  var CALL_PATTERN = /([^\s()=!<>,+\-*/&^;:%]+)\s*\(([^()]*)\)/g;
+  var CALL_NAME_MAX = 256;
+  var CALL_PATTERN = new RegExp("([^\\s()=!<>,+\\-*/&^;:%]{1," + CALL_NAME_MAX + "})\\s*\\(([^()]*)\\)", "g");
   var QUERY_SPLIT = /[^\s()=!<>,]+/g;
   var EXPRESSION_SPLIT = /[^\s()=!<>,+\-*/&^;:%]+/g;
   function uniqueKnownTokens(text, split, known) {
@@ -685,7 +686,7 @@
     const known = knownCodes instanceof Set ? knownCodes : new Set(knownCodes);
     if (!known.size) return [];
     const syntax = querySyntaxText(expression);
-    const withoutNames = syntax.replace(/([^\s()=!<>,+\-*/&^;:%]+)(\s*\()/g, (_match, name, paren) => " ".repeat(name.length) + paren);
+    const withoutNames = syntax.replace(new RegExp("([^\\s()=!<>,+\\-*/&^;:%]{1," + CALL_NAME_MAX + "})(\\s*\\()", "g"), (_match, name, paren) => " ".repeat(name.length) + paren);
     return uniqueKnownTokens(withoutNames, EXPRESSION_SPLIT, known);
   }
 

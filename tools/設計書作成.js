@@ -12062,6 +12062,10 @@
     MINUTE: "分"
   };
 
+  // src/kintone-query.ts
+  var CALL_NAME_MAX = 256;
+  var CALL_PATTERN = new RegExp("([^\\s()=!<>,+\\-*/&^;:%]{1," + CALL_NAME_MAX + "})\\s*\\(([^()]*)\\)", "g");
+
   // src/runControl.ts
   var RUN_CANCELLED_MESSAGE = "利用者の操作で中止しました";
   var RunCancelledError = class extends Error {

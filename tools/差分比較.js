@@ -553,6 +553,10 @@
     "modifier"
   ]);
 
+  // src/kintone-query.ts
+  var CALL_NAME_MAX = 256;
+  var CALL_PATTERN = new RegExp("([^\\s()=!<>,+\\-*/&^;:%]{1," + CALL_NAME_MAX + "})\\s*\\(([^()]*)\\)", "g");
+
   // src/utils.ts
   function getToolWindowSafe() {
     try {
