@@ -30,5 +30,5 @@
     "types": ["node"]
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.js", "src/**/*.mjs", "build.js"],
-  "exclude": ["node_modules", "dist"]
+  "exclude": ["node_modules", "dist", "src/tabs/er-viewer/*.js"]
 }

@@ -4216,6 +4216,5663 @@ ${String(text).trim().replace(/\*\//g, "* /")}
     return `\uFEFF${rows.map(erCsvLine).join("\n")}`;
   }
 
+  // raw-text:src/tabs/er-viewer/viewer.css
+  var viewer_default = `/*\r
+ * ER図ビューアーの画面。buildHTML（tabs/er.ts）がこのファイルを文字列のまま <style> へ埋め込む。\r
+ * 明るい配色が基本で、開いたときは OS の設定（prefers-color-scheme）に合わせて暗い配色にする（data-theme="dark"）。\r
+ */\r
+*{margin:0;padding:0;box-sizing:border-box;}\r
+:root{\r
+  color-scheme:light;\r
+  --bg:#f1f5f9;--canvas:#f8fafc;--surface:#ffffff;--surface2:#f1f5f9;--surface3:#e2e8f0;--border:#e2e8f0;--border-strong:#cbd5e1;\r
+  --text:#0f172a;--text2:#334155;--dim:#475569;--accent:#2563eb;--accent-strong:#1d4ed8;--accent-soft:#dbeafe;--on-accent:#ffffff;--accent2:#4338ca;\r
+  --lookup:#1d4ed8;--ref:#047857;--action:#b45309;--pk:#92400e;--req:#b91c1c;\r
+  --ok-bg:#ecfdf5;--ok-fg:#065f46;--err-bg:#fef2f2;--err-fg:#991b1b;--err-bd:#fecaca;--warn-bg:#fffbeb;--warn-fg:#92400e;--warn-bd:#fde68a;--info-bg:#eff6ff;--info-fg:#1e3a8a;\r
+  --radius:10px;\r
+  --font:"Noto Sans JP","Hiragino Kaku Gothic ProN","Yu Gothic UI",Meiryo,system-ui,sans-serif;\r
+  --mono:'Cascadia Mono',Consolas,'Yu Gothic UI','Hiragino Sans',monospace;\r
+  --shadow-sm:0 1px 3px rgba(15,23,42,0.08);\r
+  --shadow-md:0 12px 28px rgba(15,23,42,0.16);\r
+  --focus:0 0 0 3px rgba(37,99,235,.35);\r
+  --sidebar-w:288px;--detail-w:400px;\r
+}\r
+[data-theme="dark"]{\r
+  color-scheme:dark;\r
+  --bg:#0b1220;--canvas:#0f172a;--surface:#111827;--surface2:#1e293b;--surface3:#273449;--border:#334155;--border-strong:#475569;\r
+  --text:#e2e8f0;--text2:#cbd5e1;--dim:#a3b1c6;--accent:#60a5fa;--accent-strong:#93c5fd;--accent-soft:#1e3a5f;--on-accent:#0b1220;--accent2:#a5b4fc;\r
+  --lookup:#60a5fa;--ref:#34d399;--action:#fbbf24;--pk:#fcd34d;--req:#f87171;\r
+  --ok-bg:#064e3b;--ok-fg:#a7f3d0;--err-bg:#3f1012;--err-fg:#fecaca;--err-bd:#7f1d1d;--warn-bg:#3b2a07;--warn-fg:#fde68a;--warn-bd:#92400e;--info-bg:#172554;--info-fg:#bfdbfe;\r
+  --shadow-sm:0 1px 3px rgba(0,0,0,0.4);\r
+  --shadow-md:0 12px 28px rgba(0,0,0,0.45);\r
+  --focus:0 0 0 3px rgba(96,165,250,.45);\r
+}\r
+html,body{height:100%;}\r
+body{font-family:var(--font);font-size:13px;line-height:1.5;background:var(--bg);color:var(--text);overflow:hidden;height:100vh;height:100dvh;display:flex;flex-direction:column;-webkit-font-smoothing:antialiased;}\r
+button,input,select,textarea{font:inherit;color:inherit;}\r
+button{cursor:pointer;}\r
+[hidden]{display:none !important;}\r
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[tabindex]:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px;box-shadow:var(--focus);}\r
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}\r
+::-webkit-scrollbar{width:8px;height:8px;}::-webkit-scrollbar-track{background:transparent;}::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:4px;}\r
+\r
+/* ── 共通の部品 ── */\r
+.tb{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:34px;padding:6px 12px;border:1px solid var(--border-strong);border-radius:8px;background:var(--surface);color:var(--text);font-size:12.5px;font-weight:600;white-space:nowrap;flex:0 0 auto;transition:background .12s,border-color .12s;}\r
+.tb:hover{background:var(--surface2);border-color:var(--accent);}\r
+.tb:disabled{opacity:.5;cursor:not-allowed;}\r
+.tb:disabled:hover{background:var(--surface);border-color:var(--border-strong);}\r
+.tb.active,.tb[aria-pressed="true"].tb-toggle{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-strong);}\r
+.tb-primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent);}\r
+.tb-primary:hover{background:var(--accent-strong);border-color:var(--accent-strong);}\r
+.tb-icon{min-width:34px;padding:6px 8px;font-size:14px;}\r
+.tb-quiet{border-color:transparent;background:transparent;}\r
+.tb-quiet:hover{background:var(--surface2);border-color:var(--border);}\r
+.badge{display:inline-flex;align-items:center;gap:3px;padding:1px 7px;border-radius:999px;font-size:11px;font-weight:700;line-height:18px;white-space:nowrap;border:1px solid transparent;}\r
+.badge-start{background:var(--accent-soft);color:var(--accent-strong);border-color:var(--accent);}\r
+.badge-failed{background:var(--err-bg);color:var(--err-fg);border-color:var(--err-bd);}\r
+.badge-partial{background:var(--warn-bg);color:var(--warn-fg);border-color:var(--warn-bd);}\r
+.badge-ghost{background:var(--surface2);color:var(--dim);border-color:var(--border-strong);border-style:dashed;}\r
+.badge-nolink{background:var(--surface2);color:var(--dim);border-color:var(--border-strong);}\r
+.badge-custom{background:var(--info-bg);color:var(--info-fg);border-color:var(--border-strong);}\r
+.badge-ok{background:var(--ok-bg);color:var(--ok-fg);}\r
+.kind-badge{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;white-space:nowrap;}\r
+.kind-badge i{display:inline-block;width:18px;height:0;border-top:2px solid currentColor;}\r
+.kind-LOOKUP{color:var(--lookup);}\r
+.kind-REF{color:var(--ref);}\r
+.kind-REF i{border-top-style:dashed;}\r
+.kind-ACTION{color:var(--action);}\r
+.kind-ACTION i{border-top-style:dotted;border-top-width:3px;}\r
+.meta-pill{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border:1px solid var(--border);border-radius:999px;background:var(--surface2);font-size:11.5px;color:var(--dim);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}\r
+.meta-pill b{color:var(--text);font-weight:700;}\r
+.meta-pill--btn{cursor:pointer;color:var(--accent-strong);border-color:var(--accent);background:var(--surface);}\r
+.meta-pill--btn:hover{background:var(--accent-soft);}\r
+.meta-pill--warn{background:var(--warn-bg);color:var(--warn-fg);border-color:var(--warn-bd);}\r
+\r
+/* ── 上部の操作バー ── */\r
+#topbar{position:relative;z-index:100;flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap;min-height:56px;}\r
+.brand{display:flex;flex-direction:column;min-width:0;flex:0 1 auto;max-width:420px;}\r
+.brand h1{font-size:14px;font-weight:800;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text);}\r
+.brand h1 small{font-size:12px;font-weight:600;color:var(--dim);margin-left:6px;}\r
+.brand-sub{display:flex;align-items:center;gap:6px;min-width:0;font-size:11.5px;color:var(--dim);white-space:nowrap;overflow:hidden;}\r
+.brand-sub .brand-meta{overflow:hidden;text-overflow:ellipsis;}\r
+#overview-pill{padding:0 8px;line-height:18px;font-size:11px;flex:0 0 auto;}\r
+.search-wrap{position:relative;display:flex;align-items:center;gap:6px;flex:1 1 200px;min-width:160px;max-width:340px;}\r
+#search-box{width:100%;min-height:34px;padding:6px 10px 6px 30px;border:1px solid var(--border-strong);border-radius:8px;background:var(--surface);color:var(--text);font-size:12.5px;outline:none;}\r
+#search-box::placeholder{color:var(--dim);}\r
+.search-wrap::before{content:"";position:absolute;left:11px;top:50%;width:9px;height:9px;margin-top:-6px;border:2px solid var(--dim);border-radius:50%;pointer-events:none;}\r
+.search-wrap::after{content:"";position:absolute;left:20px;top:50%;width:6px;height:2px;margin-top:3px;background:var(--dim);transform:rotate(45deg);pointer-events:none;}\r
+#search-meta{flex:0 0 auto;font-size:11px;padding:2px 8px;}\r
+.view-tabs{display:inline-flex;align-items:center;padding:3px;gap:2px;border:1px solid var(--border-strong);border-radius:10px;background:var(--surface2);flex:0 0 auto;}\r
+.view-tab{min-height:30px;padding:4px 12px;border:0;border-radius:7px;background:transparent;color:var(--dim);font-size:12.5px;font-weight:700;white-space:nowrap;}\r
+.view-tab:hover{color:var(--text);background:var(--surface);}\r
+.view-tab[aria-selected="true"]{background:var(--surface);color:var(--accent-strong);box-shadow:var(--shadow-sm);}\r
+.view-tab .tab-count{font-size:10.5px;font-weight:600;color:var(--dim);margin-left:4px;}\r
+.tb-actions{display:flex;align-items:center;gap:6px;margin-left:auto;flex:0 0 auto;}\r
+#mobile-menu-btn{display:none;}\r
+.tb-menu{position:relative;}\r
+.tb-menu > .tb-menu-btn::after{content:"";width:0;height:0;margin-left:2px;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid currentColor;opacity:.7;}\r
+.tb-menu-panel{display:none;position:absolute;top:calc(100% + 6px);right:0;min-width:240px;max-height:min(72vh,560px);overflow-y:auto;background:var(--surface);border:1px solid var(--border-strong);border-radius:12px;box-shadow:var(--shadow-md);padding:6px;z-index:140;}\r
+.tb-menu.open .tb-menu-panel{display:flex;flex-direction:column;gap:1px;}\r
+.tb-menu-panel .tb{justify-content:flex-start;width:100%;min-height:32px;padding:6px 10px;border-color:transparent;background:transparent;font-weight:500;text-align:left;}\r
+.tb-menu-panel .tb:hover{background:var(--surface2);border-color:var(--border);}\r
+.tb-menu-panel hr{border:none;border-top:1px solid var(--border);margin:4px 2px;}\r
+.menu-heading{padding:8px 10px 2px;font-size:11px;font-weight:800;color:var(--dim);letter-spacing:.03em;}\r
+.menu-note{padding:2px 10px 6px;font-size:11px;color:var(--dim);line-height:1.5;}\r
+.tb-check{position:relative;padding-left:30px !important;}\r
+.tb-check::before{content:"";position:absolute;left:10px;top:50%;width:13px;height:13px;margin-top:-7px;border:1.5px solid var(--border-strong);border-radius:4px;background:var(--surface);}\r
+.tb-check.active::before{background:var(--accent);border-color:var(--accent);}\r
+.tb-check.active::after{content:"";position:absolute;left:14px;top:50%;width:4px;height:8px;margin-top:-6px;border:solid var(--on-accent);border-width:0 2px 2px 0;transform:rotate(45deg);}\r
+.tb-menu-panel .tb-check.active{background:transparent;color:var(--text);font-weight:600;}\r
+/* 表示設定は項目が多いため、列に分けた広いパネルにする */\r
+.settings-panel{width:min(640px,calc(100vw - 24px));}\r
+.tb-menu.open .settings-panel{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 12px;padding:10px;}\r
+.settings-group{display:flex;flex-direction:column;gap:1px;min-width:0;}\r
+.settings-group .menu-heading{padding-left:4px;}\r
+.seg{display:flex;flex-wrap:wrap;gap:4px;padding:2px 4px 6px;}\r
+.seg .tb{width:auto !important;flex:1 1 auto;justify-content:center !important;min-height:30px;padding:4px 8px !important;border-color:var(--border) !important;font-weight:600 !important;}\r
+.seg .tb.active{background:var(--accent-soft) !important;border-color:var(--accent) !important;color:var(--accent-strong) !important;}\r
+.settings-row{display:flex;align-items:center;gap:6px;padding:2px 4px 6px;flex-wrap:wrap;}\r
+.settings-row label{font-size:12px;color:var(--dim);}\r
+.tb-select{min-height:32px;padding:4px 8px;border:1px solid var(--border-strong);border-radius:8px;background:var(--surface);color:var(--text);font-size:12.5px;outline:none;max-width:100%;}\r
+.settings-pills{grid-column:1 / -1;display:flex;flex-wrap:wrap;gap:6px;padding:6px 4px 2px;border-top:1px solid var(--border);margin-top:4px;}\r
+\r
+/* ── 本体 ── */\r
+#app-shell{position:relative;flex:1 1 auto;min-height:0;display:flex;}\r
+#sidebar{position:relative;z-index:20;flex:0 0 var(--sidebar-w);width:var(--sidebar-w);min-height:0;display:flex;flex-direction:column;background:var(--surface);border-right:1px solid var(--border);}\r
+#sidebar.collapsed{display:none;}\r
+.sidebar-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 12px 8px;}\r
+.sidebar-head h2{font-size:13px;font-weight:800;}\r
+.sidebar-head .count{font-size:11.5px;color:var(--dim);font-weight:600;margin-left:6px;}\r
+#sidebar-close{display:none;}\r
+.sidebar-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;padding:0 10px 14px;}\r
+.sidebar-checks{margin:0 0 10px;padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--surface2);}\r
+.sidebar-checks .check-facts{display:flex;flex-wrap:wrap;gap:4px 10px;margin:4px 0 8px;font-size:11.5px;color:var(--dim);}\r
+.sidebar-checks .check-facts b{color:var(--text);font-variant-numeric:tabular-nums;}\r
+.sidebar-checks .check-facts .is-warn b{color:var(--req);}\r
+.sidebar-checks .tb{width:100%;}\r
+.sidebar-filter-row{display:flex;gap:6px;align-items:center;margin:2px 0 8px;}\r
+.sidebar-filter-row .tb-select{flex:1 1 auto;min-width:0;}\r
+#app-list{display:flex;flex-direction:column;gap:2px;}\r
+.app-list-group{margin:10px 2px 4px;font-size:11px;font-weight:800;color:var(--dim);}\r
+.app-list-item{display:flex;flex-direction:column;gap:2px;width:100%;padding:7px 9px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--text);text-align:left;}\r
+.app-list-item:hover{background:var(--surface2);border-color:var(--border);}\r
+.app-list-item.active-app{background:var(--accent-soft);border-color:var(--accent);}\r
+.app-list-item.is-out{opacity:.72;}\r
+.app-list-item.is-removed{opacity:.55;text-decoration:line-through;}\r
+.app-list-item.highlighted{border-color:var(--pk);}\r
+.ali-top{display:flex;align-items:center;gap:6px;min-width:0;}\r
+.ali-name{font-weight:700;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto;min-width:0;}\r
+.ali-sub{display:flex;flex-wrap:wrap;gap:2px 10px;font-size:11px;color:var(--dim);}\r
+.ali-sub b{color:var(--text2);font-weight:700;font-variant-numeric:tabular-nums;}\r
+.sidebar-more{margin-top:12px;border-top:1px solid var(--border);padding-top:8px;}\r
+.sidebar-more summary{cursor:pointer;font-size:12px;font-weight:700;color:var(--text2);padding:4px 2px;}\r
+.stat-row{display:flex;justify-content:space-between;padding:4px 2px;border-bottom:1px dashed var(--border);font-size:12px;}\r
+.stat-val{font-weight:700;font-family:var(--mono);color:var(--text);}\r
+.filter-chip{display:inline-block;padding:3px 9px;margin:2px;border:1px solid var(--border-strong);border-radius:999px;background:var(--surface);font-size:11.5px;}\r
+.filter-chip:hover{border-color:var(--accent);}\r
+.filter-chip.active,.filter-chip[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent-strong);border-color:var(--accent);font-weight:700;}\r
+#main{position:relative;flex:1 1 auto;min-width:0;min-height:0;}\r
+.view-panel{position:absolute;inset:0;}\r
+#view-diagram{z-index:0;}\r
+.table-view{z-index:5;}\r
+#cy{position:absolute;inset:0;background:var(--canvas);}\r
+\r
+/* 図の上の表示範囲 */\r
+#scope-bar{position:absolute;top:10px;left:10px;z-index:30;display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;max-width:calc(100% - 20px);padding:6px 8px 6px 12px;background:var(--surface);border:1px solid var(--border-strong);border-radius:12px;box-shadow:var(--shadow-sm);font-size:12px;}\r
+#scope-bar .scope-label{font-weight:700;color:var(--text);}\r
+#scope-bar .scope-label small{font-weight:600;color:var(--dim);margin-left:4px;}\r
+#scope-bar .scope-depth{display:inline-flex;align-items:center;gap:2px;padding:2px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);}\r
+#scope-bar .scope-depth span{padding:0 4px 0 6px;color:var(--dim);font-size:11.5px;}\r
+#scope-bar .scope-depth button{min-width:28px;min-height:26px;border:0;border-radius:6px;background:transparent;font-weight:700;font-size:12px;color:var(--dim);}\r
+#scope-bar .scope-depth button[aria-pressed="true"]{background:var(--surface);color:var(--accent-strong);box-shadow:var(--shadow-sm);}\r
+#scope-bar .tb{min-height:30px;padding:4px 10px;font-size:12px;}\r
+\r
+/* ズーム操作・凡例・ミニマップ・経路探索 */\r
+#zoom-ctrl{position:absolute;right:12px;bottom:12px;z-index:40;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border-strong);border-radius:10px;box-shadow:var(--shadow-sm);}\r
+#zoom-ctrl > button{width:40px;min-height:34px;border:none;border-bottom:1px solid var(--border);background:transparent;color:var(--text);font-size:15px;line-height:1;}\r
+#zoom-ctrl > button:first-child{border-radius:10px 10px 0 0;}\r
+#zoom-ctrl > button:last-of-type{border-bottom:none;border-radius:0 0 10px 10px;}\r
+#zoom-ctrl > button:hover{background:var(--surface2);color:var(--accent-strong);}\r
+#zoom-level{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;font-size:10px !important;color:var(--dim) !important;font-family:var(--mono);line-height:1.15 !important;padding:3px 0;}\r
+#zoom-level[aria-expanded="true"]{background:var(--surface2);color:var(--accent-strong) !important;}\r
+#zoom-mode{font-family:var(--font);font-size:9.5px;font-weight:700;color:var(--action);}\r
+#zoom-mode:empty{display:none;}\r
+#zoom-presets{display:none;position:absolute;right:calc(100% + 8px);bottom:0;width:180px;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:6px;background:var(--surface);border:1px solid var(--border-strong);border-radius:12px;box-shadow:var(--shadow-md);}\r
+#zoom-presets.open{display:grid;}\r
+#zoom-presets button{min-width:0;height:32px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);color:var(--text);font:600 11px var(--mono);}\r
+#zoom-presets button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--on-accent);}\r
+#legend{position:absolute;left:12px;bottom:12px;z-index:35;display:flex;align-items:center;gap:10px;flex-wrap:wrap;max-width:calc(100% - 90px);padding:6px 10px;background:var(--surface);border:1px solid var(--border-strong);border-radius:10px;box-shadow:var(--shadow-sm);font-size:11.5px;}\r
+#legend .legend-toggle-btn{display:none;}\r
+#legend span,#legend button{display:inline-flex;align-items:center;gap:5px;}\r
+#legend .legend-items{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}\r
+#legend button.legend-toggle{border:1px solid transparent;border-radius:7px;background:transparent;padding:2px 6px;font-weight:600;}\r
+#legend button.legend-toggle:hover{background:var(--surface2);border-color:var(--border);}\r
+#legend button.legend-toggle.off{opacity:.45;text-decoration:line-through;}\r
+#legend i.legend-line{display:inline-block;width:22px;height:0;border-top-width:2px;}\r
+#legend i.legend-box{display:inline-block;width:12px;height:10px;border-radius:3px;}\r
+#legend b{padding:0 5px;border-radius:4px;font-size:10.5px;line-height:16px;background:color-mix(in srgb,currentColor 14%,transparent);}\r
+#legend .legend-sep{width:1px;height:16px;background:var(--border);}\r
+#minimap{position:absolute;top:10px;right:12px;z-index:30;width:190px;height:136px;background:var(--surface);border:1px solid var(--border-strong);border-radius:10px;overflow:hidden;display:none;box-shadow:var(--shadow-sm);}\r
+#minimap.open{display:block;}\r
+#minimap canvas{width:100%;height:100%;}\r
+#pathfinder{position:absolute;left:50%;bottom:64px;transform:translateX(-50%);z-index:45;display:none;align-items:center;gap:8px;flex-wrap:wrap;max-width:calc(100% - 24px);padding:8px 12px;background:var(--surface);border:1px solid var(--border-strong);border-radius:12px;box-shadow:var(--shadow-md);font-size:12px;}\r
+#pathfinder.open{display:flex;}\r
+#pathfinder select{max-width:200px;}\r
+#path-result{font-size:12px;color:var(--accent-strong);max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}\r
+\r
+/* ── 表のビュー ── */\r
+.table-view{overflow:auto;padding:14px 18px 28px;background:var(--bg);}\r
+.table-head{display:flex;align-items:flex-end;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px;}\r
+.table-head h2{font-size:16px;font-weight:800;}\r
+.table-head p{font-size:12px;color:var(--dim);margin-top:2px;}\r
+.table-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;}\r
+.table-toolbar input[type="search"]{min-height:34px;padding:6px 10px;border:1px solid var(--border-strong);border-radius:8px;background:var(--surface);color:var(--text);min-width:200px;flex:1 1 220px;max-width:340px;}\r
+.table-count{font-size:12px;color:var(--dim);margin-left:auto;font-variant-numeric:tabular-nums;}\r
+.check-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;}\r
+.check-chip{display:inline-flex;align-items:center;gap:6px;min-height:30px;padding:4px 10px;border:1px solid var(--border-strong);border-radius:999px;background:var(--surface);font-size:12px;font-weight:600;}\r
+.check-chip b{font-variant-numeric:tabular-nums;}\r
+.check-chip.has-items b{color:var(--req);}\r
+.check-chip[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-strong);}\r
+.table-wrap{background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow-sm);overflow:auto;}\r
+table.data-table{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px;}\r
+.data-table th{position:sticky;top:0;z-index:1;background:var(--surface2);text-align:left;font-weight:700;color:var(--text2);border-bottom:1px solid var(--border-strong);padding:0;white-space:nowrap;}\r
+.data-table th .sort-btn{display:flex;align-items:center;gap:4px;width:100%;padding:8px 10px;border:0;background:transparent;font-weight:700;color:inherit;text-align:left;}\r
+.data-table th .sort-btn::after{content:"↕";font-size:10px;opacity:.35;}\r
+.data-table th[aria-sort="ascending"] .sort-btn::after{content:"▲";opacity:.9;}\r
+.data-table th[aria-sort="descending"] .sort-btn::after{content:"▼";opacity:.9;}\r
+.data-table th.num .sort-btn{justify-content:flex-end;}\r
+.data-table th.plain{padding:8px 10px;}\r
+.data-table td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:top;overflow-wrap:anywhere;}\r
+.data-table tbody tr:hover td{background:var(--surface2);}\r
+.data-table tbody tr.is-selected td{background:var(--accent-soft);}\r
+.data-table td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}\r
+.data-table td.nowrap{white-space:nowrap;}\r
+.data-table .cell-main{font-weight:700;}\r
+.data-table .cell-sub{font-size:11.5px;color:var(--dim);}\r
+.data-table .cell-note{font-size:11.5px;color:var(--text2);line-height:1.5;}\r
+.data-table .row-link{border:0;background:transparent;padding:0;color:var(--accent-strong);font-weight:700;text-align:left;text-decoration:underline;text-underline-offset:2px;}\r
+.data-table .row-go{min-height:28px;padding:3px 10px;font-size:12px;}\r
+.data-table .arrow{color:var(--dim);padding:8px 2px;}\r
+.table-empty{padding:24px;text-align:center;color:var(--dim);}\r
+\r
+/* ── 右のパネル（詳細・構造チェック） ── */\r
+.side-panel{position:absolute;top:0;right:0;bottom:0;z-index:60;width:var(--detail-w);max-width:100%;overflow-y:auto;background:var(--surface);border-left:1px solid var(--border-strong);box-shadow:-12px 0 32px rgba(15,23,42,0.12);padding:18px 18px 28px;display:none;}\r
+.side-panel.open{display:block;}\r
+.close-btn{position:absolute;top:10px;right:10px;width:34px;height:34px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--dim);font-size:16px;}\r
+.close-btn:hover{background:var(--surface2);border-color:var(--border);color:var(--text);}\r
+#detail h2{font-size:16px;font-weight:800;line-height:1.35;margin:0 40px 6px 0;overflow-wrap:anywhere;}\r
+#detail .app-meta{font-size:12px;color:var(--dim);margin-bottom:6px;}\r
+.detail-badges{display:flex;flex-wrap:wrap;gap:4px;margin:4px 0 8px;}\r
+.detail-chip-row{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 10px;}\r
+.detail-actions{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 10px;}\r
+.detail-actions .tb{min-height:32px;font-size:12px;padding:4px 10px;}\r
+.detail-section{margin-top:14px;}\r
+.field-group-title{font-size:12px;font-weight:800;color:var(--text2);margin:14px 0 6px;padding-bottom:4px;border-bottom:1px solid var(--border);}\r
+.field-row{display:flex;align-items:flex-start;gap:8px;padding:8px 6px;border-radius:8px;font-size:12.5px;border-bottom:1px solid var(--border);}\r
+.field-row:hover{background:var(--surface2);}\r
+.detail-relation-button{width:100%;background:transparent;color:inherit;text-align:left;border:0;border-bottom:1px solid var(--border);}\r
+.field-icon{width:20px;text-align:center;flex-shrink:0;color:var(--dim);}\r
+.field-main{flex:1;min-width:0;}\r
+.field-name{display:flex;align-items:center;gap:4px;flex-wrap:wrap;overflow-wrap:anywhere;font-weight:700;}\r
+.field-sub{margin-top:2px;font-size:11.5px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}\r
+.field-sub.wrap{white-space:normal;overflow-wrap:anywhere;}\r
+/* 関連の詳細（コピー・表示・絞り込み）は長くなるため、省略せず折り返して全文を読めるようにする */\r
+.field-detail{margin-top:3px;font-size:11.5px;line-height:1.5;color:var(--text2);white-space:normal;overflow-wrap:anywhere;word-break:break-word;}\r
+.field-detail b{color:var(--text);font-weight:700;}\r
+.field-type{color:var(--dim);font-size:11.5px;flex-shrink:0;}\r
+.link-btn{border:0;background:none;padding:0;color:var(--accent-strong);font-weight:700;text-decoration:underline;text-underline-offset:2px;text-align:left;}\r
+.tag{display:inline-block;padding:0 5px;border-radius:4px;font-size:10.5px;font-weight:700;margin-left:4px;line-height:16px;}\r
+.tag-pk{background:color-mix(in srgb,var(--pk) 14%,transparent);color:var(--pk);}\r
+.tag-fk{background:color-mix(in srgb,var(--lookup) 14%,transparent);color:var(--lookup);}\r
+.tag-ref{background:color-mix(in srgb,var(--ref) 14%,transparent);color:var(--ref);}\r
+.tag-req{background:color-mix(in srgb,var(--req) 12%,transparent);color:var(--req);}\r
+.tag-sub{background:var(--surface2);color:var(--dim);}\r
+.row-del,.row-edit{flex-shrink:0;align-self:center;width:26px;height:26px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--dim);font-size:12px;line-height:1;opacity:0;transition:opacity .12s;}\r
+.field-row:hover .row-del,.field-row:hover .row-edit,.field-row:focus-within .row-edit,.field-row:focus-within .row-del{opacity:1;}\r
+.row-del:hover{color:var(--req);border-color:var(--border);background:var(--surface);}\r
+.row-edit:hover{color:var(--accent-strong);border-color:var(--border);background:var(--surface);}\r
+.row-del--restore{opacity:1;color:var(--accent-strong);}\r
+.field-row--hidden{opacity:0.5;}\r
+.detail-filter{width:100%;margin:10px 0 2px;padding:7px 10px;border:1px solid var(--border-strong);border-radius:8px;background:var(--surface);font-size:12px;outline:none;}\r
+.analysis-note{margin-top:10px;padding:9px 11px;border-radius:10px;background:var(--info-bg);color:var(--info-fg);font-size:12px;line-height:1.6;}\r
+.analysis-note.is-warn{background:var(--warn-bg);color:var(--warn-fg);}\r
+.analysis-note.is-error{background:var(--err-bg);color:var(--err-fg);}\r
+.analysis-head{margin:0 40px 12px 0;}\r
+.analysis-head h2{font-size:16px;font-weight:800;}\r
+.analysis-head p{font-size:12px;line-height:1.6;color:var(--dim);margin-top:3px;}\r
+.analysis-facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;}\r
+.analysis-fact{padding:8px;border:1px solid var(--border);border-radius:10px;background:var(--surface2);text-align:center;}\r
+.analysis-fact strong{display:block;font:800 20px/1.1 var(--mono);color:var(--text);}\r
+.analysis-fact span{display:block;margin-top:4px;font-size:11.5px;color:var(--dim);}\r
+.analysis-section{margin-top:16px;}\r
+.analysis-section h3{font-size:12.5px;font-weight:800;margin-bottom:6px;display:flex;justify-content:space-between;gap:8px;}\r
+.analysis-count{color:var(--dim);font-family:var(--mono);}\r
+.analysis-empty{padding:9px 10px;border:1px dashed var(--border-strong);border-radius:10px;color:var(--dim);font-size:12px;}\r
+.analysis-item{display:block;width:100%;text-align:left;padding:8px 10px;margin:4px 0;border:1px solid var(--border);border-radius:10px;background:var(--surface);}\r
+.analysis-item:hover{border-color:var(--accent);background:var(--surface2);}\r
+.analysis-item strong{display:block;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}\r
+.analysis-item span{display:block;font-size:11.5px;color:var(--dim);margin-top:2px;line-height:1.45;}\r
+.analysis-item--warn{border-left:3px solid var(--action);}\r
+.analysis-item--risk{border-left:3px solid var(--req);}\r
+\r
+/* ── 取得・関連サマリー（ポップオーバー） ── */\r
+#overview{position:absolute;top:6px;left:12px;z-index:150;width:min(480px,calc(100vw - 24px));max-height:calc(100% - 12px);overflow-y:auto;background:var(--surface);border:1px solid var(--border-strong);border-radius:14px;padding:14px;box-shadow:var(--shadow-md);}\r
+#overview.collapsed,#overview.hidden{display:none;}\r
+.ov-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px;}\r
+.ov-title{font-size:14px;font-weight:800;}\r
+.ov-sub{margin-top:2px;font-size:12px;line-height:1.6;color:var(--dim);}\r
+.ov-close{flex:0 0 auto;width:32px;height:32px;border:1px solid transparent;border-radius:8px;background:none;color:var(--dim);}\r
+.ov-close:hover{background:var(--surface2);border-color:var(--border);}\r
+.ov-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;}\r
+.ov-card{padding:9px 11px;border:1px solid var(--border);border-radius:12px;background:var(--surface2);display:flex;flex-direction:column;gap:3px;min-height:64px;text-align:left;}\r
+.ov-card--action:hover{border-color:var(--accent);}\r
+.ov-card--risk{border-color:var(--err-bd);}\r
+.ov-card--warn{border-color:var(--warn-bd);}\r
+.ov-kpi{font-size:18px;font-weight:800;line-height:1;}\r
+.ov-label{font-size:11.5px;color:var(--dim);}\r
+.ov-conditions{margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:12px;}\r
+.ov-conditions dt{color:var(--dim);}\r
+.ov-conditions dd{overflow-wrap:anywhere;}\r
+\r
+/* ── ダイアログ ── */\r
+.overlay{display:none;position:fixed;inset:0;z-index:300;background:rgba(15,23,42,0.45);justify-content:center;align-items:center;padding:16px;}\r
+.overlay.open{display:flex;}\r
+.dialog{background:var(--surface);border:1px solid var(--border-strong);border-radius:14px;padding:20px;width:min(600px,100%);max-height:85vh;overflow-y:auto;box-shadow:var(--shadow-md);}\r
+.dialog h2{font-size:15px;font-weight:800;margin-bottom:8px;}\r
+.dialog .actions{margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;}\r
+.dialog .actions button{min-height:34px;padding:6px 14px;border:1px solid var(--border-strong);border-radius:8px;background:var(--surface);font-size:12.5px;font-weight:600;}\r
+.dialog .actions button.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent);}\r
+.dialog .actions button.danger{color:var(--req);border-color:var(--req);margin-right:auto;}\r
+#modal pre{background:var(--surface2);padding:12px;border-radius:8px;font-size:11.5px;overflow:auto;white-space:pre-wrap;font-family:var(--mono);color:var(--text2);max-height:52vh;border:1px solid var(--border);}\r
+#cmd-overlay{align-items:flex-start;padding-top:12vh;}\r
+#cmd-box{width:min(560px,100%);background:var(--surface);border:1px solid var(--border-strong);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-md);}\r
+#cmd-input{width:100%;padding:14px 18px;border:none;background:transparent;font-size:14px;outline:none;border-bottom:1px solid var(--border);}\r
+#cmd-results{max-height:min(360px,60vh);overflow-y:auto;}\r
+.cmd-item{width:100%;padding:9px 18px;display:flex;align-items:center;gap:10px;font-size:12.5px;border:0;border-bottom:1px solid var(--border);background:transparent;text-align:left;}\r
+.cmd-item:hover,.cmd-item.active{background:var(--surface2);}\r
+.cmd-item .kbd{margin-left:auto;font-size:10.5px;padding:1px 7px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;font-family:var(--mono);color:var(--dim);}\r
+#editor{width:min(460px,100%);}\r
+#editor-sub{font-size:12px;color:var(--dim);margin-bottom:12px;line-height:1.55;}\r
+.ed-row{display:flex;flex-direction:column;gap:4px;margin-bottom:12px;}\r
+.ed-row label{font-size:12px;color:var(--text2);font-weight:700;}\r
+.ed-row input,.ed-row select,.ed-row textarea{padding:8px 10px;border:1px solid var(--border-strong);border-radius:8px;background:var(--surface);font-size:12.5px;outline:none;}\r
+.ed-row textarea{min-height:84px;resize:vertical;}\r
+.ed-hint{font-size:11.5px;color:var(--dim);line-height:1.55;}\r
+.ed-swatches{display:flex;gap:8px;flex-wrap:wrap;}\r
+.ed-swatch{width:28px;height:28px;border-radius:8px;border:2px solid var(--border-strong);padding:0;}\r
+.ed-swatch.selected{border-color:var(--text);box-shadow:0 0 0 2px var(--surface),0 0 0 4px var(--accent);}\r
+.ed-swatch--none{background:linear-gradient(135deg,var(--surface2) 44%,var(--req) 47%,var(--req) 53%,var(--surface2) 56%);}\r
+#help-box{width:min(720px,100%);}\r
+#help-box .help-sub{font-size:12px;color:var(--dim);margin-bottom:12px;line-height:1.6;}\r
+.help-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;}\r
+.help-section h3{font-size:12.5px;font-weight:800;margin-bottom:6px;}\r
+.help-row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px dashed var(--border);gap:10px;font-size:12px;}\r
+.help-row:last-child{border-bottom:none;}\r
+.help-row kbd{background:var(--surface2);border:1px solid var(--border-strong);border-radius:4px;padding:1px 7px;font-size:11px;color:var(--text2);font-family:var(--mono);white-space:nowrap;}\r
+#toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(16px);z-index:600;max-width:calc(100vw - 32px);padding:9px 18px;background:var(--text);color:var(--surface);border-radius:10px;font-size:12.5px;font-weight:600;opacity:0;transition:.25s;pointer-events:none;box-shadow:var(--shadow-md);}\r
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0);}\r
+#er-tooltip{position:fixed;z-index:400;display:none;max-width:320px;padding:8px 12px;background:var(--surface);border:1px solid var(--border-strong);border-radius:8px;box-shadow:var(--shadow-md);font-size:12px;line-height:1.55;pointer-events:none;color:var(--text);}\r
+.backdrop{display:none;}\r
+#print-doc{display:none;}\r
+\r
+/* ── 画面幅ごとの調整 ── */\r
+@media (min-width:1024px){\r
+  #app-shell:has(#detail.open) #zoom-ctrl,#app-shell:has(#analysis-panel.open) #zoom-ctrl{right:calc(var(--detail-w) + 12px);}\r
+  #app-shell:has(#detail.open) #minimap,#app-shell:has(#analysis-panel.open) #minimap{right:calc(var(--detail-w) + 12px);}\r
+  #app-shell:has(#detail.open) #legend,#app-shell:has(#analysis-panel.open) #legend{max-width:calc(100% - var(--detail-w) - 90px);}\r
+}\r
+@media (max-width:1279px){\r
+  .brand{max-width:220px;}\r
+  .view-tab .tab-count{display:none;}\r
+  .view-tab{padding:4px 10px;}\r
+  .search-wrap{flex-basis:150px;min-width:130px;}\r
+  .tb-actions .tb{padding-left:10px;padding-right:10px;}\r
+  .tb-actions .tb-icon{padding-left:8px;padding-right:8px;}\r
+  .brand-sub .brand-meta{display:none;}\r
+  .tb-label-long{display:none;}\r
+}\r
+@media (max-width:1023px){\r
+  #sidebar{position:fixed;left:0;top:0;bottom:0;z-index:220;width:min(340px,92vw);flex-basis:auto;box-shadow:var(--shadow-md);transform:translateX(-102%);visibility:hidden;transition:transform .2s,visibility .2s;}\r
+  #sidebar.open{transform:none;visibility:visible;}\r
+  #sidebar.collapsed{display:flex;}\r
+  #sidebar-close{display:inline-flex;}\r
+  .backdrop.open{display:block;position:fixed;inset:0;z-index:210;background:rgba(15,23,42,0.35);}\r
+  .side-panel{z-index:200;}\r
+}\r
+@media (max-width:900px){\r
+  #topbar{gap:6px;padding:6px 8px;}\r
+  .brand{flex:1 1 auto;max-width:none;}\r
+  #mobile-menu-btn{display:inline-flex;}\r
+  .tb-actions{display:none;width:100%;order:10;flex-wrap:wrap;margin-left:0;}\r
+  #topbar.mobile-open .tb-actions{display:flex;}\r
+  .search-wrap{order:5;flex:1 1 100%;max-width:none;}\r
+  .view-tabs{order:4;}\r
+  .tb-menu-panel{position:fixed;left:8px;right:8px;top:auto;max-height:calc(100vh - 140px);}\r
+  .tb-menu.open .settings-panel{grid-template-columns:minmax(0,1fr);width:auto;}\r
+}\r
+@media (max-width:640px){\r
+  body{font-size:12.5px;}\r
+  .brand h1 small,.brand-sub{display:none;}\r
+  .brand h1{font-size:13px;}\r
+  .view-tabs{order:3;flex:1 1 auto;}\r
+  .view-tab{flex:1 1 0;padding:4px 6px;}\r
+  .view-tab .tab-count,.view-tab .tab-long{display:none;}\r
+  .side-panel{position:fixed;inset:0;width:100vw;z-index:230;border-left:0;padding:16px 14px 28px;}\r
+  #overview{position:fixed;top:8px;left:8px;width:calc(100vw - 16px);max-height:calc(100vh - 16px);}\r
+  .ov-grid{grid-template-columns:repeat(2,minmax(0,1fr));}\r
+  #scope-bar{top:8px;left:8px;max-width:calc(100% - 16px);padding:5px 6px 5px 10px;font-size:11.5px;}\r
+  #scope-bar .scope-count{display:none;}\r
+  #legend{left:8px;bottom:8px;padding:4px;max-width:calc(100% - 72px);}\r
+  #legend .legend-toggle-btn{display:inline-flex;min-height:32px;padding:4px 10px;border:0;background:transparent;font-weight:700;}\r
+  #legend .legend-items{display:none;}\r
+  #legend.open .legend-items{display:flex;padding:4px 6px;}\r
+  #zoom-ctrl{right:8px;bottom:8px;}\r
+  #zoom-ctrl > button,#zoom-level{width:42px;min-height:38px;}\r
+  #minimap{display:none !important;}\r
+  #pathfinder{left:8px;right:8px;transform:none;bottom:56px;}\r
+  #path-result{max-width:100%;white-space:normal;}\r
+  .row-edit,.row-del{opacity:1;width:32px;height:32px;}\r
+  .table-view{padding:10px 10px 24px;}\r
+  .table-toolbar input[type="search"]{min-width:0;max-width:none;}\r
+  .table-count{margin-left:0;width:100%;}\r
+  /* 表は 1 行を 1 枚のカードにして、列名を各値の前に出す */\r
+  .data-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);}\r
+  .data-table,.data-table tbody,.data-table tr,.data-table td{display:block;width:100%;}\r
+  .data-table tr{padding:8px 10px;border-bottom:1px solid var(--border-strong);}\r
+  .data-table td{display:grid;grid-template-columns:88px minmax(0,1fr);gap:8px;padding:3px 0;border-bottom:0;text-align:left !important;white-space:normal !important;}\r
+  .data-table td::before{content:attr(data-label);font-size:11px;font-weight:700;color:var(--dim);}\r
+  .data-table td.arrow{display:none;}\r
+  .data-table td.cell-action{grid-template-columns:minmax(0,1fr);}\r
+  .data-table td.cell-action::before{content:none;}\r
+  .data-table tbody tr:hover td{background:transparent;}\r
+  .table-wrap{border-radius:10px;}\r
+}\r
+@media (max-width:420px){\r
+  .dialog{padding:16px;}\r
+  .dialog .actions button{flex:1 1 112px;min-height:44px;}\r
+  .dialog .actions button.danger{margin-right:0;}\r
+  .help-grid{grid-template-columns:minmax(0,1fr);}\r
+  .help-row{align-items:flex-start;flex-wrap:wrap;}\r
+  #zoom-ctrl > button,#zoom-level{width:42px;min-height:40px;}\r
+  #sidebar-close{width:44px;height:44px;}\r
+}\r
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition-duration:.01ms!important;animation-duration:.01ms!important;animation-iteration-count:1!important;}}\r
+\r
+/* ── 印刷: 画面の部品ではなく、見出し・図・アプリ一覧・関連一覧の資料にする ── */\r
+@media print{\r
+  @page{size:A4 landscape;margin:10mm;}\r
+  :root,[data-theme="dark"]{color-scheme:light;--text:#0f172a;--dim:#475569;--border:#cbd5e1;}\r
+  html,body{height:auto;overflow:visible;display:block;background:#ffffff;color:#0f172a;font-size:10.5pt;}\r
+  body > *:not(#print-doc){display:none !important;}\r
+  #print-doc{display:block !important;}\r
+}\r
+#print-doc h1{font-size:18pt;font-weight:800;margin-bottom:4pt;}\r
+#print-doc h2{font-size:13pt;font-weight:800;margin:14pt 0 6pt;break-after:avoid;}\r
+#print-doc .print-meta{display:grid;grid-template-columns:auto 1fr;gap:2pt 14pt;font-size:10pt;margin:6pt 0 10pt;}\r
+#print-doc .print-meta dt{color:#475569;}\r
+#print-doc figure{margin:8pt 0;break-inside:avoid;text-align:center;}\r
+#print-doc figure img{max-width:100%;max-height:170mm;object-fit:contain;border:1px solid #cbd5e1;}\r
+#print-doc figcaption{font-size:9pt;color:#475569;margin-top:4pt;}\r
+#print-doc table{width:100%;border-collapse:collapse;font-size:9pt;}\r
+#print-doc th,#print-doc td{border:1px solid #cbd5e1;padding:3pt 5pt;text-align:left;vertical-align:top;overflow-wrap:anywhere;}\r
+#print-doc th{background:#f1f5f9;}\r
+#print-doc thead{display:table-header-group;}\r
+#print-doc tr{break-inside:avoid;}\r
+#print-doc .print-note{font-size:9pt;color:#475569;}\r
+`;
+
+  // raw-text:src/tabs/er-viewer/viewer-core.js
+  var viewer_core_default = `// ER図ビューアー: データ・カード・図の描画・配置・表示範囲・関連線の表示。\r
+// buildHTML（tabs/er.ts）が viewer-*.js をこの順につないで <script id="er-main" type="text/plain"> へ埋め込む。\r
+// 先頭で APPS・ER_OPTIONS・ER_ANALYSIS・FIELD_TYPE_JP_LABEL・ER_MD_MERMAID_MAX_CHARS が定義される。\r
+// 起動処理（配置・表示範囲・パネルの描画）は viewer-boot.js にまとめ、各ファイルの最上位では関数と状態だけを定義する。\r
+const appMap = new Map(APPS.map(a=>[a.id,a]));\r
+const ER_LAYOUT_NAMES = new Set(["dagre","breadthfirst","cose","concentric","grid","circle"]);\r
+const ER_DENSITY_NAMES = new Set(["none","compact","standard","full"]);\r
+// cytoscape-dagre 2.5.0 は別に同梱した dagre 0.8.5（window.dagre）を使うため、両方がそろったときだけ「階層」の配置を使う\r
+const ER_DAGRE_READY = typeof window.cytoscapeDagre === "function" && !!(window.dagre && window.dagre.graphlib && window.dagre.graphlib.Graph);\r
+function normalizeLayoutName(name){\r
+  const normalized=String(name||"").trim();\r
+  const selected=ER_LAYOUT_NAMES.has(normalized)?normalized:"dagre";\r
+  return selected==="dagre"&&!ER_DAGRE_READY?"cose":selected;\r
+}\r
+function normalizeDensityName(name){\r
+  const normalized=String(name||"").trim();\r
+  return ER_DENSITY_NAMES.has(normalized)?normalized:"standard";\r
+}\r
+// 「編集済みHTMLを保存」で埋め込まれた編集状態（手動追加・配置・表示設定）。以前の版で保存した形式もそのまま読む\r
+const ER_EDIT_STATE = window.__ER_EDIT_STATE__ || null;\r
+if(ER_EDIT_STATE && ER_EDIT_STATE.options){\r
+  if(ER_EDIT_STATE.options.layoutName) ER_OPTIONS.layoutName = normalizeLayoutName(ER_EDIT_STATE.options.layoutName);\r
+  if(ER_EDIT_STATE.options.fieldDensity) ER_OPTIONS.fieldDensity = normalizeDensityName(ER_EDIT_STATE.options.fieldDensity);\r
+}\r
+ER_OPTIONS.layoutName=normalizeLayoutName(ER_OPTIONS.layoutName);\r
+ER_OPTIONS.fieldDensity=normalizeDensityName(ER_OPTIONS.fieldDensity);\r
+if (ER_DAGRE_READY) cytoscape.use(window.cytoscapeDagre);\r
+\r
+// ─── Toast ───\r
+let toastTimer=0;\r
+function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove("show"),2400);}\r
+function escapeHtml(value){\r
+  return String(value == null ? "" : value)\r
+    .replace(/&/g,"&amp;")\r
+    .replace(/</g,"&lt;")\r
+    .replace(/>/g,"&gt;")\r
+    .replace(/"/g,"&quot;")\r
+    .replace(/'/g,"&#39;");\r
+}\r
+\r
+// ─── 配色 ───\r
+// 開いたときは OS の設定に従う。切り替えはこの画面を開いている間だけ有効（保存しない）\r
+let isDark = !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);\r
+function readCssVar(name, fallback){\r
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;\r
+}\r
+function currentPalette(){\r
+  return {\r
+    text: readCssVar("--text", isDark ? "#e2e8f0" : "#0f172a"),\r
+    dim: readCssVar("--dim", isDark ? "#a3b1c6" : "#475569"),\r
+    accent: readCssVar("--accent", isDark ? "#60a5fa" : "#2563eb"),\r
+    accent2: readCssVar("--accent2", isDark ? "#a5b4fc" : "#4338ca"),\r
+    lookup: readCssVar("--lookup", isDark ? "#60a5fa" : "#1d4ed8"),\r
+    ref: readCssVar("--ref", isDark ? "#34d399" : "#047857"),\r
+    pk: readCssVar("--pk", isDark ? "#fcd34d" : "#92400e"),\r
+    req: readCssVar("--req", isDark ? "#f87171" : "#b91c1c"),\r
+    action: readCssVar("--action", isDark ? "#fbbf24" : "#b45309"),\r
+    bg: readCssVar("--bg", isDark ? "#0b1220" : "#f1f5f9"),\r
+    canvas: readCssVar("--canvas", isDark ? "#0f172a" : "#f8fafc"),\r
+    surface: readCssVar("--surface", isDark ? "#111827" : "#ffffff"),\r
+    surface2: readCssVar("--surface2", isDark ? "#1e293b" : "#f1f5f9"),\r
+    border: readCssVar("--border-strong", isDark ? "#475569" : "#cbd5e1")\r
+  };\r
+}\r
+function formatFieldDensityLabel(density){\r
+  const map = { none:"結合のみ", compact:"コンパクト", standard:"標準", full:"詳細" };\r
+  return map[density] || density || "-";\r
+}\r
+function fieldIconForLabel(f){\r
+  if(f.isPK) return "🔑";\r
+  if(f.isLookup) return "🔗";\r
+  if(f.isRef) return "📋";\r
+  if(f.unique) return "🔒";\r
+  if(f.type==="SUBTABLE") return "📦";\r
+  if(f.inSubtable) return "↳";\r
+  if(f.required) return "•";\r
+  return "·";\r
+}\r
+// kintone API のフィールド ENUM を日本語化（ER 図側パネル表示用）\r
+function fieldTypeJpLabel(type){\r
+  if(!type) return "-";\r
+  const key = String(type).trim().toUpperCase();\r
+  return FIELD_TYPE_JP_LABEL[key] || type;\r
+}\r
+// 手動で非表示にした項目キーの集合（"アプリID::path|code"）\r
+const hiddenFieldKeys = new Set();\r
+function fieldHideKey(app, field){\r
+  return String(app.id) + "::" + String(field.path || field.code || field.label || "");\r
+}\r
+function isFieldHidden(app, field){\r
+  return hiddenFieldKeys.has(fieldHideKey(app, field));\r
+}\r
+function hiddenFieldCount(app){\r
+  return allFieldsForApp(app).filter(f=>isFieldHidden(app, f)).length;\r
+}\r
+function allFieldsForApp(app){\r
+  const fields = Array.isArray(app&&app.allFields) ? app.allFields : (Array.isArray(app&&app.fields) ? app.fields : []);\r
+  return fields.filter(f=>f&&f.type!=="SUBTABLE"&&(ER_OPTIONS.includeSubtableFields||!f.inSubtable));\r
+}\r
+function fieldsForDensity(app){\r
+  if(ER_OPTIONS.fieldDensity==="none") return [];\r
+  const candidates=allFieldsForApp(app);\r
+  const linked=new Set();\r
+  (app.relations||[]).forEach(r=>{\r
+    if(r.kind!=="LOOKUP"&&r.kind!=="REF") return;\r
+    [r.fromPath,r.from,r.controlFieldPath,r.controlField].forEach(v=>{const key=String(v||"").trim();if(key) linked.add(key);});\r
+  });\r
+  const essential=f=>f.isPK||f.unique||f.isLookup||f.isRef||linked.has(String(f.path||""))||linked.has(String(f.code||""));\r
+  let selected;\r
+  if(ER_OPTIONS.fieldDensity==="full") selected=candidates;\r
+  else if(ER_OPTIONS.fieldDensity==="standard"){\r
+    selected=candidates.filter(f=>essential(f)||f.required);\r
+    if(!selected.length) selected=candidates.slice(0,6);\r
+  }else{\r
+    selected=candidates.filter(essential);\r
+    if(!selected.length) selected=candidates.slice(0,6);\r
+  }\r
+  const limit=Math.max(0,Number(ER_OPTIONS.maxFields)||220);\r
+  return selected.slice(0,limit);\r
+}\r
+function visibleFieldsForNode(app){\r
+  return fieldsForDensity(app).filter(f=>!isFieldHidden(app, f));\r
+}\r
+function buildFieldDisplayName(field){\r
+  if(!field) return "";\r
+  if(field.inSubtable && field.tableLabel) return field.tableLabel + " > " + (field.label || field.code || "");\r
+  return field.label || field.code || field.path || "";\r
+}\r
+function fieldPrefixForNodeLabel(field){\r
+  if(field.isPK) return "PK";\r
+  if(field.isLookup) return "FK";\r
+  if(field.isRef) return "関連";\r
+  if(field.required) return "必須";\r
+  if(field.type === "SUBTABLE") return "表";\r
+  if(field.inSubtable) return "↳";\r
+  return "・";\r
+}\r
+function buildFieldPreviewLine(field){\r
+  const label = buildFieldDisplayName(field).trim();\r
+  const code = String(field.code || "").trim();\r
+  const type = String(field.type || "").trim();\r
+  const prefix = fieldPrefixForNodeLabel(field);\r
+  if(ER_OPTIONS.fieldDensity === "compact"){\r
+    return prefix + " " + label;\r
+  }\r
+  if(ER_OPTIONS.fieldDensity === "full"){\r
+    const extras = [];\r
+    if(code && code !== label) extras.push("[" + code + "]");\r
+    if(type) extras.push(fieldTypeJpLabel(type));\r
+    return prefix + " " + label + (extras.length ? " • " + extras.join(" • ") : "");\r
+  }\r
+  return prefix + " " + label + (code && code !== label ? " [" + code + "]" : "");\r
+}\r
+// 起点の目印は、起点がアプリ全体の半分に満たないときだけ付ける（全アプリが起点の図では、全カードに付いて区別の役に立たない）\r
+const startAppIdSet = new Set((ER_OPTIONS.startAppIds || []).map((id)=>String(id)).filter(Boolean));\r
+function startMarksEnabled(){\r
+  const fetched=APPS.filter(a=>!a.isCustom).length;\r
+  return startAppIdSet.size>0&&startAppIdSet.size*2<=fetched;\r
+}\r
+function isMarkedStartApp(app){\r
+  return !!app&&!app.isCustom&&startAppIdSet.has(String(app.id))&&startMarksEnabled();\r
+}\r
+function isFailedApp(app){ return !!app&&(app.ok===false||app.status==="failed"); }\r
+function isPartialApp(app){ return !!app&&!isFailedApp(app)&&app.status==="partial"; }\r
+// 参照される数（ほかのアプリ・自分自身からこのアプリへの関連の本数）\r
+let incomingCountCache=null;\r
+function incomingRelationCount(appId){\r
+  if(!incomingCountCache){\r
+    incomingCountCache=new Map();\r
+    APPS.forEach(a=>(a.relations||[]).forEach(r=>{const key=String(r.toApp);incomingCountCache.set(key,(incomingCountCache.get(key)||0)+1);}));\r
+  }\r
+  return incomingCountCache.get(String(appId))||0;\r
+}\r
+function invalidateRelationCounts(){ incomingCountCache=null; }\r
+function appStatusLabel(app){\r
+  if(isFailedApp(app)) return "取得失敗";\r
+  if(isPartialApp(app)) return "一部取得";\r
+  return "取得完了";\r
+}\r
+// カードの見出しに付ける目印（色だけに頼らず、文字で示す）\r
+function appCardBadges(app,palette){\r
+  const badges=[];\r
+  if(isFailedApp(app)) badges.push({text:"⚠ 取得失敗",color:palette.req});\r
+  else if(isPartialApp(app)) badges.push({text:"△ 一部取得",color:palette.action});\r
+  if(app.isGhost) badges.push({text:"？ 未取得",color:palette.dim});\r
+  if(isMarkedStartApp(app)) badges.push({text:"起点",color:palette.accent});\r
+  if(app.isCustom) badges.push({text:"手動",color:palette.accent2});\r
+  return badges;\r
+}\r
+function appMetaText(app,fieldsShown){\r
+  if(app.isGhost) return "App "+app.id+" ・ 図の外の参照先";\r
+  const total=typeof app.totalFieldCount==="number"?app.totalFieldCount:(fieldsShown!=null?fieldsShown:allFieldsForApp(app).length);\r
+  const fieldText=fieldsShown!=null&&total>fieldsShown?fieldsShown+"/"+total+"項目":total+"項目";\r
+  const out=(app.relations||[]).length, inc=incomingRelationCount(app.id);\r
+  const parts=[app.isCustom?"手動追加":"App "+app.id, fieldText];\r
+  if(!out&&!inc) parts.push("関連なし");\r
+  else parts.push("参照 "+out+" ・ 被参照 "+inc);\r
+  return parts.join(" ・ ");\r
+}\r
+function nodeCardContent(app){\r
+  const limits = { none: 0, compact: 6, standard: 10, full: 16 };\r
+  const maxLines = limits[ER_OPTIONS.fieldDensity] !== undefined ? limits[ER_OPTIONS.fieldDensity] : limits.standard;\r
+  const fields = visibleFieldsForNode(app);\r
+  const ordered = fields.slice().sort((a,b)=>{\r
+    const score = (f)=> (f.isPK ? 0 : (f.isLookup ? 1 : (f.isRef ? 2 : (f.required ? 3 : (f.inSubtable ? 5 : 4)))));\r
+    const diff = score(a) - score(b);\r
+    if(diff !== 0) return diff;\r
+    return String(buildFieldDisplayName(a) || a.code || '').localeCompare(String(buildFieldDisplayName(b) || b.code || ''));\r
+  });\r
+  const shown = maxLines > 0 ? ordered.slice(0, maxLines) : [];\r
+  const moreCount = maxLines > 0 ? Math.max(0, ordered.length - maxLines) : 0;\r
+  const meta = appMetaText(app, ER_OPTIONS.fieldDensity==="none"?null:fields.length);\r
+  const statusPrefix = isFailedApp(app) ? "取得失敗: " : (isPartialApp(app) ? "一部取得: " : "");\r
+  const title = statusPrefix + app.name;\r
+  return { title, name: app.name, meta, shown, moreCount };\r
+}\r
+function buildNodeLabel(app){\r
+  const { title, meta, shown, moreCount } = nodeCardContent(app);\r
+  const preview = shown.map((f)=>buildFieldPreviewLine(f));\r
+  if(moreCount) preview.push("… 他 " + moreCount + " 項目");\r
+  return [title, meta, ...preview].join("\\n");\r
+}\r
+function buildSemanticNodeLabel(app){\r
+  const statusPrefix = isFailedApp(app) ? "取得失敗: " : (isPartialApp(app) ? "一部取得: " : "");\r
+  return [statusPrefix + app.name, appMetaText(app,null)].join("\\n");\r
+}\r
+// ─── アプリカード ───\r
+// Cytoscape のラベルは1書式しか持てないため、見出しと項目行を書き分けられる SVG 画像として描く。\r
+// 枠線と地色は Cytoscape のスタイルで描くので、選択・強調などの状態表示も枠と地色に出る。\r
+const CARD_FONT="'Yu Gothic UI','Hiragino Sans','Noto Sans JP',Meiryo,sans-serif";\r
+const cardMeasure=document.createElement("canvas").getContext("2d");\r
+function cardTextWidth(text,font){\r
+  cardMeasure.font=font+" "+CARD_FONT;\r
+  return cardMeasure.measureText(String(text)).width;\r
+}\r
+function cardFitText(text,font,maxWidth){\r
+  const s=String(text||"");\r
+  if(cardTextWidth(s,font)<=maxWidth) return s;\r
+  const chars=Array.from(s);\r
+  let lo=0,hi=chars.length;\r
+  while(lo<hi){\r
+    const mid=Math.ceil((lo+hi)/2);\r
+    if(cardTextWidth(chars.slice(0,mid).join("")+"…",font)<=maxWidth) lo=mid; else hi=mid-1;\r
+  }\r
+  return chars.slice(0,lo).join("")+"…";\r
+}\r
+// 名前を幅に合わせて行に分ける（日本語は語の切れ目が無いため 1 文字ずつ詰める）。入りきらない最後の行は省略する\r
+function cardWrapText(text,font,maxWidth,maxLines){\r
+  const chars=Array.from(String(text||""));\r
+  const lines=[];\r
+  let line="";\r
+  for(let i=0;i<chars.length;i++){\r
+    const next=line+chars[i];\r
+    if(line&&cardTextWidth(next,font)>maxWidth){\r
+      lines.push(line);\r
+      line=chars[i];\r
+      if(lines.length===maxLines){ line=""; lines[maxLines-1]=cardFitText(lines[maxLines-1]+chars.slice(i).join(""),font,maxWidth); return {lines,truncated:true}; }\r
+    }else line=next;\r
+  }\r
+  if(line) lines.push(line);\r
+  return {lines,truncated:false};\r
+}\r
+function cardXml(text){\r
+  return String(text).replace(/[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f￾￿]/g,"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");\r
+}\r
+function cardFieldBadge(field,palette){\r
+  if(field.isPK) return {text:"PK",color:palette.pk};\r
+  if(field.isLookup) return {text:"FK",color:palette.lookup};\r
+  if(field.isRef) return {text:"関連",color:palette.ref};\r
+  if(field.unique) return {text:"一意",color:palette.accent2};\r
+  if(field.required) return {text:"必須",color:palette.req};\r
+  return null;\r
+}\r
+function cardFieldNote(field,name){\r
+  if(ER_OPTIONS.fieldDensity==="compact") return "";\r
+  const code=String(field.code||"").trim();\r
+  const parts=code&&code!==name?[code]:[];\r
+  if(ER_OPTIONS.fieldDensity==="full"&&field.type) parts.push(fieldTypeJpLabel(field.type));\r
+  return parts.join(" ・ ");\r
+}\r
+function cardHeaderTint(app,palette){\r
+  if(isFailedApp(app)) return {color:palette.req,opacity:0.12};\r
+  if(isPartialApp(app)) return {color:palette.action,opacity:0.12};\r
+  if(app.isGhost) return {color:palette.dim,opacity:0.08};\r
+  if(isMarkedStartApp(app)) return {color:palette.accent,opacity:0.12};\r
+  return {color:palette.text,opacity:0.045};\r
+}\r
+function cardBadgeSvg(badges,right,top,fontSize,palette){\r
+  // 右端から左へ並べ、使った幅を返す\r
+  let x=right;\r
+  const parts=[];\r
+  badges.slice().reverse().forEach(b=>{\r
+    const w=Math.ceil(cardTextWidth(b.text,"700 "+fontSize+"px"))+fontSize;\r
+    const h=Math.round(fontSize*1.7);\r
+    x-=w;\r
+    parts.push('<rect x="'+x+'" y="'+top+'" width="'+w+'" height="'+h+'" rx="'+(h/2)+'" fill="'+b.color+'" fill-opacity="0.14" stroke="'+b.color+'" stroke-opacity="0.55"/>');\r
+    parts.push('<text x="'+(x+w/2)+'" y="'+(top+h*0.7)+'" font-size="'+fontSize+'" font-weight="700" text-anchor="middle" fill="'+b.color+'">'+cardXml(b.text)+'</text>');\r
+    x-=6;\r
+  });\r
+  return {svg:parts.join(""),width:right-x};\r
+}\r
+function svgImage(svg){\r
+  return "data:image/svg+xml;charset=utf-8,"+encodeURIComponent(svg);\r
+}\r
+// 詳細表示のカード（見出し + 項目行）\r
+function buildNodeCard(app,palette){\r
+  const content=nodeCardContent(app);\r
+  const title=content.name, meta=content.meta;\r
+  const pad=14,headerH=54;\r
+  const titleFont="700 14px",metaFont="11px";\r
+  const rowFont="12px",noteFont="10.5px";\r
+  const badgeW=28,rowH=22,rowGap=10,bodyPad=8;\r
+  const badges=appCardBadges(app,palette);\r
+  const badgeWidth=badges.reduce((sum,b)=>sum+Math.ceil(cardTextWidth(b.text,"700 10px"))+16,0);\r
+  const rows=content.shown.map(field=>{\r
+    const name=buildFieldDisplayName(field).trim();\r
+    return {name,note:cardFieldNote(field,name),badge:cardFieldBadge(field,palette)};\r
+  });\r
+  const more=content.moreCount;\r
+  const rowLeft=badgeW+8;\r
+  const natural=pad*2+Math.max(\r
+    cardTextWidth(title,titleFont)+(badgeWidth?badgeWidth+8:0),\r
+    cardTextWidth(meta,metaFont),\r
+    ...rows.map(r=>rowLeft+cardTextWidth(r.name,rowFont)+(r.note?rowGap+cardTextWidth(r.note,noteFont):0))\r
+  );\r
+  const maxW=ER_OPTIONS.fieldDensity==="full"?380:320;\r
+  const w=Math.ceil(Math.min(maxW,Math.max(210,natural)));\r
+  const rowCount=rows.length+(more?1:0);\r
+  const h=headerH+(rowCount?bodyPad*2+rowCount*rowH:0);\r
+  const inner=w-pad*2;\r
+  const tint=cardHeaderTint(app,palette);\r
+  const badgeSvg=cardBadgeSvg(badges,w-10,8,10,palette);\r
+  const parts=[\r
+    '<rect width="'+w+'" height="'+headerH+'" fill="'+tint.color+'" fill-opacity="'+tint.opacity+'"/>',\r
+    badgeSvg.svg,\r
+    '<text x="'+pad+'" y="23" font-size="14" font-weight="700" fill="'+palette.text+'">'+cardXml(cardFitText(title,titleFont,inner-(badgeSvg.width?badgeSvg.width+4:0)))+'</text>',\r
+    '<text x="'+pad+'" y="42" font-size="11" fill="'+palette.dim+'">'+cardXml(cardFitText(meta,metaFont,inner))+'</text>'\r
+  ];\r
+  if(rowCount) parts.push('<rect y="'+(headerH-1)+'" width="'+w+'" height="1" fill="'+palette.border+'"/>');\r
+  rows.forEach((row,index)=>{\r
+    const top=headerH+bodyPad+index*rowH;\r
+    const baseline=top+15;\r
+    if(row.badge){\r
+      parts.push('<rect x="'+pad+'" y="'+(top+3)+'" width="'+badgeW+'" height="16" rx="4" fill="'+row.badge.color+'" fill-opacity="0.14"/>');\r
+      parts.push('<text x="'+(pad+badgeW/2)+'" y="'+(top+14.5)+'" font-size="9.5" font-weight="700" text-anchor="middle" fill="'+row.badge.color+'">'+cardXml(row.badge.text)+'</text>');\r
+    }\r
+    const area=inner-rowLeft;\r
+    const noteW=row.note?cardTextWidth(row.note,noteFont):0;\r
+    const nameMax=row.note&&noteW+rowGap<area*0.4?area-noteW-rowGap:(row.note?area*0.6:area);\r
+    const name=cardFitText(row.name,rowFont,nameMax);\r
+    parts.push('<text x="'+(pad+rowLeft)+'" y="'+baseline+'" font-size="12" fill="'+palette.text+'">'+cardXml(name)+'</text>');\r
+    const noteMax=area-cardTextWidth(name,rowFont)-rowGap;\r
+    if(row.note&&noteMax>=24){\r
+      parts.push('<text x="'+(w-pad)+'" y="'+baseline+'" font-size="10.5" text-anchor="end" fill="'+palette.dim+'">'+cardXml(cardFitText(row.note,noteFont,noteMax))+'</text>');\r
+    }\r
+  });\r
+  if(more){\r
+    const baseline=headerH+bodyPad+rows.length*rowH+15;\r
+    parts.push('<text x="'+(pad+rowLeft)+'" y="'+baseline+'" font-size="10.5" fill="'+palette.dim+'">他 '+more+' 項目</text>');\r
+  }\r
+  const svg='<svg xmlns="http://www.w3.org/2000/svg" width="'+(w*2)+'" height="'+(h*2)+'" viewBox="0 0 '+w+' '+h+'" font-family="'+cardXml(CARD_FONT)+'">'+parts.join("")+'</svg>';\r
+  return {image:svgImage(svg),w,h};\r
+}\r
+// 縮小表示のカード。詳細カードと同じ大きさの枠に、アプリ名をできるだけ大きく描く（縮小しても名前が読める）。\r
+// 枠の大きさを詳細カードとそろえるので、倍率を変えても配置が重ならない\r
+const LOW_CARD_MIN_W=240, LOW_CARD_MIN_H=128;\r
+// 名前の大きさを決める。なるべく 1 行で大きく、収まらなければ 2 行・3 行にする（短い名前を途中で折り返さない）\r
+function overviewNameLayout(name,inner,nameArea){\r
+  const LINE=1.22, MIN=20, MAX=46;\r
+  const fits=(size,lines)=>{\r
+    if(lines*size*LINE>nameArea) return null;\r
+    const wrapped=cardWrapText(name,"700 "+size+"px",inner,lines);\r
+    return !wrapped.truncated&&wrapped.lines.length<=lines?wrapped.lines:null;\r
+  };\r
+  const best=(lines)=>{\r
+    for(let size=MAX;size>=MIN;size-=2){ const got=fits(size,lines); if(got) return {size,lines:got}; }\r
+    return null;\r
+  };\r
+  const one=best(1);\r
+  if(one&&one.size>=28) return one;\r
+  const two=best(2);\r
+  if(two&&(!one||two.size>=one.size+6)&&two.size>=24) return two;\r
+  if(one) return one;\r
+  const three=best(3);\r
+  if(two&&(!three||two.size>=three.size)) return two;\r
+  if(three) return three;\r
+  const maxLines=Math.max(1,Math.min(3,Math.floor(nameArea/(MIN*LINE))));\r
+  return {size:MIN,lines:cardWrapText(name,"700 "+MIN+"px",inner,maxLines).lines};\r
+}\r
+function buildOverviewCard(app,palette,size){\r
+  const w=Math.max(LOW_CARD_MIN_W,size.w), h=Math.max(LOW_CARD_MIN_H,size.h);\r
+  const pad=16;\r
+  const inner=w-pad*2;\r
+  const badges=appCardBadges(app,palette);\r
+  const badgeH=badges.length?36:0;\r
+  const metaSize=16;\r
+  const meta=app.isGhost?"App "+app.id:(app.isCustom?"手動追加":"App "+app.id)+" ・ 参照 "+(app.relations||[]).length+" ・ 被参照 "+incomingRelationCount(app.id);\r
+  const nameArea=h-pad*2-badgeH-metaSize-10;\r
+  const name=app.isGhost?"未取得の参照先":String(app.name||"");\r
+  const chosen=overviewNameLayout(name,inner,nameArea);\r
+  const tint=cardHeaderTint(app,palette);\r
+  const parts=['<rect width="'+w+'" height="'+h+'" fill="'+tint.color+'" fill-opacity="'+(tint.opacity*0.8)+'"/>'];\r
+  if(badges.length){\r
+    // 目印は左上に並べる\r
+    let x=pad;\r
+    badges.forEach(b=>{\r
+      const bw=Math.ceil(cardTextWidth(b.text,"700 18px"))+20;\r
+      parts.push('<rect x="'+x+'" y="'+pad+'" width="'+bw+'" height="28" rx="14" fill="'+b.color+'" fill-opacity="0.16" stroke="'+b.color+'" stroke-opacity="0.6"/>');\r
+      parts.push('<text x="'+(x+bw/2)+'" y="'+(pad+20)+'" font-size="18" font-weight="700" text-anchor="middle" fill="'+b.color+'">'+cardXml(b.text)+'</text>');\r
+      x+=bw+6;\r
+    });\r
+  }\r
+  const lineH=chosen.size*1.22;\r
+  const blockH=chosen.lines.length*lineH;\r
+  let y=pad+badgeH+Math.max(0,(nameArea-blockH)/2)+chosen.size*0.95;\r
+  chosen.lines.forEach(line=>{\r
+    parts.push('<text x="'+pad+'" y="'+y+'" font-size="'+chosen.size+'" font-weight="700" fill="'+palette.text+'">'+cardXml(line)+'</text>');\r
+    y+=lineH;\r
+  });\r
+  parts.push('<text x="'+pad+'" y="'+(h-pad)+'" font-size="'+metaSize+'" fill="'+palette.dim+'">'+cardXml(cardFitText(meta,metaSize+"px",inner))+'</text>');\r
+  const svg='<svg xmlns="http://www.w3.org/2000/svg" width="'+(w*2)+'" height="'+(h*2)+'" viewBox="0 0 '+w+' '+h+'" font-family="'+cardXml(CARD_FONT)+'">'+parts.join("")+'</svg>';\r
+  return {image:svgImage(svg),w,h};\r
+}\r
+function nodeCardData(app){\r
+  const palette=currentPalette();\r
+  const card=buildNodeCard(app,palette);\r
+  const low=buildOverviewCard(app,palette,card);\r
+  return {cardImage:card.image,cardW:card.w,cardH:card.h,lowImage:low.image,lowW:low.w,lowH:low.h};\r
+}\r
+// 図の外の参照先（取得していないアプリ）のカード\r
+function ghostPseudoApp(targetAppId){\r
+  return {id:targetAppId,name:"未取得の参照先",isGhost:true,relations:[],allFields:[],ok:true,status:"complete"};\r
+}\r
+function ghostCardData(targetAppId){\r
+  const palette=currentPalette();\r
+  const app=ghostPseudoApp(targetAppId);\r
+  const card=buildNodeCard(app,palette);\r
+  const low=buildOverviewCard(app,palette,card);\r
+  return {cardImage:card.image,cardW:card.w,cardH:card.h,lowImage:low.image,lowW:low.w,lowH:low.h};\r
+}\r
+function detailFieldGroups(app){\r
+  const groups={pk:[],lookup:[],ref:[],required:[],subtable:[],normal:[]};\r
+  visibleFieldsForNode(app).forEach(f=>{\r
+    if(f.isPK) groups.pk.push(f);\r
+    else if(f.isLookup) groups.lookup.push(f);\r
+    else if(f.isRef) groups.ref.push(f);\r
+    else if(f.type==="SUBTABLE") groups.subtable.push(f);\r
+    else if(f.required) groups.required.push(f);\r
+    else groups.normal.push(f);\r
+  });\r
+  return groups;\r
+}\r
+function layoutDisplayName(name){\r
+  const map = { dagre:"階層", breadthfirst:"ツリー", cose:"自動", concentric:"同心円", grid:"グリッド", circle:"円形" };\r
+  return map[name] || name || "-";\r
+}\r
+function buildLayoutOptions(name, initial, count){\r
+  const base = { padding: 80, animate: !initial, animationDuration: initial ? 0 : 550, fit: true };\r
+  const n = Math.max(1, Number(count) || APPS.length || 1);\r
+  if(name === "dagre" && ER_DAGRE_READY){\r
+    return Object.assign(base, { name: "dagre", rankDir: "LR", rankSep: 170, nodeSep: 48, edgeSep: 24, spacingFactor: 1.1 });\r
+  }\r
+  if(name === "grid") return Object.assign(base, { name: "grid", rows: Math.ceil(Math.sqrt(n)) });\r
+  if(name === "circle") return Object.assign(base, { name: "circle" });\r
+  if(name === "breadthfirst") return Object.assign(base, { name: "breadthfirst", directed: true, spacingFactor: 1.6, circle: false });\r
+  if(name === "concentric") return Object.assign(base, { name: "concentric", concentric: n => (n.data("relCount") || 0) + 1, levelWidth: () => 2 });\r
+  return Object.assign(base, { name: "cose", nodeRepulsion: 900000, idealEdgeLength: 280, gravity: 0.22, numIter: 1400 });\r
+}\r
+function densityNodeMetrics(){\r
+  if(ER_OPTIONS.fieldDensity === "none") return { maxWidth:"240px", fontSize:"11px", padding:"14px", lineHeight:"1.35" };\r
+  if(ER_OPTIONS.fieldDensity === "compact") return { maxWidth:"230px", fontSize:"9px", padding:"12px", lineHeight:"1.22" };\r
+  if(ER_OPTIONS.fieldDensity === "full") return { maxWidth:"320px", fontSize:"10.5px", padding:"18px", lineHeight:"1.35" };\r
+  return { maxWidth:"280px", fontSize:"10px", padding:"15px", lineHeight:"1.3" };\r
+}\r
+function buildCyStyle(palette){\r
+  const nodeMetrics = densityNodeMetrics();\r
+  const labelShown = {"text-opacity":1,"text-background-opacity":1,"text-border-opacity":0.7};\r
+  return [\r
+    {selector:"node",style:{\r
+      "shape":"round-rectangle","label":"data(label)","text-valign":"center","text-halign":"center",\r
+      "text-justification":"left",\r
+      "text-wrap":"wrap","text-max-width":nodeMetrics.maxWidth,"font-size":nodeMetrics.fontSize,"line-height":nodeMetrics.lineHeight,"min-zoomed-font-size":6.5,\r
+      "font-family":CARD_FONT,"font-weight":600,"color":palette.text,\r
+      "text-outline-color":palette.surface,"text-outline-width":"1px",\r
+      "background-color":palette.surface,"border-width":1.5,"border-color":palette.border,"padding":nodeMetrics.padding,"width":"label","height":"label"\r
+    }},\r
+    {selector:"node[cardImage]",style:{\r
+      "label":"","padding":0,"width":"data(cardW)","height":"data(cardH)",\r
+      "background-image":"data(cardImage)","background-fit":"contain","background-clip":"node"\r
+    }},\r
+    {selector:"node.no-link",style:{"border-style":"dashed","opacity":0.95}},\r
+    {selector:"node[?isError]",style:{"border-color":palette.req,"border-width":2,"background-color":isDark ? "#2a0f14" : "#fff5f5"}},\r
+    {selector:"node[?isPartial]",style:{"border-color":palette.action,"border-width":2,"border-style":"dashed","background-color":isDark ? "#2a1f08" : "#fffbeb"}},\r
+    {selector:"node[?isGhost]",style:{"border-color":palette.dim,"border-style":"dashed","background-color":palette.surface2,"color":palette.dim,"font-style":"italic"}},\r
+    {selector:"node.semantic-low",style:{"font-size":"18px","font-weight":700,"line-height":"1.35","text-max-width":"300px","min-zoomed-font-size":6,"padding":"16px","width":"label","height":"label"}},\r
+    {selector:"node[cardImage].semantic-low",style:{"label":"","padding":0,"width":"data(lowW)","height":"data(lowH)","background-image":"data(lowImage)"}},\r
+    {selector:"node[?isCustom]",style:{"border-style":"dashed","border-color":palette.accent2}},\r
+    {selector:"node[?isStart]",style:{"border-color":palette.accent,"border-width":2.5}},\r
+    {selector:"node[?inSpace]",style:{"border-color":"#0f766e","border-width":4,"border-style":"double"}},\r
+    {selector:"node[?accent]",style:{"border-color":"data(accent)","border-width":3}},\r
+    {selector:"node:selected",style:{"border-color":palette.accent,"border-width":3.5,"overlay-color":"transparent"}},\r
+    {selector:"node.highlighted",style:{"border-color":palette.pk,"border-width":3.5}},\r
+    {selector:"node.analysis-hit",style:{"border-color":palette.req,"border-width":5,"z-index":1000}},\r
+    {selector:"node.analysis-dim",style:{"opacity":0.12}},\r
+    {selector:"node.path-node",style:{"border-color":"#db2777","border-width":4}},\r
+    {selector:"node.focus-root",style:{"border-color":palette.accent,"border-width":3.5,"z-index":999}},\r
+    {selector:"node.focus-neighbor",style:{"border-color":palette.accent,"border-width":2}},\r
+    {selector:"node.pinned-node",style:{"border-color":palette.pk,"border-width":4}},\r
+    {selector:"node.note-node",style:{\r
+      "shape":"round-rectangle","background-color":"data(noteColor)","background-opacity":0.96,\r
+      "border-width":1,"border-color":"#8a8a8a","color":"#1f2430",\r
+      "text-outline-width":0,"font-size":"11px","font-weight":500,\r
+      "text-wrap":"wrap","text-max-width":"230px","text-valign":"center","text-halign":"center",\r
+      "padding":"12px","width":"label","height":"label","line-height":"1.4","z-index":5\r
+    }},\r
+    {selector:"node.note-node:selected",style:{"border-color":palette.accent,"border-width":3}},\r
+    {selector:"node.isolated-by-filter",style:{"opacity":0.4}},\r
+    {selector:"node.focus-dim",style:{"opacity":0.12}},\r
+    {selector:"node.dimmed",style:{"opacity":0.16}},\r
+    {selector:"node.app-manual-hidden",style:{"display":"none"}},\r
+    {selector:"node.scope-out",style:{"display":"none"}},\r
+    {selector:"edge",style:{\r
+      "curve-style":"bezier","arrow-scale":1,"control-point-step-size":36,\r
+      "label":"data(label)","font-size":"11px","font-weight":600,"min-zoomed-font-size":7,\r
+      "font-family":CARD_FONT,\r
+      "text-background-color":palette.surface,"text-background-opacity":1,\r
+      "text-background-padding":"4px","text-background-shape":"roundrectangle",\r
+      "text-border-color":palette.border,"text-border-width":1,"text-border-opacity":0.7,\r
+      "text-rotation":"none"\r
+    }},\r
+    {selector:'edge[kind="LOOKUP"]',style:{\r
+      "width":1.8,"line-color":palette.lookup,"target-arrow-color":palette.lookup,"target-arrow-shape":"triangle",\r
+      "source-arrow-shape":"circle","source-arrow-color":palette.lookup,"color":palette.lookup\r
+    }},\r
+    {selector:'edge[kind="REF"]',style:{\r
+      "width":1.8,"line-color":palette.ref,"line-style":"dashed","target-arrow-color":palette.ref,\r
+      "target-arrow-shape":"triangle","source-arrow-shape":"diamond","source-arrow-color":palette.ref,"color":palette.ref\r
+    }},\r
+    {selector:'edge[kind="ACTION"]',style:{\r
+      "width":1.8,"line-color":palette.action,"line-style":"dotted","target-arrow-color":palette.action,\r
+      "target-arrow-shape":"triangle","source-arrow-shape":"none","color":palette.action\r
+    }},\r
+    {selector:"edge[bundleCount > 1]",style:{"width":"data(bundleWidth)"}},\r
+    {selector:"edge[?isUnresolved]",style:{"line-style":"dashed","opacity":0.8}},\r
+    // 線のラベルは、選んだ線・マウスを乗せた線・選んだアプリの線だけに出す（「線のラベルを常に表示」で全部に出す）\r
+    {selector:"edge.label-hidden",style:{"text-opacity":0,"text-background-opacity":0,"text-border-opacity":0}},\r
+    {selector:"edge.label-hidden:selected",style:labelShown},\r
+    {selector:"edge.label-hidden.edge-hover",style:labelShown},\r
+    {selector:"edge.label-hidden.focus-edge",style:labelShown},\r
+    {selector:"edge.label-hidden.path-edge",style:labelShown},\r
+    {selector:"edge:selected",style:{"width":4,"z-index":997,"overlay-color":palette.accent,"overlay-opacity":0.12,"overlay-padding":4}},\r
+    {selector:"edge.edge-hover",style:{"width":4,"z-index":997}},\r
+    {selector:"edge.path-edge",style:{"width":4,"line-color":"#db2777","target-arrow-color":"#db2777","source-arrow-color":"#db2777","z-index":999}},\r
+    {selector:"edge.focus-edge",style:{"width":2.8,"z-index":998}},\r
+    {selector:"edge.semantic-low",style:{"text-opacity":0,"text-background-opacity":0,"text-border-opacity":0}},\r
+    {selector:"edge.rel-hidden",style:{"display":"none"}},\r
+    {selector:"edge.rel-manual-hidden",style:{"display":"none"}},\r
+    {selector:"edge.edge-collapsed",style:{"display":"none"}},\r
+    {selector:"edge.scope-out",style:{"display":"none"}},\r
+    {selector:"edge.focus-dim",style:{"opacity":0.07}},\r
+    {selector:"edge.dimmed",style:{"opacity":0.1}}\r
+  ];\r
+}\r
+function applyTheme(){\r
+  document.documentElement.setAttribute("data-theme",isDark?"dark":"light");\r
+  const btn=document.getElementById("theme-btn");\r
+  if(btn){\r
+    btn.setAttribute("aria-pressed",String(isDark));\r
+    btn.setAttribute("aria-label",isDark?"明るい配色に切り替える":"暗い配色に切り替える");\r
+    btn.title=(isDark?"明るい配色に切り替える":"暗い配色に切り替える")+"（保存しません）";\r
+  }\r
+}\r
+function toggleTheme(){\r
+  isDark=!isDark;\r
+  applyTheme();\r
+  applyCyTheme();\r
+  toast(isDark?"暗い配色にしました":"明るい配色にしました");\r
+}\r
+// カードの画像と図の色は CSS の変数から作るため、図を作る前に配色を決めておく\r
+applyTheme();\r
+\r
+// ─── 手動追加のデータ層（編集済みHTMLの復元でも使用） ───\r
+let customAppSeq=0, customRelSeq=0, customFieldSeq=0;\r
+\r
+function findApp(id){\r
+  if(appMap.has(id)) return appMap.get(id);\r
+  const n=Number(id);\r
+  if(appMap.has(n)) return appMap.get(n);\r
+  const s=String(id);\r
+  return appMap.has(s) ? appMap.get(s) : null;\r
+}\r
+function registerManualApp(app){\r
+  app.relations = Array.isArray(app.relations) ? app.relations : [];\r
+  app.fields = Array.isArray(app.fields) ? app.fields : [];\r
+  app.allFields = Array.isArray(app.allFields) ? app.allFields : app.fields.slice();\r
+  app.isCustom = true;\r
+  if(app.ok === undefined) app.ok = true;\r
+  APPS.push(app);\r
+  appMap.set(app.id, app);\r
+  invalidateRelationCounts();\r
+}\r
+// 取得したアプリは allFields だけを持つ（fields は HTML へ埋め込まない）。手動追加のアプリは両方を持つ\r
+function applyManualFieldData(app, field){\r
+  if(!Array.isArray(app.allFields)) app.allFields = [];\r
+  app.allFields.push(field);\r
+  if(Array.isArray(app.fields)) app.fields.push(field);\r
+  if(typeof app.totalFieldCount === "number") app.totalFieldCount += 1;\r
+  if(field.required) app.requiredCount = (app.requiredCount||0)+1;\r
+}\r
+function applyManualRelationData(app, rel){\r
+  app.relations.push(rel);\r
+  if(rel.kind === "LOOKUP") app.lookupCount = (app.lookupCount||0)+1;\r
+  if(rel.kind === "REF") app.refCount = (app.refCount||0)+1;\r
+  if(typeof invalidateRelationCounts === "function") invalidateRelationCounts();\r
+}\r
+// ─── 上書き編集のデータ層（アプリ名/枠色・項目・関連線。編集済みHTMLで永続化） ───\r
+const appOverrides=(ER_EDIT_STATE&&ER_EDIT_STATE.appOverrides)||{};\r
+const fieldOverrides=(ER_EDIT_STATE&&ER_EDIT_STATE.fieldOverrides)||{};\r
+const relationOverrides=(ER_EDIT_STATE&&ER_EDIT_STATE.relationOverrides)||{};\r
+function findFieldByKey(app,key){\r
+  const prefix=String(app.id)+"::";\r
+  if(String(key).indexOf(prefix)!==0) return null;\r
+  const suffix=String(key).slice(prefix.length);\r
+  const match=(f)=>String(f.path||f.code||f.label||"")===suffix;\r
+  return (app.allFields||[]).find(match)||(app.fields||[]).find(match)||null;\r
+}\r
+function parseEdgeId(edgeId){\r
+  const m=/^e_(-?\\d+)_(\\d+)$/.exec(String(edgeId||""));\r
+  if(!m) return null;\r
+  return {appId:Number(m[1]),ri:Number(m[2])};\r
+}\r
+function relationForEdgeId(edgeId){\r
+  const ref=parseEdgeId(edgeId);\r
+  const app=ref&&findApp(ref.appId);\r
+  const rel=app&&(app.relations||[])[ref.ri];\r
+  return rel?{app,rel,ri:ref.ri}:null;\r
+}\r
+function appAccentColor(app){\r
+  const o=appOverrides[app.id]||appOverrides[String(app.id)];\r
+  return (o&&o.color)||"";\r
+}\r
+function applyDataOverrides(){\r
+  Object.keys(appOverrides).forEach(id=>{\r
+    const o=appOverrides[id];\r
+    const app=findApp(id);\r
+    if(app&&o&&o.name) app.name=o.name;\r
+  });\r
+  Object.keys(fieldOverrides).forEach(key=>{\r
+    const app=findApp(String(key).split("::")[0]);\r
+    if(!app) return;\r
+    const field=findFieldByKey(app,key);\r
+    if(field) Object.assign(field,fieldOverrides[key]);\r
+  });\r
+  Object.keys(relationOverrides).forEach(edgeId=>{\r
+    const ref=parseEdgeId(edgeId);\r
+    if(!ref) return;\r
+    const app=findApp(ref.appId);\r
+    const rel=app&&(app.relations||[])[ref.ri];\r
+    if(rel) Object.assign(rel,relationOverrides[edgeId]);\r
+  });\r
+}\r
+\r
+// 編集済みHTMLからの復元: 手動追加データを描画前に再適用する\r
+if(ER_EDIT_STATE){\r
+  try{\r
+    (ER_EDIT_STATE.customApps||[]).forEach(raw=>{ if(raw && raw.id !== undefined && !appMap.has(raw.id)) registerManualApp(raw); });\r
+    (ER_EDIT_STATE.customFields||[]).forEach(item=>{ const app=findApp(item && item.appId); if(app && item.field) applyManualFieldData(app, item.field); });\r
+    (ER_EDIT_STATE.customRelations||[]).forEach(item=>{ const app=findApp(item && item.fromAppId); if(app && item.rel) applyManualRelationData(app, item.rel); });\r
+    if(ER_EDIT_STATE.seq){\r
+      customAppSeq=Number(ER_EDIT_STATE.seq.app)||0;\r
+      customRelSeq=Number(ER_EDIT_STATE.seq.rel)||0;\r
+      customFieldSeq=Number(ER_EDIT_STATE.seq.field)||0;\r
+    }\r
+  }catch(err){ console.error("[ER] 編集状態の復元に失敗", err); }\r
+}\r
+try{ applyDataOverrides(); }catch(err){ console.error("[ER] 上書き編集の復元に失敗", err); }\r
+invalidateRelationCounts();\r
+\r
+// ─── Cytoscape Init ───\r
+const spaceAppIdSet = new Set((ER_OPTIONS.spaceAppIds || []).map((id)=>String(id)));\r
+const erSpaceId = String(ER_OPTIONS.spaceId || "");\r
+const isInSpaceApp = (app)=> !!erSpaceId && (spaceAppIdSet.has(String(app.id)) || String(app.spaceId || "") === erSpaceId);\r
+const savedPositions=(ER_EDIT_STATE && ER_EDIT_STATE.view && ER_EDIT_STATE.view.positions) || null;\r
+const elements=[];\r
+APPS.forEach(app=>{\r
+  const el={data:{\r
+    id:"a"+app.id,\r
+    label:buildNodeLabel(app),\r
+    ...nodeCardData(app),\r
+    appId:app.id,\r
+    isError:!app.ok,\r
+    isPartial:app.status==="partial",\r
+    isStart:isMarkedStartApp(app),\r
+    inSpace:isInSpaceApp(app),\r
+    isCustom:!!app.isCustom,\r
+    accent:appAccentColor(app),\r
+    fieldCount:visibleFieldsForNode(app).length,\r
+    relCount:app.relations.length,\r
+    depth:app.depth || 0\r
+  }};\r
+  const sp=savedPositions && savedPositions["a"+app.id];\r
+  if(sp && typeof sp.x === "number" && typeof sp.y === "number") el.position={x:sp.x,y:sp.y};\r
+  elements.push(el);\r
+});\r
+function edgeDisplayLabel(text){\r
+  const s=String(text||"");\r
+  return s.length > 24 ? s.slice(0, 23) + "…" : s;\r
+}\r
+function ghostNodeIdFor(toApp){\r
+  return "g"+String(toApp||"unknown").replace(/[^0-9A-Za-z_-]/g,"_");\r
+}\r
+// エッジIDは「e_アプリID_リレーション順」で安定化（編集済みHTML復元時に削除状態を引き継ぐため）\r
+const ghostNodeIds=new Set();\r
+APPS.forEach(app=>{\r
+  app.relations.forEach((r,ri)=>{\r
+    const hasTarget=appMap.has(r.toApp);\r
+    const targetId=hasTarget?"a"+r.toApp:ghostNodeIdFor(r.toApp);\r
+    if(!hasTarget&&r.toApp&&!ghostNodeIds.has(targetId)){\r
+      ghostNodeIds.add(targetId);\r
+      const ghost={data:{id:targetId,label:"未取得の参照先\\nApp "+r.toApp,...ghostCardData(r.toApp),appId:null,targetAppId:r.toApp,isGhost:true,fieldCount:0,relCount:0,depth:(app.depth||0)+1}};\r
+      const gp=savedPositions && savedPositions[targetId];\r
+      if(gp && typeof gp.x === "number" && typeof gp.y === "number") ghost.position={x:gp.x,y:gp.y};\r
+      elements.push(ghost);\r
+    }\r
+    if(hasTarget||r.toApp){\r
+      const fullLabel = r.fromDisplay || r.fromLabel || (r.kind==="LOOKUP"?"ルックアップ":(r.kind==="REF"?"関連":"アクション"));\r
+      elements.push({data:{id:"e_"+app.id+"_"+ri,source:"a"+app.id,target:targetId,kind:r.kind,label:edgeDisplayLabel(fullLabel),fromLabel:r.fromLabel,fromDisplay:r.fromDisplay || r.fromLabel || "",isCustom:!!r.isCustom,isUnresolved:!hasTarget,bundleCount:1,bundleWidth:1.8}});\r
+    }\r
+  });\r
+});\r
+\r
+const hasSavedLayout=!!savedPositions;\r
+// 初期配置は preset で置き、起動処理（viewer-boot.js）で表示範囲を決めてから配置する\r
+const cy=cytoscape({\r
+  container:document.getElementById("cy"),\r
+  elements,\r
+  style: buildCyStyle(currentPalette()),\r
+  layout: {name:"preset",fit:false},\r
+  minZoom:0.05,maxZoom:4,wheelSensitivity:0.25,\r
+  boxSelectionEnabled:true,\r
+});\r
+\r
+function refreshNodeCards(){\r
+  invalidateRelationCounts();\r
+  APPS.forEach(app=>{\r
+    const node=cy.getElementById("a"+app.id);\r
+    if(node.length) node.data({...nodeCardData(app),isStart:isMarkedStartApp(app)});\r
+  });\r
+  cy.nodes("[?isGhost]").forEach(node=>node.data(ghostCardData(node.data("targetAppId"))));\r
+}\r
+function refreshNodeDisplay(node,app){\r
+  node.data({label:buildNodeLabel(app),...nodeCardData(app)});\r
+}\r
+function applyCyTheme(){\r
+  refreshNodeCards();\r
+  cy.style().fromJson(buildCyStyle(currentPalette())).update();\r
+}\r
+// 縮小したときは、アプリ名を大きく描いた概要カードに切り替える\r
+const SEMANTIC_ZOOM_THRESHOLD=0.65;\r
+const semanticZoomLabelBackup=new Map();\r
+let semanticZoomActive=false;\r
+function applySemanticZoom(zoom, force){\r
+  const low=Number(zoom)<SEMANTIC_ZOOM_THRESHOLD;\r
+  if(low===semanticZoomActive&&!force) return;\r
+  semanticZoomActive=low;\r
+  if(low){\r
+    cy.nodes().not(".note-node").forEach(node=>{\r
+      if(!node.hasClass("semantic-low")) semanticZoomLabelBackup.set(node.id(),String(node.data("label")||""));\r
+      const app=appMap.get(node.data("appId"));\r
+      if(app) node.data("label",buildSemanticNodeLabel(app));\r
+      node.addClass("semantic-low");\r
+    });\r
+    cy.edges().addClass("semantic-low");\r
+    return;\r
+  }\r
+  cy.nodes(".semantic-low").forEach(node=>{\r
+    if(semanticZoomLabelBackup.has(node.id())) node.data("label",semanticZoomLabelBackup.get(node.id()));\r
+    node.removeClass("semantic-low");\r
+  });\r
+  cy.edges().removeClass("semantic-low");\r
+  semanticZoomLabelBackup.clear();\r
+}\r
+function syncLayoutButtons(name){\r
+  document.querySelectorAll("[data-layout-btn]").forEach((btn)=>{\r
+    const on=btn.dataset.layoutBtn === name;\r
+    btn.classList.toggle("active", on);\r
+    btn.setAttribute("aria-pressed", String(on));\r
+  });\r
+  const pill = document.getElementById("layout-pill");\r
+  if(pill){pill.replaceChildren();const label=document.createElement("b");label.textContent="配置";pill.append(label," "+layoutDisplayName(name));}\r
+}\r
+function refreshNodeLabels(){\r
+  invalidateRelationCounts();\r
+  APPS.forEach((app)=>{\r
+    const node = cy.getElementById("a"+app.id);\r
+    if(!node.length) return;\r
+    const fullLabel=buildNodeLabel(app);\r
+    if(semanticZoomActive){\r
+      semanticZoomLabelBackup.set(node.id(),fullLabel);\r
+      node.data("label",buildSemanticNodeLabel(app));\r
+      node.addClass("semantic-low");\r
+    }else{\r
+      node.data("label",fullLabel);\r
+    }\r
+    node.data(nodeCardData(app));\r
+  });\r
+}\r
+function syncDensityControl(){\r
+  const select = document.getElementById("density-select");\r
+  if(select) select.value = ER_OPTIONS.fieldDensity || "standard";\r
+  const pill = document.getElementById("density-pill");\r
+  if(pill) pill.innerHTML = "<b>密度</b> " + formatFieldDensityLabel(ER_OPTIONS.fieldDensity);\r
+}\r
+function setDensity(value){\r
+  const next = ["none","compact","standard","full"].includes(String(value)) ? String(value) : "standard";\r
+  ER_OPTIONS.fieldDensity = next;\r
+  // シンプルモード中に「結合のみ」以外へ変更したら、シンプルモードを解除する\r
+  if(simpleMode && next !== "none") setSimpleMode(false, true);\r
+  refreshNodeLabels();\r
+  applyCyTheme();\r
+  syncDensityControl();\r
+  if(typeof refreshAppList === "function") refreshAppList();\r
+  toast("カードの項目: " + formatFieldDensityLabel(next));\r
+}\r
+\r
+const MAX_FIT_ZOOM=1.25;\r
+// 図に重なる部品（表示範囲の帯・凡例・ズーム操作）を避けて、表示中の要素を画面に収める\r
+function fitInsets(){\r
+  const host=cy.container().getBoundingClientRect();\r
+  const scopeBar=document.getElementById("scope-bar");\r
+  const sb=scopeBar&&!scopeBar.hidden?scopeBar.getBoundingClientRect():null;\r
+  const top=Math.max(16,(sb&&sb.height?sb.bottom-host.top:0)+18);\r
+  const legend=document.getElementById("legend");\r
+  const lg=legend?legend.getBoundingClientRect():null;\r
+  const bottom=Math.max(40,(lg&&lg.height?host.bottom-lg.top:0)+14);\r
+  // 右の詳細・構造チェックが図に重なっているときは、その幅も避ける\r
+  let right=64;\r
+  ["detail","analysis-panel"].forEach(id=>{\r
+    const panel=document.getElementById(id);\r
+    if(!panel||!panel.classList.contains("open")) return;\r
+    const r=panel.getBoundingClientRect();\r
+    if(r.width&&r.left>host.left+host.width*0.4) right=Math.max(right,host.right-r.left+24);\r
+  });\r
+  return {top,bottom,left:28,right};\r
+}\r
+function fitViewportFor(eles,maxZoom){\r
+  const box=eles.boundingBox();\r
+  const inset=fitInsets();\r
+  const availW=Math.max(cy.width()-inset.left-inset.right,120),availH=Math.max(cy.height()-inset.top-inset.bottom,120);\r
+  const zoom=Math.max(cy.minZoom(),Math.min(maxZoom,availW/Math.max(box.w,1),availH/Math.max(box.h,1)));\r
+  return {zoom,pan:{x:inset.left+(availW-box.w*zoom)/2-box.x1*zoom,y:inset.top+(availH-box.h*zoom)/2-box.y1*zoom}};\r
+}\r
+// 指定した要素を、図に重なる部品を避けて画面に収める\r
+function fitElements(eles,options){\r
+  const opts=options||{};\r
+  if(!eles||!eles.length) return;\r
+  const target=fitViewportFor(eles,opts.maxZoom||MAX_FIT_ZOOM);\r
+  if(opts.animate) cy.animate(target,{duration:400,complete:updateZoomLabel});\r
+  else { cy.viewport(target); updateZoomLabel(); }\r
+}\r
+function fit(){\r
+  closeZoomPresets();\r
+  const eles=cy.elements(":visible");\r
+  // 縮小すると概要表示に変わりノードの大きさも変わるため、切り替わった後の大きさでもう一度合わせる\r
+  for(let pass=0;eles.length&&pass<2;pass++) cy.viewport(fitViewportFor(eles,MAX_FIT_ZOOM));\r
+  updateZoomLabel();\r
+}\r
+\r
+// ─── 紐づきなしアプリの分離配置 ───\r
+// レイアウト適用時、関連線を持たないアプリを本体グラフの下の別枠（グリッド）にまとめる\r
+let separateNoLink = true;\r
+\r
+function isEdgeShown(e){\r
+  return !e.hasClass("rel-hidden") && !e.hasClass("rel-manual-hidden") && !e.hasClass("scope-out");\r
+}\r
+function nodeHasVisibleLink(n){\r
+  return n.connectedEdges().some(e=>{\r
+    if(e.hasClass("rel-hidden") || e.hasClass("rel-manual-hidden")) return false;\r
+    const other = e.source().id() === n.id() ? e.target() : e.source();\r
+    return !other.hasClass("app-manual-hidden") && !other.hasClass("scope-out");\r
+  });\r
+}\r
+function layoutCandidates(){\r
+  return cy.nodes().filter(n=>!n.hasClass("app-manual-hidden") && !n.hasClass("note-node") && !n.hasClass("scope-out"));\r
+}\r
+function refreshNoLinkClasses(){\r
+  const nodes = layoutCandidates();\r
+  const linked = nodes.filter(n=>nodeHasVisibleLink(n));\r
+  const isolated = nodes.not(linked);\r
+  cy.nodes().removeClass("no-link");\r
+  isolated.addClass("no-link");\r
+  return { linked, isolated };\r
+}\r
+function appNameForNode(n){\r
+  const app = appMap.get(n.data("appId"));\r
+  return app ? String(app.name || "") : String(n.data("label") || "");\r
+}\r
+// 詳細表示と概要表示（縮小時）のカードは大きさが違う。どちらの表示でも重ならないよう、大きい方の寸法で配置を考える\r
+function nodeSpan(n){\r
+  return {\r
+    w: Math.max(Number(n.data("cardW")) || 0, Number(n.data("lowW")) || 0, n.outerWidth()),\r
+    h: Math.max(Number(n.data("cardH")) || 0, Number(n.data("lowH")) || 0, n.outerHeight())\r
+  };\r
+}\r
+// レイアウトが重ねて置いたアプリ（フォース・同心円・グリッドなど）を、重なりが無くなるまで少しずつ押し広げる。\r
+// 重なりのない配置は動かさない。動かしたら true を返す（呼び出し側で全体表示に合わせ直す）\r
+const OVERLAP_GAP = 28;\r
+const OVERLAP_MAX_NODES = 800;\r
+function separateOverlappingNodes(nodes, animate){\r
+  const items = nodes.toArray().filter(n=>!n.hasClass("note-node")).map(n=>{\r
+    const pos = n.position();\r
+    const span = nodeSpan(n);\r
+    return { n, x: pos.x, y: pos.y, w: span.w + OVERLAP_GAP, h: span.h + OVERLAP_GAP, fixed: n.locked() };\r
+  });\r
+  if(items.length < 2 || items.length > OVERLAP_MAX_NODES) return false;\r
+  const start = items.map(item=>({x:item.x,y:item.y}));\r
+  for(let round = 0; round < 120; round++){\r
+    let moved = false;\r
+    for(let i = 0; i < items.length; i++){\r
+      for(let j = i + 1; j < items.length; j++){\r
+        const a = items[i], b = items[j];\r
+        if(a.fixed && b.fixed) continue;\r
+        let dx = b.x - a.x, dy = b.y - a.y;\r
+        if(dx === 0 && dy === 0){ dx = 0.01; b.x += dx; }\r
+        const overlapX = (a.w + b.w) / 2 - Math.abs(dx);\r
+        const overlapY = (a.h + b.h) / 2 - Math.abs(dy);\r
+        if(overlapX <= 0 || overlapY <= 0) continue;\r
+        // 食い込みが浅い向きへ、お互いに半分ずつ（固定のアプリは動かさない）離す\r
+        const shareA = a.fixed ? 0 : (b.fixed ? 1 : 0.5);\r
+        const shareB = 1 - shareA;\r
+        if(overlapX < overlapY){\r
+          const step = overlapX + 1, sign = dx >= 0 ? 1 : -1;\r
+          a.x -= sign * step * shareA; b.x += sign * step * shareB;\r
+        }else{\r
+          const step = overlapY + 1, sign = dy >= 0 ? 1 : -1;\r
+          a.y -= sign * step * shareA; b.y += sign * step * shareB;\r
+        }\r
+        moved = true;\r
+      }\r
+    }\r
+    if(!moved) break;\r
+  }\r
+  let changed = false;\r
+  items.forEach((item, i)=>{\r
+    if(Math.abs(item.x - start[i].x) < 0.5 && Math.abs(item.y - start[i].y) < 0.5) return;\r
+    changed = true;\r
+    const pos = { x: item.x, y: item.y };\r
+    if(animate) item.n.animate({position:pos},{duration:380});\r
+    else item.n.position(pos);\r
+  });\r
+  return changed;\r
+}\r
+function placeNoLinkGrid(linked, isolated, animate){\r
+  const bb = linked.boundingBox();\r
+  let cellW = 0, cellH = 0;\r
+  isolated.forEach(n=>{\r
+    const span = nodeSpan(n);\r
+    cellW = Math.max(cellW, span.w);\r
+    cellH = Math.max(cellH, span.h);\r
+  });\r
+  cellW += 46; cellH += 42;\r
+  const cols = Math.max(1, Math.min(isolated.length, Math.max(Math.floor(bb.w / cellW), Math.ceil(Math.sqrt(isolated.length)))));\r
+  const startX = bb.x1 + cellW / 2;\r
+  const startY = bb.y2 + 80 + cellH / 2;\r
+  const sorted = isolated.sort((a,b)=>appNameForNode(a).localeCompare(appNameForNode(b), "ja"));\r
+  sorted.forEach((n,i)=>{\r
+    const pos = { x: startX + (i % cols) * cellW, y: startY + Math.floor(i / cols) * cellH };\r
+    if(animate) n.animate({position:pos},{duration:380});\r
+    else n.position(pos);\r
+  });\r
+}\r
+// 1つの階層に多数のアプリが並ぶと図が縦に細長くなり全体表示で読めなくなるため、\r
+// 階層内の順序を保ったまま複数列に折り返して画面の縦横比に近づける\r
+function wrapTallRanks(nodes, animate){\r
+  const gapX = 70, gapY = 28;\r
+  const area = nodes.toArray().reduce((sum,n)=>sum+(n.outerWidth()+gapX)*(n.outerHeight()+gapY),0);\r
+  const maxHeight = Math.max(900, Math.sqrt(area / (cy.width() / Math.max(cy.height(), 1))));\r
+  const box = nodes.boundingBox();\r
+  if(box.h <= maxHeight * 1.25) return false;\r
+  const midY = (box.y1 + box.y2) / 2;\r
+  const ranks = new Map();\r
+  nodes.forEach(n=>{\r
+    const x = Math.round(n.position("x"));\r
+    if(!ranks.has(x)) ranks.set(x, []);\r
+    ranks.get(x).push(n);\r
+  });\r
+  let shift = 0;\r
+  [...ranks.keys()].sort((a,b)=>a-b).forEach(x=>{\r
+    const rank = ranks.get(x).sort((a,b)=>a.position("y")-b.position("y"));\r
+    const columns = [[]];\r
+    let height = 0;\r
+    rank.forEach(n=>{\r
+      const h = n.outerHeight() + gapY;\r
+      if(height + h > maxHeight && columns[columns.length-1].length){ columns.push([]); height = 0; }\r
+      columns[columns.length-1].push(n);\r
+      height += h;\r
+    });\r
+    const cellW = Math.max(...rank.map(n=>n.outerWidth())) + gapX;\r
+    columns.forEach((column,index)=>{\r
+      const columnH = column.reduce((sum,n)=>sum+n.outerHeight()+gapY,0);\r
+      let y = midY - columnH / 2;\r
+      column.forEach(n=>{\r
+        const pos = { x: x + shift + index * cellW, y: y + n.outerHeight() / 2 };\r
+        y += n.outerHeight() + gapY;\r
+        if(animate) n.animate({position:pos},{duration:380});\r
+        else n.position(pos);\r
+      });\r
+    });\r
+    shift += (columns.length - 1) * cellW;\r
+  });\r
+  return true;\r
+}\r
+// 依存が長く連なると階層数だけ横に伸びるため、階層の順を保ったまま複数段に分けて画面の縦横比に近づける\r
+function wrapWideRanks(nodes){\r
+  const box = nodes.boundingBox();\r
+  const aspect = cy.width() / Math.max(cy.height(), 1);\r
+  const bands = Math.round(Math.sqrt((box.w / Math.max(box.h, 1)) / aspect));\r
+  if(bands < 2) return false;\r
+  const gapY = 160;\r
+  const members = Array.from({length:bands},()=>[]);\r
+  nodes.forEach(n=>members[Math.min(bands-1,Math.floor((n.position("x")-box.x1)/(box.w/bands)))].push(n));\r
+  let top = box.y1;\r
+  members.filter(band=>band.length).forEach(band=>{\r
+    const left = Math.min(...band.map(n=>n.boundingBox().x1));\r
+    const upper = Math.min(...band.map(n=>n.boundingBox().y1));\r
+    const lower = Math.max(...band.map(n=>n.boundingBox().y2));\r
+    band.forEach(n=>n.position({x:n.position("x")-left+box.x1,y:n.position("y")-upper+top}));\r
+    top += lower - upper + gapY;\r
+  });\r
+  return true;\r
+}\r
+function wrapRanks(nodes, animate){\r
+  const before = nodes.map(n=>({n,pos:Object.assign({},n.position())}));\r
+  const tall = wrapTallRanks(nodes, false);\r
+  const wrapped = wrapWideRanks(nodes) || tall;\r
+  if(wrapped && animate) before.forEach(({n,pos})=>{\r
+    const target = Object.assign({},n.position());\r
+    n.position(pos);\r
+    n.animate({position:target},{duration:380});\r
+  });\r
+  return wrapped;\r
+}\r
+// 配置の対象: 表示範囲の外とメモを除いたアプリと、その間の線（範囲外のアプリへの線を渡すと、配置が架空のアプリを作る）\r
+function layoutTargetElements(){\r
+  const nodes = cy.nodes().not(".note-node").not(".scope-out");\r
+  return nodes.union(nodes.edgesWith(nodes));\r
+}\r
+// 「〇〇のまわり」の表示で使う配置。中心のアプリを真ん中に、それを参照するアプリを左、それが参照するアプリを右に並べる\r
+// （深さ 2 は、その外側）。列が縦に長くなるときは、外側へ折り返して画面の縦横比に近づける\r
+function aroundLayoutColumns(){\r
+  const roots = viewScope.roots.map(id=>"a"+id).filter(id=>scopeMembers&&scopeMembers.has(id));\r
+  const col = new Map(), parent = new Map();\r
+  roots.forEach(id=>col.set(id,0));\r
+  let frontier = roots.slice();\r
+  for(let d = 1; d <= viewScope.depth; d++){\r
+    const next = [];\r
+    frontier.forEach(id=>{\r
+      const side = col.get(id);\r
+      // 参照している線を先に見る（参照しあうアプリは右に置く）\r
+      const edges = cy.getElementById(id).connectedEdges().toArray().sort((a,b)=>(a.source().id()===id?0:1)-(b.source().id()===id?0:1));\r
+      edges.forEach(e=>{\r
+        if(e.hasClass("rel-manual-hidden")) return;\r
+        const other = e.source().id() === id ? e.target() : e.source();\r
+        const oid = other.id();\r
+        if(col.has(oid) || !scopeMembers.has(oid) || other.hasClass("app-manual-hidden")) return;\r
+        const sign = side === 0 ? (e.source().id() === id ? 1 : -1) : Math.sign(side);\r
+        col.set(oid, sign * d);\r
+        parent.set(oid, id);\r
+        next.push(oid);\r
+      });\r
+    });\r
+    frontier = next;\r
+  }\r
+  return { col, parent, roots };\r
+}\r
+function runAroundLayout(animate){\r
+  const nodes = layoutCandidates().union(cy.nodes(".app-manual-hidden").not(".scope-out").not(".note-node"));\r
+  const { col, parent, roots } = aroundLayoutColumns();\r
+  const groups = new Map();\r
+  nodes.forEach(n=>{\r
+    const c = col.has(n.id()) ? col.get(n.id()) : 0;\r
+    if(!groups.has(c)) groups.set(c, []);\r
+    groups.get(c).push(n);\r
+  });\r
+  const gapX = 150, gapY = 30;\r
+  const area = nodes.toArray().reduce((sum,n)=>{ const s=nodeSpan(n); return sum+(s.w+gapX)*(s.h+gapY); },0);\r
+  const maxHeight = Math.max(720, Math.sqrt(area / Math.max(0.5, cy.width() / Math.max(cy.height(), 1))));\r
+  const orderIndex = new Map();\r
+  const keys = [...groups.keys()].sort((a,b)=>Math.abs(a)-Math.abs(b)||a-b);\r
+  const columns = new Map();\r
+  keys.forEach(k=>{\r
+    const list = groups.get(k).sort((a,b)=>{\r
+      if(k === 0){ const ra = roots.includes(a.id()) ? 0 : 1, rb = roots.includes(b.id()) ? 0 : 1; if(ra !== rb) return ra - rb; }\r
+      const pa = orderIndex.has(parent.get(a.id())) ? orderIndex.get(parent.get(a.id())) : 0;\r
+      const pb = orderIndex.has(parent.get(b.id())) ? orderIndex.get(parent.get(b.id())) : 0;\r
+      return pa - pb || appNameForNode(a).localeCompare(appNameForNode(b), "ja");\r
+    });\r
+    list.forEach((n,i)=>orderIndex.set(n.id(), i));\r
+    const subcols = [[]];\r
+    let height = 0;\r
+    list.forEach(n=>{\r
+      const h = nodeSpan(n).h + gapY;\r
+      if(height + h > maxHeight && subcols[subcols.length-1].length){ subcols.push([]); height = 0; }\r
+      subcols[subcols.length-1].push(n);\r
+      height += h;\r
+    });\r
+    columns.set(k, subcols.map(sc=>({ nodes: sc, w: Math.max(...sc.map(n=>nodeSpan(n).w)) })));\r
+  });\r
+  const positions = new Map();\r
+  const placeSubcol = (sc, centerX)=>{\r
+    const total = sc.nodes.reduce((sum,n)=>sum+nodeSpan(n).h+gapY,0) - gapY;\r
+    let y = -total / 2;\r
+    sc.nodes.forEach(n=>{ const h = nodeSpan(n).h; positions.set(n.id(), { x: centerX, y: y + h / 2 }); y += h + gapY; });\r
+  };\r
+  const center = columns.get(0) || [];\r
+  const centerW = center.reduce((sum,sc)=>sum+sc.w,0) + Math.max(0, center.length-1) * gapX;\r
+  let x = -centerW / 2;\r
+  center.forEach(sc=>{ placeSubcol(sc, x + sc.w / 2); x += sc.w + gapX; });\r
+  let right = centerW / 2 + gapX, left = -centerW / 2 - gapX;\r
+  keys.filter(k=>k>0).sort((a,b)=>a-b).forEach(k=>columns.get(k).forEach(sc=>{ placeSubcol(sc, right + sc.w / 2); right += sc.w + gapX; }));\r
+  keys.filter(k=>k<0).sort((a,b)=>b-a).forEach(k=>columns.get(k).forEach(sc=>{ placeSubcol(sc, left - sc.w / 2); left -= sc.w + gapX; }));\r
+  nodes.forEach(n=>{\r
+    const pos = positions.get(n.id());\r
+    if(!pos || n.locked()) return;\r
+    if(animate) n.animate({position:pos},{duration:450});\r
+    else n.position(pos);\r
+  });\r
+}\r
+// 配置が終わって画面に合わせ直したら解決する Promise を返す\r
+function runLayout(name, initial){\r
+  return new Promise(resolve=>{\r
+    // 概要表示の小さなカードで配置すると、拡大したときに重なるため詳細表示の大きさで計算する\r
+    applySemanticZoom(1,true);\r
+    const parts = refreshNoLinkClasses();\r
+    const finish = (delay)=>setTimeout(()=>{ fit(); resolve(); }, delay);\r
+    if(name === "dagre" && viewScope.mode === "around"){\r
+      // 列に積むので重ならない。固定したアプリがあるときだけ、重なりを押し広げる（動かしながらでは位置が読めないため、その場合は動かさずに置く）\r
+      const hasPinned = layoutCandidates().some(n=>n.locked());\r
+      runAroundLayout(!initial && !hasPinned);\r
+      if(hasPinned) separateOverlappingNodes(layoutCandidates(), false);\r
+      finish(initial ? 120 : 500);\r
+      return;\r
+    }\r
+    if(!separateNoLink || !parts.isolated.length || !parts.linked.length){\r
+      // メモ(付箋)はレイアウトの対象外にして、手で置いた位置を保つ\r
+      const targets = layoutTargetElements();\r
+      const lay = targets.layout(buildLayoutOptions(name, initial, targets.nodes().length));\r
+      const wrapTargets = cy.nodes().not(".note-node").not(".app-manual-hidden").not(".scope-out");\r
+      lay.one("layoutstop",()=>{\r
+        const wrapped = name === "dagre" && ER_DAGRE_READY && wrapTargets.length > 1 && wrapRanks(wrapTargets, !initial);\r
+        const separated = separateOverlappingNodes(wrapTargets, !initial);\r
+        if(initial || wrapped || separated) finish(initial ? 200 : 450);\r
+        else { updateZoomLabel(); resolve(); }\r
+      });\r
+      lay.run();\r
+      return;\r
+    }\r
+    const opts = buildLayoutOptions(name, initial, parts.linked.length);\r
+    opts.fit = false;\r
+    const visibleEdges = parts.linked.edgesWith(parts.linked).filter(e=>!e.hasClass("rel-hidden") && !e.hasClass("rel-manual-hidden"));\r
+    const lay = parts.linked.union(visibleEdges).layout(opts);\r
+    lay.one("layoutstop",()=>{\r
+      if(name === "dagre" && ER_DAGRE_READY) wrapRanks(parts.linked, false);\r
+      separateOverlappingNodes(parts.linked, false);\r
+      placeNoLinkGrid(parts.linked, parts.isolated, !initial);\r
+      finish(initial ? 150 : 450);\r
+    });\r
+    lay.run();\r
+  });\r
+}\r
+function syncSeparateNoLinkButton(){\r
+  const btn = document.getElementById("separate-nolink-btn");\r
+  if(btn){ btn.classList.toggle("active", separateNoLink); btn.setAttribute("aria-pressed", String(separateNoLink)); }\r
+}\r
+function toggleSeparateNoLink(){\r
+  separateNoLink = !separateNoLink;\r
+  syncSeparateNoLinkButton();\r
+  scopePositionCache.clear();\r
+  runLayout(ER_OPTIONS.layoutName || "dagre", false);\r
+  toast(separateNoLink ? "関連のないアプリを下にまとめました" : "関連のないアプリをまとめずに配置しました");\r
+}\r
+\r
+// ─── Layout Switching ───\r
+function setLayout(name){\r
+  name=normalizeLayoutName(name);\r
+  ER_OPTIONS.layoutName = name;\r
+  syncLayoutButtons(name);\r
+  // 配置を変えたら、ほかの表示範囲で覚えていた位置も使わない\r
+  scopePositionCache.clear();\r
+  runLayout(name, false);\r
+  toast("配置: " + layoutDisplayName(name));\r
+}\r
+\r
+// ─── 表示範囲（起点まわり / 選んだアプリのまわり / 全体） ───\r
+// アプリが多い図は、開いた直後は起点とその直接の関連先だけを見せる。「全体を表示」でいつでも全体へ戻れる\r
+const SCOPE_AUTO_MIN_APPS = 15;\r
+let viewScope = { mode: "all", roots: [], depth: 1 };\r
+let scopeMembers = null; // 表示するノードIDの集合（全体のときは null）\r
+const scopePositionCache = new Map(); // 表示範囲ごとに、最後の位置を覚えておく（戻ったときに配置し直さない）\r
+function normalizeScope(raw){\r
+  const mode = raw && raw.mode === "around" ? "around" : "all";\r
+  const depth = raw && Number(raw.depth) === 2 ? 2 : 1;\r
+  const roots = mode === "around" ? [...new Set((raw.roots || []).map(String))].filter(id=>cy.getElementById("a"+id).length) : [];\r
+  if(mode === "around" && !roots.length) return { mode: "all", roots: [], depth };\r
+  return { mode, roots, depth };\r
+}\r
+function scopeKeyOf(scope){\r
+  return scope.mode === "all" ? "all" : "around:" + scope.roots.slice().sort().join(",") + ":" + scope.depth;\r
+}\r
+function startRootIds(){\r
+  return [...startAppIdSet].filter(id=>{\r
+    const n=cy.getElementById("a"+id);\r
+    return n.length && !n.hasClass("app-manual-hidden");\r
+  });\r
+}\r
+// 起点から depth 段の関連で届くノード（線の向きは問わない。手動で消した線・アプリは辿らない）\r
+function computeScopeMembers(rootIds, depth){\r
+  const members = new Set(rootIds.map(id=>"a"+id));\r
+  let frontier = [...members];\r
+  for(let d = 0; d < depth; d++){\r
+    const next = [];\r
+    frontier.forEach(id=>{\r
+      cy.getElementById(id).connectedEdges().forEach(e=>{\r
+        if(e.hasClass("rel-manual-hidden")) return;\r
+        const other = e.source().id() === id ? e.target() : e.source();\r
+        if(other.hasClass("app-manual-hidden") || members.has(other.id())) return;\r
+        members.add(other.id());\r
+        next.push(other.id());\r
+      });\r
+    });\r
+    frontier = next;\r
+    if(!frontier.length) break;\r
+  }\r
+  return members;\r
+}\r
+function appNodeCount(){\r
+  return cy.nodes().filter(n=>!n.hasClass("note-node") && !n.hasClass("app-manual-hidden")).length;\r
+}\r
+// 起点まわりの表示で、アプリが十分に減るときだけ既定にする（全アプリを起点にした図などは全体を出す）\r
+function defaultScope(){\r
+  const roots = startRootIds();\r
+  const total = appNodeCount();\r
+  if(!roots.length || total <= SCOPE_AUTO_MIN_APPS) return { mode: "all", roots: [], depth: 1 };\r
+  const around = computeScopeMembers(roots, 1);\r
+  if(around.size >= total * 0.75) return { mode: "all", roots: [], depth: 1 };\r
+  return { mode: "around", roots, depth: 1 };\r
+}\r
+function canShowStartScope(){\r
+  const roots = startRootIds();\r
+  if(!roots.length) return false;\r
+  return computeScopeMembers(roots, viewScope.depth || 1).size < appNodeCount();\r
+}\r
+function isStartScope(scope){\r
+  const roots = startRootIds().slice().sort().join(",");\r
+  return scope.mode === "around" && scope.roots.slice().sort().join(",") === roots;\r
+}\r
+function applyScopeClasses(){\r
+  cy.batch(()=>{\r
+    cy.elements().removeClass("scope-out");\r
+    if(!scopeMembers) return;\r
+    cy.nodes().forEach(n=>{ if(!n.hasClass("note-node") && !scopeMembers.has(n.id())) n.addClass("scope-out"); });\r
+    cy.edges().forEach(e=>{ if(e.source().hasClass("scope-out") || e.target().hasClass("scope-out")) e.addClass("scope-out"); });\r
+  });\r
+}\r
+function isNodeInScope(node){\r
+  return !!node && node.length > 0 && !node.hasClass("scope-out");\r
+}\r
+function snapshotScopePositions(){\r
+  const positions = {};\r
+  cy.nodes().not(".note-node").not(".scope-out").forEach(n=>{\r
+    const p = n.position();\r
+    positions[n.id()] = { x: Math.round(p.x * 100) / 100, y: Math.round(p.y * 100) / 100 };\r
+  });\r
+  scopePositionCache.set(scopeKeyOf(viewScope), positions);\r
+}\r
+function restoreScopePositions(scope){\r
+  const cached = scopePositionCache.get(scopeKeyOf(scope));\r
+  if(!cached) return false;\r
+  const targets = cy.nodes().not(".note-node").not(".scope-out");\r
+  if(!targets.every(n=>cached[n.id()])) return false;\r
+  targets.forEach(n=>{ if(!n.locked()) n.position(cached[n.id()]); });\r
+  return true;\r
+}\r
+// 表示範囲を切り替える。前に表示した範囲なら、そのときの位置に戻す（配置し直さない）\r
+function setScope(next, options){\r
+  const opts = options || {};\r
+  if(!opts.initial) snapshotScopePositions();\r
+  viewScope = normalizeScope(next);\r
+  scopeMembers = viewScope.mode === "all" ? null : computeScopeMembers(viewScope.roots, viewScope.depth);\r
+  applyScopeClasses();\r
+  clearFocus(true);\r
+  cy.elements().removeClass("analysis-hit analysis-dim path-node path-edge");\r
+  applyRelationFilter();\r
+  if(typeof refreshScopeBar === "function") refreshScopeBar();\r
+  if(typeof refreshAppList === "function") refreshAppList();\r
+  if(opts.keepPositions) return Promise.resolve();\r
+  if(restoreScopePositions(viewScope)){\r
+    fit();\r
+    return Promise.resolve();\r
+  }\r
+  return runLayout(ER_OPTIONS.layoutName || "dagre", !!opts.initial);\r
+}\r
+function showAllScope(){\r
+  if(viewScope.mode === "all"){ fit(); return Promise.resolve(); }\r
+  const done = setScope({ mode: "all" });\r
+  toast("全体を表示: " + appNodeCount() + "アプリ");\r
+  closeAllMenus();\r
+  return done;\r
+}\r
+function showStartScope(){\r
+  const roots = startRootIds();\r
+  if(!roots.length){ toast("起点のアプリが図にありません"); return Promise.resolve(); }\r
+  const done = setScope({ mode: "around", roots, depth: viewScope.depth || 1 });\r
+  toast("起点まわりを表示");\r
+  closeAllMenus();\r
+  return done;\r
+}\r
+function showAroundApp(appId, depth){\r
+  const node = cy.getElementById("a"+appId);\r
+  if(!node.length || node.hasClass("app-manual-hidden")){ toast("このアプリは図にありません"); return Promise.resolve(); }\r
+  const done = setScope({ mode: "around", roots: [String(appId)], depth: depth || viewScope.depth || 1 });\r
+  const app = findApp(appId);\r
+  toast((app ? app.name : "アプリ") + " のまわりを表示");\r
+  return done;\r
+}\r
+function setScopeDepth(depth){\r
+  const d = Number(depth) === 2 ? 2 : 1;\r
+  if(viewScope.mode !== "around"){ viewScope.depth = d; if(typeof refreshScopeBar === "function") refreshScopeBar(); return Promise.resolve(); }\r
+  if(viewScope.depth === d) return Promise.resolve();\r
+  return setScope({ mode: "around", roots: viewScope.roots, depth: d });\r
+}\r
+// 図の外にあるアプリへ移るときは、そのアプリのまわりを表示する\r
+function ensureNodeVisible(node){\r
+  if(!node || !node.length) return Promise.resolve(false);\r
+  if(isNodeInScope(node)) return Promise.resolve(true);\r
+  const appId = node.data("appId");\r
+  if(appId != null) return showAroundApp(appId).then(()=>true);\r
+  // 未取得の参照先は、参照しているアプリのまわりを表示する\r
+  const source = node.incomers("node").filter(n=>n.data("appId")!=null).first();\r
+  if(source.length) return showAroundApp(source.data("appId")).then(()=>isNodeInScope(node));\r
+  return showAllScope().then(()=>true);\r
+}\r
+\r
+const relationKindState = { LOOKUP: true, REF: true, ACTION: true };\r
+let relationLabelVisible = false;\r
+let edgeBundling = true;\r
+let focusMode = true;\r
+let focusDepth = 1;\r
+let focusDirection = "both";\r
+let currentFocusNodeId = "";\r
+let lastTappedNodeId = "";\r
+let activeAppId = 0;\r
+const pinnedNodeIds = new Set();\r
+\r
+// ─── 同じアプリ間の線をまとめる（シンプルモードでも使う） ───\r
+let simpleMode = false;\r
+let simpleModeRestore = null; // { density, labels, bundling }\r
+const collapsedEdgeLabelBackup = new Map(); // 代表エッジの元ラベル退避\r
+\r
+function collapseParallelEdges(on){\r
+  // いったん全解除\r
+  cy.edges().removeClass("edge-collapsed");\r
+  collapsedEdgeLabelBackup.forEach((label, id)=>{\r
+    const e = cy.getElementById(id);\r
+    if(e.length) e.data({label, bundleCount:1, bundleWidth:1.8, bundleIds:""});\r
+  });\r
+  collapsedEdgeLabelBackup.clear();\r
+  if(!on) return;\r
+  // 同じ「起点→宛先→種類」の可視エッジを1本に集約し、線種の意味を保つ\r
+  const groups = new Map();\r
+  cy.edges().forEach(e=>{\r
+    if(e.hasClass("rel-manual-hidden") || e.hasClass("rel-hidden")) return;\r
+    const key = e.source().id() + "→" + e.target().id() + "→" + e.data("kind");\r
+    const list = groups.get(key) || [];\r
+    list.push(e);\r
+    groups.set(key, list);\r
+  });\r
+  groups.forEach(list=>{\r
+    if(list.length < 2) return;\r
+    list.slice(1).forEach(e=>e.addClass("edge-collapsed"));\r
+    const rep = list[0];\r
+    collapsedEdgeLabelBackup.set(rep.id(), rep.data("label") || "");\r
+    rep.data({\r
+      label: list.length + "本の" + relationKindJp(rep.data("kind")),\r
+      bundleCount: list.length,\r
+      bundleWidth: Math.min(6, 1.8 + (list.length - 1) * 0.9),\r
+      bundleIds: list.map(e=>e.id()).join(",")\r
+    });\r
+  });\r
+}\r
+// まとめた線が表す関連線（まとめていなければ自分だけ）\r
+function bundleMembers(edge){\r
+  const ids = String(edge.data("bundleIds") || "").split(",").filter(Boolean);\r
+  if(!ids.length) return edge;\r
+  return ids.map(id=>cy.getElementById(id)).filter(e=>e.length).reduce((all,e)=>all.union(e), cy.collection());\r
+}\r
+// まとめた線の代表（まとめていなければ自分）\r
+function bundleRepresentative(edge){\r
+  if(!edge || !edge.length || !edge.hasClass("edge-collapsed")) return edge;\r
+  const rep = cy.edges().filter(e=>String(e.data("bundleIds")||"").split(",").includes(edge.id())).first();\r
+  return rep.length ? rep : edge;\r
+}\r
+function syncBundleButton(){\r
+  const btn = document.getElementById("bundle-btn");\r
+  if(btn){ btn.classList.toggle("active", edgeBundling); btn.setAttribute("aria-pressed", String(edgeBundling)); }\r
+}\r
+function toggleEdgeBundling(){\r
+  edgeBundling = !edgeBundling;\r
+  syncBundleButton();\r
+  applyRelationFilter();\r
+  toast(edgeBundling ? "同じアプリ間の線を 1 本にまとめました" : "関連ごとに線を分けて表示します");\r
+}\r
+\r
+function syncSimpleModeButton(){\r
+  const btn = document.getElementById("simple-mode-btn");\r
+  if(btn){ btn.classList.toggle("active", simpleMode); btn.setAttribute("aria-pressed", String(simpleMode)); }\r
+}\r
+\r
+function setSimpleMode(on, keepDensity){\r
+  if(simpleMode === !!on) { syncSimpleModeButton(); return; }\r
+  simpleMode = !!on;\r
+  if(simpleMode){\r
+    simpleModeRestore = { density: ER_OPTIONS.fieldDensity, labels: relationLabelVisible, bundling: edgeBundling };\r
+    ER_OPTIONS.fieldDensity = "none";\r
+    relationLabelVisible = false;\r
+    edgeBundling = true;\r
+    collapseParallelEdges(true);\r
+  }else{\r
+    if(!keepDensity) ER_OPTIONS.fieldDensity = (simpleModeRestore && simpleModeRestore.density && simpleModeRestore.density !== "none") ? simpleModeRestore.density : "standard";\r
+    relationLabelVisible = simpleModeRestore ? !!simpleModeRestore.labels : false;\r
+    edgeBundling = simpleModeRestore ? simpleModeRestore.bundling !== false : true;\r
+    simpleModeRestore = null;\r
+    collapseParallelEdges(edgeBundling);\r
+  }\r
+  refreshNodeLabels();\r
+  applyCyTheme();\r
+  syncDensityControl();\r
+  applyRelationLabelVisibility();\r
+  syncSimpleModeButton();\r
+  syncBundleButton();\r
+}\r
+\r
+function toggleSimpleMode(){\r
+  setSimpleMode(!simpleMode);\r
+  toast(simpleMode ? "シンプル: 項目を隠してアプリのつながりだけを表示" : "シンプルを解除しました");\r
+}\r
+\r
+function syncLegendState(){\r
+  [["LOOKUP","legend-lookup-edge"],["REF","legend-ref-edge"],["ACTION","legend-action-edge"]].forEach(([kind,id])=>{\r
+    const el = document.getElementById(id);\r
+    if(el){ el.classList.toggle("off", !relationKindState[kind]); el.setAttribute("aria-pressed", String(!!relationKindState[kind])); }\r
+  });\r
+}\r
+function syncRelationLabelButton(){\r
+  const btn = document.getElementById("rel-label-btn");\r
+  if(!btn) return;\r
+  btn.classList.toggle("active", relationLabelVisible);\r
+  btn.setAttribute("aria-pressed", String(relationLabelVisible));\r
+}\r
+function applyRelationLabelVisibility(){\r
+  cy.edges().toggleClass("label-hidden", !relationLabelVisible);\r
+  syncRelationLabelButton();\r
+}\r
+function toggleRelationLabels(){\r
+  relationLabelVisible = !relationLabelVisible;\r
+  applyRelationLabelVisibility();\r
+  toast(relationLabelVisible ? "線のラベルを常に表示します" : "線のラベルは、選んだ線とマウスを乗せた線だけに出します");\r
+}\r
+function setActiveApp(appId){\r
+  activeAppId = Number(appId) || 0;\r
+  if(typeof refreshAppList === "function") refreshAppList();\r
+}\r
+\r
+function applyRelationFilter(){\r
+  const partialFilter = !relationKindState.LOOKUP || !relationKindState.REF || !relationKindState.ACTION;\r
+  cy.edges().forEach(e=>{\r
+    const visible = !!relationKindState[e.data("kind")];\r
+    e.toggleClass("rel-hidden", !visible);\r
+  });\r
+  cy.nodes().forEach(n=>{\r
+    const visibleEdgeCount = n.connectedEdges().filter(e=>!e.hasClass("rel-hidden") && !e.hasClass("rel-manual-hidden")).length;\r
+    n.toggleClass("isolated-by-filter", partialFilter && visibleEdgeCount === 0);\r
+  });\r
+  collapseParallelEdges(edgeBundling || simpleMode);\r
+  refreshNoLinkClasses();\r
+  syncLegendState();\r
+}\r
+\r
+function collectFocusSet(rootNode, depth, direction){\r
+  let nodes = cy.collection(rootNode);\r
+  let edges = cy.collection();\r
+  let frontier = cy.collection(rootNode);\r
+  const visited = new Set([rootNode.id()]);\r
+\r
+  for(let i=0;i<depth;i++){\r
+    let next = cy.collection();\r
+    frontier.forEach(n=>{\r
+      let candidateEdges = n.connectedEdges().filter(e=>!e.hasClass("rel-hidden") && !e.hasClass("rel-manual-hidden"));\r
+      if(direction==="out") candidateEdges = candidateEdges.filter(e=>e.source().id()===n.id());\r
+      if(direction==="in") candidateEdges = candidateEdges.filter(e=>e.target().id()===n.id());\r
+\r
+      candidateEdges.forEach(e=>{\r
+        edges = edges.union(e);\r
+        let linked = cy.collection();\r
+        if(direction==="out") linked = linked.union(e.target());\r
+        else if(direction==="in") linked = linked.union(e.source());\r
+        else linked = linked.union(e.connectedNodes().difference(n));\r
+\r
+        linked.forEach(nn=>{\r
+          if(visited.has(nn.id())) return;\r
+          visited.add(nn.id());\r
+          nodes = nodes.union(nn);\r
+          next = next.union(nn);\r
+        });\r
+      });\r
+    });\r
+    frontier = next;\r
+    if(frontier.length===0) break;\r
+  }\r
+\r
+  return { nodes, edges };\r
+}\r
+\r
+function applyFocusToNode(node, silent){\r
+  cy.elements().removeClass("focus-root focus-neighbor focus-edge focus-dim");\r
+  if(!focusMode || !node || !node.length) return;\r
+\r
+  const depth = Math.max(1, Number(focusDepth) || 1);\r
+  const result = collectFocusSet(node, depth, focusDirection);\r
+  cy.elements().not(".note-node").addClass("focus-dim");\r
+  result.nodes.removeClass("focus-dim").addClass("focus-neighbor");\r
+  result.edges.removeClass("focus-dim").addClass("focus-edge");\r
+  node.removeClass("focus-neighbor").addClass("focus-root");\r
+  currentFocusNodeId = node.id();\r
+\r
+  if(!silent){\r
+    const relatedCount = Math.max(0, result.nodes.length - 1);\r
+    toast("関連強調: "+relatedCount+"アプリ");\r
+  }\r
+}\r
+\r
+function clearFocus(silent){\r
+  currentFocusNodeId = "";\r
+  cy.elements().removeClass("focus-root focus-neighbor focus-edge focus-dim");\r
+  if(!silent) toast("強調を解除しました");\r
+}\r
+\r
+function syncFocusButton(){\r
+  const btn = document.getElementById("focus-toggle-btn");\r
+  if(!btn) return;\r
+  btn.classList.toggle("active", focusMode);\r
+  btn.setAttribute("aria-pressed", String(focusMode));\r
+}\r
+function syncRelationKindButtons(){\r
+  ["LOOKUP","REF","ACTION"].forEach(kind=>{\r
+    const btn = document.getElementById(kind==="LOOKUP" ? "rel-lookup-btn" : (kind==="REF" ? "rel-ref-btn" : "rel-action-btn"));\r
+    if(btn){ btn.classList.toggle("active", !!relationKindState[kind]); btn.setAttribute("aria-pressed", String(!!relationKindState[kind])); }\r
+  });\r
+}\r
+function toggleFocusMode(){\r
+  focusMode = !focusMode;\r
+  syncFocusButton();\r
+  if(!focusMode) clearFocus(true);\r
+  else if(currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);\r
+  toast(focusMode ? "選んだアプリの関連を強調します" : "選んだアプリの関連を強調しません");\r
+}\r
+\r
+function updateFocusOptions(){\r
+  focusDepth = Number(document.getElementById("focus-depth")?.value || 1);\r
+  focusDirection = document.getElementById("focus-direction")?.value || "both";\r
+  if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);\r
+}\r
+\r
+// ─── 元に戻す (Undo) ───\r
+const undoStack = [];\r
+function pushUndo(label, fn){\r
+  undoStack.push({label, fn});\r
+  if(undoStack.length > 60) undoStack.shift();\r
+}\r
+function undoLast(){\r
+  const entry = undoStack.pop();\r
+  if(!entry){toast("元に戻す操作はありません");return;}\r
+  try{ entry.fn(); }catch(err){ console.error("[ER] undo failed", err); }\r
+  afterGraphChange();\r
+  toast("元に戻しました: "+entry.label);\r
+}\r
+// 図の要素を消した・戻したあとに、一覧と表を合わせる\r
+function afterGraphChange(){\r
+  invalidateRelationCounts();\r
+  if(typeof refreshScopeBar === "function") refreshScopeBar();\r
+  if(typeof refreshAppList === "function") refreshAppList();\r
+  if(typeof refreshActiveTable === "function") refreshActiveTable();\r
+}\r
+\r
+const manuallyRemovedEdgeIds = new Set();\r
+const manuallyRemovedNodeIds = new Set();\r
+const nodeHiddenEdgeIds = new Set();\r
+\r
+function hideRelationEdges(edges){\r
+  const ids = edges.map(e=>e.id());\r
+  edges.forEach((e)=>{ manuallyRemovedEdgeIds.add(e.id()); e.addClass("rel-manual-hidden"); });\r
+  pushUndo("関連線削除 "+ids.length+"件", ()=>{\r
+    ids.forEach(id=>{\r
+      manuallyRemovedEdgeIds.delete(id);\r
+      const e = cy.getElementById(id);\r
+      if(e.length) e.removeClass("rel-manual-hidden");\r
+    });\r
+    applyRelationFilter();\r
+    if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);\r
+  });\r
+}\r
+// 選んだ線（まとめた線は、まとめた全部の関連線）\r
+function selectedRelationEdges(){\r
+  let edges = cy.collection();\r
+  cy.edges(":selected").forEach(e=>{ edges = edges.union(bundleMembers(e)); });\r
+  return edges.filter(e=>!e.hasClass("rel-manual-hidden"));\r
+}\r
+\r
+function removeSelectedRelations(){\r
+  const edges = selectedRelationEdges();\r
+  if(!edges.length){toast("削除する関連線を選んでください");return;}\r
+  hideRelationEdges(edges);\r
+  if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);\r
+  applyRelationFilter();\r
+  afterGraphChange();\r
+  toast("関連線を図から削除しました: "+edges.length+"件（Ctrl+Z で戻せます）");\r
+}\r
+\r
+function restoreRemovedRelations(){\r
+  let restored = 0;\r
+  manuallyRemovedEdgeIds.forEach((id)=>{\r
+    const edge = cy.getElementById(id);\r
+    if(edge.length){ edge.removeClass("rel-manual-hidden"); restored += 1; }\r
+  });\r
+  manuallyRemovedEdgeIds.clear();\r
+  if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);\r
+  applyRelationFilter();\r
+  afterGraphChange();\r
+  toast(restored ? ("削除した関連線を戻しました: "+restored+"件") : "戻す関連線はありません");\r
+}\r
+\r
+function hideAppNodes(nodes){\r
+  const nodeIds = [], newEdgeIds = [];\r
+  let edgeCount = 0;\r
+  nodes.forEach((node)=>{\r
+    manuallyRemovedNodeIds.add(node.id());\r
+    nodeIds.push(node.id());\r
+    node.addClass("app-manual-hidden");\r
+    node.connectedEdges().forEach((edge)=>{\r
+      if(!nodeHiddenEdgeIds.has(edge.id()) && !manuallyRemovedEdgeIds.has(edge.id())) newEdgeIds.push(edge.id());\r
+      nodeHiddenEdgeIds.add(edge.id());\r
+      if(!edge.hasClass("rel-manual-hidden")) edgeCount += 1;\r
+      edge.addClass("rel-manual-hidden");\r
+    });\r
+  });\r
+  pushUndo("アプリ削除 "+nodeIds.length+"件", ()=>{\r
+    nodeIds.forEach(id=>{\r
+      manuallyRemovedNodeIds.delete(id);\r
+      const n = cy.getElementById(id);\r
+      if(n.length) n.removeClass("app-manual-hidden");\r
+    });\r
+    newEdgeIds.forEach(id=>{\r
+      nodeHiddenEdgeIds.delete(id);\r
+      const e = cy.getElementById(id);\r
+      if(e.length) e.removeClass("rel-manual-hidden");\r
+    });\r
+    applyRelationFilter();\r
+    if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);\r
+  });\r
+  return edgeCount;\r
+}\r
+\r
+function removeSelectedApps(){\r
+  let nodes = cy.nodes(":selected").not(".app-manual-hidden").not(".note-node");\r
+  if(!nodes.length && lastTappedNodeId){\r
+    const n = cy.getElementById(lastTappedNodeId);\r
+    if(n.length && !n.hasClass("app-manual-hidden") && !n.hasClass("note-node")) nodes = nodes.union(n);\r
+  }\r
+  if(!nodes.length){toast("削除するアプリを選んでください");return;}\r
+  const edgeCount = hideAppNodes(nodes);\r
+  applyRelationFilter();\r
+  afterGraphChange();\r
+  if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);\r
+  toast("アプリを図から削除しました: "+nodes.length+"件 / 関連線 "+edgeCount+"件（Ctrl+Z で戻せます）");\r
+}\r
+\r
+function restoreRemovedApps(){\r
+  let restoredNodes = 0;\r
+  manuallyRemovedNodeIds.forEach((id)=>{\r
+    const node = cy.getElementById(id);\r
+    if(node.length){\r
+      node.removeClass("app-manual-hidden");\r
+      restoredNodes += 1;\r
+    }\r
+  });\r
+  let restoredEdges = 0;\r
+  nodeHiddenEdgeIds.forEach((id)=>{\r
+    const edge = cy.getElementById(id);\r
+    if(!edge.length) return;\r
+    if(manuallyRemovedEdgeIds.has(id)) return;\r
+    edge.removeClass("rel-manual-hidden");\r
+    restoredEdges += 1;\r
+  });\r
+  manuallyRemovedNodeIds.clear();\r
+  nodeHiddenEdgeIds.clear();\r
+  applyRelationFilter();\r
+  afterGraphChange();\r
+  if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);\r
+  toast(restoredNodes ? ("削除したアプリを戻しました: "+restoredNodes+"件 / 関連線 "+restoredEdges+"件") : "戻すアプリはありません");\r
+}\r
+function toggleRelationKind(kind){\r
+  relationKindState[kind] = !relationKindState[kind];\r
+  syncRelationKindButtons();\r
+  applyRelationFilter();\r
+  if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);\r
+  toast(relationKindJp(kind) + "の線: " + (relationKindState[kind] ? "表示" : "非表示"));\r
+}\r
+\r
+function pinNode(node,silent){\r
+  if(!node || !node.length) return;\r
+  node.lock();\r
+  node.addClass("pinned-node");\r
+  pinnedNodeIds.add(node.id());\r
+  if(!silent) toast("固定しました: "+(appMap.get(node.data("appId"))?.name || node.id()));\r
+}\r
+\r
+function unpinNode(node,silent){\r
+  if(!node || !node.length) return;\r
+  node.unlock();\r
+  node.removeClass("pinned-node");\r
+  pinnedNodeIds.delete(node.id());\r
+  if(!silent) toast("固定を解除しました: "+(appMap.get(node.data("appId"))?.name || node.id()));\r
+}\r
+\r
+function togglePinFromSelection(){\r
+  let nodes = cy.nodes(":selected");\r
+  if(!nodes.length && lastTappedNodeId){\r
+    const n = cy.getElementById(lastTappedNodeId);\r
+    if(n.length) nodes = nodes.union(n);\r
+  }\r
+  if(!nodes.length){toast("固定するアプリを選んでください");return;}\r
+  const allPinned = nodes.every(n=>pinnedNodeIds.has(n.id()));\r
+  nodes.forEach(n=>{if(allPinned) unpinNode(n,true); else pinNode(n,true);});\r
+  toast(allPinned ? "選んだアプリの固定を解除しました" : "選んだアプリを固定しました");\r
+}\r
+\r
+function clearPins(){\r
+  [...pinnedNodeIds].forEach(id=>{\r
+    const n = cy.getElementById(id);\r
+    if(n.length) n.unlock().removeClass("pinned-node");\r
+  });\r
+  pinnedNodeIds.clear();\r
+  toast("固定をすべて解除しました");\r
+}\r
+function relationKindJp(kind){\r
+  return kind==="LOOKUP"?"ルックアップ":(kind==="REF"?"関連レコード一覧":"アプリアクション");\r
+}\r
+`;
+
+  // raw-text:src/tabs/er-viewer/viewer-edit.js
+  var viewer_edit_default = `// ─── Manual additions (アプリ / 項目 / 関連線の手動追加 UI) ───\r
+let editorMode="";\r
+let pendingNodePos=null;\r
+let editorReturnFocus=null;\r
+\r
+function appOptionsHtml(selectedId){\r
+  return APPS.map(a=>'<option value="'+escapeHtml(String(a.id))+'"'+(String(a.id)===String(selectedId)?" selected":"")+'>'+escapeHtml(a.name)+(a.isCustom?"（手動）":" (App "+escapeHtml(String(a.id))+")")+'</option>').join("");\r
+}\r
+const MANUAL_FIELD_TYPES=[["SINGLE_LINE_TEXT","文字列(1行)"],["MULTI_LINE_TEXT","文字列(複数行)"],["NUMBER","数値"],["CALC","計算"],["DATE","日付"],["DATETIME","日時"],["DROP_DOWN","ドロップダウン"],["CHECK_BOX","チェックボックス"],["USER_SELECT","ユーザー選択"],["FILE","添付ファイル"],["LINK","リンク"],["RECORD_NUMBER","レコード番号"]];\r
+function openEditor(mode, title, sub, bodyHtml, opts){\r
+  const o=opts||{};\r
+  editorMode=mode;\r
+  document.getElementById("editor-title").textContent=title;\r
+  document.getElementById("editor-sub").textContent=sub;\r
+  document.getElementById("editor-body").innerHTML=bodyHtml;\r
+  const submitBtn=document.getElementById("editor-submit");\r
+  if(submitBtn) submitBtn.textContent=o.submitLabel||"追加";\r
+  const delBtn=document.getElementById("editor-delete");\r
+  if(delBtn) delBtn.style.display=o.showDelete?"":"none";\r
+  const editorOverlay=document.getElementById("editor-overlay");\r
+  if(!editorOverlay.classList.contains("open")) editorReturnFocus=rememberDialogFocus();\r
+  editorOverlay.classList.add("open");\r
+  const first=document.querySelector("#editor-body input,#editor-body select,#editor-body textarea");\r
+  if(first) setTimeout(()=>{try{first.focus();}catch(_){}},50);\r
+}\r
+function closeEditor(){\r
+  editorMode=""; pendingNodePos=null; editingNoteId=""; editingAppId=""; editingFieldRef=null; editingRelRef=null;\r
+  const editorOverlay=document.getElementById("editor-overlay");\r
+  const wasOpen=editorOverlay.classList.contains("open");\r
+  editorOverlay.classList.remove("open");\r
+  if(wasOpen){ const back=editorReturnFocus; editorReturnFocus=null; restoreDialogFocus(back); }\r
+}\r
+function submitEditor(){\r
+  if(editorMode==="app") addCustomApp();\r
+  else if(editorMode==="field") addCustomField();\r
+  else if(editorMode==="rel") addCustomRelation();\r
+  else if(editorMode==="note-add") submitNoteAdd();\r
+  else if(editorMode==="note-edit") submitNoteEdit();\r
+  else if(editorMode==="edit-app") submitEditApp();\r
+  else if(editorMode==="edit-field") submitEditField();\r
+  else if(editorMode==="edit-rel") submitEditRelation();\r
+}\r
+function deleteFromEditor(){\r
+  if(editorMode==="note-edit"){\r
+    const node=cy.getElementById(editingNoteId);\r
+    if(node.length) deleteNoteNodes(node);\r
+    closeEditor();\r
+    toast("メモを削除しました");\r
+  }\r
+}\r
+function currentTargetAppId(){\r
+  if(activeAppId) return activeAppId;\r
+  if(lastTappedNodeId){\r
+    const n=cy.getElementById(lastTappedNodeId);\r
+    if(n.length) return n.data("appId");\r
+  }\r
+  return APPS.length ? APPS[0].id : "";\r
+}\r
+function openAddApp(pos){\r
+  pendingNodePos=pos||null;\r
+  openEditor("app","アプリを追加","図にだけ追加します（kintone にアプリは作りません）。",\r
+    '<div class="ed-row"><label>アプリ名 *</label><input id="ed-app-name" placeholder="例: 外部システム / 顧客マスタ(構想)"></div>'\r
+    +'<div class="ed-row"><label>初期項目（任意・1行に1項目）</label><textarea id="ed-app-fields" placeholder="顧客名&#10;!顧客コード&#10;*金額"></textarea>'\r
+    +'<div class="ed-hint">行頭の記号で区分を指定できます: <b>!</b> 主キー / <b>*</b> 必須 / 無印 通常の項目。項目は後から「項目を追加」でも足せます。</div></div>');\r
+}\r
+function openAddField(){\r
+  if(!APPS.length){toast("追加先のアプリがありません");return;}\r
+  openEditor("field","項目を追加","図のカード・詳細・出力に項目を足します（kintone の設定は変わりません）。",\r
+    '<div class="ed-row"><label>対象アプリ</label><select id="ed-field-app">'+appOptionsHtml(currentTargetAppId())+'</select></div>'\r
+    +'<div class="ed-row"><label>項目名 *</label><input id="ed-field-name" placeholder="例: 承認ステータス"></div>'\r
+    +'<div class="ed-row"><label>フィールドコード（任意）</label><input id="ed-field-code" placeholder="未入力なら自動採番"></div>'\r
+    +'<div class="ed-row"><label>種類</label><select id="ed-field-type">'+MANUAL_FIELD_TYPES.map(t=>'<option value="'+t[0]+'">'+t[1]+'</option>').join("")+'</select></div>'\r
+    +'<div class="ed-row"><label>区分</label><select id="ed-field-kind"><option value="">通常</option><option value="pk">主キー</option><option value="required">必須</option><option value="lookup">ルックアップ</option><option value="ref">関連レコード一覧</option></select></div>');\r
+}\r
+function openAddRelation(){\r
+  if(APPS.length<2){toast("関連線を引くにはアプリが2つ以上必要です");return;}\r
+  openEditor("rel","関連線を追加","2 つのアプリの間に線を引きます。関連一覧と出力にも入ります（kintone の設定は変わりません）。",\r
+    '<div class="ed-row"><label>参照元アプリ</label><select id="ed-rel-from">'+appOptionsHtml(currentTargetAppId())+'</select></div>'\r
+    +'<div class="ed-row"><label>参照先アプリ</label><select id="ed-rel-to">'+appOptionsHtml("")+'</select></div>'\r
+    +'<div class="ed-row"><label>種類</label><select id="ed-rel-kind"><option value="LOOKUP">ルックアップ</option><option value="REF">関連レコード一覧</option><option value="ACTION">アプリアクション</option></select></div>'\r
+    +'<div class="ed-row"><label>ラベル（任意）</label><input id="ed-rel-label" placeholder="例: 顧客参照"></div>');\r
+}\r
+function parseManualFieldLines(text){\r
+  return String(text||"").split(/\\n+/).map(l=>l.trim()).filter(Boolean).slice(0,30).map(line=>{\r
+    const isPK=line.charAt(0)==="!";\r
+    const required=line.charAt(0)==="*";\r
+    const label=line.replace(/^[!*]\\s*/,"").trim();\r
+    customFieldSeq+=1;\r
+    return {code:"manual_"+customFieldSeq,label:label||("項目"+customFieldSeq),type:isPK?"RECORD_NUMBER":"SINGLE_LINE_TEXT",required:required||isPK,isPK,unique:isPK,isCustom:true};\r
+  });\r
+}\r
+function addCustomApp(){\r
+  const name=(document.getElementById("ed-app-name").value||"").trim();\r
+  if(!name){toast("アプリ名を入力してください");return;}\r
+  const fields=parseManualFieldLines(document.getElementById("ed-app-fields").value);\r
+  customAppSeq+=1;\r
+  const id=-customAppSeq;\r
+  const app={id,name,fields,totalFieldCount:fields.length,relations:[],ok:true,depth:0,isCustom:true,\r
+    requiredCount:fields.filter(f=>f.required).length,lookupCount:0,refCount:0};\r
+  registerManualApp(app);\r
+  const ext=cy.extent();\r
+  const pos=pendingNodePos||{x:(ext.x1+ext.x2)/2+(Math.random()*60-30),y:(ext.y1+ext.y2)/2+(Math.random()*60-30)};\r
+  const node=cy.add({group:"nodes",data:{id:"a"+id,label:buildNodeLabel(app),...nodeCardData(app),appId:id,isError:false,isStart:false,inSpace:false,isCustom:true,accent:"",fieldCount:fields.length,relCount:0,depth:0},position:pos});\r
+  // 表示範囲を絞っているときも、追加したアプリは見えるようにする\r
+  if(scopeMembers) scopeMembers.add(node.id());\r
+  if(semanticZoomActive) applySemanticZoom(cy.zoom(),true);\r
+  applyRelationLabelVisibility();\r
+  commands.push({label:"アプリ: "+app.name+" (手動追加)",icon:"⬡",appId:id,action:()=>focusApp(id)});\r
+  pushUndo("アプリ追加",()=>{\r
+    const n=cy.getElementById("a"+id);\r
+    if(n.length) cy.remove(n);\r
+    const idx=APPS.indexOf(app);\r
+    if(idx>=0) APPS.splice(idx,1);\r
+    appMap.delete(app.id);\r
+    if(scopeMembers) scopeMembers.delete("a"+id);\r
+    invalidateRelationCounts();\r
+    refreshSidebar();\r
+    if(String(activeAppId)===String(app.id)) closeDetail();\r
+  });\r
+  refreshSidebar();\r
+  closeEditor();\r
+  node.select();\r
+  renderAppDetail(app);\r
+  toast("アプリを追加しました: "+name);\r
+}\r
+function addCustomField(){\r
+  const app=findApp(document.getElementById("ed-field-app").value);\r
+  if(!app){toast("対象アプリが見つかりません");return;}\r
+  const name=(document.getElementById("ed-field-name").value||"").trim();\r
+  if(!name){toast("項目名を入力してください");return;}\r
+  const codeInput=(document.getElementById("ed-field-code").value||"").trim();\r
+  const type=document.getElementById("ed-field-type").value||"SINGLE_LINE_TEXT";\r
+  const kind=document.getElementById("ed-field-kind").value;\r
+  customFieldSeq+=1;\r
+  const field={code:codeInput||("manual_"+customFieldSeq),label:name,type,\r
+    required:kind==="required"||kind==="pk",isPK:kind==="pk",unique:kind==="pk",\r
+    isLookup:kind==="lookup",isRef:kind==="ref",isCustom:true};\r
+  applyManualFieldData(app,field);\r
+  pushUndo("項目追加",()=>{\r
+    [app.fields,app.allFields].forEach(list=>{\r
+      if(!Array.isArray(list)) return;\r
+      const index=list.indexOf(field);\r
+      if(index>=0) list.splice(index,1);\r
+    });\r
+    if(typeof app.totalFieldCount==="number") app.totalFieldCount=Math.max(0,app.totalFieldCount-1);\r
+    if(field.required) app.requiredCount=Math.max(0,(app.requiredCount||0)-1);\r
+    afterFieldVisibilityChange(app);\r
+  });\r
+  const node=cy.getElementById("a"+app.id);\r
+  if(node.length){\r
+    refreshNodeDisplay(node,app);\r
+    node.data("fieldCount",visibleFieldsForNode(app).length);\r
+  }\r
+  refreshSidebar();\r
+  if(String(activeAppId)===String(app.id)) renderAppDetail(app);\r
+  closeEditor();\r
+  toast("項目を追加: "+name+" → "+app.name);\r
+}\r
+function addCustomRelation(){\r
+  const from=findApp(document.getElementById("ed-rel-from").value);\r
+  const to=findApp(document.getElementById("ed-rel-to").value);\r
+  if(!from||!to){toast("アプリを選択してください");return;}\r
+  if(String(from.id)===String(to.id)){toast("参照元と参照先が同じアプリです");return;}\r
+  const kind=document.getElementById("ed-rel-kind").value||"LOOKUP";\r
+  const kindLabel=kind==="LOOKUP"?"ルックアップ":(kind==="REF"?"関連":"アクション");\r
+  const label=(document.getElementById("ed-rel-label").value||"").trim()||(kindLabel+"(手動)");\r
+  customRelSeq+=1;\r
+  const rel={from:"__MANUAL__"+customRelSeq,fromLabel:label,fromDisplay:label,toApp:to.id,toField:"",kind,isCustom:true};\r
+  const relIndex=from.relations.length;\r
+  applyManualRelationData(from,rel);\r
+  const fromNode=cy.getElementById("a"+from.id), toNode=cy.getElementById("a"+to.id);\r
+  // 表示範囲を絞っているときは、線を引いた両端のアプリを見えるようにする\r
+  if(scopeMembers&&(scopeMembers.has(fromNode.id())||scopeMembers.has(toNode.id()))){\r
+    const revealed=[fromNode,toNode].filter(n=>!scopeMembers.has(n.id()));\r
+    revealed.forEach(n=>scopeMembers.add(n.id()));\r
+    applyScopeClasses();\r
+  }\r
+  cy.add({group:"edges",data:{id:"e_"+from.id+"_"+relIndex,source:"a"+from.id,target:"a"+to.id,kind,label:edgeDisplayLabel(label),fromLabel:label,fromDisplay:label,isCustom:true,bundleCount:1,bundleWidth:1.8}});\r
+  if(scopeMembers) applyScopeClasses();\r
+  if(semanticZoomActive) applySemanticZoom(cy.zoom(),true);\r
+  pushUndo("関連線追加",()=>{\r
+    const ri=from.relations.indexOf(rel); if(ri>=0) from.relations.splice(ri,1);\r
+    if(kind==="LOOKUP") from.lookupCount=Math.max(0,(from.lookupCount||0)-1);\r
+    if(kind==="REF") from.refCount=Math.max(0,(from.refCount||0)-1);\r
+    const e=cy.getElementById("e_"+from.id+"_"+relIndex);\r
+    if(e.length) cy.remove(e);\r
+    invalidateRelationCounts();\r
+    [from,to].forEach(a=>{\r
+      const n=cy.getElementById("a"+a.id);\r
+      if(n.length){ n.data("relCount",a.relations.length); refreshNodeDisplay(n,a); }\r
+    });\r
+    applyRelationFilter();\r
+    refreshSidebar();\r
+    if(String(activeAppId)===String(from.id)) renderAppDetail(from);\r
+  });\r
+  [from,to].forEach(a=>{\r
+    const n=cy.getElementById("a"+a.id);\r
+    if(n.length){ n.data("relCount",a.relations.length); refreshNodeDisplay(n,a); }\r
+  });\r
+  applyRelationFilter();\r
+  applyRelationLabelVisibility();\r
+  refreshSidebar();\r
+  if(String(activeAppId)===String(from.id)) renderAppDetail(from);\r
+  closeEditor();\r
+  toast("関連線を追加: "+from.name+" → "+to.name);\r
+}\r
+document.getElementById("editor").addEventListener("keydown",e=>{\r
+  if(e.key==="Enter"&&e.target&&e.target.tagName!=="TEXTAREA"){e.preventDefault();submitEditor();}\r
+});\r
+\r
+// ─── 色スウォッチ（アプリ枠色・メモ色の選択UI） ───\r
+const APP_ACCENT_COLORS=[["","なし(既定)"],["#818cf8","藍"],["#60a5fa","青"],["#2dd4bf","青緑"],["#34d399","緑"],["#fbbf24","黄"],["#f87171","赤"],["#f472b6","桃"],["#a78bfa","紫"]];\r
+const NOTE_COLORS=[["#fef08a","黄"],["#fbcfe8","桃"],["#bae6fd","青"],["#bbf7d0","緑"],["#fed7aa","橙"],["#e9d5ff","紫"]];\r
+function swatchesHtml(colors,selected){\r
+  return '<div class="ed-swatches">'+colors.map(c=>{\r
+    const col=c[0];\r
+    const cls="ed-swatch"+(col?"":" ed-swatch--none")+(String(selected||"")===String(col)?" selected":"");\r
+    return '<button type="button" class="'+cls+'" data-color="'+escapeHtml(col)+'" title="'+escapeHtml(c[1])+'"'+(col?' style="background:'+escapeHtml(col)+'"':'')+' onclick="selectSwatch(this)"></button>';\r
+  }).join("")+'</div>';\r
+}\r
+function selectSwatch(btn){\r
+  btn.parentNode.querySelectorAll(".ed-swatch").forEach(b=>b.classList.remove("selected"));\r
+  btn.classList.add("selected");\r
+}\r
+function selectedSwatchColor(){\r
+  const sel=document.querySelector("#editor-body .ed-swatch.selected");\r
+  return sel?String(sel.dataset.color||""):"";\r
+}\r
+\r
+// ─── アプリの編集（表示名・枠色） ───\r
+let editingAppId="";\r
+function openEditApp(appId){\r
+  const app=findApp(appId!==undefined&&appId!==""?appId:currentTargetAppId());\r
+  if(!app){toast("編集するアプリを図で選んでください");return;}\r
+  editingAppId=app.id;\r
+  openEditor("edit-app","アプリを編集","図での名前と枠の色を変えます（kintone のアプリ名は変わりません）。",\r
+    '<div class="ed-row"><label>表示名 *</label><input id="ed-eapp-name"></div>'\r
+    +'<div class="ed-row"><label>枠色（グループ分けに便利）</label>'+swatchesHtml(APP_ACCENT_COLORS,appAccentColor(app))+'</div>',\r
+    {submitLabel:"保存"});\r
+  document.getElementById("ed-eapp-name").value=app.name||"";\r
+}\r
+function applyAppOverride(app,name,color){\r
+  app.name=name;\r
+  appOverrides[app.id]=Object.assign({},appOverrides[app.id],{name:name,color:color||""});\r
+  const node=cy.getElementById("a"+app.id);\r
+  if(node.length){\r
+    node.data("accent",color||"");\r
+    refreshNodeDisplay(node,app);\r
+  }\r
+  commands.forEach(c=>{ if(c.appId!==undefined&&String(c.appId)===String(app.id)) c.label="アプリ: "+name+" (ID:"+app.id+")"; });\r
+  refreshSidebar();\r
+  if(String(activeAppId)===String(app.id)) renderAppDetail(app);\r
+}\r
+function submitEditApp(){\r
+  const app=findApp(editingAppId);\r
+  if(!app){closeEditor();return;}\r
+  const name=(document.getElementById("ed-eapp-name").value||"").trim();\r
+  if(!name){toast("表示名を入力してください");return;}\r
+  const old={name:app.name,color:appAccentColor(app)};\r
+  applyAppOverride(app,name,selectedSwatchColor());\r
+  pushUndo("アプリ編集",()=>{applyAppOverride(app,old.name,old.color);});\r
+  closeEditor();\r
+  toast("アプリを更新: "+name);\r
+}\r
+\r
+// ─── 項目の編集（表示名・種類・区分） ───\r
+let editingFieldRef=null;\r
+function openEditFieldRow(btn){\r
+  const app=findApp(btn.dataset.app);\r
+  if(!app) return;\r
+  const key=decodeURIComponent(btn.dataset.key||"");\r
+  const field=findFieldByKey(app,key);\r
+  if(!field){toast("対象の項目が見つかりません");return;}\r
+  editingFieldRef={appId:app.id,key};\r
+  const currentKind=field.isPK?"pk":(field.isLookup?"lookup":(field.isRef?"ref":(field.required?"required":"")));\r
+  const typeOptions=MANUAL_FIELD_TYPES.some(t=>t[0]===field.type)?MANUAL_FIELD_TYPES:[[field.type,fieldTypeJpLabel(field.type)]].concat(MANUAL_FIELD_TYPES);\r
+  openEditor("edit-field","項目を編集","図での名前・種類・区分を変えます（kintone の設定は変わりません）。",\r
+    '<div class="ed-row"><label>項目名 *</label><input id="ed-efield-name"></div>'\r
+    +'<div class="ed-row"><label>種類</label><select id="ed-efield-type">'+typeOptions.map(t=>'<option value="'+escapeHtml(t[0])+'"'+(t[0]===field.type?" selected":"")+'>'+escapeHtml(t[1])+'</option>').join("")+'</select></div>'\r
+    +'<div class="ed-row"><label>区分</label><select id="ed-efield-kind">'\r
+      +'<option value=""'+(currentKind===""?" selected":"")+'>通常</option>'\r
+      +'<option value="pk"'+(currentKind==="pk"?" selected":"")+'>主キー</option>'\r
+      +'<option value="required"'+(currentKind==="required"?" selected":"")+'>必須</option>'\r
+      +'<option value="lookup"'+(currentKind==="lookup"?" selected":"")+'>ルックアップ</option>'\r
+      +'<option value="ref"'+(currentKind==="ref"?" selected":"")+'>関連レコード一覧</option>'\r
+    +'</select></div>'\r
+    +'<div class="ed-hint">フィールドコード: <b>'+escapeHtml(field.code||"-")+'</b>（コードは変更できません）</div>',\r
+    {submitLabel:"保存"});\r
+  document.getElementById("ed-efield-name").value=field.label||"";\r
+}\r
+function fieldPatchFromKind(kind){\r
+  return {isPK:kind==="pk",unique:kind==="pk",required:kind==="required"||kind==="pk",isLookup:kind==="lookup",isRef:kind==="ref"};\r
+}\r
+function applyFieldOverride(app,key,patch){\r
+  const field=findFieldByKey(app,key);\r
+  if(!field) return;\r
+  Object.assign(field,patch);\r
+  fieldOverrides[key]=Object.assign({},fieldOverrides[key],patch);\r
+  afterFieldVisibilityChange(app);\r
+}\r
+function submitEditField(){\r
+  if(!editingFieldRef){closeEditor();return;}\r
+  const appId=editingFieldRef.appId, key=editingFieldRef.key;\r
+  const app=findApp(appId);\r
+  const field=app&&findFieldByKey(app,key);\r
+  if(!field){closeEditor();return;}\r
+  const name=(document.getElementById("ed-efield-name").value||"").trim();\r
+  if(!name){toast("項目名を入力してください");return;}\r
+  const old={label:field.label,type:field.type,isPK:!!field.isPK,unique:!!field.unique,required:!!field.required,isLookup:!!field.isLookup,isRef:!!field.isRef};\r
+  const patch=Object.assign({label:name,type:document.getElementById("ed-efield-type").value||field.type},fieldPatchFromKind(document.getElementById("ed-efield-kind").value));\r
+  applyFieldOverride(app,key,patch);\r
+  pushUndo("項目編集",()=>{const a=findApp(appId);if(a)applyFieldOverride(a,key,old);});\r
+  closeEditor();\r
+  toast("項目を更新: "+name);\r
+}\r
+\r
+// ─── 関連線の編集（ラベル・種類） ───\r
+let editingRelRef=null;\r
+function openEditRelationRow(btn){\r
+  const edgeId=String(btn.dataset.edge||"");\r
+  const ref=parseEdgeId(edgeId);\r
+  const app=ref&&findApp(ref.appId);\r
+  const rel=app&&(app.relations||[])[ref.ri];\r
+  if(!rel){toast("対象の関連線が見つかりません");return;}\r
+  editingRelRef={appId:app.id,edgeId,ri:ref.ri};\r
+  openEditor("edit-rel","関連線を編集","図での線の名前と種類を変えます（kintone の設定は変わりません）。",\r
+    '<div class="ed-row"><label>ラベル</label><input id="ed-erel-label"></div>'\r
+    +'<div class="ed-row"><label>種類</label><select id="ed-erel-kind">'\r
+      +'<option value="LOOKUP"'+(rel.kind==="LOOKUP"?" selected":"")+'>ルックアップ</option>'\r
+      +'<option value="REF"'+(rel.kind==="REF"?" selected":"")+'>関連レコード一覧</option>'\r
+      +'<option value="ACTION"'+(rel.kind==="ACTION"?" selected":"")+'>アプリアクション</option>'\r
+    +'</select></div>',\r
+    {submitLabel:"保存"});\r
+  document.getElementById("ed-erel-label").value=rel.fromDisplay||rel.fromLabel||"";\r
+}\r
+function applyRelationOverride(app,edgeId,ri,patch){\r
+  const rel=(app.relations||[])[ri];\r
+  if(!rel) return;\r
+  Object.assign(rel,patch);\r
+  relationOverrides[edgeId]=Object.assign({},relationOverrides[edgeId],patch);\r
+  const edge=cy.getElementById(edgeId);\r
+  if(edge.length){\r
+    edge.data("kind",rel.kind);\r
+    edge.data("label",edgeDisplayLabel(rel.fromDisplay||rel.fromLabel||""));\r
+    edge.data("fromLabel",rel.fromLabel);\r
+    edge.data("fromDisplay",rel.fromDisplay||rel.fromLabel||"");\r
+  }\r
+  applyRelationFilter();\r
+  refreshSidebar();\r
+  refreshOpenDetail();\r
+}\r
+function submitEditRelation(){\r
+  if(!editingRelRef){closeEditor();return;}\r
+  const appId=editingRelRef.appId, edgeId=editingRelRef.edgeId, ri=editingRelRef.ri;\r
+  const app=findApp(appId);\r
+  const rel=app&&(app.relations||[])[ri];\r
+  if(!rel){closeEditor();return;}\r
+  const label=(document.getElementById("ed-erel-label").value||"").trim()||rel.fromLabel||"関連";\r
+  const kind=document.getElementById("ed-erel-kind").value||rel.kind;\r
+  const old={fromLabel:rel.fromLabel,fromDisplay:rel.fromDisplay,kind:rel.kind};\r
+  applyRelationOverride(app,edgeId,ri,{fromLabel:label,fromDisplay:label,kind});\r
+  pushUndo("関連線編集",()=>{const a=findApp(appId);if(a)applyRelationOverride(a,edgeId,ri,old);});\r
+  closeEditor();\r
+  toast("関連線を更新しました");\r
+}\r
+\r
+// ─── メモ（付箋）ノード ───\r
+let noteSeq=(ER_EDIT_STATE&&ER_EDIT_STATE.seq&&Number(ER_EDIT_STATE.seq.note))||0;\r
+let editingNoteId="";\r
+function addNoteElement(data){\r
+  return cy.add({group:"nodes",classes:"note-node",data:{id:data.id,label:data.text,noteColor:data.color||"#fef08a",isNote:true},position:{x:Number(data.x)||0,y:Number(data.y)||0}});\r
+}\r
+if(ER_EDIT_STATE&&Array.isArray(ER_EDIT_STATE.notes)){\r
+  try{ ER_EDIT_STATE.notes.forEach(n=>{ if(n&&n.id&&!cy.getElementById(n.id).length) addNoteElement(n); }); }\r
+  catch(err){ console.error("[ER] メモの復元に失敗", err); }\r
+}\r
+function openAddNote(pos){\r
+  pendingNodePos=pos||null;\r
+  openEditor("note-add","メモを追加","図に付箋を置きます。出力のファイルには入りませんが、編集済みHTMLに残ります。",\r
+    '<div class="ed-row"><label>メモ内容 *</label><textarea id="ed-note-text" placeholder="例: このアプリ群は受注フロー"></textarea></div>'\r
+    +'<div class="ed-row"><label>色</label>'+swatchesHtml(NOTE_COLORS,"#fef08a")+'</div>');\r
+}\r
+function openEditNote(id){\r
+  const node=cy.getElementById(id);\r
+  if(!node.length) return;\r
+  editingNoteId=id;\r
+  openEditor("note-edit","メモを編集","内容と色を変えます。ドラッグで移動、ここから削除もできます。",\r
+    '<div class="ed-row"><label>メモ内容 *</label><textarea id="ed-note-text"></textarea></div>'\r
+    +'<div class="ed-row"><label>色</label>'+swatchesHtml(NOTE_COLORS,node.data("noteColor"))+'</div>',\r
+    {submitLabel:"保存",showDelete:true});\r
+  document.getElementById("ed-note-text").value=node.data("label")||"";\r
+}\r
+function submitNoteAdd(){\r
+  const text=(document.getElementById("ed-note-text").value||"").trim();\r
+  if(!text){toast("メモ内容を入力してください");return;}\r
+  noteSeq+=1;\r
+  const ext=cy.extent();\r
+  const pos=pendingNodePos||{x:(ext.x1+ext.x2)/2,y:(ext.y1+ext.y2)/2};\r
+  const data={id:"note_"+noteSeq,text,color:selectedSwatchColor()||"#fef08a",x:pos.x,y:pos.y};\r
+  const node=addNoteElement(data);\r
+  pushUndo("メモ追加",()=>{const n=cy.getElementById(data.id);if(n.length)cy.remove(n);});\r
+  closeEditor();\r
+  node.select();\r
+  toast("メモを追加しました（押すと編集、ドラッグで移動）");\r
+}\r
+function submitNoteEdit(){\r
+  const node=cy.getElementById(editingNoteId);\r
+  if(!node.length){closeEditor();return;}\r
+  const text=(document.getElementById("ed-note-text").value||"").trim();\r
+  if(!text){toast("メモ内容を入力してください");return;}\r
+  const noteId=node.id();\r
+  const old={text:node.data("label"),color:node.data("noteColor")};\r
+  node.data("label",text);\r
+  node.data("noteColor",selectedSwatchColor()||old.color);\r
+  pushUndo("メモ編集",()=>{const n=cy.getElementById(noteId);if(n.length){n.data("label",old.text);n.data("noteColor",old.color);}});\r
+  closeEditor();\r
+  toast("メモを更新しました");\r
+}\r
+function deleteNoteNodes(nodes){\r
+  const saved=[];\r
+  nodes.forEach(n=>{const p=n.position();saved.push({id:n.id(),text:n.data("label"),color:n.data("noteColor"),x:p.x,y:p.y});});\r
+  cy.remove(nodes);\r
+  if(saved.length) pushUndo("メモ削除 "+saved.length+"件",()=>{saved.forEach(d=>{if(!cy.getElementById(d.id).length) addNoteElement(d);});});\r
+}\r
+\r
+// ─── 整列ツール（複数選択ノードの位置合わせ） ───\r
+function selectedMovableNodes(){\r
+  return cy.nodes(":selected").not(".app-manual-hidden");\r
+}\r
+function pushPositionsUndo(nodes,label){\r
+  const saved=nodes.map(n=>({id:n.id(),x:n.position("x"),y:n.position("y")}));\r
+  pushUndo(label,()=>{saved.forEach(p=>{const n=cy.getElementById(p.id);if(n.length)n.position({x:p.x,y:p.y});});});\r
+}\r
+function alignSelected(axis){\r
+  const nodes=selectedMovableNodes();\r
+  if(nodes.length<2){toast("2 つ以上のアプリを選んでください（Shift+ドラッグ / Shift+クリック）");return;}\r
+  pushPositionsUndo(nodes,"整列");\r
+  if(axis==="x"){\r
+    const v=Math.min.apply(null,nodes.map(n=>n.position("x")));\r
+    nodes.forEach(n=>n.animate({position:{x:v,y:n.position("y")}},{duration:220}));\r
+    toast("選んだアプリを左にそろえました");\r
+  }else{\r
+    const v=Math.min.apply(null,nodes.map(n=>n.position("y")));\r
+    nodes.forEach(n=>n.animate({position:{x:n.position("x"),y:v}},{duration:220}));\r
+    toast("選んだアプリを上にそろえました");\r
+  }\r
+}\r
+function distributeSelected(axis){\r
+  const nodes=selectedMovableNodes();\r
+  if(nodes.length<3){toast("3 つ以上のアプリを選んでください");return;}\r
+  pushPositionsUndo(nodes,"等間隔配置");\r
+  const arr=nodes.sort((a,b)=>a.position(axis)-b.position(axis));\r
+  const first=arr[0].position(axis), last=arr[arr.length-1].position(axis);\r
+  const step=(last-first)/(arr.length-1);\r
+  arr.forEach((n,i)=>{\r
+    const pos={x:n.position("x"),y:n.position("y")};\r
+    pos[axis]=first+step*i;\r
+    n.animate({position:pos},{duration:220});\r
+  });\r
+  toast(axis==="x"?"横に等間隔で並べました":"縦に等間隔で並べました");\r
+}\r
+\r
+// ─── 深さごとの色分け ───\r
+function setAppAccent(app,color){\r
+  appOverrides[app.id]=Object.assign({},appOverrides[app.id],{name:app.name,color:color||""});\r
+  const n=cy.getElementById("a"+app.id);\r
+  if(n.length) n.data("accent",color||"");\r
+}\r
+function snapshotAccents(){\r
+  const map={};\r
+  APPS.forEach(app=>{map[app.id]=appAccentColor(app);});\r
+  return map;\r
+}\r
+function restoreAccents(map){\r
+  APPS.forEach(app=>{setAppAccent(app,map[app.id]||"");});\r
+}\r
+function autoColorByDepth(){\r
+  const palette=["#818cf8","#60a5fa","#34d399","#fbbf24","#f87171","#f472b6","#a78bfa","#2dd4bf"];\r
+  const old=snapshotAccents();\r
+  APPS.forEach(app=>{setAppAccent(app,palette[(app.depth||0)%palette.length]);});\r
+  pushUndo("深さで色分け",()=>restoreAccents(old));\r
+  toast("探索の深さごとに枠を色分けしました（起点は藍）");\r
+}\r
+function clearNodeColors(){\r
+  const old=snapshotAccents();\r
+  APPS.forEach(app=>{setAppAccent(app,"");});\r
+  pushUndo("色分け解除",()=>restoreAccents(old));\r
+  toast("枠の色分けを解除しました");\r
+}\r
+\r
+// ─── 項目・関連線の個別削除/復元（詳細パネルから操作） ───\r
+function afterFieldVisibilityChange(app){\r
+  const node = cy.getElementById("a"+app.id);\r
+  if(node.length){\r
+    refreshNodeDisplay(node,app);\r
+    node.data("fieldCount", visibleFieldsForNode(app).length);\r
+  }\r
+  refreshSidebar();\r
+  if(String(activeAppId)===String(app.id)) renderAppDetail(app);\r
+}\r
+function hideFieldFromRow(btn){\r
+  const app = findApp(btn.dataset.app);\r
+  if(!app) return;\r
+  const key = decodeURIComponent(btn.dataset.key || "");\r
+  if(!key) return;\r
+  hiddenFieldKeys.add(key);\r
+  pushUndo("項目非表示",()=>{\r
+    hiddenFieldKeys.delete(key);\r
+    const a=findApp(app.id);\r
+    if(a) afterFieldVisibilityChange(a);\r
+  });\r
+  afterFieldVisibilityChange(app);\r
+  renderAppDetail(app);\r
+  toast("項目を図から隠しました（詳細から戻せます）");\r
+}\r
+function restoreHiddenFields(appId){\r
+  const app = findApp(appId);\r
+  if(!app) return;\r
+  const prefix = String(app.id) + "::";\r
+  let restored = 0;\r
+  [...hiddenFieldKeys].forEach(key=>{\r
+    if(key.indexOf(prefix) === 0){ hiddenFieldKeys.delete(key); restored += 1; }\r
+  });\r
+  afterFieldVisibilityChange(app);\r
+  renderAppDetail(app);\r
+  toast(restored ? ("隠した項目を戻しました: "+restored+"件") : "戻す項目はありません");\r
+}\r
+function restoreAllHiddenFields(){\r
+  const count = hiddenFieldKeys.size;\r
+  hiddenFieldKeys.clear();\r
+  refreshNodeLabels();\r
+  refreshSidebar();\r
+  if(activeAppId){\r
+    const app = findApp(activeAppId);\r
+    if(app) renderAppDetail(app);\r
+  }\r
+  toast(count ? ("隠した項目をすべて戻しました: "+count+"件") : "戻す項目はありません");\r
+}\r
+function toggleRelationEdgeFromRow(btn){\r
+  const edgeId = String(btn.dataset.edge || "");\r
+  const edge = cy.getElementById(edgeId);\r
+  if(!edge.length){ toast("対応する関連線が見つかりません"); return; }\r
+  if(edge.hasClass("rel-manual-hidden")){\r
+    manuallyRemovedEdgeIds.delete(edgeId);\r
+    nodeHiddenEdgeIds.delete(edgeId);\r
+    edge.removeClass("rel-manual-hidden");\r
+    toast("関連線を戻しました");\r
+  }else{\r
+    manuallyRemovedEdgeIds.add(edgeId);\r
+    edge.addClass("rel-manual-hidden");\r
+    toast("関連線を図から削除しました（同じボタンで戻せます）");\r
+  }\r
+  applyRelationFilter();\r
+  if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);\r
+  afterGraphChange();\r
+  refreshOpenDetail();\r
+}\r
+`;
+
+  // raw-text:src/tabs/er-viewer/viewer-ui.js
+  var viewer_ui_default = `// ER図ビューアー: 画面の部品（検索・アプリ一覧・詳細・構造チェック・表のビュー・メニュー・キーボード・印刷）。\r
+\r
+// ─── 関連の説明（詳細・表・吹き出し・出力で共通） ───\r
+// 関連の詳細（コピーするフィールド・表示するフィールド・絞り込み条件）。er-model.ts の describeErRelation* と同じ結果にする。\r
+function relCopyText(r){\r
+  const pairs=Array.isArray(r&&r.copyFields)?r.copyFields:[];\r
+  return pairs.filter(m=>m&&m.from&&m.to).map(m=>r.kind==="ACTION"?m.from+" → 起動先 "+m.to:"参照先 "+m.from+" → "+m.to).join(" / ");\r
+}\r
+function relDisplayText(r){\r
+  return (Array.isArray(r&&r.displayFields)?r.displayFields:[]).filter(Boolean).join(" / ");\r
+}\r
+function relFilterText(r){\r
+  return typeof (r&&r.filterCond)==="string"?r.filterCond.trim():"";\r
+}\r
+function relFieldsText(r){\r
+  return r&&r.kind==="REF"?relDisplayText(r):relCopyText(r);\r
+}\r
+// 詳細パネルの関連の行に出す、コピー・表示・絞り込みの説明（折り返して全文を示す）\r
+function relationDetailHtml(rel){\r
+  const rows=[["コピー",relCopyText(rel)],["表示",relDisplayText(rel)],["絞り込み",relFilterText(rel)]].filter(row=>row[1]);\r
+  return rows.map(row=>'<div class="field-detail"><b>'+row[0]+'</b>: '+escapeHtml(row[1])+'</div>').join("");\r
+}\r
+function fieldLabelByCode(app,code){\r
+  if(!app||!code) return "";\r
+  const field=(app.allFields||app.fields||[]).find(f=>f&&(String(f.code)===String(code)||String(f.path||"")===String(code)));\r
+  return field?buildFieldDisplayName(field):"";\r
+}\r
+function labelWithCode(label,code){\r
+  const l=String(label||""),c=String(code||"");\r
+  if(!l) return c;\r
+  if(!c||l===c) return l;\r
+  return l+"（"+c+"）";\r
+}\r
+// 参照元の項目: ルックアップは項目、関連レコード一覧は一覧の名前と結合元、アプリアクションはアクション名\r
+function relSourceFieldText(rel){\r
+  if(rel.kind==="REF") return "一覧「"+(rel.controlFieldLabel||rel.controlField||"-")+"」・結合 "+labelWithCode(rel.fromDisplay||rel.fromLabel,rel.sourceJoinField||rel.from);\r
+  if(rel.kind==="ACTION") return "アクション「"+(rel.fromDisplay||rel.fromLabel||"-")+"」";\r
+  return labelWithCode(rel.fromDisplay||rel.fromLabel,String(rel.from||"").startsWith("__")?"":rel.from);\r
+}\r
+function relTargetFieldText(rel,target){\r
+  if(rel.kind==="ACTION"||!rel.toField) return "";\r
+  return labelWithCode(fieldLabelByCode(target,rel.toField),rel.toField);\r
+}\r
+function appDisplayName(app,id){\r
+  return app?String(app.name||("アプリ "+app.id)):"未取得の参照先";\r
+}\r
+\r
+// ─── 検索（図の強調・アプリ一覧・表で共通） ───\r
+let searchQuery="";\r
+let searchMatchNodes=[],searchMatchIndex=-1,searchHiddenOnlyIds=new Set();\r
+function normalizedQuery(){ return String(searchQuery||"").trim().toLowerCase(); }\r
+function fieldMatchesQuery(f,low){\r
+  return buildFieldDisplayName(f).toLowerCase().includes(low)||String(f.code||"").toLowerCase().includes(low)||String(f.path||"").toLowerCase().includes(low);\r
+}\r
+// アプリ名・ID と、取得済みの全項目の名前・コードで探す（表示密度によってカードに出ない項目でも、どのアプリにあるかを探せるように）\r
+function appMatchesQuery(app,low){\r
+  if(!low) return true;\r
+  if(String(app.name||"").toLowerCase().includes(low) || String(app.id).includes(low)) return true;\r
+  return allFieldsForApp(app).some(f=>!isFieldHidden(app,f)&&fieldMatchesQuery(f,low));\r
+}\r
+function updateSearchMeta(query, matched, hiddenOnly, outside){\r
+  const pill = document.getElementById("search-meta");\r
+  if(!pill) return;\r
+  const normalized = String(query || "").trim();\r
+  pill.hidden = !normalized;\r
+  if(!normalized){\r
+    pill.innerHTML = "<b>検索</b> すべて";\r
+    pill.title = "";\r
+    return;\r
+  }\r
+  // 操作バーが折り返さないよう、表示は短いまま、図に出ていない項目で一致した件数は吹き出しで示す\r
+  pill.innerHTML = "<b>検索</b> " + matched + "件";\r
+  const notes = [];\r
+  if(outside) notes.push("うち" + outside + "件は図の表示範囲の外です（Enter でそのアプリのまわりへ移ります）");\r
+  if(hiddenOnly) notes.push("うち" + hiddenOnly + "件は、現在の表示密度では図に出ていない項目で一致したアプリです（表示密度を「詳細」にすると項目を確認できます）");\r
+  pill.title = normalized + (notes.length ? "。" + notes.join("。") : "");\r
+}\r
+function searchGraph(q){\r
+  searchQuery=String(q||"");\r
+  cy.elements().removeClass("highlighted dimmed");\r
+  const low=normalizedQuery();\r
+  if(!low){\r
+    updateSearchMeta("", 0);\r
+    searchMatchNodes=[];searchMatchIndex=-1;\r
+    refreshAppList();\r
+    refreshActiveTable();\r
+    return;\r
+  }\r
+  const fieldMatches=f=>fieldMatchesQuery(f,low);\r
+  searchHiddenOnlyIds=new Set();\r
+  const matched=cy.nodes().not(".app-manual-hidden").filter(n=>{\r
+    const app=appMap.get(n.data("appId"));\r
+    if(!app) return false;\r
+    if(app.name.toLowerCase().includes(low) || String(app.id).includes(low)) return true;\r
+    if(visibleFieldsForNode(app).some(fieldMatches)) return true;\r
+    if(allFieldsForApp(app).some(f=>!isFieldHidden(app,f)&&fieldMatches(f))){ searchHiddenOnlyIds.add(n.id()); return true; }\r
+    return false;\r
+  });\r
+  const outside=matched.filter(n=>n.hasClass("scope-out")).length;\r
+  updateSearchMeta(q, matched.length, searchHiddenOnlyIds.size, outside);\r
+  searchMatchNodes=matched.sort((a,b)=>String(appMap.get(a.data("appId"))?.name||"").localeCompare(String(appMap.get(b.data("appId"))?.name||""))).toArray();\r
+  searchMatchIndex=-1;\r
+  if(matched.length){\r
+    matched.addClass("highlighted");\r
+    const visibleEdges = matched.connectedEdges().filter(e=>!e.hasClass("rel-hidden") && !e.hasClass("rel-manual-hidden"));\r
+    cy.elements().not(matched).not(visibleEdges).not(".note-node").addClass("dimmed");\r
+  }\r
+  refreshAppList();\r
+  refreshActiveTable();\r
+}\r
+function focusNextSearchMatch(){\r
+  if(activeView!=="diagram"){ setView("diagram"); }\r
+  if(!searchMatchNodes.length){toast("検索に一致するアプリがありません");return;}\r
+  searchMatchIndex=(searchMatchIndex+1)%searchMatchNodes.length;\r
+  const n=searchMatchNodes[searchMatchIndex];\r
+  const index=searchMatchIndex;\r
+  ensureNodeVisible(n).then(()=>{\r
+    cy.animate({center:{eles:n},zoom:Math.max(cy.zoom(),1.1)},{duration:300});\r
+    toast("一致 "+(index+1)+"/"+searchMatchNodes.length+": "+(appMap.get(n.data("appId"))?.name||"")+(searchHiddenOnlyIds.has(n.id())?"（一致した項目は現在の表示密度では図に出ていません）":""));\r
+  });\r
+}\r
+function clearSearch(){\r
+  const box=document.getElementById("search-box");\r
+  if(box) box.value="";\r
+  searchGraph("");\r
+}\r
+\r
+// ─── 詳細パネル（アプリ・関連線・未取得の参照先） ───\r
+let detailMode="";\r
+let detailEdgeId="";\r
+function openSidePanel(id){\r
+  ["detail","analysis-panel"].forEach(other=>{ if(other!==id) document.getElementById(other)?.classList.remove("open"); });\r
+  document.getElementById("analysis-toggle-btn")?.setAttribute("aria-expanded",String(id==="analysis-panel"));\r
+  document.getElementById(id)?.classList.add("open");\r
+}\r
+function detailBadgesHtml(app){\r
+  const badges=[];\r
+  if(isMarkedStartApp(app)) badges.push('<span class="badge badge-start">起点</span>');\r
+  if(isFailedApp(app)) badges.push('<span class="badge badge-failed">⚠ 取得失敗</span>');\r
+  else if(isPartialApp(app)) badges.push('<span class="badge badge-partial">△ 一部取得</span>');\r
+  else if(!app.isCustom) badges.push('<span class="badge badge-ok">✓ 取得完了</span>');\r
+  if(app.isCustom) badges.push('<span class="badge badge-custom">手動で追加</span>');\r
+  if(!(app.relations||[]).length&&!incomingRelationCount(app.id)) badges.push('<span class="badge badge-nolink">関連なし</span>');\r
+  if(isInSpaceApp(app)) badges.push('<span class="badge badge-nolink">スペース #'+escapeHtml(erSpaceId)+'</span>');\r
+  const node=cy.getElementById("a"+app.id);\r
+  if(node.length&&node.hasClass("app-manual-hidden")) badges.push('<span class="badge badge-nolink">図から削除済み</span>');\r
+  return '<div class="detail-badges">'+badges.join("")+'</div>';\r
+}\r
+function renderAppDetail(app){\r
+  detailMode="app";\r
+  detailEdgeId="";\r
+  const visibleFields = visibleFieldsForNode(app);\r
+  const fieldGroups = detailFieldGroups(app);\r
+  document.getElementById("detail-title").textContent = app.name;\r
+  const realFieldTotal = typeof app.totalFieldCount === "number" ? app.totalFieldCount : visibleFields.length;\r
+  const fieldPillText = realFieldTotal > visibleFields.length\r
+    ? '<b>項目</b> ' + visibleFields.length + '/' + realFieldTotal\r
+    : '<b>項目</b> ' + visibleFields.length;\r
+  const hiddenCnt = hiddenFieldCount(app);\r
+  const facts=[app.isCustom ? "手動で追加したアプリ" : "App " + escapeHtml(app.id)];\r
+  if(app.createdAt) facts.push("作成 " + escapeHtml(new Date(app.createdAt).toLocaleDateString()));\r
+  if(app.modifiedAt) facts.push("更新 " + escapeHtml(new Date(app.modifiedAt).toLocaleDateString()));\r
+  if(!app.isCustom) facts.push("探索の深さ " + (app.depth || 0));\r
+  const node = cy.getElementById("a"+app.id);\r
+  document.getElementById("detail-meta").innerHTML = detailBadgesHtml(app)\r
+    + '<div class="app-meta">' + facts.join(" ・ ") + '</div>'\r
+    + '<div class="detail-actions">'\r
+    + (node.length && !node.hasClass("app-manual-hidden") ? '<button type="button" class="tb tb-primary" data-app="' + escapeHtml(String(app.id)) + '" onclick="showAroundApp(this.dataset.app)">このアプリのまわりを表示</button>' : '')\r
+    + '<button type="button" class="tb" title="図での名前と枠の色を変えます（kintone のアプリ名は変わりません）" data-app="' + escapeHtml(String(app.id)) + '" onclick="openEditApp(this.dataset.app)">名前・色を編集</button>'\r
+    + (hiddenCnt ? '<button type="button" class="tb" title="このアプリで隠した項目をすべて戻します" data-app="' + escapeHtml(String(app.id)) + '" onclick="restoreHiddenFields(this.dataset.app)">隠した項目 ' + hiddenCnt + ' 件を戻す</button>' : '')\r
+    + '</div>'\r
+    + '<div class="detail-chip-row">'\r
+    + '<span class="meta-pill" title="表示中 / 総数（表示数はカードの項目の設定によります）">' + fieldPillText + '</span>'\r
+    + '<span class="meta-pill"><b>ルックアップ</b> ' + fieldGroups.lookup.length + '</span>'\r
+    + '<span class="meta-pill"><b>関連レコード一覧</b> ' + fieldGroups.ref.length + '</span>'\r
+    + '<span class="meta-pill"><b>必須</b> ' + fieldGroups.required.length + '</span>'\r
+    + '</div>'\r
+    + ((app.issues||[]).length?'<div class="analysis-note '+(isFailedApp(app)?'is-error':'is-warn')+'" role="status"><strong>'+(isFailedApp(app)?'取得失敗':'一部取得')+'</strong><br>'+(app.issues||[]).map(issue=>escapeHtml(issue.message||issue.code||"取得上の注意")).join('<br>')+'</div>':'');\r
+\r
+  let relHtml = "";\r
+  const outbound = (app.relations || []).map((rel, ri)=>({ rel, ri }));\r
+  relHtml += '<div class="field-group-title">参照している関連 (' + outbound.length + ')</div>';\r
+  if(!outbound.length) relHtml += '<div class="field-sub">このアプリから参照している関連はありません。</div>';\r
+  outbound\r
+    .slice()\r
+    .sort((a,b)=>(a.rel.kind===b.rel.kind?0:(["LOOKUP","REF","ACTION"].indexOf(a.rel.kind)-["LOOKUP","REF","ACTION"].indexOf(b.rel.kind)))||String(a.rel.fromDisplay || a.rel.fromLabel || a.rel.from || '').localeCompare(String(b.rel.fromDisplay || b.rel.fromLabel || b.rel.from || '')))\r
+    .forEach((item)=>{\r
+      const rel = item.rel;\r
+      const targetApp = appMap.get(rel.toApp);\r
+      const targetLabel = (targetApp ? targetApp.name : "未取得の参照先") + " (App " + rel.toApp + ")";\r
+      const relationLabel = rel.kind==="REF" ? (rel.controlFieldLabel || rel.fromDisplay || rel.fromLabel || "関連レコード一覧") : (rel.fromDisplay || rel.fromLabel || rel.from || relationKindJp(rel.kind));\r
+      const relationMeta = [];\r
+      if(rel.kind==="REF") relationMeta.push("結合: "+(rel.fromDisplay||rel.sourceJoinField||rel.from||"?")+" → "+(rel.toField||"?"));\r
+      else if(rel.toField) relationMeta.push("参照先の項目: " + labelWithCode(fieldLabelByCode(targetApp,rel.toField),rel.toField));\r
+      if(rel.kind==="LOOKUP" && rel.fromPath && rel.fromPath !== rel.from) relationMeta.push("path: " + rel.fromPath);\r
+      const edgeId = "e_" + app.id + "_" + item.ri;\r
+      const edge = cy.getElementById(edgeId);\r
+      const edgeHidden = edge.length && edge.hasClass("rel-manual-hidden");\r
+      const relEditBtn = '<button type="button" class="row-edit" title="この関連線を編集（名前・種類）" aria-label="この関連線を編集" data-edge="' + escapeHtml(edgeId) + '" data-app="' + escapeHtml(String(app.id)) + '" onclick="openEditRelationRow(this);event.stopPropagation();">✎</button>';\r
+      const edgeBtn = edge.length\r
+        ? relEditBtn + '<button type="button" class="row-del' + (edgeHidden ? ' row-del--restore' : '') + '" title="' + (edgeHidden ? 'この関連線を戻す' : 'この関連線を図から削除') + '" aria-label="' + (edgeHidden ? 'この関連線を戻す' : 'この関連線を図から削除') + '" data-edge="' + escapeHtml(edgeId) + '" data-app="' + escapeHtml(String(app.id)) + '" onclick="toggleRelationEdgeFromRow(this);event.stopPropagation();">' + (edgeHidden ? '↺' : '✕') + '</button>'\r
+        : '';\r
+      relHtml += '<div class="field-row' + (edgeHidden ? ' field-row--hidden' : '') + '">'\r
+        + '<span class="field-icon kind-' + escapeHtml(rel.kind) + '" aria-hidden="true">→</span>'\r
+        + '<div class="field-main">'\r
+        + '<div class="field-name"><span class="kind-badge kind-' + escapeHtml(rel.kind) + '"><i></i>' + escapeHtml(relationKindJp(rel.kind)) + '</span> ' + escapeHtml(relationLabel) + '</div>'\r
+        + '<div class="field-sub wrap">参照先: <button type="button" class="link-btn" data-app="' + escapeHtml(String(rel.toApp)) + '" onclick="focusApp(this.dataset.app)">' + escapeHtml(targetLabel) + '</button>' + (relationMeta.length ? ' / ' + escapeHtml(relationMeta.join(' / ')) : '') + '</div>'\r
+        + relationDetailHtml(rel)\r
+        + '</div>'\r
+        + edgeBtn\r
+        + '</div>';\r
+    });\r
+  const inboundRelations = [];\r
+  APPS.forEach((sourceApp)=>{\r
+    (sourceApp.relations || []).forEach((rel)=>{\r
+      if(String(rel.toApp) === String(app.id)) inboundRelations.push({ sourceApp, rel });\r
+    });\r
+  });\r
+  relHtml += '<div class="field-group-title">このアプリを参照している関連 (' + inboundRelations.length + ')</div>';\r
+  if(!inboundRelations.length) relHtml += '<div class="field-sub">このアプリを参照している関連はありません。</div>';\r
+  inboundRelations\r
+    .slice()\r
+    .sort((a,b)=>String(a.sourceApp.name || a.sourceApp.id).localeCompare(String(b.sourceApp.name || b.sourceApp.id)))\r
+    .forEach((item)=>{\r
+      const rel=item.rel;\r
+      const sourceLabel=(item.sourceApp.name || ("アプリ "+item.sourceApp.id)) + " (App " + item.sourceApp.id + ")";\r
+      const relationName=rel.kind==="REF"?(rel.controlFieldLabel||rel.fromDisplay||rel.fromLabel||"関連レコード一覧"):(rel.fromDisplay || rel.fromLabel || rel.from || relationKindJp(rel.kind));\r
+      const meta=[];\r
+      if(rel.toField) meta.push((rel.kind==="REF"?"結合先: ":"参照先の項目: ") + labelWithCode(fieldLabelByCode(app,rel.toField),rel.toField));\r
+      relHtml += '<button type="button" class="field-row detail-relation-button" data-app="' + escapeHtml(String(item.sourceApp.id)) + '" onclick="focusApp(this.dataset.app)">'\r
+        + '<span class="field-icon kind-' + escapeHtml(rel.kind) + '" aria-hidden="true">←</span>'\r
+        + '<div class="field-main"><div class="field-name">' + escapeHtml(sourceLabel) + '</div><div class="field-sub">' + escapeHtml(relationKindJp(rel.kind) + ": " + relationName + (meta.length ? " / " + meta.join(" / ") : "")) + '</div>' + relationDetailHtml(rel) + '</div>'\r
+        + '<span class="field-type">被参照</span></button>';\r
+    });\r
+  document.getElementById("detail-relations").innerHTML = relHtml;\r
+\r
+  let fieldHtml = "";\r
+  const renderGroup = (title, fields, tagClass, tagLabel) => {\r
+    if(!fields.length) return;\r
+    fieldHtml += '<div class="field-group-title">' + title + ' (' + fields.length + ')</div>';\r
+    fields.forEach((field)=>{\r
+      let tags = "";\r
+      if(tagLabel) tags += '<span class="tag ' + tagClass + '">' + tagLabel + '</span>';\r
+      if(field.required && tagLabel !== "必須") tags += '<span class="tag tag-req">必須</span>';\r
+      if(field.inSubtable) tags += '<span class="tag tag-sub">表</span>';\r
+      if(field.unique) tags += '<span class="tag tag-pk">重複不可</span>';\r
+      const fieldName = buildFieldDisplayName(field);\r
+      const meta = ["code: " + (field.code || "-")];\r
+      if(field.path && field.path !== field.code) meta.push("path: " + field.path);\r
+      if(field.tableLabel) meta.push("table: " + field.tableLabel);\r
+      fieldHtml += '<div class="field-row" title="' + escapeHtml(fieldName) + '">'\r
+        + '<span class="field-icon" aria-hidden="true">' + fieldIconForLabel(field) + '</span>'\r
+        + '<div class="field-main">'\r
+        + '<div class="field-name">' + escapeHtml(fieldName) + tags + '</div>'\r
+        + '<div class="field-sub">' + escapeHtml(meta.join(' / ')) + '</div>'\r
+        + '</div>'\r
+        + '<span class="field-type">' + escapeHtml(fieldTypeJpLabel(field.type)) + '</span>'\r
+        + '<button type="button" class="row-edit" title="この項目を編集（名前・種類・区分）" aria-label="この項目を編集" data-app="' + escapeHtml(String(app.id)) + '" data-key="' + escapeHtml(encodeURIComponent(fieldHideKey(app, field))) + '" onclick="openEditFieldRow(this);event.stopPropagation();">✎</button>'\r
+        + '<button type="button" class="row-del" title="この項目を図から隠す" aria-label="この項目を図から隠す" data-app="' + escapeHtml(String(app.id)) + '" data-key="' + escapeHtml(encodeURIComponent(fieldHideKey(app, field))) + '" onclick="hideFieldFromRow(this);event.stopPropagation();">✕</button>'\r
+        + '</div>';\r
+    });\r
+  };\r
+  renderGroup("主キー", fieldGroups.pk, "tag-pk", "PK");\r
+  renderGroup("ルックアップ (FK)", fieldGroups.lookup, "tag-fk", "FK");\r
+  renderGroup("関連レコード一覧", fieldGroups.ref, "tag-ref", "関連");\r
+  renderGroup("必須の項目", fieldGroups.required, "tag-req", "必須");\r
+  renderGroup("サブテーブル", fieldGroups.subtable, "tag-sub", "表");\r
+  renderGroup("そのほかの項目", fieldGroups.normal, "", "");\r
+  const fieldFilterHtml = visibleFields.length > 8\r
+    ? '<input class="detail-filter" type="search" placeholder="このアプリの項目を絞り込む" aria-label="このアプリの項目を絞り込む" oninput="filterDetailFields(this.value)">'\r
+    : '';\r
+  document.getElementById("detail-fields").innerHTML = '<div class="detail-section">' + fieldFilterHtml + (fieldHtml || '<div class="field-group-title">項目</div><div class="field-sub">表示できる項目はありません（カードの項目の設定を「詳細」にすると増えます）。</div>') + '</div>';\r
+\r
+  openSidePanel("detail");\r
+  setActiveApp(app.id);\r
+}\r
+function renderGhostDetail(node){\r
+  detailMode="ghost";\r
+  detailEdgeId=node.id();\r
+  const targetAppId=node.data("targetAppId")||"不明";\r
+  const inbound=[];\r
+  APPS.forEach((sourceApp)=>{\r
+    (sourceApp.relations||[]).forEach((rel)=>{\r
+      if(String(rel.toApp)===String(targetAppId)) inbound.push({sourceApp,rel});\r
+    });\r
+  });\r
+  document.getElementById("detail-title").textContent="未取得の参照先";\r
+  document.getElementById("detail-meta").innerHTML='<div class="detail-badges"><span class="badge badge-ghost">？ 未取得</span></div><div class="app-meta">App '+escapeHtml(String(targetAppId))+'</div>'\r
+    +'<div class="analysis-note is-warn" role="status"><strong>図の外にある参照先です</strong><br>探索の深さ・閲覧権限・削除済みなどのため、このアプリの設定は取得していません。下は、取得したアプリ側に残っている参照の情報です。</div>';\r
+  let relationHtml='<div class="field-group-title">この参照先へ向かう関連 ('+inbound.length+')</div>';\r
+  inbound.forEach((item)=>{\r
+    relationHtml+='<button type="button" class="field-row detail-relation-button" data-app="'+escapeHtml(String(item.sourceApp.id))+'" onclick="focusApp(this.dataset.app)">'\r
+      +'<span class="field-icon" aria-hidden="true">←</span><div class="field-main"><div class="field-name">'+escapeHtml(item.sourceApp.name+' (App '+item.sourceApp.id+')')+'</div>'\r
+      +'<div class="field-sub">'+escapeHtml(relationKindJp(item.rel.kind)+": "+exportRelationLabel(item.rel))+'</div>'+relationDetailHtml(item.rel)+'</div><span class="field-type">参照元</span></button>';\r
+  });\r
+  document.getElementById("detail-relations").innerHTML=relationHtml;\r
+  document.getElementById("detail-fields").innerHTML='<div class="field-group-title">項目</div><div class="field-sub">参照先のアプリを取得していないため、項目は表示できません。</div>';\r
+  openSidePanel("detail");\r
+  setActiveApp(0);\r
+}\r
+// 関連線を選んだときの詳細。まとめた線は、まとめた関連線をすべて並べる\r
+function renderEdgeDetail(edge){\r
+  if(!edge||!edge.length) return;\r
+  detailMode="edge";\r
+  detailEdgeId=edge.id();\r
+  const members=bundleMembers(edge).toArray();\r
+  const source=appMap.get(edge.source().data("appId"));\r
+  const target=appMap.get(edge.target().data("appId"));\r
+  const targetName=target?target.name:"未取得の参照先 (App "+edge.target().data("targetAppId")+")";\r
+  document.getElementById("detail-title").textContent=(source?source.name:"?")+" → "+targetName;\r
+  document.getElementById("detail-meta").innerHTML='<div class="detail-badges"><span class="kind-badge kind-'+escapeHtml(edge.data("kind"))+'"><i></i>'+escapeHtml(relationKindJp(edge.data("kind")))+'</span></div>'\r
+    +'<div class="app-meta">'+(members.length>1?members.length+" 本の関連線を 1 本にまとめて表示しています":"関連線 1 本")+'</div>'\r
+    +'<div class="detail-actions">'\r
+    +(source?'<button type="button" class="tb" data-app="'+escapeHtml(String(source.id))+'" onclick="focusApp(this.dataset.app)">参照元を見る</button>':'')\r
+    +'<button type="button" class="tb" data-app="'+escapeHtml(String(target?target.id:edge.target().data("targetAppId")))+'" onclick="focusApp(this.dataset.app)">参照先を見る</button>'\r
+    +'</div>';\r
+  let html='<div class="field-group-title">関連線 ('+members.length+')</div>';\r
+  members.forEach(e=>{\r
+    const found=relationForEdgeId(e.id());\r
+    if(!found) return;\r
+    const rel=found.rel;\r
+    const hidden=e.hasClass("rel-manual-hidden");\r
+    html+='<div class="field-row'+(hidden?' field-row--hidden':'')+'">'\r
+      +'<span class="field-icon kind-'+escapeHtml(rel.kind)+'" aria-hidden="true">→</span>'\r
+      +'<div class="field-main"><div class="field-name">'+escapeHtml(relSourceFieldText(rel))+(rel.isCustom?'<span class="tag tag-sub">手動</span>':'')+'</div>'\r
+      +'<div class="field-sub">'+escapeHtml(relTargetFieldText(rel,target)?"参照先の項目: "+relTargetFieldText(rel,target):relationKindJp(rel.kind))+'</div>'\r
+      +relationDetailHtml(rel)+'</div>'\r
+      +'<button type="button" class="row-edit" title="この関連線を編集（名前・種類）" aria-label="この関連線を編集" data-edge="'+escapeHtml(e.id())+'" data-app="'+escapeHtml(String(found.app.id))+'" onclick="openEditRelationRow(this);event.stopPropagation();">✎</button>'\r
+      +'<button type="button" class="row-del'+(hidden?' row-del--restore':'')+'" title="'+(hidden?'この関連線を戻す':'この関連線を図から削除')+'" aria-label="'+(hidden?'この関連線を戻す':'この関連線を図から削除')+'" data-edge="'+escapeHtml(e.id())+'" data-app="'+escapeHtml(String(found.app.id))+'" onclick="toggleRelationEdgeFromRow(this);event.stopPropagation();">'+(hidden?'↺':'✕')+'</button>'\r
+      +'</div>';\r
+  });\r
+  document.getElementById("detail-relations").innerHTML=html;\r
+  document.getElementById("detail-fields").innerHTML="";\r
+  openSidePanel("detail");\r
+  setActiveApp(0);\r
+}\r
+// 編集のあと、開いている詳細を描き直す\r
+function refreshOpenDetail(){\r
+  const panel=document.getElementById("detail");\r
+  if(!panel||!panel.classList.contains("open")) return;\r
+  if(detailMode==="app"&&activeAppId){ const app=findApp(activeAppId); if(app) renderAppDetail(app); }\r
+  else if(detailMode==="edge"&&detailEdgeId){\r
+    const edge=cy.getElementById(detailEdgeId);\r
+    if(edge.length) renderEdgeDetail(bundleRepresentative(edge));\r
+  }\r
+}\r
+cy.on("tap","node",e=>{\r
+  if(e.target.hasClass("note-node")){ openEditNote(e.target.id()); return; }\r
+  lastTappedNodeId = e.target.id();\r
+  const app=appMap.get(e.target.data("appId"));\r
+  if(!app){ if(e.target.data("isGhost")) renderGhostDetail(e.target); return; }\r
+  renderAppDetail(app);\r
+  if(focusMode) applyFocusToNode(e.target);\r
+});\r
+cy.on("tap","edge",e=>{\r
+  renderEdgeDetail(e.target);\r
+});\r
+cy.on("cxttap","node",e=>{\r
+  const n = e.target;\r
+  if(n.hasClass("note-node")){ deleteNoteNodes(n); toast("メモを削除しました（Ctrl+Z で戻せます）"); return; }\r
+  const oe = e.originalEvent || ({});\r
+  if(oe.altKey || oe.metaKey){\r
+    hideAppNodes(n);\r
+    applyRelationFilter();\r
+    afterGraphChange();\r
+    if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);\r
+    toast("アプリを図から削除しました（Ctrl+Z で戻せます）");\r
+    return;\r
+  }\r
+  if(pinnedNodeIds.has(n.id())) unpinNode(n);\r
+  else pinNode(n);\r
+});\r
+cy.on("cxttap","edge",e=>{\r
+  const edges = bundleMembers(e.target);\r
+  hideRelationEdges(edges);\r
+  applyRelationFilter();\r
+  afterGraphChange();\r
+  if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);\r
+  toast("関連線を図から削除しました（Ctrl+Z で戻せます）");\r
+});\r
+cy.on("tap",e=>{if(e.target===cy){closeDetail();cy.elements().removeClass("highlighted dimmed path-node path-edge");clearFocus(true);clearAnalysisHighlight();if(searchQuery.trim()) searchGraph(searchQuery);}});\r
+\r
+function closeDetail(){\r
+  document.getElementById("detail").classList.remove("open");\r
+  detailMode="";\r
+  detailEdgeId="";\r
+  setActiveApp(0);\r
+}\r
+\r
+// 詳細パネル内の項目絞り込み（大きいアプリで目的の項目を探しやすくする）\r
+function filterDetailFields(q){\r
+  const low=String(q||"").trim().toLowerCase();\r
+  document.querySelectorAll("#detail-fields .field-row").forEach(row=>{\r
+    row.style.display=!low||row.textContent.toLowerCase().includes(low)?"":"none";\r
+  });\r
+  document.querySelectorAll("#detail-fields .field-group-title").forEach(title=>{\r
+    let el=title.nextElementSibling, any=false;\r
+    while(el&&el.classList&&el.classList.contains("field-row")){\r
+      if(el.style.display!=="none") any=true;\r
+      el=el.nextElementSibling;\r
+    }\r
+    title.style.display=!low||any?"":"none";\r
+  });\r
+}\r
+\r
+// 図のそのアプリへ移る（表示範囲の外なら、そのアプリのまわりを表示してから移る）\r
+function focusApp(id){\r
+  const n=cy.getElementById("a"+id);\r
+  if(n.length && !n.hasClass("app-manual-hidden")){\r
+    if(typeof isNodeInScope==="function" && !isNodeInScope(n)) return ensureNodeVisible(n).then(()=>focusApp(id));\r
+    if(typeof showDiagramView==="function") showDiagramView();\r
+    cy.animate({center:{eles:n},zoom:Math.max(1,Math.min(1.5,cy.zoom()))},{ duration:400 });\r
+    n.select();\r
+    const app = appMap.get(Number(id)) || appMap.get(id);\r
+    if(app) renderAppDetail(app);\r
+    if(focusMode) applyFocusToNode(n, true);\r
+    if(typeof closeSidebarDrawer==="function") closeSidebarDrawer();\r
+    return;\r
+  }\r
+  // 取得できていない参照先は「未取得の参照先」ノードへ移動し、詳細を表示する\r
+  const ghost=cy.getElementById("g"+String(id).replace(/[^0-9A-Za-z_-]/g,"_"));\r
+  if(ghost.length && ghost.data("isGhost") && !ghost.hasClass("app-manual-hidden")){\r
+    if(typeof isNodeInScope==="function" && !isNodeInScope(ghost)) return ensureNodeVisible(ghost).then(()=>focusApp(id));\r
+    if(typeof showDiagramView==="function") showDiagramView();\r
+    cy.animate({center:{eles:ghost},zoom:Math.max(1,Math.min(1.5,cy.zoom()))},{ duration:400 });\r
+    ghost.select();\r
+    renderGhostDetail(ghost);\r
+    return;\r
+  }\r
+  if(n.length && n.hasClass("app-manual-hidden")) toast("このアプリは図から削除しています（編集 → 削除したアプリを戻す）");\r
+}\r
+// 関連一覧の行から、図のその線へ移る\r
+function goToRelationEdge(edgeId){\r
+  const edge=cy.getElementById(edgeId);\r
+  if(!edge.length){ toast("この関連線は図にありません"); return; }\r
+  showDiagramView();\r
+  if(edge.hasClass("rel-manual-hidden")){ toast("この関連線は図から削除しています（編集 → 削除した関連線を戻す）"); return; }\r
+  if(!relationKindState[edge.data("kind")]){ relationKindState[edge.data("kind")]=true; syncRelationKindButtons(); applyRelationFilter(); }\r
+  const source=edge.source(), target=edge.target();\r
+  const reveal=isNodeInScope(source)&&isNodeInScope(target)?Promise.resolve():(source.data("appId")!=null?showAroundApp(source.data("appId")):showAllScope());\r
+  reveal.then(()=>{\r
+    const rep=bundleRepresentative(edge);\r
+    cy.elements().unselect();\r
+    rep.select();\r
+    clearFocus(true);\r
+    renderEdgeDetail(rep);\r
+    fitElements(source.union(target).union(rep),{animate:true,maxZoom:1.1});\r
+  });\r
+}\r
+\r
+// ─── 構造チェック ───\r
+function analysisItem(title, meta, ids, tone){\r
+  const safeIds=(ids||[]).map(id=>String(id).replace(/[^0-9-]/g,"")).filter(Boolean).join(",");\r
+  return '<button type="button" class="analysis-item'+(tone?' analysis-item--'+tone:'')+'" data-analysis-ids="'+safeIds+'" onclick="focusAnalysisApps(this.dataset.analysisIds)"><strong>'+escapeHtml(title)+'</strong><span>'+escapeHtml(meta)+'</span></button>';\r
+}\r
+function renderAnalysisPanel(){\r
+  const host=document.getElementById("analysis-content");\r
+  if(!host) return;\r
+  recomputeErAnalysis();\r
+  const cycles=ER_ANALYSIS.cycles||[];\r
+  const selfReferences=ER_ANALYSIS.selfReferences||[];\r
+  const isolated=ER_ANALYSIS.isolatedAppIds||[];\r
+  const hubs=ER_ANALYSIS.hubs||[];\r
+  const unresolved=ER_ANALYSIS.unresolvedTargets||[];\r
+  const partialIds=ER_ANALYSIS.partialAppIds||[];\r
+  const failedIds=ER_ANALYSIS.failedAppIds||[];\r
+  const facts=document.getElementById("analysis-facts");\r
+  if(facts) facts.innerHTML='<div class="analysis-fact"><strong>'+ER_ANALYSIS.counts.retrievalComplete+'</strong><span>取得完了</span></div><div class="analysis-fact"><strong>'+ER_ANALYSIS.counts.retrievalPartial+'</strong><span>一部取得</span></div><div class="analysis-fact"><strong>'+ER_ANALYSIS.counts.retrievalFailed+'</strong><span>取得失敗</span></div>';\r
+  let html='<section class="analysis-section"><h3><span>取得に注意が必要</span><span class="analysis-count">'+(partialIds.length+failedIds.length)+'</span></h3>';\r
+  html+=partialIds.concat(failedIds).length?partialIds.concat(failedIds).map(id=>{const app=appMap.get(Number(id))||appMap.get(id);const status=failedIds.includes(id)?'取得失敗':'一部取得';const messages=(app&&app.issues||[]).map(issue=>issue.message).filter(Boolean);return analysisItem((app&&app.name)||('アプリ '+id),status+(messages.length?' / '+messages.slice(0,2).join(' / '):''),[id],failedIds.includes(id)?'risk':'warn');}).join(''):'<div class="analysis-empty">取得上の注意は記録されていません。</div>';\r
+  html+='</section><section class="analysis-section"><h3><span>複数アプリの循環候補</span><span class="analysis-count">'+cycles.length+'</span></h3>';\r
+  html+=cycles.length?cycles.map((cycle,i)=>analysisItem('候補 '+(i+1)+': '+cycle.appNames.join(' → '),cycle.appIds.length+'アプリ間で相互に到達できます',cycle.appIds,'risk')).join(''):'<div class="analysis-empty">複数アプリの循環候補は検出されませんでした。</div>';\r
+  html+='</section><section class="analysis-section"><h3><span>自己参照</span><span class="analysis-count">'+selfReferences.length+'</span></h3>';\r
+  html+=selfReferences.length?selfReferences.map(item=>analysisItem(item.appName+' (App '+item.appId+')',(item.kind||'関連')+(item.field?' / '+item.field:''),[item.appId],'')).join(''):'<div class="analysis-empty">自己参照はありません。</div>';\r
+  html+='</section><section class="analysis-section"><h3><span>接続数が多いアプリ（'+(ER_ANALYSIS.highConnectionThreshold||3)+'件以上）</span><span class="analysis-count">'+hubs.length+'</span></h3>';\r
+  html+=hubs.length?hubs.map(hub=>analysisItem(hub.name+' (App '+hub.appId+')','入 '+hub.incoming+' / 出 '+hub.outgoing+' / 合計 '+hub.total,[hub.appId],'')).join(''):'<div class="analysis-empty">該当するアプリはありません。</div>';\r
+  html+='</section><section class="analysis-section"><h3><span>図内で関連のないアプリ</span><span class="analysis-count">'+isolated.length+'</span></h3>';\r
+  html+=isolated.length?isolated.map(id=>{const app=findApp(id);return analysisItem((app&&app.name)||('アプリ '+id),'図内に入出力の関連がありません',[id],'');}).join(''):'<div class="analysis-empty">該当するアプリはありません。</div>';\r
+  html+='</section><section class="analysis-section"><h3><span>未取得の参照先</span><span class="analysis-count">'+unresolved.length+'</span></h3>';\r
+  html+=unresolved.length?unresolved.slice(0,20).map(item=>analysisItem(item.fromAppName+' → App '+item.toAppId,(item.kind||'関連')+(item.field?' / '+item.field:''),[item.fromAppId],'warn')).join(''):'<div class="analysis-empty">参照先はすべて図内に取得されています。</div>';\r
+  if(unresolved.length>20) html+='<div class="analysis-empty">ほか '+(unresolved.length-20)+' 件（関連一覧の「未取得の参照先」で全件を確認できます）</div>';\r
+  html+='</section>';\r
+  host.innerHTML=html;\r
+}\r
+function clearAnalysisHighlight(){\r
+  cy.elements().removeClass("analysis-hit analysis-dim");\r
+}\r
+function focusAnalysisApps(csv){\r
+  const ids=String(csv||"").split(",").filter(Boolean);\r
+  clearAnalysisHighlight();\r
+  const nodes=ids.map(id=>cy.getElementById("a"+id)).filter(node=>node.length&&!node.hasClass("app-manual-hidden"));\r
+  if(!nodes.length){toast("対象のアプリは図にありません");return;}\r
+  if(nodes.length===1){ focusApp(ids.find(id=>cy.getElementById("a"+id).length)); return; }\r
+  const collection=nodes.reduce((all,node)=>all.union(node),cy.collection());\r
+  const reveal=collection.some(n=>n.hasClass("scope-out"))?showAllScope():Promise.resolve();\r
+  showDiagramView();\r
+  reveal.then(()=>{\r
+    cy.nodes().not(".note-node").not(collection).addClass("analysis-dim");\r
+    collection.addClass("analysis-hit");\r
+    fitElements(collection,{animate:true});\r
+    toast(collection.length+"アプリを強調しました（背景を押すと解除）");\r
+  });\r
+}\r
+function toggleAnalysisPanel(force){\r
+  const panel=document.getElementById("analysis-panel");\r
+  const open=typeof force==="boolean"?force:!panel.classList.contains("open");\r
+  if(open){ renderAnalysisPanel(); closeSidebarDrawer(); closeDetail(); openSidePanel("analysis-panel"); }\r
+  else panel.classList.remove("open");\r
+  document.getElementById("analysis-toggle-btn")?.setAttribute("aria-expanded",String(open));\r
+}\r
+function refreshSidebarChecks(){\r
+  const host=document.getElementById("sidebar-check-facts");\r
+  if(!host) return;\r
+  const a=ER_ANALYSIS;\r
+  const item=(label,count)=>'<span class="'+(count?'is-warn':'')+'">'+label+' <b>'+count+'</b></span>';\r
+  host.innerHTML=item("取得失敗",a.counts.retrievalFailed)+item("一部取得",a.counts.retrievalPartial)+item("循環候補",(a.cycles||[]).length)+item("自己参照",(a.selfReferences||[]).length)+item("関連なし",(a.isolatedAppIds||[]).length)+item("未取得の参照先",(a.unresolvedTargets||[]).length);\r
+}\r
+\r
+// ─── アプリ一覧（左） ───\r
+let sidebarReturnFocus=null;\r
+let sidebarDesktopOpen=true;\r
+function isDrawerLayout(){ return !!(window.matchMedia&&window.matchMedia("(max-width:1023px)").matches); }\r
+function sidebarIsOpen(){\r
+  const sidebar=document.getElementById("sidebar");\r
+  return isDrawerLayout()?sidebar.classList.contains("open"):!sidebar.classList.contains("collapsed");\r
+}\r
+function syncSidebarMode(){\r
+  const sidebar=document.getElementById("sidebar");\r
+  const backdrop=document.getElementById("sidebar-backdrop");\r
+  if(isDrawerLayout()){\r
+    const open=sidebar.classList.contains("open");\r
+    sidebar.classList.remove("collapsed");\r
+    sidebar.inert=!open;\r
+    sidebar.setAttribute("aria-hidden",String(!open));\r
+    backdrop?.classList.toggle("open",open);\r
+  }else{\r
+    sidebar.classList.remove("open");\r
+    sidebar.classList.toggle("collapsed",!sidebarDesktopOpen);\r
+    sidebar.inert=false;\r
+    sidebar.removeAttribute("aria-hidden");\r
+    backdrop?.classList.remove("open");\r
+  }\r
+  document.getElementById("sidebar-toggle-btn")?.setAttribute("aria-expanded",String(sidebarIsOpen()));\r
+}\r
+function toggleSidebar(force, trigger){\r
+  const sidebar=document.getElementById("sidebar");\r
+  const wasOpen=sidebarIsOpen();\r
+  const open=typeof force==="boolean"?force:!wasOpen;\r
+  if(isDrawerLayout()){\r
+    if(open&&!wasOpen){\r
+      const active=document.activeElement;\r
+      sidebarReturnFocus=trigger&&typeof trigger.focus==="function"?trigger:(active&&active!==document.body?active:document.getElementById("sidebar-toggle-btn"));\r
+    }\r
+    sidebar.classList.toggle("open",open);\r
+    syncSidebarMode();\r
+    if(open&&!wasOpen) document.getElementById("sidebar-close")?.focus();\r
+    else if(!open&&wasOpen){\r
+      const restore=sidebarReturnFocus;\r
+      sidebarReturnFocus=null;\r
+      if(restore&&document.contains(restore)&&restore.getClientRects().length) restore.focus();\r
+    }\r
+  }else{\r
+    sidebarDesktopOpen=open;\r
+    syncSidebarMode();\r
+    requestAnimationFrame(()=>{ cy.resize(); });\r
+  }\r
+}\r
+function closeSidebar(){toggleSidebar(false);}\r
+// 引き出し式（狭い画面）のときだけ閉じる。広い画面の左の一覧は閉じない\r
+function closeSidebarDrawer(){ if(isDrawerLayout()&&sidebarIsOpen()) toggleSidebar(false); }\r
+\r
+// 集計・項目の種類・アプリ一覧・表をまとめて描き直す\r
+function refreshSidebar(){\r
+  const activeTypes=new Set([...document.querySelectorAll("#type-filters .filter-chip.active")].map(e=>e.dataset.type));\r
+  const visibleFieldsTotal=APPS.reduce((s,a)=>s+visibleFieldsForNode(a).length,0);\r
+  const totalFieldsAcrossApps=APPS.reduce((s,a)=>s+(typeof a.totalFieldCount==="number"?a.totalFieldCount:visibleFieldsForNode(a).length),0);\r
+  const totalRels=APPS.reduce((s,a)=>s+a.relations.length,0);\r
+  const lookups=APPS.reduce((s,a)=>s+a.relations.filter(r=>r.kind==="LOOKUP").length,0);\r
+  const actions=APPS.reduce((s,a)=>s+a.relations.filter(r=>r.kind==="ACTION").length,0);\r
+  const refs=totalRels-lookups-actions;\r
+  const typeCount={};\r
+  APPS.forEach(a=>visibleFieldsForNode(a).forEach(f=>{typeCount[f.type]=(typeCount[f.type]||0)+1;}));\r
+\r
+  let html='<div class="stat-row"><span>アプリ数</span><span class="stat-val">'+APPS.length+'</span></div>';\r
+  html+='<div class="stat-row"><span>項目数（合計）</span><span class="stat-val">'+totalFieldsAcrossApps+'</span></div>';\r
+  if(visibleFieldsTotal!==totalFieldsAcrossApps){\r
+    html+='<div class="stat-row"><span>カードに表示中の項目</span><span class="stat-val">'+visibleFieldsTotal+'</span></div>';\r
+  }\r
+  html+='<div class="stat-row"><span>ルックアップ</span><span class="stat-val">'+lookups+'</span></div>';\r
+  html+='<div class="stat-row"><span>関連レコード一覧</span><span class="stat-val">'+refs+'</span></div>';\r
+  html+='<div class="stat-row"><span>アプリアクション</span><span class="stat-val">'+actions+'</span></div>';\r
+  html+='<div class="stat-row"><span>関連（合計）</span><span class="stat-val">'+totalRels+'</span></div>';\r
+  html+='<div class="stat-row"><span>取得完了</span><span class="stat-val">'+APPS.filter(a=>(a.status||"complete")==="complete"&&a.ok!==false).length+'</span></div>';\r
+  html+='<div class="stat-row"><span>一部取得</span><span class="stat-val">'+APPS.filter(a=>a.status==="partial").length+'</span></div>';\r
+  html+='<div class="stat-row"><span>取得失敗</span><span class="stat-val">'+APPS.filter(a=>a.status==="failed"||a.ok===false).length+'</span></div>';\r
+  document.getElementById("stats-summary").innerHTML=html;\r
+\r
+  // type filters\r
+  const filterHost=document.getElementById("type-filters");\r
+  filterHost.replaceChildren();\r
+  Object.entries(typeCount).sort((a,b)=>b[1]-a[1]).forEach(([t,c])=>{\r
+    const button=document.createElement("button");\r
+    button.type="button";\r
+    button.className="filter-chip"+(activeTypes.has(t)?" active":"");\r
+    button.dataset.type=t;\r
+    button.textContent=fieldTypeJpLabel(t)+" ("+c+")";\r
+    button.setAttribute("aria-pressed",activeTypes.has(t)?"true":"false");\r
+    button.addEventListener("click",()=>filterByType(button));\r
+    filterHost.appendChild(button);\r
+  });\r
+\r
+  recomputeErAnalysis();\r
+  refreshSidebarChecks();\r
+  refreshAppList();\r
+  refreshScopeBar();\r
+  refreshActiveTable();\r
+}\r
+\r
+function appListSortKey(a){\r
+  return [startAppIdSet.has(String(a.id))?0:1,a.depth||0,String(a.name||"")];\r
+}\r
+function refreshAppList(){\r
+  const host=document.getElementById("app-list");\r
+  if(!host) return;\r
+  const filter=document.getElementById("app-list-filter")?.value||"";\r
+  const low=normalizedQuery();\r
+  const sorted = APPS\r
+    .slice()\r
+    .sort((a,b)=>{\r
+      const ka=appListSortKey(a),kb=appListSortKey(b);\r
+      if(ka[0]!==kb[0]) return ka[0]-kb[0];\r
+      if(ka[1]!==kb[1]) return ka[1]-kb[1];\r
+      return ka[2].localeCompare(kb[2],"ja");\r
+    });\r
+  const rows=sorted.map(a=>{\r
+    const node=cy.getElementById('a'+a.id);\r
+    return {a,node,removed:node.length&&node.hasClass('app-manual-hidden'),inScope:isNodeInScope(node),out:(a.relations||[]).length,inc:incomingRelationCount(a.id)};\r
+  }).filter(row=>{\r
+    if(low&&!appMatchesQuery(row.a,low)) return false;\r
+    if(filter==="scope") return row.inScope&&!row.removed;\r
+    if(filter==="attention") return isFailedApp(row.a)||isPartialApp(row.a);\r
+    if(filter==="nolink") return !row.out&&!row.inc;\r
+    if(filter==="start") return startAppIdSet.has(String(row.a.id));\r
+    return true;\r
+  });\r
+  const count=document.getElementById("sidebar-count");\r
+  if(count) count.textContent=rows.length===APPS.length?String(APPS.length):rows.length+" / "+APPS.length;\r
+  const renderItem=(row)=>{\r
+    const a=row.a;\r
+    const classes=['app-list-item'];\r
+    if(Number(activeAppId)===Number(a.id)) classes.push('active-app');\r
+    if(!row.inScope) classes.push('is-out');\r
+    if(row.removed) classes.push('is-removed');\r
+    const badges=[];\r
+    if(isMarkedStartApp(a)) badges.push('<span class="badge badge-start">起点</span>');\r
+    if(isFailedApp(a)) badges.push('<span class="badge badge-failed">⚠ 失敗</span>');\r
+    else if(isPartialApp(a)) badges.push('<span class="badge badge-partial">△ 一部</span>');\r
+    if(a.isCustom) badges.push('<span class="badge badge-custom">手動</span>');\r
+    const sub=['<span>'+(a.isCustom?'手動追加':'App '+escapeHtml(a.id))+'</span>'];\r
+    if(!row.out&&!row.inc) sub.push('<span>関連なし</span>');\r
+    else sub.push('<span>参照 <b>'+row.out+'</b> ・ 被参照 <b>'+row.inc+'</b></span>');\r
+    if(row.removed) sub.push('<span>図から削除済み</span>');\r
+    else if(!row.inScope) sub.push('<span>図の外</span>');\r
+    const label=a.name+'、'+(a.isCustom?'手動追加':'App '+a.id)+'、参照 '+row.out+'、被参照 '+row.inc+(row.inScope?'':'、図の外');\r
+    return '<button type="button" role="listitem" class="'+classes.join(' ')+'" data-app="'+escapeHtml(String(a.id))+'" onclick="focusApp(this.dataset.app)" aria-label="'+escapeHtml(label)+'"><span class="ali-top"><span class="ali-name">'+escapeHtml(a.name)+'</span>'+badges.join('')+'</span><span class="ali-sub">'+sub.join('')+'</span></button>';\r
+  };\r
+  let html="";\r
+  if(!rows.length) html='<div class="analysis-empty">条件に合うアプリはありません。</div>';\r
+  else if(viewScope.mode==="around"&&!filter){\r
+    const inside=rows.filter(r=>r.inScope&&!r.removed), outside=rows.filter(r=>!r.inScope||r.removed);\r
+    if(inside.length){ html+='<div class="app-list-group">図に表示中 ('+inside.length+')</div>'; inside.forEach(r=>{html+=renderItem(r);}); }\r
+    if(outside.length){ html+='<div class="app-list-group">図の外 ('+outside.length+') — 押すとそのアプリのまわりを表示</div>'; outside.forEach(r=>{html+=renderItem(r);}); }\r
+  }else{\r
+    const linked=rows.filter(r=>r.out||r.inc), noLink=rows.filter(r=>!r.out&&!r.inc);\r
+    if(noLink.length&&linked.length){\r
+      html+='<div class="app-list-group">関連あり ('+linked.length+')</div>'; linked.forEach(r=>{html+=renderItem(r);});\r
+      html+='<div class="app-list-group">関連なし ('+noLink.length+')</div>'; noLink.forEach(r=>{html+=renderItem(r);});\r
+    }else rows.forEach(r=>{html+=renderItem(r);});\r
+  }\r
+  host.innerHTML=html;\r
+}\r
+\r
+function filterByType(el){\r
+  el.classList.toggle("active");\r
+  el.setAttribute("aria-pressed",el.classList.contains("active")?"true":"false");\r
+  const active=[...document.querySelectorAll("#type-filters .filter-chip.active")].map(e=>e.dataset.type);\r
+  cy.elements().removeClass("highlighted dimmed");\r
+  if(!active.length) return;\r
+  const matched=cy.nodes().not(".app-manual-hidden").filter(n=>{\r
+    const app=appMap.get(n.data("appId"));\r
+    return app&&visibleFieldsForNode(app).some(f=>active.includes(f.type));\r
+  });\r
+  matched.addClass("highlighted");\r
+  const visibleEdges = matched.connectedEdges().filter(e=>!e.hasClass("rel-hidden") && !e.hasClass("rel-manual-hidden"));\r
+  cy.elements().not(matched).not(visibleEdges).not(".note-node").addClass("dimmed");\r
+}\r
+\r
+// ─── 図の表示範囲の帯 ───\r
+function refreshScopeBar(){\r
+  const bar=document.getElementById("scope-bar");\r
+  if(!bar||typeof viewScope==="undefined") return;\r
+  const total=appNodeCount();\r
+  const shown=cy.nodes().filter(n=>!n.hasClass("note-node")&&!n.hasClass("app-manual-hidden")&&!n.hasClass("scope-out")).length;\r
+  let html="";\r
+  if(viewScope.mode==="all"){\r
+    html+='<span class="scope-label">全体を表示<small class="scope-count">'+total+' アプリ</small></span>';\r
+    if(canShowStartScope()) html+='<button type="button" class="tb" id="scope-start-btn" onclick="showStartScope()">起点まわりだけ表示</button>';\r
+  }else{\r
+    const start=isStartScope(viewScope);\r
+    const rootNames=viewScope.roots.map(id=>{const a=findApp(id);return a?a.name:("App "+id);});\r
+    const title=start?"起点まわり":("「"+rootNames[0]+"」"+(rootNames.length>1?" ほか "+(rootNames.length-1)+" 件":"")+" のまわり");\r
+    html+='<span class="scope-label" title="'+escapeHtml(rootNames.join("、"))+'">'+escapeHtml(title)+'<small class="scope-count">'+shown+' / '+total+' アプリ</small></span>';\r
+    html+='<span class="scope-depth" role="group" aria-label="関連をたどる段数"><span>深さ</span>'\r
+      +[1,2].map(d=>'<button type="button" id="scope-depth-'+d+'" aria-pressed="'+(viewScope.depth===d)+'" onclick="setScopeDepth('+d+')" title="'+(d===1?'直接の関連先まで':'関連先の関連先まで')+'">'+d+'</button>').join("")\r
+      +'</span>';\r
+    html+='<button type="button" class="tb tb-primary" id="scope-all-btn" onclick="showAllScope()">全体を表示</button>';\r
+    if(!start&&canShowStartScope()) html+='<button type="button" class="tb" id="scope-start-btn" onclick="showStartScope()">起点まわり</button>';\r
+  }\r
+  if(ER_OPTIONS.reverseScanNote) html+='<span class="meta-pill meta-pill--warn" title="'+escapeHtml(ER_OPTIONS.reverseScanNote)+'">⚠ 逆引き走査が不完全</span>';\r
+  bar.innerHTML=html;\r
+  document.querySelectorAll("[data-scope-btn]").forEach(btn=>{\r
+    const on=btn.dataset.scopeBtn==="all"?viewScope.mode==="all":isStartScope(viewScope);\r
+    btn.classList.toggle("active",on);\r
+    btn.setAttribute("aria-pressed",String(on));\r
+    // 起点まわりにしてもアプリが減らない図（全アプリが起点など）では選べなくする\r
+    if(btn.dataset.scopeBtn==="start"){\r
+      btn.disabled=!on&&!canShowStartScope();\r
+      btn.title=btn.disabled?"この図は起点まわりにしてもアプリが減りません":"起点とその関連先だけを表示します";\r
+    }\r
+  });\r
+}\r
+\r
+// ─── 表のビュー（アプリ一覧・関連一覧） ───\r
+let activeView="diagram";\r
+const tableState={\r
+  apps:{sort:"name",dir:1,status:"",check:""},\r
+  relations:{sort:"source",dir:1,kinds:{LOOKUP:true,REF:true,ACTION:true},state:""}\r
+};\r
+function setView(name){\r
+  const next=["diagram","apps","relations"].includes(name)?name:"diagram";\r
+  activeView=next;\r
+  [["diagram","tab-diagram","view-diagram"],["apps","tab-apps","view-apps"],["relations","tab-relations","view-relations"]].forEach(([key,tabId,panelId])=>{\r
+    const tab=document.getElementById(tabId), panel=document.getElementById(panelId);\r
+    const on=key===next;\r
+    if(tab){ tab.setAttribute("aria-selected",String(on)); tab.tabIndex=on?0:-1; }\r
+    if(panel&&key!=="diagram") panel.hidden=!on;\r
+  });\r
+  // 図は表の下に残す（描画の大きさを保つ）。表を開いている間は操作の対象から外す\r
+  const diagram=document.getElementById("view-diagram");\r
+  if(diagram){ diagram.inert=next!=="diagram"; diagram.setAttribute("aria-hidden",String(next!=="diagram")); }\r
+  if(next==="apps") renderAppsTable();\r
+  if(next==="relations") renderRelationsTable();\r
+  if(next!=="diagram"){ closeDetail(); toggleAnalysisPanel(false); }\r
+  closeAllMenus();\r
+}\r
+function showDiagramView(){ if(activeView!=="diagram") setView("diagram"); }\r
+function refreshActiveTable(){\r
+  if(activeView==="apps") renderAppsTable();\r
+  else if(activeView==="relations") renderRelationsTable();\r
+}\r
+// タブは左右の矢印キーでも移れる\r
+function onViewTabKey(e){\r
+  const order=["diagram","apps","relations"];\r
+  const i=order.indexOf(activeView);\r
+  let next=-1;\r
+  if(e.key==="ArrowRight") next=(i+1)%order.length;\r
+  else if(e.key==="ArrowLeft") next=(i+order.length-1)%order.length;\r
+  else if(e.key==="Home") next=0;\r
+  else if(e.key==="End") next=order.length-1;\r
+  if(next<0) return;\r
+  e.preventDefault();\r
+  setView(order[next]);\r
+  document.getElementById("tab-"+order[next])?.focus();\r
+}\r
+function compareValues(a,b){\r
+  if(typeof a==="number"&&typeof b==="number") return a-b;\r
+  return String(a==null?"":a).localeCompare(String(b==null?"":b),"ja",{numeric:true});\r
+}\r
+function sortRows(rows,columns,state){\r
+  const col=columns.find(c=>c.key===state.sort)||columns[0];\r
+  const value=col.sortValue||((row)=>row[col.key]);\r
+  return rows.slice().sort((a,b)=>compareValues(value(a),value(b))*state.dir||compareValues(a.tiebreak,b.tiebreak));\r
+}\r
+function tableHeadHtml(columns,state,tableName){\r
+  return '<thead><tr>'+columns.map(col=>{\r
+    if(col.sortable===false) return '<th scope="col" class="plain'+(col.num?' num':'')+'">'+(col.label?escapeHtml(col.label):'<span class="sr-only">'+escapeHtml(col.srLabel||"")+'</span>')+'</th>';\r
+    const sorted=state.sort===col.key;\r
+    const aria=sorted?(state.dir>0?"ascending":"descending"):"none";\r
+    return '<th scope="col"'+(col.num?' class="num"':'')+' aria-sort="'+aria+'"><button type="button" class="sort-btn" onclick="sortTable(\\''+tableName+'\\',\\''+col.key+'\\')">'+escapeHtml(col.label)+'</button></th>';\r
+  }).join('')+'</tr></thead>';\r
+}\r
+function sortTable(tableName,key){\r
+  const state=tableState[tableName];\r
+  if(!state) return;\r
+  if(state.sort===key) state.dir=-state.dir;\r
+  else { state.sort=key; state.dir=1; }\r
+  refreshActiveTable();\r
+  // 並べ替えたあとも、押した見出しにフォーカスを残す\r
+  const th=[...document.querySelectorAll("#"+(tableName==="apps"?"apps-table":"relations-table")+" th")].find(el=>el.querySelector(".sort-btn")&&el.getAttribute("aria-sort")!=="none");\r
+  th?.querySelector(".sort-btn")?.focus();\r
+}\r
+function cycleAppIdSet(){\r
+  const set=new Set();\r
+  (ER_ANALYSIS.cycles||[]).forEach(c=>(c.appIds||[]).forEach(id=>set.add(String(id))));\r
+  return set;\r
+}\r
+function appTableRows(){\r
+  recomputeErAnalysis();\r
+  const cycleIds=cycleAppIdSet();\r
+  const selfIds=new Set((ER_ANALYSIS.selfReferences||[]).map(s=>String(s.appId)));\r
+  const isolatedIds=new Set((ER_ANALYSIS.isolatedAppIds||[]).map(String));\r
+  const unresolvedFrom=new Set((ER_ANALYSIS.unresolvedTargets||[]).map(u=>String(u.fromAppId)));\r
+  return APPS.map(app=>{\r
+    const node=cy.getElementById("a"+app.id);\r
+    const out=(app.relations||[]).length, inc=incomingRelationCount(app.id);\r
+    const issues=(app.issues||[]).map(issue=>issue.message||issue.code||"").filter(Boolean);\r
+    return {\r
+      app,id:app.id,name:String(app.name||""),space:String(app.spaceId||""),\r
+      fields:typeof app.totalFieldCount==="number"?app.totalFieldCount:allFieldsForApp(app).length,\r
+      out,inc,status:appStatusLabel(app),issues,\r
+      start:startAppIdSet.has(String(app.id)),removed:node.length&&node.hasClass("app-manual-hidden"),inScope:isNodeInScope(node),\r
+      cycle:cycleIds.has(String(app.id)),self:selfIds.has(String(app.id)),isolated:isolatedIds.has(String(app.id)),unresolved:unresolvedFrom.has(String(app.id)),\r
+      tiebreak:String(app.id)\r
+    };\r
+  });\r
+}\r
+const APP_TABLE_COLUMNS=[\r
+  {key:"id",label:"App ID",num:true,sortValue:r=>typeof r.id==="number"?r.id:Number(r.id)||0},\r
+  {key:"name",label:"アプリ名"},\r
+  {key:"space",label:"スペース"},\r
+  {key:"fields",label:"項目数",num:true},\r
+  {key:"out",label:"参照する",num:true},\r
+  {key:"inc",label:"参照される",num:true},\r
+  {key:"status",label:"状態",sortValue:r=>(r.status==="取得失敗"?0:(r.status==="一部取得"?1:2))+r.name},\r
+  {key:"go",label:"",srLabel:"図で見る",sortable:false}\r
+];\r
+const APP_CHECKS=[\r
+  {key:"attention",label:"取得に注意",test:r=>r.status!=="取得完了"},\r
+  {key:"cycle",label:"循環候補",test:r=>r.cycle},\r
+  {key:"self",label:"自己参照",test:r=>r.self},\r
+  {key:"isolated",label:"関連なし",test:r=>r.isolated},\r
+  {key:"unresolved",label:"未取得の参照先あり",test:r=>r.unresolved}\r
+];\r
+function setAppsCheck(key){\r
+  tableState.apps.check=tableState.apps.check===key?"":key;\r
+  renderAppsTable();\r
+}\r
+function setAppsStatus(value){\r
+  tableState.apps.status=String(value||"");\r
+  renderAppsTable();\r
+}\r
+function renderAppsTable(){\r
+  const host=document.getElementById("apps-table");\r
+  if(!host) return;\r
+  const state=tableState.apps;\r
+  const all=appTableRows();\r
+  const low=normalizedQuery();\r
+  const check=APP_CHECKS.find(c=>c.key===state.check);\r
+  const rows=sortRows(all.filter(r=>{\r
+    if(low&&!appMatchesQuery(r.app,low)) return false;\r
+    if(state.status==="start"&&!r.start) return false;\r
+    if(state.status==="scope"&&!(r.inScope&&!r.removed)) return false;\r
+    if(state.status==="custom"&&!r.app.isCustom) return false;\r
+    if(state.status==="removed"&&!r.removed) return false;\r
+    if(check&&!check.test(r)) return false;\r
+    return true;\r
+  }),APP_TABLE_COLUMNS,state);\r
+  const chips=document.getElementById("apps-checks");\r
+  if(chips) chips.innerHTML=APP_CHECKS.map(c=>{\r
+    const n=all.filter(c.test).length;\r
+    return '<button type="button" class="check-chip'+(n?' has-items':'')+'" aria-pressed="'+(state.check===c.key)+'" onclick="setAppsCheck(\\''+c.key+'\\')">'+escapeHtml(c.label)+' <b>'+n+'</b></button>';\r
+  }).join('')+'<button type="button" class="check-chip" onclick="toggleAnalysisPanel(true);showDiagramView()">構造チェックの詳細</button>';\r
+  const count=document.getElementById("apps-count");\r
+  if(count) count.textContent=all.length+" 件中 "+rows.length+" 件";\r
+  const status=document.getElementById("apps-status");\r
+  if(status&&status.value!==state.status) status.value=state.status;\r
+  if(!rows.length){ host.innerHTML='<div class="table-empty">条件に合うアプリはありません。検索や絞り込みを変えてください。</div>'; return; }\r
+  const body=rows.map(r=>{\r
+    const badges=[];\r
+    if(r.start&&startMarksEnabled()) badges.push('<span class="badge badge-start">起点</span>');\r
+    if(r.app.isCustom) badges.push('<span class="badge badge-custom">手動</span>');\r
+    if(r.removed) badges.push('<span class="badge badge-nolink">図から削除済み</span>');\r
+    const statusBadge=r.status==="取得失敗"?'<span class="badge badge-failed">⚠ 取得失敗</span>':(r.status==="一部取得"?'<span class="badge badge-partial">△ 一部取得</span>':'<span class="badge badge-ok">✓ 取得完了</span>');\r
+    const flags=[];\r
+    if(r.cycle) flags.push("循環候補");\r
+    if(r.self) flags.push("自己参照");\r
+    if(r.isolated) flags.push("関連なし");\r
+    if(r.unresolved) flags.push("未取得の参照先あり");\r
+    return '<tr'+(Number(activeAppId)===Number(r.id)?' class="is-selected"':'')+'>'\r
+      +'<td class="num" data-label="App ID">'+(r.app.isCustom?'-':escapeHtml(r.id))+'</td>'\r
+      +'<td data-label="アプリ名"><button type="button" class="row-link" data-app="'+escapeHtml(String(r.id))+'" onclick="focusApp(this.dataset.app)">'+escapeHtml(r.name)+'</button> '+badges.join(' ')+(r.app.isCustom?'':'<div class="cell-sub">探索の深さ '+(r.app.depth||0)+'</div>')+'</td>'\r
+      +'<td data-label="スペース">'+(r.space?'#'+escapeHtml(r.space):'<span class="cell-sub">-</span>')+'</td>'\r
+      +'<td class="num" data-label="項目数">'+r.fields+'</td>'\r
+      +'<td class="num" data-label="参照する">'+r.out+'</td>'\r
+      +'<td class="num" data-label="参照される">'+r.inc+'</td>'\r
+      +'<td data-label="状態">'+statusBadge+(r.issues.length?'<div class="cell-note">'+r.issues.map(escapeHtml).join('<br>')+'</div>':'')+(flags.length?'<div class="cell-sub">'+escapeHtml(flags.join(' ・ '))+'</div>':'')+'</td>'\r
+      +'<td class="cell-action" data-label=""><button type="button" class="tb row-go" data-app="'+escapeHtml(String(r.id))+'" onclick="focusApp(this.dataset.app)" aria-label="'+escapeHtml(r.name)+' を図で見る">図で見る</button></td>'\r
+      +'</tr>';\r
+  }).join('');\r
+  host.innerHTML='<table class="data-table"><caption class="sr-only">アプリ一覧（'+rows.length+' 件）</caption>'+tableHeadHtml(APP_TABLE_COLUMNS,state,"apps")+'<tbody>'+body+'</tbody></table>';\r
+}\r
+function relationTableRows(){\r
+  const rows=[];\r
+  APPS.forEach(app=>(app.relations||[]).forEach((rel,ri)=>{\r
+    const edgeId="e_"+app.id+"_"+ri;\r
+    const target=appMap.get(rel.toApp)||null;\r
+    const edge=cy.getElementById(edgeId);\r
+    rows.push({\r
+      edgeId,rel,source:app,target,kind:rel.kind,\r
+      sourceName:String(app.name||""),targetName:target?String(target.name||""):"未取得の参照先 (App "+rel.toApp+")",\r
+      sourceField:relSourceFieldText(rel),targetField:relTargetFieldText(rel,target),\r
+      fieldsText:relFieldsText(rel),filter:relFilterText(rel),\r
+      removed:edge.length&&edge.hasClass("rel-manual-hidden"),self:String(rel.toApp)===String(app.id),unresolved:!target,custom:!!rel.isCustom,\r
+      tiebreak:edgeId\r
+    });\r
+  }));\r
+  return rows;\r
+}\r
+const RELATION_TABLE_COLUMNS=[\r
+  {key:"kind",label:"種類",sortValue:r=>["LOOKUP","REF","ACTION"].indexOf(r.kind)},\r
+  {key:"source",label:"参照元アプリ",sortValue:r=>r.sourceName+"\\u0000"+["LOOKUP","REF","ACTION"].indexOf(r.kind)},\r
+  {key:"sourceField",label:"参照元の項目"},\r
+  {key:"arrow",label:"",srLabel:"向き",sortable:false},\r
+  {key:"target",label:"参照先アプリ",sortValue:r=>r.targetName},\r
+  {key:"targetField",label:"参照先の項目"},\r
+  {key:"fieldsText",label:"コピー・表示する項目"},\r
+  {key:"filter",label:"絞り込み条件"},\r
+  {key:"go",label:"",srLabel:"図で見る",sortable:false}\r
+];\r
+function toggleRelationTableKind(kind){\r
+  tableState.relations.kinds[kind]=!tableState.relations.kinds[kind];\r
+  renderRelationsTable();\r
+}\r
+function setRelationsState(value){\r
+  tableState.relations.state=String(value||"");\r
+  renderRelationsTable();\r
+}\r
+function showRelationsTable(state){\r
+  tableState.relations.state=state||"";\r
+  setView("relations");\r
+}\r
+function relationRowMatches(r,low){\r
+  if(!low) return true;\r
+  return [r.sourceName,r.targetName,r.sourceField,r.targetField,r.fieldsText,r.filter,String(r.source.id),String(r.rel.toApp),relationKindJp(r.kind)].some(v=>String(v||"").toLowerCase().includes(low));\r
+}\r
+function renderRelationsTable(){\r
+  const host=document.getElementById("relations-table");\r
+  if(!host) return;\r
+  const state=tableState.relations;\r
+  const all=relationTableRows();\r
+  const low=normalizedQuery();\r
+  const rows=sortRows(all.filter(r=>{\r
+    if(!state.kinds[r.kind]) return false;\r
+    if(state.state==="unresolved"&&!r.unresolved) return false;\r
+    if(state.state==="self"&&!r.self) return false;\r
+    if(state.state==="custom"&&!r.custom) return false;\r
+    if(state.state==="removed"&&!r.removed) return false;\r
+    if(state.state==="filtered"&&!r.filter) return false;\r
+    return relationRowMatches(r,low);\r
+  }),RELATION_TABLE_COLUMNS,state);\r
+  const kinds=document.getElementById("relations-kinds");\r
+  if(kinds) kinds.innerHTML=["LOOKUP","REF","ACTION"].map(kind=>{\r
+    const n=all.filter(r=>r.kind===kind).length;\r
+    return '<button type="button" class="check-chip" aria-pressed="'+(!!state.kinds[kind])+'" onclick="toggleRelationTableKind(\\''+kind+'\\')"><span class="kind-badge kind-'+kind+'"><i></i>'+escapeHtml(relationKindJp(kind))+'</span> <b>'+n+'</b></button>';\r
+  }).join('');\r
+  const select=document.getElementById("relations-state");\r
+  if(select&&select.value!==state.state) select.value=state.state;\r
+  const count=document.getElementById("relations-count");\r
+  if(count) count.textContent=all.length+" 件中 "+rows.length+" 件";\r
+  if(!rows.length){ host.innerHTML='<div class="table-empty">条件に合う関連はありません。検索や絞り込みを変えてください。</div>'; return; }\r
+  const appCell=(app,id,label)=>app\r
+    ?'<button type="button" class="row-link" data-app="'+escapeHtml(String(app.id))+'" onclick="focusApp(this.dataset.app)">'+escapeHtml(app.name)+'</button><div class="cell-sub">'+(app.isCustom?'手動追加':'App '+escapeHtml(app.id))+'</div>'\r
+    :'<span class="badge badge-ghost">？ 未取得</span><div class="cell-sub">App '+escapeHtml(id)+'</div>';\r
+  const body=rows.map(r=>{\r
+    const notes=[];\r
+    if(r.custom) notes.push('<span class="badge badge-custom">手動</span>');\r
+    if(r.removed) notes.push('<span class="badge badge-nolink">図から削除済み</span>');\r
+    if(r.self) notes.push('<span class="badge badge-nolink">自己参照</span>');\r
+    return '<tr>'\r
+      +'<td class="nowrap" data-label="種類"><span class="kind-badge kind-'+escapeHtml(r.kind)+'"><i></i>'+escapeHtml(relationKindJp(r.kind))+'</span>'+(notes.length?'<div>'+notes.join(' ')+'</div>':'')+'</td>'\r
+      +'<td data-label="参照元アプリ">'+appCell(r.source,r.source.id)+'</td>'\r
+      +'<td data-label="参照元の項目"><span class="cell-note">'+escapeHtml(r.sourceField||"-")+'</span></td>'\r
+      +'<td class="arrow" aria-hidden="true">→</td>'\r
+      +'<td data-label="参照先アプリ">'+appCell(r.target,r.rel.toApp)+'</td>'\r
+      +'<td data-label="参照先の項目"><span class="cell-note">'+escapeHtml(r.targetField||"-")+'</span></td>'\r
+      +'<td data-label="コピー・表示する項目"><span class="cell-note">'+escapeHtml(r.fieldsText||"-")+'</span></td>'\r
+      +'<td data-label="絞り込み条件"><span class="cell-note">'+escapeHtml(r.filter||"-")+'</span></td>'\r
+      +'<td class="cell-action" data-label=""><button type="button" class="tb row-go" data-edge="'+escapeHtml(r.edgeId)+'" onclick="goToRelationEdge(this.dataset.edge)" aria-label="'+escapeHtml(r.sourceName+' → '+r.targetName)+' の線を図で見る">図で見る</button></td>'\r
+      +'</tr>';\r
+  }).join('');\r
+  host.innerHTML='<table class="data-table"><caption class="sr-only">関連一覧（'+rows.length+' 件）</caption>'+tableHeadHtml(RELATION_TABLE_COLUMNS,state,"relations")+'<tbody>'+body+'</tbody></table>';\r
+}\r
+\r
+// ─── 取得・関連サマリー ───\r
+function hideOverview(){\r
+  const panel = document.getElementById("overview");\r
+  if(!panel) return;\r
+  panel.classList.add("collapsed");\r
+  panel.classList.remove("hidden");\r
+  document.getElementById("overview-pill")?.setAttribute("aria-expanded","false");\r
+}\r
+function toggleOverview(force){\r
+  const panel = document.getElementById("overview");\r
+  if(!panel) return;\r
+  const open = typeof force==="boolean" ? force : panel.classList.contains("collapsed") || panel.classList.contains("hidden");\r
+  panel.classList.toggle("collapsed", !open);\r
+  panel.classList.remove("hidden");\r
+  document.getElementById("overview-pill")?.setAttribute("aria-expanded",String(open));\r
+  if(open) panel.querySelector(".ov-close")?.focus();\r
+}\r
+\r
+// ─── Path Finder ───\r
+function syncToolButton(id,on){\r
+  const btn=document.getElementById(id);\r
+  if(btn){ btn.classList.toggle("active",!!on); btn.setAttribute("aria-pressed",String(!!on)); }\r
+}\r
+function togglePathFinder(){\r
+  const pf=document.getElementById("pathfinder");\r
+  pf.classList.toggle("open");\r
+  const open=pf.classList.contains("open");\r
+  syncToolButton("pathfinder-btn",open);\r
+  if(open){\r
+    showDiagramView();\r
+    const apps=APPS.filter(a=>{ const n = cy.getElementById("a"+a.id); return n.length && !n.hasClass("app-manual-hidden"); });\r
+    ["pf-from","pf-to"].forEach(id=>{\r
+      const select=document.getElementById(id);\r
+      select.replaceChildren();\r
+      apps.forEach(app=>{const option=document.createElement("option");option.value="a"+app.id;option.textContent=String(app.name||("アプリ "+app.id));select.appendChild(option);});\r
+    });\r
+    if(activeAppId){ const from=document.getElementById("pf-from"); if(from) from.value="a"+activeAppId; }\r
+  }\r
+}\r
+\r
+function findPath(){\r
+  clearPath();\r
+  const from=document.getElementById("pf-from").value;\r
+  const to=document.getElementById("pf-to").value;\r
+  if(from===to){toast("同じアプリです");return;}\r
+  const dijkstra=cy.elements().not(".rel-hidden").not(".rel-manual-hidden").not(".app-manual-hidden").dijkstra({root:"#"+from,directed:false});\r
+  const path=dijkstra.pathTo(cy.getElementById(to));\r
+  if(!path||path.length===0){document.getElementById("path-result").textContent="経路なし";return;}\r
+  const reveal=path.nodes().some(n=>n.hasClass("scope-out"))?showAllScope():Promise.resolve();\r
+  reveal.then(()=>{\r
+    path.addClass("path-node path-edge");\r
+    path.edges().forEach(e=>{ if(e.hasClass("edge-collapsed")) bundleRepresentative(e).addClass("path-edge"); });\r
+    cy.elements().not(path).not(".note-node").not(".path-edge").addClass("dimmed");\r
+    const names=path.nodes().map(n=>appMap.get(n.data("appId"))?.name||"?").join(" → ");\r
+    document.getElementById("path-result").textContent=names;\r
+    fitElements(path,{animate:true});\r
+    toast("経路: "+path.nodes().length+"アプリ");\r
+  });\r
+}\r
+\r
+function clearPath(){\r
+  cy.elements().removeClass("path-node path-edge dimmed highlighted");\r
+  document.getElementById("path-result").textContent="";\r
+}\r
+\r
+// ─── Minimap ───\r
+let minimapOpen=false,minimapTimer;\r
+function toggleMinimap(){\r
+  minimapOpen=!minimapOpen;\r
+  document.getElementById("minimap").classList.toggle("open",minimapOpen);\r
+  syncToolButton("minimap-btn",minimapOpen);\r
+  if(minimapOpen) startMinimap(); else clearInterval(minimapTimer);\r
+}\r
+function startMinimap(){\r
+  const canvas=document.getElementById("minimap-canvas");\r
+  const ctx=canvas.getContext("2d");\r
+  const render=()=>{\r
+    const palette=currentPalette();\r
+    canvas.width=190;canvas.height=136;\r
+    ctx.fillStyle=palette.surface;\r
+    ctx.fillRect(0,0,190,136);\r
+    const bb=cy.elements(":visible").boundingBox();\r
+    if(!bb.w) return;\r
+    const sx=180/bb.w,sy=126/bb.h,s=Math.min(sx,sy);\r
+    const ox=(190-bb.w*s)/2,oy=(136-bb.h*s)/2;\r
+    cy.edges(":visible").forEach(e=>{\r
+      const sp=e.sourceEndpoint(),tp=e.targetEndpoint();\r
+      ctx.strokeStyle=e.data("kind")==="LOOKUP"?palette.lookup:(e.data("kind")==="REF"?palette.ref:palette.action);\r
+      ctx.lineWidth=0.6;ctx.beginPath();\r
+      ctx.moveTo((sp.x-bb.x1)*s+ox,(sp.y-bb.y1)*s+oy);\r
+      ctx.lineTo((tp.x-bb.x1)*s+ox,(tp.y-bb.y1)*s+oy);\r
+      ctx.stroke();\r
+    });\r
+    cy.nodes(":visible").forEach(n=>{\r
+      const p=n.position();\r
+      if(n.hasClass("pinned-node")) ctx.fillStyle=palette.pk;\r
+      else if(n.hasClass("focus-root")||n.selected()) ctx.fillStyle=palette.accent;\r
+      else if(n.hasClass("path-node")) ctx.fillStyle="#db2777";\r
+      else if(n.hasClass("highlighted")) ctx.fillStyle=palette.pk;\r
+      else ctx.fillStyle=palette.dim;\r
+      ctx.globalAlpha=(n.hasClass("dimmed")||n.hasClass("focus-dim"))?0.15:0.85;\r
+      ctx.fillRect((p.x-bb.x1)*s+ox-2,(p.y-bb.y1)*s+oy-2,4,4);\r
+      ctx.globalAlpha=1;\r
+    });\r
+    const ext=cy.extent();\r
+    ctx.strokeStyle=palette.accent;ctx.lineWidth=1;ctx.globalAlpha=0.8;\r
+    ctx.strokeRect((ext.x1-bb.x1)*s+ox,(ext.y1-bb.y1)*s+oy,(ext.x2-ext.x1)*s,(ext.y2-ext.y1)*s);\r
+    ctx.globalAlpha=1;\r
+  };\r
+  clearInterval(minimapTimer);\r
+  minimapTimer=setInterval(render,500);\r
+  render();\r
+}\r
+\r
+// ─── Command Palette ───\r
+const commands=[\r
+  {label:"画面に合わせる",icon:"⤢",action:fit,keys:"Ctrl+0"},\r
+  {label:"表示: 図",icon:"◇",action:()=>setView("diagram"),keys:"Alt+1"},\r
+  {label:"表示: アプリ一覧（表）",icon:"▤",action:()=>setView("apps"),keys:"Alt+2"},\r
+  {label:"表示: 関連一覧（表）",icon:"▤",action:()=>setView("relations"),keys:"Alt+3"},\r
+  {label:"表示範囲: 全体を表示",icon:"◎",action:showAllScope},\r
+  {label:"表示範囲: 起点まわりを表示",icon:"◉",action:showStartScope},\r
+  {label:"表示範囲: 選んだアプリのまわりを表示",icon:"◉",action:()=>{ if(activeAppId) showAroundApp(activeAppId); else toast("アプリを図で選んでください"); }},\r
+  {label:"表示範囲の深さ: 1（直接の関連先）",icon:"1",action:()=>setScopeDepth(1)},\r
+  {label:"表示範囲の深さ: 2（関連先の関連先）",icon:"2",action:()=>setScopeDepth(2)},\r
+  {label:"配置: 階層（Dagre）",icon:"⬡",action:()=>setLayout("dagre")},\r
+  {label:"配置: 自動（Cose）",icon:"🔄",action:()=>setLayout("cose")},\r
+  {label:"配置: グリッド",icon:"⊞",action:()=>setLayout("grid")},\r
+  {label:"配置: 円形",icon:"◯",action:()=>setLayout("circle")},\r
+  {label:"配置: ツリー",icon:"🌳",action:()=>setLayout("breadthfirst")},\r
+  {label:"配置: 同心円",icon:"◎",action:()=>setLayout("concentric")},\r
+  {label:"関連のないアプリを下にまとめる ON/OFF",icon:"🗂",action:toggleSeparateNoLink},\r
+  {label:"シンプル（項目を隠す）ON/OFF",icon:"⬡",action:toggleSimpleMode},\r
+  {label:"カードの項目: 結合のみ",icon:"⬡",action:()=>setDensity("none")},\r
+  {label:"カードの項目: コンパクト",icon:"🪶",action:()=>setDensity("compact")},\r
+  {label:"カードの項目: 標準",icon:"📄",action:()=>setDensity("standard")},\r
+  {label:"カードの項目: 詳細",icon:"🧾",action:()=>setDensity("full")},\r
+  {label:"アプリ一覧（左）を開閉",icon:"☰",action:()=>toggleSidebar(),keys:"Ctrl+B"},\r
+  {label:"構造チェック（取得状態・循環候補・接続数）",icon:"🩺",action:()=>toggleAnalysisPanel(true)},\r
+  {label:"取得・関連サマリー",icon:"🧭",action:()=>toggleOverview()},\r
+  {label:"経路探索",icon:"🔍",action:togglePathFinder},\r
+  {label:"選んだアプリの関連強調 ON/OFF",icon:"🎯",action:toggleFocusMode,keys:"Shift+F"},\r
+  {label:"強調を解除",icon:"🧹",action:()=>clearFocus()},\r
+  {label:"ルックアップの線 ON/OFF",icon:"🔗",action:()=>toggleRelationKind("LOOKUP")},\r
+  {label:"関連レコード一覧の線 ON/OFF",icon:"📋",action:()=>toggleRelationKind("REF")},\r
+  {label:"アプリアクションの線 ON/OFF",icon:"⚡",action:()=>toggleRelationKind("ACTION")},\r
+  {label:"同じアプリ間の線をまとめる ON/OFF",icon:"≡",action:toggleEdgeBundling},\r
+  {label:"線のラベルを常に表示 ON/OFF",icon:"🏷",action:toggleRelationLabels},\r
+  {label:"元に戻す",icon:"↩",action:undoLast,keys:"Ctrl+Z"},\r
+  {label:"アプリを追加",icon:"⬡",action:()=>openAddApp()},\r
+  {label:"アプリに項目を追加",icon:"📝",action:()=>openAddField()},\r
+  {label:"関連線を追加",icon:"🔗",action:()=>openAddRelation()},\r
+  {label:"メモ（付箋）を追加",icon:"🗒",action:()=>openAddNote()},\r
+  {label:"アプリを編集（名前・枠の色）",icon:"✏",action:()=>openEditApp()},\r
+  {label:"深さごとに枠を色分け",icon:"🎨",action:autoColorByDepth},\r
+  {label:"枠の色分けを解除",icon:"🧼",action:clearNodeColors},\r
+  {label:"選んだアプリを左にそろえる",icon:"⇤",action:()=>alignSelected("x")},\r
+  {label:"選んだアプリを上にそろえる",icon:"⇞",action:()=>alignSelected("y")},\r
+  {label:"選んだアプリを横に等間隔で並べる",icon:"⇶",action:()=>distributeSelected("x")},\r
+  {label:"選んだアプリを縦に等間隔で並べる",icon:"⇩",action:()=>distributeSelected("y")},\r
+  {label:"選んだ関連線を図から削除",icon:"🗑",action:removeSelectedRelations,keys:"Delete"},\r
+  {label:"削除した関連線を戻す",icon:"↺",action:restoreRemovedRelations},\r
+  {label:"選んだアプリを図から削除",icon:"🗑",action:removeSelectedApps,keys:"Delete"},\r
+  {label:"削除したアプリを戻す",icon:"↺",action:restoreRemovedApps},\r
+  {label:"隠した項目をすべて戻す",icon:"↺",action:restoreAllHiddenFields},\r
+  {label:"選んだアプリを固定 / 解除",icon:"📌",action:togglePinFromSelection,keys:"Shift+P"},\r
+  {label:"固定をすべて解除",icon:"📍",action:clearPins},\r
+  {label:"ミニマップ",icon:"🗺",action:toggleMinimap},\r
+  {label:"配色を切り替える（明るい / 暗い）",icon:"◐",action:toggleTheme},\r
+  {label:"編集済みHTMLを保存",icon:"💾",action:exportEditedHtml},\r
+  {label:"PNG 画像を保存（白背景）",icon:"🖼",action:exportPNG},\r
+  {label:"Mermaid を出力",icon:"🧜",action:showMermaid},\r
+  {label:"draw.io XML を出力",icon:"📊",action:showDrawio},\r
+  {label:"SQL DDL を出力",icon:"🗄",action:showSQL},\r
+  {label:"PlantUML を出力",icon:"🌱",action:showPlantUML},\r
+  {label:"ERモデル JSON を出力",icon:"{}",action:showJSON},\r
+  {label:"Markdown 仕様書を出力",icon:"📝",action:showMarkdown},\r
+  {label:"CSV（アプリ一覧）を出力",icon:"📑",action:showCSVApps},\r
+  {label:"CSV（フィールド）を出力",icon:"📑",action:showCSVFields},\r
+  {label:"CSV（関連）を出力",icon:"📑",action:showCSVRelations},\r
+  {label:"印刷（資料として）",icon:"🖨",action:printDiagram,keys:"Ctrl+P"},\r
+  {label:"表示状態のURLをコピー",icon:"🔗",action:copyShareUrl},\r
+  {label:"フルスクリーン",icon:"⛶",action:toggleFullscreen,keys:"F11"},\r
+  {label:"拡大",icon:"➕",action:zoomIn,keys:"+"},\r
+  {label:"縮小",icon:"➖",action:zoomOut,keys:"-"},\r
+  {label:"倍率を 100% に戻す",icon:"◎",action:zoomReset,keys:"0"},\r
+  {label:"ヘルプ",icon:"?",action:openHelp,keys:"?"},\r
+  {label:"強調と検索を解除",icon:"✨",action:()=>{cy.elements().removeClass("highlighted dimmed path-node path-edge");clearSearch();clearFocus(true);}},\r
+];\r
+\r
+// Add app-focus commands\r
+APPS.forEach(a=>{\r
+  commands.push({label:"アプリ: "+a.name+" (ID:"+a.id+")",icon:"📱",appId:a.id,action:()=>focusApp(a.id)});\r
+});\r
+\r
+let cmdReturnFocus=null;\r
+function openCmd(){\r
+  const overlay=document.getElementById("cmd-overlay");\r
+  if(!overlay.classList.contains("open")) cmdReturnFocus=rememberDialogFocus();\r
+  overlay.classList.add("open");\r
+  const inp=document.getElementById("cmd-input");inp.value="";inp.focus();\r
+  filterCmd("");\r
+}\r
+function closeCmd(){\r
+  const overlay=document.getElementById("cmd-overlay");\r
+  const wasOpen=overlay.classList.contains("open");\r
+  overlay.classList.remove("open");\r
+  if(wasOpen){ const back=cmdReturnFocus; cmdReturnFocus=null; restoreDialogFocus(back); }\r
+}\r
+\r
+function filterCmd(q){\r
+  const low=q.toLowerCase();\r
+  const filtered=q?commands.filter(c=>c.label.toLowerCase().includes(low)):commands.slice(0,14);\r
+  const box=document.getElementById("cmd-results");\r
+  box.replaceChildren();\r
+  filtered.forEach((command,index)=>{\r
+    const item=document.createElement("button");\r
+    item.type="button";\r
+    item.className="cmd-item"+(index===0?" active":"");\r
+    const icon=document.createElement("span");icon.textContent=String(command.icon||"");icon.setAttribute("aria-hidden","true");\r
+    const label=document.createElement("span");label.textContent=String(command.label||"");\r
+    item.append(icon,label);\r
+    if(command.keys){const keys=document.createElement("span");keys.className="kbd";keys.textContent=String(command.keys);item.appendChild(keys);}\r
+    item.addEventListener("click",()=>runCmd(commands.indexOf(command)));\r
+    box.appendChild(item);\r
+  });\r
+}\r
+\r
+function runCmd(idx){closeCmd();commands[idx].action();}\r
+\r
+// ─── Keyboard Shortcuts ───\r
+function isTypingTarget(el){\r
+  if(!el) return false;\r
+  const tag=(el.tagName||"").toUpperCase();\r
+  return tag==="INPUT"||tag==="TEXTAREA"||tag==="SELECT"||el.isContentEditable;\r
+}\r
+function isInteractiveShortcutTarget(el){\r
+  if(isTypingTarget(el)) return true;\r
+  return !!(el && typeof el.closest === "function" && el.closest("button,a,summary,[role='button']"));\r
+}\r
+function closeTransientUi(){\r
+  closeCmd();closeModal();closeHelp();closeEditor();closeAllMenus();closeZoomPresets();hideOverview();closeMobileMenu();\r
+}\r
+document.addEventListener("keydown",e=>{\r
+  if(e.key==="k"&&(e.ctrlKey||e.metaKey)){e.preventDefault();openCmd();}\r
+  if(e.key==="b"&&(e.ctrlKey||e.metaKey)){e.preventDefault();toggleSidebar();}\r
+  if(e.key==="f"&&(e.ctrlKey||e.metaKey)){e.preventDefault();document.getElementById("search-box").focus();document.getElementById("search-box").select();}\r
+  if(e.key==="p"&&(e.ctrlKey||e.metaKey)&&!e.shiftKey){e.preventDefault();printDiagram();}\r
+  if(e.altKey&&!e.ctrlKey&&!e.metaKey&&["1","2","3"].includes(e.key)){e.preventDefault();setView(["diagram","apps","relations"][Number(e.key)-1]);}\r
+  if(e.key==="F"&&e.shiftKey&&!e.isComposing&&!e.repeat&&!isInteractiveShortcutTarget(e.target)){e.preventDefault();toggleFocusMode();}\r
+  if(e.key==="P"&&e.shiftKey&&!e.isComposing&&!e.repeat&&!isInteractiveShortcutTarget(e.target)){e.preventDefault();togglePinFromSelection();}\r
+  if(e.key==="0"&&(e.ctrlKey||e.metaKey)){e.preventDefault();fit();}\r
+  if((e.key==="z"||e.key==="Z")&&(e.ctrlKey||e.metaKey)&&!e.shiftKey&&!isTypingTarget(e.target)){e.preventDefault();undoLast();}\r
+  if(e.key==="Escape"){\r
+    const hadDialog=["cmd-overlay","modal-overlay","help-overlay","editor-overlay"].some(id=>document.getElementById(id)?.classList.contains("open"));\r
+    const hadMenu=!!document.querySelector(".tb-menu.open")||!!document.querySelector("#overview:not(.collapsed)");\r
+    closeTransientUi();\r
+    if(hadDialog||hadMenu) return;\r
+    if(isDrawerLayout()&&sidebarIsOpen()){ closeSidebar(); return; }\r
+    closeDetail();toggleAnalysisPanel(false);clearFocus(true);clearAnalysisHighlight();\r
+  }\r
+  if((e.key==="Delete"||e.key==="Backspace")&&!isTypingTarget(e.target)&&activeView==="diagram"){\r
+    const selEdges=cy.edges(":selected");\r
+    const selNotes=cy.nodes(".note-node:selected");\r
+    const selNodes=cy.nodes(":selected").not(".app-manual-hidden").not(".note-node");\r
+    if(selEdges.length||selNodes.length||selNotes.length){\r
+      e.preventDefault();\r
+      if(selEdges.length) removeSelectedRelations();\r
+      if(selNodes.length) removeSelectedApps();\r
+      if(selNotes.length){ deleteNoteNodes(selNotes); toast("メモを削除しました: "+selNotes.length+"件（Ctrl+Z で戻せます）"); }\r
+    }\r
+  }\r
+  if(!isTypingTarget(e.target)){\r
+    if(e.key==="?"||(e.key==="/"&&e.shiftKey)){e.preventDefault();openHelp();}\r
+    if(activeView==="diagram"&&!e.ctrlKey&&!e.metaKey&&!e.altKey){\r
+      if(e.key==="+"||e.key==="="){e.preventDefault();zoomIn();}\r
+      if(e.key==="-"||e.key==="_"){e.preventDefault();zoomOut();}\r
+      if(e.key==="0"){e.preventDefault();zoomReset();}\r
+    }\r
+    if(e.key==="F11"){e.preventDefault();toggleFullscreen();}\r
+  }\r
+  // cmd palette navigation\r
+  if(document.getElementById("cmd-overlay").classList.contains("open")){\r
+    const items=[...document.querySelectorAll(".cmd-item")];\r
+    const ai=items.findIndex(i=>i.classList.contains("active"));\r
+    if(e.key==="ArrowDown"){e.preventDefault();items[ai]?.classList.remove("active");items[Math.min(ai+1,items.length-1)]?.classList.add("active");items[Math.min(ai+1,items.length-1)]?.scrollIntoView({block:"nearest"});}\r
+    if(e.key==="ArrowUp"){e.preventDefault();items[ai]?.classList.remove("active");items[Math.max(ai-1,0)]?.classList.add("active");items[Math.max(ai-1,0)]?.scrollIntoView({block:"nearest"});}\r
+    if(e.key==="Enter"){e.preventDefault();items[ai]?.click();}\r
+  }\r
+});\r
+\r
+// ─── Zoom controls ───\r
+function closeZoomPresets(){\r
+  const presets=document.getElementById("zoom-presets");\r
+  const trigger=document.getElementById("zoom-level");\r
+  const restoreFocus=!!(presets&&presets.contains(document.activeElement));\r
+  presets?.classList.remove("open");\r
+  trigger?.setAttribute("aria-expanded","false");\r
+  if(restoreFocus) trigger?.focus();\r
+}\r
+function toggleZoomPresets(){\r
+  const presets=document.getElementById("zoom-presets");\r
+  const trigger=document.getElementById("zoom-level");\r
+  if(!presets||!trigger) return;\r
+  const open=!presets.classList.contains("open");\r
+  presets.classList.toggle("open",open);\r
+  trigger.setAttribute("aria-expanded",String(open));\r
+  if(open){\r
+    const current=presets.querySelector('[aria-pressed="true"]')||presets.querySelector("button");\r
+    current?.focus();\r
+  }\r
+}\r
+function updateZoomLabel(){\r
+  const percent=Math.round(cy.zoom()*100);\r
+  applySemanticZoom(cy.zoom());\r
+  const value=document.getElementById("zoom-value");\r
+  const mode=document.getElementById("zoom-mode");\r
+  const trigger=document.getElementById("zoom-level");\r
+  if(value) value.textContent=percent+"%";\r
+  if(mode) mode.textContent=cy.zoom()<0.35?"構造":(cy.zoom()<SEMANTIC_ZOOM_THRESHOLD?"概要":"");\r
+  if(trigger){\r
+    trigger.setAttribute("aria-label","現在の表示倍率 "+percent+"%。倍率プリセットを開く");\r
+    trigger.title=cy.zoom()<SEMANTIC_ZOOM_THRESHOLD\r
+      ? "縮小中はアプリ名を大きく出す概要のカードです。押すと倍率を選べます"\r
+      : "倍率を選ぶ";\r
+  }\r
+  document.querySelectorAll(".zoom-preset").forEach(button=>{\r
+    button.setAttribute("aria-pressed",String(Number(button.dataset.zoom)===percent));\r
+  });\r
+}\r
+function setZoomLevel(level){\r
+  cy.zoom({level:Math.max(cy.minZoom(),Math.min(level,cy.maxZoom())),renderedPosition:{x:cy.width()/2,y:cy.height()/2}});\r
+  updateZoomLabel();\r
+}\r
+function setZoomPercent(percent){setZoomLevel(Number(percent)/100);closeZoomPresets();document.getElementById("zoom-level")?.focus();}\r
+function zoomIn(){closeZoomPresets();setZoomLevel(cy.zoom()*1.25);}\r
+function zoomOut(){closeZoomPresets();setZoomLevel(cy.zoom()/1.25);}\r
+function zoomReset(){closeZoomPresets();cy.zoom(1);cy.center();updateZoomLabel();}\r
+cy.on("zoom", updateZoomLabel);\r
+\r
+// ─── Fullscreen ───\r
+function toggleFullscreen(){\r
+  const doc=document;\r
+  const el=doc.documentElement;\r
+  try{\r
+    if(!doc.fullscreenElement){\r
+      (el.requestFullscreen||el.webkitRequestFullscreen).call(el);\r
+    }else{\r
+      (doc.exitFullscreen||doc.webkitExitFullscreen).call(doc);\r
+    }\r
+  }catch(_){ toast("このブラウザはフルスクリーンに対応していません"); }\r
+}\r
+document.addEventListener("fullscreenchange",()=>{\r
+  syncToolButton("fs-btn",!!document.fullscreenElement);\r
+});\r
+\r
+// ─── Dropdown menus ───\r
+function toggleMenu(id){\r
+  const m=document.getElementById(id);\r
+  if(!m) return;\r
+  const willOpen=!m.classList.contains("open");\r
+  closeAllMenus();\r
+  hideOverview();\r
+  if(willOpen){\r
+    m.classList.add("open");\r
+    m.querySelector(".tb-menu-btn")?.setAttribute("aria-expanded","true");\r
+    positionMenuPanel(m);\r
+  }\r
+}\r
+// 狭い画面では、メニューを操作バーの下に、画面の幅いっぱいに出す（操作バーの中の操作に重ねない）\r
+function positionMenuPanel(menu){\r
+  const panel=menu.querySelector(".tb-menu-panel");\r
+  if(!panel) return;\r
+  if(window.matchMedia&&window.matchMedia("(max-width:900px)").matches){\r
+    const top=Math.round(document.getElementById("topbar").getBoundingClientRect().bottom+6);\r
+    panel.style.top=top+"px";\r
+    panel.style.maxHeight=Math.max(160,innerHeight-top-8)+"px";\r
+  }else{\r
+    panel.style.top="";\r
+    panel.style.maxHeight="";\r
+  }\r
+}\r
+function closeAllMenus(){\r
+  document.querySelectorAll(".tb-menu.open").forEach(x=>{\r
+    x.classList.remove("open");\r
+    x.querySelector(".tb-menu-btn")?.setAttribute("aria-expanded","false");\r
+  });\r
+}\r
+document.addEventListener("click",(e)=>{\r
+  const inside=e.target.closest(".tb-menu");\r
+  if(!inside) closeAllMenus();\r
+  if(!e.target.closest("#zoom-ctrl")) closeZoomPresets();\r
+  if(!e.target.closest("#overview")&&!e.target.closest("#overview-pill")) hideOverview();\r
+});\r
+// メニューの項目を押したら閉じる（表示設定の切り替えは続けて操作できるよう、開いたままにする）\r
+document.querySelectorAll(".tb-menu").forEach(menu=>{\r
+  menu.addEventListener("click",(e)=>{\r
+    const item=e.target.closest(".tb-menu-panel button");\r
+    if(item&&!item.closest(".settings-panel")) setTimeout(closeAllMenus,0);\r
+  });\r
+});\r
+\r
+// ─── Mobile menu toggle ───\r
+function toggleMobileMenu(){\r
+  const topbar=document.getElementById("topbar");\r
+  const open=!topbar.classList.contains("mobile-open");\r
+  topbar.classList.toggle("mobile-open",open);\r
+  document.getElementById("mobile-menu-btn")?.setAttribute("aria-expanded",String(open));\r
+}\r
+function closeMobileMenu(){\r
+  document.getElementById("topbar")?.classList.remove("mobile-open");\r
+  document.getElementById("mobile-menu-btn")?.setAttribute("aria-expanded","false");\r
+}\r
+let resizeTimer=0;\r
+window.addEventListener("resize",()=>{\r
+  clearTimeout(resizeTimer);\r
+  resizeTimer=setTimeout(()=>{ syncSidebarMode(); cy.resize(); },120);\r
+},{passive:true});\r
+\r
+// ─── ダイアログのフォーカス管理（開くと中へ移し、閉じると開いた操作の位置へ戻す） ───\r
+function rememberDialogFocus(){\r
+  const active=document.activeElement;\r
+  if(!active||active===document.body||typeof active.focus!=="function") return null;\r
+  // メニュー項目から開いた場合、項目はメニューを閉じると消えるため、メニューの開閉ボタンへ戻す\r
+  const menu=typeof active.closest==="function"?active.closest(".tb-menu"):null;\r
+  return (menu&&menu.querySelector(".tb-menu-btn"))||active;\r
+}\r
+function restoreDialogFocus(target){\r
+  if(target&&target.isConnected&&target.getClientRects().length>0) target.focus();\r
+}\r
+\r
+// ─── Help modal ───\r
+let helpReturnFocus=null;\r
+function openHelp(){\r
+  const overlay=document.getElementById("help-overlay");\r
+  if(!overlay.classList.contains("open")) helpReturnFocus=rememberDialogFocus();\r
+  overlay.classList.add("open");\r
+  const close=document.querySelector("#help-box .close-row button");\r
+  if(close) close.focus();\r
+}\r
+function closeHelp(){\r
+  const overlay=document.getElementById("help-overlay");\r
+  const wasOpen=overlay.classList.contains("open");\r
+  overlay.classList.remove("open");\r
+  if(wasOpen){ const back=helpReturnFocus; helpReturnFocus=null; restoreDialogFocus(back); }\r
+}\r
+\r
+// ─── 印刷: 見出し・図（現在の表示の画像）・アプリ一覧・関連一覧の資料にする ───\r
+function printConnectionText(){\r
+  return (ER_OPTIONS.sourceHost?ER_OPTIONS.sourceHost+" / ":"")+(ER_OPTIONS.sourceGuestId?("ゲストスペース "+ER_OPTIONS.sourceGuestId):"通常空間")+" / "+(ER_OPTIONS.sourcePreview?"プレビュー":"本番");\r
+}\r
+function scopeDescription(){\r
+  const total=appNodeCount();\r
+  if(viewScope.mode==="all") return "全体（"+total+" アプリ）";\r
+  const shown=cy.nodes().filter(n=>!n.hasClass("note-node")&&!n.hasClass("app-manual-hidden")&&!n.hasClass("scope-out")).length;\r
+  const names=viewScope.roots.map(id=>{const a=findApp(id);return a?a.name:"App "+id;});\r
+  return (isStartScope(viewScope)?"起点まわり":"「"+names.join("」「")+"」のまわり")+"（深さ "+viewScope.depth+"、"+shown+" / "+total+" アプリ）";\r
+}\r
+function buildPrintDocHtml(){\r
+  recomputeErAnalysis();\r
+  const startIds=ER_OPTIONS.startAppIds||[];\r
+  const startNames=startIds.slice(0,8).map(id=>{const a=findApp(id);return a?a.name+"（App "+id+"）":"App "+id;});\r
+  const meta=[\r
+    ["対象（起点）",startNames.join("、")+(startIds.length>8?" ほか "+(startIds.length-8)+" 件":"")||"-"],\r
+    ["取得日時",ER_OPTIONS.generatedAt?new Date(ER_OPTIONS.generatedAt).toLocaleString("ja-JP"):"-"],\r
+    ["印刷日時",new Date().toLocaleString("ja-JP")],\r
+    ["接続先",printConnectionText()],\r
+    ["取得状態","取得完了 "+ER_ANALYSIS.counts.retrievalComplete+" / 一部取得 "+ER_ANALYSIS.counts.retrievalPartial+" / 取得失敗 "+ER_ANALYSIS.counts.retrievalFailed+" / 未取得の参照先 "+(ER_ANALYSIS.unresolvedTargets||[]).length],\r
+    ["アプリ・関連",APPS.length+" アプリ / "+APPS.reduce((s,a)=>s+(a.relations||[]).length,0)+" 関連"],\r
+    ["図の表示範囲",scopeDescription()]\r
+  ];\r
+  if(ER_OPTIONS.reverseScanNote) meta.push(["注意",ER_OPTIONS.reverseScanNote]);\r
+  const apps=sortRows(appTableRows(),APP_TABLE_COLUMNS,tableState.apps);\r
+  const rels=sortRows(relationTableRows(),RELATION_TABLE_COLUMNS,tableState.relations);\r
+  let html='<h1>kintone ER図</h1><dl class="print-meta">'+meta.map(([k,v])=>'<dt>'+escapeHtml(k)+'</dt><dd>'+escapeHtml(v)+'</dd>').join('')+'</dl>';\r
+  html+='<figure id="print-figure-wrap"><figcaption>図: '+escapeHtml(scopeDescription())+'。実線はルックアップ、破線は関連レコード一覧、点線はアプリアクション。</figcaption></figure>';\r
+  html+='<h2>アプリ一覧（'+apps.length+' 件）</h2><table><thead><tr><th>App ID</th><th>アプリ名</th><th>スペース</th><th>項目数</th><th>参照する</th><th>参照される</th><th>状態</th></tr></thead><tbody>'\r
+    +apps.map(r=>'<tr><td>'+(r.app.isCustom?'手動':escapeHtml(r.id))+'</td><td>'+escapeHtml(r.name)+(r.start&&startMarksEnabled()?'（起点）':'')+'</td><td>'+escapeHtml(r.space?'#'+r.space:'-')+'</td><td>'+r.fields+'</td><td>'+r.out+'</td><td>'+r.inc+'</td><td>'+escapeHtml(r.status+(r.issues.length?'：'+r.issues.join(' / '):''))+'</td></tr>').join('')\r
+    +'</tbody></table>';\r
+  html+='<h2>関連一覧（'+rels.length+' 件）</h2><table><thead><tr><th>種類</th><th>参照元アプリ</th><th>参照元の項目</th><th>参照先アプリ</th><th>参照先の項目</th><th>コピー・表示する項目</th><th>絞り込み条件</th></tr></thead><tbody>'\r
+    +rels.map(r=>'<tr><td>'+escapeHtml(relationKindJp(r.kind))+(r.removed?'（図から削除）':'')+'</td><td>'+escapeHtml(r.sourceName)+'</td><td>'+escapeHtml(r.sourceField||'-')+'</td><td>'+escapeHtml(r.targetName)+'</td><td>'+escapeHtml(r.targetField||'-')+'</td><td>'+escapeHtml(r.fieldsText||'-')+'</td><td>'+escapeHtml(r.filter||'-')+'</td></tr>').join('')\r
+    +'</tbody></table>';\r
+  html+='<p class="print-note">この資料は kintone ER図（読み取り専用のツール）で作成しました。手動で追加・削除した内容を含む場合があります。</p>';\r
+  return html;\r
+}\r
+// 図の画像は、印刷するときだけ作る（開いた時点では画像の要素を置かない）\r
+let printPrepared=false;\r
+function setPrintFigure(dataUrl){\r
+  const wrap=document.getElementById("print-figure-wrap");\r
+  if(!wrap||!dataUrl) return Promise.resolve();\r
+  const img=document.createElement("img");\r
+  img.alt="ER図（"+scopeDescription()+"）";\r
+  wrap.insertBefore(img,wrap.firstChild);\r
+  return new Promise(resolve=>{ img.onload=img.onerror=()=>resolve(); img.src=dataUrl; });\r
+}\r
+function preparePrint(){\r
+  const doc=document.getElementById("print-doc");\r
+  doc.innerHTML=buildPrintDocHtml();\r
+  printPrepared=true;\r
+  return buildExportImage(5000,{bare:true}).then(setPrintFigure).catch(err=>{ console.error("[ER] 印刷用の図の作成に失敗",err); });\r
+}\r
+function clearPrintDoc(){\r
+  const doc=document.getElementById("print-doc");\r
+  if(doc) doc.innerHTML="";\r
+  printPrepared=false;\r
+}\r
+let printing=false;\r
+function printDiagram(){\r
+  if(printing) return;\r
+  printing=true;\r
+  toast("印刷用の資料を作成しています…");\r
+  preparePrint().then(()=>{\r
+    try{ window.print(); }catch(_){ toast("印刷を開けませんでした"); }\r
+  }).finally(()=>{ printing=false; });\r
+}\r
+// ブラウザのメニューや Ctrl+P 以外の方法で印刷したときも、表と見出しは出す（図は画面の画像を使う）\r
+window.addEventListener("beforeprint",()=>{\r
+  if(printPrepared) return;\r
+  const doc=document.getElementById("print-doc");\r
+  doc.innerHTML=buildPrintDocHtml();\r
+  try{\r
+    const box=cy.elements(":visible").boundingBox();\r
+    const data=cy.png({bg:"#ffffff",full:true,scale:Math.min(2,4000/Math.max(box.w,box.h,1))});\r
+    const wrap=document.getElementById("print-figure-wrap");\r
+    const img=document.createElement("img");\r
+    img.alt="ER図";\r
+    img.src=data;\r
+    wrap.insertBefore(img,wrap.firstChild);\r
+  }catch(err){ console.error("[ER] 印刷用の図の作成に失敗",err); }\r
+  printPrepared=true;\r
+});\r
+window.addEventListener("afterprint",()=>{ setTimeout(clearPrintDoc,0); });\r
+\r
+// ─── ダブルクリック ───\r
+// アプリをダブルクリックすると、そのアプリのまわりだけを表示する\r
+cy.on("dbltap","node",e=>{\r
+  const n=e.target;\r
+  if(n.hasClass("note-node")) return;\r
+  if(n.data("appId")!=null) showAroundApp(n.data("appId"));\r
+});\r
+// 背景をダブルクリックすると、その位置にアプリを追加する\r
+cy.on("dbltap",e=>{\r
+  if(e.target===cy) openAddApp({x:e.position.x,y:e.position.y});\r
+});\r
+\r
+// ─── Hover tooltip（ノード / 関連線） ───\r
+let tipEl;\r
+function ensureTip(){\r
+  if(tipEl) return tipEl;\r
+  tipEl=document.createElement("div");\r
+  tipEl.id="er-tooltip";\r
+  tipEl.setAttribute("role","tooltip");\r
+  document.body.appendChild(tipEl);\r
+  return tipEl;\r
+}\r
+cy.on("mouseover","node",e=>{\r
+  if(e.target.hasClass("note-node")) return;\r
+  const app=appMap.get(e.target.data("appId"));\r
+  if(!app) return;\r
+  ensureTip();\r
+  const _v = visibleFieldsForNode(app).length;\r
+  const _t = typeof app.totalFieldCount === "number" ? app.totalFieldCount : _v;\r
+  const _itemText = _t > _v ? (_v + "/" + _t) : _v;\r
+  tipEl.innerHTML="<b>"+escapeHtml(app.name)+"</b> "+(app.isCustom?"(手動追加)":"(App "+escapeHtml(String(app.id))+")")+"<br>項目: "+_itemText+" | 参照 "+app.relations.length+" | 被参照 "+incomingRelationCount(app.id)+(isFailedApp(app)?"<br>⚠ 取得失敗":(isPartialApp(app)?"<br>△ 一部取得":""));\r
+  tipEl.style.display="block";\r
+});\r
+cy.on("mouseout","node",()=>{if(tipEl) tipEl.style.display="none";});\r
+// 線にマウスを乗せたときの補足（コピーするフィールド・表示するフィールド・絞り込み条件）。長いときは省略する\r
+function edgeDetailTipHtml(edge){\r
+  const found=relationForEdgeId(edge.id());\r
+  const rel=found?found.rel:null;\r
+  if(!rel) return "";\r
+  const short=text=>text.length>140?text.slice(0,139)+"…":text;\r
+  let html="";\r
+  if(relCopyText(rel)) html+="<br>コピー: "+escapeHtml(short(relCopyText(rel)));\r
+  if(relDisplayText(rel)) html+="<br>表示: "+escapeHtml(short(relDisplayText(rel)));\r
+  if(relFilterText(rel)) html+="<br>絞り込み: "+escapeHtml(short(relFilterText(rel)));\r
+  return html;\r
+}\r
+// 線にマウスを乗せると強調 + ラベル非表示中でも内容をその場で確認できる\r
+cy.on("mouseover","edge",e=>{\r
+  const edge=e.target;\r
+  if(edge.hasClass("rel-hidden")||edge.hasClass("rel-manual-hidden")||edge.hasClass("edge-collapsed")) return;\r
+  edge.addClass("edge-hover");\r
+  const src=appMap.get(edge.source().data("appId"));\r
+  const dst=appMap.get(edge.target().data("appId"));\r
+  const count=Number(edge.data("bundleCount"))||1;\r
+  ensureTip();\r
+  tipEl.innerHTML="<b>"+escapeHtml(count>1?count+"本の"+relationKindJp(edge.data("kind")):(edge.data("fromDisplay")||edge.data("fromLabel")||relationKindJp(edge.data("kind"))))+"</b><br>"\r
+    +escapeHtml(src?src.name:"?")+" → "+escapeHtml(dst?dst.name:"未取得の参照先")\r
+    +"<br>種類: "+relationKindJp(edge.data("kind"))+(edge.data("isCustom")?"（手動追加）":"")\r
+    +(count>1?"<br>押すと、まとめた関連線をすべて表示します":edgeDetailTipHtml(edge));\r
+  tipEl.style.display="block";\r
+});\r
+cy.on("mouseout","edge",e=>{\r
+  e.target.removeClass("edge-hover");\r
+  if(tipEl) tipEl.style.display="none";\r
+});\r
+cy.on("mousemove",e=>{\r
+  if(tipEl&&tipEl.style.display==="block"){\r
+    const x=e.originalEvent.clientX+14,y=e.originalEvent.clientY+14;\r
+    tipEl.style.left=Math.min(x,innerWidth-tipEl.offsetWidth-8)+"px";\r
+    tipEl.style.top=Math.min(y,innerHeight-tipEl.offsetHeight-8)+"px";\r
+  }\r
+});\r
+\r
+// ─── 凡例（狭い画面では畳む） ───\r
+function syncLegendToggle(){\r
+  const legend=document.getElementById("legend");\r
+  const btn=document.getElementById("legend-toggle-btn");\r
+  if(btn&&legend) btn.setAttribute("aria-expanded",String(legend.classList.contains("open")));\r
+}\r
+function toggleLegend(){\r
+  document.getElementById("legend")?.classList.toggle("open");\r
+  syncLegendToggle();\r
+}\r
+`;
+
+  // raw-text:src/tabs/er-viewer/viewer-export.js
+  var viewer_export_default = `// ER図ビューアー: 出力（PNG・編集済みHTML・Mermaid・draw.io・PlantUML・SQL DDL・JSON・CSV・Markdown）と、編集状態の保存・復元・共有 URL。\r
+// ─── Exports ───\r
+const EXPORT_CLEARED_CLASSES=["focus-root","focus-neighbor","focus-edge","focus-dim","dimmed","highlighted","analysis-hit","analysis-dim","path-node","path-edge"];\r
+// カード画像は非同期に読み込まれるため、一度描いて読み込みを始めさせてから完了を待つ\r
+function waitForCardImages(){\r
+  cy.png({full:true,scale:0.05});\r
+  const sources=cy.nodes("[cardImage]").map(node=>node.data("cardImage"));\r
+  return Promise.all(sources.map(src=>new Promise(done=>{\r
+    const img=new Image();\r
+    img.onload=img.onerror=()=>done();\r
+    img.src=src;\r
+  }))).then(()=>new Promise(done=>setTimeout(done,150)));\r
+}\r
+// 出力は表示倍率や配色によらず、明るい配色の詳細カードで描く。図は現在の表示範囲（画面に出ているアプリ）\r
+async function withExportView(render){\r
+  const wasDark=isDark,wasLow=semanticZoomActive;\r
+  // 画面上の強調は操作中の目印なので、出力には残さない\r
+  const emphasis=EXPORT_CLEARED_CLASSES.map(name=>[name,cy.elements("."+name)]);\r
+  cy.elements().removeClass(EXPORT_CLEARED_CLASSES.join(" "));\r
+  const selected=cy.elements(":selected");\r
+  selected.unselect();\r
+  cy.edges().removeClass("edge-hover");\r
+  if(wasLow) applySemanticZoom(1,true);\r
+  if(wasDark){isDark=false;applyTheme();applyCyTheme();}\r
+  try{\r
+    await waitForCardImages();\r
+    return render();\r
+  }finally{\r
+    if(wasDark){isDark=true;applyTheme();applyCyTheme();}\r
+    if(wasLow) applySemanticZoom(cy.zoom(),true);\r
+    emphasis.forEach(([name,elements])=>elements.addClass(name));\r
+    selected.select();\r
+  }\r
+}\r
+function exportImageMeta(){\r
+  const ids=ER_OPTIONS.startAppIds||[];\r
+  const shown=ids.slice(0,5).join(", ")+(ids.length>5?" ほか"+(ids.length-5)+"件":"");\r
+  return [\r
+    "起点: "+(shown||"-"),\r
+    (ER_OPTIONS.sourceGuestId?("ゲスト "+ER_OPTIONS.sourceGuestId):"通常空間")+" / "+(ER_OPTIONS.sourcePreview?"プレビュー":"本番"),\r
+    "表示: "+scopeDescription(),\r
+    "出力: "+new Date().toLocaleString("ja-JP")\r
+  ].join("  |  ");\r
+}\r
+async function buildExportImage(maxSide=14000,options){\r
+  const diagram=await withExportView(()=>{\r
+    const box=cy.elements(":visible").boundingBox();\r
+    // cy.png は画面の倍率も掛けるため、高解像度の画面でもキャンバスの上限を超えないように割り戻す\r
+    return cy.png({bg:"#ffffff",full:true,scale:Math.min(2,maxSide/Math.max(box.w,box.h,1))/(window.devicePixelRatio||1)});\r
+  });\r
+  // 印刷の資料は見出しと凡例を別に書くため、図だけを返す\r
+  if(options&&options.bare) return diagram;\r
+  return new Promise(resolve=>{\r
+    const img=new Image();\r
+    img.onerror=()=>resolve(diagram);\r
+    img.onload=()=>{\r
+      try{\r
+        // 図が大きいほど見出しも拡大し、縮小して見ても読める大きさを保つ\r
+        const unit=Math.max(1,img.width/2000);\r
+        const pad=48,headerH=214;\r
+        const canvas=document.createElement("canvas");\r
+        canvas.width=Math.max(img.width+pad*unit*2,1600);\r
+        canvas.height=img.height+(headerH+pad)*unit;\r
+        const g=canvas.getContext("2d");\r
+        const font='"Yu Gothic UI","Hiragino Sans","Noto Sans JP",Meiryo,sans-serif';\r
+        g.fillStyle="#ffffff";g.fillRect(0,0,canvas.width,canvas.height);\r
+        g.save();g.scale(unit,unit);\r
+        g.fillStyle="#111827";g.font="700 40px "+font;g.fillText("kintone ER図",pad,72);\r
+        g.fillStyle="#4b5563";g.font="26px "+font;g.fillText(exportImageMeta(),pad,116);\r
+        let x=pad;\r
+        [["ルックアップ","#2563eb",[]],["関連レコード","#047857",[14,10]],["アクション","#d97706",[4,8]]].forEach(([label,color,dash])=>{\r
+          g.strokeStyle=color;g.lineWidth=5;g.setLineDash(dash);\r
+          g.beginPath();g.moveTo(x,150);g.lineTo(x+64,150);g.stroke();\r
+          g.setLineDash([]);\r
+          g.fillStyle="#374151";g.font="24px "+font;g.fillText(label,x+76,158);\r
+          x+=76+g.measureText(label).width+44;\r
+        });\r
+        x=pad;\r
+        [["PK","レコード番号","#b45309"],["FK","ルックアップ項目","#2563eb"],["関連","関連レコード一覧","#047857"],["一意","重複禁止","#6366f1"],["必須","必須項目","#dc2626"]].forEach(([badge,label,color])=>{\r
+          g.font="700 20px "+font;\r
+          const badgeW=Math.max(56,g.measureText(badge).width+20);\r
+          g.fillStyle=color;g.globalAlpha=0.14;g.beginPath();g.roundRect(x,172,badgeW,32,8);g.fill();g.globalAlpha=1;\r
+          g.textAlign="center";g.fillText(badge,x+badgeW/2,196);g.textAlign="left";\r
+          g.fillStyle="#374151";g.font="24px "+font;g.fillText(label,x+badgeW+10,197);\r
+          x+=badgeW+10+g.measureText(label).width+40;\r
+        });\r
+        g.restore();\r
+        g.drawImage(img,Math.round((canvas.width-img.width)/2),Math.round(headerH*unit));\r
+        resolve(canvas.toDataURL("image/png"));\r
+      }catch(err){\r
+        console.error("[ER] 画像の合成に失敗",err);\r
+        resolve(diagram);\r
+      }\r
+    };\r
+    img.src=diagram;\r
+  });\r
+}\r
+// 大きな図のデータ URL はリンクからダウンロードすると空になるため、Blob にして渡す\r
+function dataUrlToBlob(data){\r
+  const [head,body]=data.split(",");\r
+  const bytes=atob(body);\r
+  const buffer=new Uint8Array(bytes.length);\r
+  for(let i=0;i<bytes.length;i++) buffer[i]=bytes.charCodeAt(i);\r
+  return new Blob([buffer],{type:head.slice(5).split(";")[0]});\r
+}\r
+async function exportPNG(){\r
+  try{\r
+    const a=document.createElement("a");\r
+    const data=await buildExportImage();\r
+    if(data.length<100) throw new Error("図が大きすぎて画像を作成できませんでした");\r
+    const url=URL.createObjectURL(dataUrlToBlob(data));\r
+    a.href=url;\r
+    a.download=exportFilename("ER図","png");a.click();toast("PNG を保存しました（白背景・"+scopeDescription()+"）");\r
+    setTimeout(()=>URL.revokeObjectURL(url),60000);\r
+  }catch(err){\r
+    console.error("[ER] exportPNG failed", err);\r
+    toast("PNG出力に失敗: "+((err&&err.message)||err));\r
+  }\r
+}\r
+// ─── 編集済みHTMLの保存 / 復元 ───\r
+function captureEditState(){\r
+  const customApps=APPS.filter(a=>a.isCustom).map(a=>({\r
+    id:a.id,name:a.name,\r
+    fields:exportFieldsForApp(a).map(f=>Object.assign({},f)),\r
+    totalFieldCount:a.totalFieldCount,\r
+    requiredCount:a.requiredCount||0,\r
+    lookupCount:a.lookupCount||0,\r
+    refCount:a.refCount||0,\r
+    depth:a.depth||0,\r
+    ok:true,isCustom:true\r
+  }));\r
+  const customFields=[];\r
+  APPS.filter(a=>!a.isCustom).forEach(a=>exportFieldsForApp(a).forEach(f=>{\r
+    if(f.isCustom) customFields.push({appId:a.id,field:Object.assign({},f)});\r
+  }));\r
+  const customRelations=[];\r
+  APPS.forEach(a=>(a.relations||[]).forEach(r=>{\r
+    if(r.isCustom) customRelations.push({fromAppId:a.id,rel:Object.assign({},r)});\r
+  }));\r
+  const positions={};\r
+  cy.nodes().forEach(n=>{\r
+    if(n.hasClass("note-node")) return;\r
+    const p=n.position();\r
+    positions[n.id()]={x:Math.round(p.x*100)/100,y:Math.round(p.y*100)/100};\r
+  });\r
+  const notes=cy.nodes(".note-node").map(n=>{\r
+    const p=n.position();\r
+    return {id:n.id(),text:n.data("label"),color:n.data("noteColor"),x:Math.round(p.x*100)/100,y:Math.round(p.y*100)/100};\r
+  });\r
+  snapshotScopePositions();\r
+  const scopePositions={};\r
+  scopePositionCache.forEach((value,key)=>{scopePositions[key]=value;});\r
+  return {\r
+    // 2: 表示範囲（scope・scopePositions）と線のまとめ（edgeBundling）を持つ。1 は以前の版（stateVersion なし）\r
+    stateVersion:2,\r
+    savedAt:new Date().toISOString(),\r
+    options:{layoutName:ER_OPTIONS.layoutName,fieldDensity:ER_OPTIONS.fieldDensity},\r
+    seq:{app:customAppSeq,rel:customRelSeq,field:customFieldSeq,note:noteSeq},\r
+    appOverrides,fieldOverrides,relationOverrides,notes,\r
+    customApps,customFields,customRelations,\r
+    view:{\r
+      positions,\r
+      zoom:cy.zoom(),\r
+      pan:cy.pan(),\r
+      removedEdgeIds:[...manuallyRemovedEdgeIds],\r
+      removedNodeIds:[...manuallyRemovedNodeIds],\r
+      nodeHiddenEdgeIds:[...nodeHiddenEdgeIds],\r
+      pinnedNodeIds:[...pinnedNodeIds],\r
+      hiddenFieldKeys:[...hiddenFieldKeys],\r
+      simpleMode,\r
+      relationKinds:Object.assign({},relationKindState),\r
+      relationLabels:relationLabelVisible,\r
+      edgeBundling,\r
+      focusMode,focusDepth,focusDirection,\r
+      scope:{mode:viewScope.mode,roots:viewScope.roots.slice(),depth:viewScope.depth},\r
+      scopePositions\r
+    }\r
+  };\r
+}\r
+function exportEditedHtml(){\r
+  try{\r
+    recomputeErAnalysis();\r
+    const payload=captureEditState();\r
+    const clone=document.documentElement.cloneNode(true);\r
+    sanitizeEditedClone(clone);\r
+    const oldState=clone.querySelector("#er-edit-state");\r
+    if(oldState && oldState.parentNode) oldState.parentNode.removeChild(oldState);\r
+    const liveRuntime=clone.querySelector("#er-runtime");\r
+    if(liveRuntime && liveRuntime.parentNode) liveRuntime.parentNode.removeChild(liveRuntime);\r
+    // 描画ライブラリは head のインライン script として複製に含まれるため、保存した HTML も単体で動く。\r
+    const main=clone.querySelector("#er-main");\r
+    if(!main){toast("保存に失敗: 本体スクリプトが見つかりません");return;}\r
+    const stateScript=document.createElement("script");\r
+    stateScript.id="er-edit-state";\r
+    const stateJson=JSON.stringify(payload)\r
+      .replace(/</g,"\\\\u003c")\r
+      .replace(/>/g,"\\\\u003e")\r
+      .replace(/&/g,"\\\\u0026")\r
+      .replace(/\\u2028/g,"\\\\u2028")\r
+      .replace(/\\u2029/g,"\\\\u2029");\r
+    stateScript.textContent="window.__ER_EDIT_STATE__="+stateJson+";";\r
+    main.parentNode.insertBefore(stateScript,main);\r
+    const html="<!DOCTYPE html>\\n"+clone.outerHTML;\r
+    const blob=new Blob([html],{type:"text/html"});\r
+    const a=document.createElement("a");\r
+    a.href=URL.createObjectURL(blob);\r
+    a.download=exportFilename("ER図_編集済み","html");\r
+    a.style.display="none";\r
+    document.body.appendChild(a);\r
+    a.click();\r
+    setTimeout(()=>{URL.revokeObjectURL(a.href);if(a.parentNode)a.parentNode.removeChild(a);},30000);\r
+    toast("編集済みHTMLを保存しました（開き直すと編集状態を復元）");\r
+  }catch(err){\r
+    console.error("[ER] exportEditedHtml failed",err);\r
+    toast("編集済みHTMLの保存に失敗: "+((err&&err.message)||err));\r
+  }\r
+}\r
+// 開いた画面の状態（開閉・描画済みの一覧や表）は保存しない。開き直したときに描き直す\r
+function sanitizeEditedClone(clone){\r
+  clone.removeAttribute("data-theme");\r
+  const cyHost=clone.querySelector("#cy");\r
+  if(cyHost) cyHost.innerHTML="";\r
+  const tip=clone.querySelector("#er-tooltip");\r
+  if(tip && tip.parentNode) tip.parentNode.removeChild(tip);\r
+  ["#cmd-overlay","#modal-overlay","#editor-overlay","#help-overlay","#detail","#analysis-panel","#minimap","#sidebar","#pathfinder","#sidebar-backdrop","#legend"].forEach(sel=>{\r
+    const el=clone.querySelector(sel);\r
+    if(el) el.classList.remove("open","collapsed");\r
+  });\r
+  const overview=clone.querySelector("#overview");\r
+  if(overview){ overview.classList.add("collapsed"); overview.classList.remove("hidden"); }\r
+  ["#app-list","#stats-summary","#type-filters","#apps-table","#relations-table","#apps-checks","#relations-kinds","#scope-bar","#print-doc","#analysis-content","#detail-relations","#detail-fields","#detail-meta","#cmd-results","#editor-body","#modal-content"].forEach(sel=>{\r
+    const el=clone.querySelector(sel);\r
+    if(el) el.innerHTML="";\r
+  });\r
+  const topbar=clone.querySelector("#topbar");\r
+  if(topbar) topbar.classList.remove("mobile-open");\r
+  const toastEl=clone.querySelector("#toast");\r
+  if(toastEl){ toastEl.classList.remove("show"); toastEl.textContent=""; }\r
+  clone.querySelectorAll(".tb-menu.open").forEach(el=>el.classList.remove("open"));\r
+  ["#view-apps","#view-relations"].forEach(sel=>{ const el=clone.querySelector(sel); if(el) el.setAttribute("hidden",""); });\r
+  const diagram=clone.querySelector("#view-diagram");\r
+  if(diagram){ diagram.removeAttribute("inert"); diagram.removeAttribute("aria-hidden"); }\r
+  const search=clone.querySelector("#search-box");\r
+  if(search) search.removeAttribute("value");\r
+}\r
+// 保存した表示の状態を戻す。以前の版（stateVersion なし）で保存したものも読む。戻した表示範囲を返す\r
+function applySavedViewState(){\r
+  if(!ER_EDIT_STATE || !ER_EDIT_STATE.view) return null;\r
+  const view=ER_EDIT_STATE.view;\r
+  const legacy=!(Number(ER_EDIT_STATE.stateVersion)>=2);\r
+  let scope={mode:"all",roots:[],depth:1};\r
+  try{\r
+    (view.removedEdgeIds||[]).forEach(id=>{\r
+      const e=cy.getElementById(id);\r
+      if(e.length){manuallyRemovedEdgeIds.add(id);e.addClass("rel-manual-hidden");}\r
+    });\r
+    (view.removedNodeIds||[]).forEach(id=>{\r
+      const n=cy.getElementById(id);\r
+      if(n.length){manuallyRemovedNodeIds.add(id);n.addClass("app-manual-hidden");}\r
+    });\r
+    (view.nodeHiddenEdgeIds||[]).forEach(id=>{\r
+      const e=cy.getElementById(id);\r
+      if(e.length){nodeHiddenEdgeIds.add(id);e.addClass("rel-manual-hidden");}\r
+    });\r
+    (view.pinnedNodeIds||[]).forEach(id=>{\r
+      const n=cy.getElementById(id);\r
+      if(n.length) pinNode(n,true);\r
+    });\r
+    (view.hiddenFieldKeys||[]).forEach(key=>hiddenFieldKeys.add(String(key)));\r
+    if((view.hiddenFieldKeys||[]).length) refreshNodeLabels();\r
+    if(view.relationKinds){\r
+      ["LOOKUP","REF","ACTION"].forEach(k=>{relationKindState[k]=view.relationKinds[k]!==false;});\r
+    }\r
+    // 以前の版は線のラベルを常に出すのが既定だったため、その値は使わず、選んだ線だけに出す今の既定にする\r
+    if(!legacy&&typeof view.relationLabels==="boolean") relationLabelVisible=view.relationLabels;\r
+    if(typeof view.edgeBundling==="boolean") edgeBundling=view.edgeBundling;\r
+    if(typeof view.focusMode==="boolean") focusMode=view.focusMode;\r
+    if(view.focusDepth){const sel=document.getElementById("focus-depth");if(sel)sel.value=String(view.focusDepth);}\r
+    if(view.focusDirection){const sel=document.getElementById("focus-direction");if(sel)sel.value=view.focusDirection;}\r
+    updateFocusOptions();\r
+    syncFocusButton();\r
+    syncRelationKindButtons();\r
+    syncBundleButton();\r
+    applyRelationFilter();\r
+    applyRelationLabelVisibility();\r
+    if(view.simpleMode) setSimpleMode(true);\r
+    syncSimpleModeButton();\r
+    if(view.scopePositions&&typeof view.scopePositions==="object"){\r
+      Object.keys(view.scopePositions).forEach(key=>{ if(view.scopePositions[key]&&typeof view.scopePositions[key]==="object") scopePositionCache.set(key,view.scopePositions[key]); });\r
+    }\r
+    // 以前の版は全体の図だけを保存していたため、全体の表示で開く（保存した位置をそのまま使う）\r
+    if(!legacy&&view.scope) scope=view.scope;\r
+  }catch(err){console.error("[ER] 表示状態の復元に失敗",err);}\r
+  return scope;\r
+}\r
+\r
+let _md={text:"",filename:""};\r
+let modalReturnFocus=null;\r
+function openModal(t,text,fn){\r
+  _md={text,filename:fn};\r
+  document.getElementById("modal-title").textContent=t;\r
+  document.getElementById("modal-content").textContent=text;\r
+  const overlay=document.getElementById("modal-overlay");\r
+  if(!overlay.classList.contains("open")) modalReturnFocus=rememberDialogFocus();\r
+  overlay.classList.add("open");\r
+  const primary=document.querySelector("#modal .actions .primary");\r
+  if(primary) primary.focus();\r
+}\r
+function closeModal(){\r
+  const overlay=document.getElementById("modal-overlay");\r
+  const wasOpen=overlay.classList.contains("open");\r
+  overlay.classList.remove("open");\r
+  if(wasOpen){ const back=modalReturnFocus; modalReturnFocus=null; restoreDialogFocus(back); }\r
+}\r
+function copyModal(){\r
+  const failed=()=>toast("コピーに失敗しました。内容を選択して手動でコピーしてください");\r
+  try{ navigator.clipboard.writeText(_md.text).then(()=>toast("コピーしました！"),failed); }\r
+  catch(_){ failed(); }\r
+}\r
+function downloadModal(){const b=new Blob([_md.text],{type:"text/plain"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=_md.filename;a.click();toast("ダウンロード: "+_md.filename);}\r
+\r
+const entityAlias=app=>"app_"+String(app&&app.id||"unknown").replace(/[^0-9A-Za-z_]/g,"_");\r
+const exportFieldsForApp=app=>allFieldsForApp(app);\r
+const oneLineLabel=value=>String(value==null?"":value).replace(/[\\r\\n]+/g," ").replace(/"/g,"'");\r
+const sqlIdentifier=value=>String.fromCharCode(96)+String(value==null?"":value).replace(/\`/g,"\`\`")+String.fromCharCode(96);\r
+const sqlString=value=>"'"+String(value==null?"":value).replace(/\\\\/g,"\\\\\\\\").replace(/'/g,"''")+"'";\r
+// Mermaid の項目名は ASCII のみ確実に解釈される（v10 系は日本語で構文エラー）。実コードは注釈へ残す。\r
+const mermaidLabel=value=>oneLineLabel(value).replace(/%%+/g,"%");\r
+const mermaidAttributeName=(code,used)=>{\r
+  const base=/^[A-Za-z_][A-Za-z0-9_]*$/.test(code)?code:"field_"+(used.size+1);\r
+  let name=base;\r
+  for(let suffix=2;used.has(name);suffix++) name=base+"_"+suffix;\r
+  used.add(name);\r
+  return name;\r
+};\r
+const exportStatusLabel=app=>app.status==="partial"?"一部取得":((app.status==="failed"||app.ok===false)?"取得失敗":"取得完了");\r
+const exportIssueText=app=>(app.issues||[]).map(issue=>oneLineLabel(issue.message||issue.code||"取得上の注意")).filter(Boolean).join(" / ");\r
+const exportRelationLabel=rel=>{\r
+  const base=oneLineLabel(rel.fromDisplay||rel.fromLabel||rel.from||rel.kind);\r
+  if(rel.kind==="REF"&&(rel.sourceJoinField||rel.from||rel.toField)) return base+" [結合: "+oneLineLabel(rel.sourceJoinField||rel.from||"?")+" → "+oneLineLabel(rel.toField||"?")+"]";\r
+  return base;\r
+};\r
+function exportProvenanceEntries(){\r
+  return [\r
+    ["生成日時",new Date().toLocaleString("ja-JP")],\r
+    ["起点アプリ",(ER_OPTIONS.startAppIds||[]).join(", ")||"-"],\r
+    ["探索深さ",ER_OPTIONS.maxDepth?String(ER_OPTIONS.maxDepth):"無制限"],\r
+    ["逆引き探索",ER_OPTIONS.includeReverseLookup?"ON":"OFF"],\r
+    ...(ER_OPTIONS.reverseScanNote?[["逆引き走査の注意",ER_OPTIONS.reverseScanNote]]:[]),\r
+    ["サブテーブル",ER_OPTIONS.includeSubtableFields!==false?"ON":"OFF"],\r
+    ["項目範囲","取得済み全項目（図の表示密度とは独立）"],\r
+    ["接続",(ER_OPTIONS.sourceGuestId?("ゲスト "+ER_OPTIONS.sourceGuestId):"通常空間")+"/"+(ER_OPTIONS.sourcePreview?"プレビュー":"本番")],\r
+    ["取得状態","完了 "+ER_ANALYSIS.counts.retrievalComplete+" / 一部 "+ER_ANALYSIS.counts.retrievalPartial+" / 失敗 "+ER_ANALYSIS.counts.retrievalFailed],\r
+    ["未取得の参照先",String((ER_ANALYSIS.unresolvedTargets||[]).length)],\r
+    ["手動編集",(hiddenFieldKeys.size||manuallyRemovedEdgeIds.size||manuallyRemovedNodeIds.size||APPS.some(a=>a.isCustom))?"あり":"なし"]\r
+  ];\r
+}\r
+function exportFilename(base,ext){\r
+  const ids=ER_OPTIONS.startAppIds||[];\r
+  const d=new Date(),p=n=>String(n).padStart(2,"0");\r
+  const stamp=d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+"_"+p(d.getHours())+p(d.getMinutes());\r
+  return [\r
+    base,\r
+    ids.length?("app"+ids[0]+(ids.length>1?"ほか"+(ids.length-1)+"件":"")):"",\r
+    ER_OPTIONS.sourceGuestId?("guest"+ER_OPTIONS.sourceGuestId):"",\r
+    ER_OPTIONS.sourcePreview?"プレビュー":"本番",\r
+    stamp\r
+  ].filter(Boolean).join("_")+"."+ext;\r
+}\r
+const exportProvenanceLines=prefix=>exportProvenanceEntries().map(([key,value])=>(prefix?prefix+" ":"")+key+": "+oneLineLabel(value));\r
+\r
+// ER_MD_MERMAID_MAX_CHARS is injected by buildHTML\r
+function buildMermaidText(){\r
+  let m=exportProvenanceLines("%%").join("\\n")+"\\nerDiagram\\n";\r
+  APPS.forEach(a=>{\r
+    const n=entityAlias(a);\r
+    m+="  %% "+n+": "+mermaidLabel(a.name)+" (App "+a.id+")\\n";\r
+    m+="  %% 取得状態: "+exportStatusLabel(a)+(exportIssueText(a)?" / "+exportIssueText(a):"")+"\\n";\r
+    const subtableFieldCount=exportFieldsForApp(a).filter(f=>f.inSubtable).length;\r
+    if(subtableFieldCount) m+="  %% サブテーブル内 "+subtableFieldCount+"項目は親エンティティへ平坦化せず省略（ERモデルJSONに所属表を収録）\\n";\r
+    const visibleName=(exportStatusLabel(a)==="取得完了"?"":("["+exportStatusLabel(a)+"] "))+mermaidLabel(a.name)+" (App "+a.id+")";\r
+    m+="  "+n+'["'+visibleName+'"] {\\n';\r
+    const usedAttributes=new Set();\r
+    exportFieldsForApp(a).forEach(f=>{\r
+      if(f.type==="SUBTABLE"||f.inSubtable) return;\r
+      let com=""; if(f.isPK) com=" PK"; else if(f.isLookup) com=" FK";\r
+      const code=String(f.code==null?"":f.code);\r
+      const note=mermaidLabel(f.label&&f.label!==code?f.label+" ["+code+"]":code);\r
+      m+="    "+f.type.replace(/[^a-zA-Z0-9_]/g,"")+" "+mermaidAttributeName(code,usedAttributes)+com+' "'+note+'"\\n';\r
+    });\r
+    m+="  }\\n";\r
+  });\r
+  const mermaidExternalIds=new Set();\r
+  APPS.forEach(a=>(a.relations||[]).forEach(r=>{\r
+    if(appMap.has(r.toApp)||mermaidExternalIds.has(String(r.toApp))) return;\r
+    mermaidExternalIds.add(String(r.toApp));\r
+    const alias=entityAlias({id:r.toApp});\r
+    m+="  %% "+alias+": 未取得の参照先 (App "+oneLineLabel(r.toApp)+")\\n";\r
+    m+="  "+alias+'["未取得の参照先 (App '+oneLineLabel(r.toApp)+')"] {\\n    string unresolved "未取得のアプリ"\\n  }\\n';\r
+  }));\r
+  APPS.forEach(a=>{\r
+    a.relations.forEach(r=>{\r
+      const t=appMap.get(r.toApp)||{id:r.toApp};\r
+      const label=mermaidLabel(exportRelationLabel(r));\r
+      if(r.kind==="ACTION") m+="  %% ACTION "+entityAlias(a)+" -> "+entityAlias(t)+": "+label+"\\n";\r
+      else m+="  "+entityAlias(a)+(r.kind==="LOOKUP"?" }o--o| ":" }o--o{ ")+entityAlias(t)+' : "'+label+'"\\n';\r
+    });\r
+  });\r
+  return m;\r
+}\r
+function showMermaid(){\r
+  openModal("Mermaid ER図",buildMermaidText(),exportFilename("ER図","mmd"));\r
+}\r
+\r
+function showDrawio(){\r
+  const esc=s=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");\r
+  const nodeId=id=>"A"+String(id==null?"unknown":id).replace(/[^0-9A-Za-z_]/g,"_");\r
+  const drawioProvenance=exportProvenanceLines("").join(" | ").replace(/--/g,"—");\r
+  let x='<'+'!-- '+esc(drawioProvenance)+' --><mxfile host="app.diagrams.net"><diagram name="ER"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>';\r
+  const externalIds=[];\r
+  APPS.forEach(a=>(a.relations||[]).forEach(r=>{\r
+    if(!appMap.has(r.toApp)&&!externalIds.some(id=>String(id)===String(r.toApp))) externalIds.push(r.toApp);\r
+  }));\r
+  const drawioApps=APPS.map(a=>({app:a,external:false})).concat(externalIds.map(id=>({app:{id,name:"未取得の参照先 (App "+id+")",relations:[],allFields:[],fields:[],status:"failed",ok:false,issues:[{message:"図の探索範囲外または取得権限外"}]},external:true})));\r
+  const colCount=3,boxWidth=330,rowGap=96,colGap=100;\r
+  let rowY=0;\r
+  for(let rowStart=0;rowStart<drawioApps.length;rowStart+=colCount){\r
+    const row=drawioApps.slice(rowStart,rowStart+colCount);\r
+    const heights=row.map(item=>Math.max(58,34+exportFieldsForApp(item.app).filter(f=>f.type!=="SUBTABLE").length*28));\r
+    const rowHeight=Math.max(...heights,58);\r
+    row.forEach((item,colIndex)=>{\r
+      const a=item.app;\r
+      const exportFields=exportFieldsForApp(a).filter(f=>f.type!=="SUBTABLE");\r
+      const nid=nodeId(a.id),px=colIndex*(boxWidth+colGap),h=heights[colIndex];\r
+      const status=exportStatusLabel(a);\r
+      const issue=exportIssueText(a);\r
+      const header=(status==="取得完了"?"":("["+status+"] "))+(a.name||("App "+a.id))+(issue?("&#xa;"+issue):"");\r
+      const fill=item.external?"#F3F4F6":(status==="取得失敗"?"#FEE2E2":(status==="一部取得"?"#FEF3C7":"#EDE9FE"));\r
+      x+='<mxCell id="'+nid+'" value="'+esc(header).replace(/&amp;#xa;/g,"&#xa;")+'" style="shape=table;startSize=34;container=1;childLayout=tableLayout;fillColor='+fill+';rounded=1;'+(item.external?'dashed=1;':'')+'" vertex="1" parent="1"><mxGeometry x="'+px+'" y="'+rowY+'" width="'+boxWidth+'" height="'+h+'" as="geometry"/></mxCell>';\r
+      exportFields.forEach((f,fi)=>{\r
+        let c="#FFF";if(f.isPK)c="#FFD700";else if(f.isLookup)c="#DBEAFE";else if(f.isRef)c="#D1FAE5";else if(f.inSubtable)c="#F3F4F6";else if(f.required)c="#FFE4E6";\r
+        const tablePrefix=f.inSubtable?("["+String(f.tableLabel||f.tableCode||"サブテーブル")+"] "):"";\r
+        const label=(f.isPK?"PK ":f.isLookup?"FK ":f.isRef?"関連 ":"")+tablePrefix+(f.label||f.code)+" ["+f.code+"]";\r
+        const rid=nid+"_R"+fi;\r
+        x+='<mxCell id="'+rid+'" value="" style="shape=tableRow;horizontal=0;startSize=0;swimlaneHead=0;" vertex="1" parent="'+nid+'"><mxGeometry y="'+(34+fi*28)+'" width="'+boxWidth+'" height="28" as="geometry"/></mxCell>';\r
+        x+='<mxCell id="'+nid+"_F"+fi+'" value="'+esc(label)+'" style="shape=partialRectangle;fillColor='+c+';align=left;spacingLeft=6;strokeColor=#d0d0d0;" vertex="1" parent="'+rid+'"><mxGeometry width="'+boxWidth+'" height="28" as="geometry"/></mxCell>';\r
+      });\r
+    });\r
+    rowY+=rowHeight+rowGap;\r
+  }\r
+  let ec=0;\r
+  APPS.forEach(a=>a.relations.forEach(r=>{\r
+    const st=r.kind==="LOOKUP"?"edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=classic;startArrow=oval;strokeColor=#0066CC;strokeWidth=2;":(r.kind==="REF"?"edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=classic;startArrow=diamond;dashed=1;strokeColor=#2E8B57;strokeWidth=2;":"edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=classic;dashed=1;strokeColor=#D97706;strokeWidth=2;");\r
+    const label=(r.kind==="LOOKUP"?"ルックアップ":(r.kind==="REF"?"関連レコード":"アクション"))+": "+exportRelationLabel(r);\r
+    x+='<mxCell id="E'+(ec++)+'" value="'+esc(label)+'" style="'+st+'" edge="1" parent="1" source="'+nodeId(a.id)+'" target="'+nodeId(r.toApp)+'"><mxGeometry relative="1" as="geometry"/></mxCell>';\r
+  }));\r
+  x+="</root></mxGraphModel></diagram></mxfile>";\r
+  openModal("draw.io 用XML",x,exportFilename("ER図","drawio"));\r
+}\r
+\r
+function showSQL(){\r
+  let sql="-- kintone ER図 → SQL DDL（MySQL 形式）\\n-- kintone の構造を表す参考資料です。そのままデータ移行に使うものではありません。\\n"+exportProvenanceLines("--").join("\\n")+"\\n\\n";\r
+  const typeMap={SINGLE_LINE_TEXT:"VARCHAR(256)",MULTI_LINE_TEXT:"TEXT",NUMBER:"DECIMAL(18,4)",CALC:"DECIMAL(18,4)",\r
+    RICH_TEXT:"TEXT",CHECK_BOX:"TEXT",RADIO_BUTTON:"VARCHAR(128)",DROP_DOWN:"VARCHAR(128)",MULTI_SELECT:"TEXT",\r
+    DATE:"DATE",TIME:"TIME",DATETIME:"DATETIME",LINK:"VARCHAR(512)",FILE:"TEXT",\r
+    USER_SELECT:"TEXT",ORGANIZATION_SELECT:"TEXT",GROUP_SELECT:"TEXT",\r
+    RECORD_NUMBER:"INT AUTO_INCREMENT",CREATOR:"VARCHAR(128)",MODIFIER:"VARCHAR(128)",\r
+    CREATED_TIME:"DATETIME",UPDATED_TIME:"DATETIME",STATUS:"VARCHAR(64)",\r
+    STATUS_ASSIGNEE:"TEXT",CATEGORY:"TEXT",LOOKUP:"VARCHAR(256)",REFERENCE_TABLE:"-- ref"};\r
+\r
+  const sqlTableInfo=new Map();\r
+  APPS.forEach(a=>{\r
+    const tbl=entityAlias(a);\r
+    sql+="-- "+oneLineLabel(a.name)+" (App "+a.id+")\\n";\r
+    sql+="-- 取得状態: "+exportStatusLabel(a)+(exportIssueText(a)?" / "+exportIssueText(a):"")+"\\n";\r
+    const cols=[];\r
+    const columnByCode=new Map();\r
+    const usedColumnNames=new Set();\r
+    let omittedSubtableFields=0;\r
+    exportFieldsForApp(a).forEach(f=>{\r
+      if(f.inSubtable){omittedSubtableFields++;return;}\r
+      if(f.type==="SUBTABLE"||f.type==="REFERENCE_TABLE") return;\r
+      const baseCol=oneLineLabel(f.code)||"unnamed";\r
+      let col=baseCol;\r
+      let suffix=2;\r
+      while(usedColumnNames.has(col)) col=baseCol+"_"+(suffix++);\r
+      usedColumnNames.add(col);\r
+      const dt=typeMap[f.type]||"TEXT";\r
+      columnByCode.set(String(f.code||""),{col,dt:dt.replace(" AUTO_INCREMENT",""),keyed:!!(f.isPK||f.unique)});\r
+      if(dt.startsWith("--")) return;\r
+      let line="  "+sqlIdentifier(col)+" "+dt;\r
+      if(f.isPK) line+=" PRIMARY KEY";\r
+      else{\r
+        if(f.required) line+=" NOT NULL";\r
+        if(f.unique) line+=" UNIQUE";\r
+      }\r
+      if(f.label&&f.label!==f.code) line+=" COMMENT "+sqlString(oneLineLabel(f.label));\r
+      cols.push(line);\r
+    });\r
+    sqlTableInfo.set(String(a.id),{table:tbl,columnByCode,emitted:cols.length>0});\r
+    if(omittedSubtableFields) sql+="-- サブテーブル内の項目 "+omittedSubtableFields+"件は親テーブルへ平坦化せず省略しました。ERモデルJSONで所属表を確認してください。\\n";\r
+    if(!cols.length){\r
+      sql+="-- SQLへ変換できる取得済みフィールドがないため CREATE TABLE を省略しました。\\n\\n";\r
+      return;\r
+    }\r
+    sql+="CREATE TABLE "+sqlIdentifier(tbl)+" (\\n"+cols.join(",\\n")+"\\n) COMMENT="+sqlString(oneLineLabel(a.name))+";\\n\\n";\r
+  });\r
+\r
+  // Foreign keys\r
+  let fkSeq=0;\r
+  APPS.forEach(a=>{\r
+    a.relations.filter(r=>r.kind==="LOOKUP"&&appMap.has(r.toApp)).forEach(r=>{\r
+      const t=appMap.get(r.toApp);\r
+      const sourceInfo=sqlTableInfo.get(String(a.id));\r
+      const targetInfo=sqlTableInfo.get(String(t.id));\r
+      const source=sourceInfo&&sourceInfo.columnByCode.get(String(r.from||""));\r
+      const target=targetInfo&&targetInfo.columnByCode.get(String(r.toField||""));\r
+      const label=oneLineLabel(a.name)+" / "+exportRelationLabel(r)+" → "+oneLineLabel(t.name);\r
+      if(exportFieldsForApp(a).some(f=>f.inSubtable&&String(f.code)===String(r.from))){\r
+        sql+="-- テーブル内のルックアップは、テーブルを親へ平坦化しないため外部キーにしていません: "+label+"\\n";\r
+        return;\r
+      }\r
+      if(!sourceInfo?.emitted||!targetInfo?.emitted||!source||!target){\r
+        sql+="-- Lookupの結合フィールドをSQLへ変換できません: "+label+"\\n";\r
+        return;\r
+      }\r
+      if(!target.keyed||source.dt!==target.dt){\r
+        sql+="-- 参照先が重複禁止でない、または型が異なるため外部キーにしていません: "+label+"\\n";\r
+        return;\r
+      }\r
+      sql+="ALTER TABLE "+sqlIdentifier(sourceInfo.table)+" ADD CONSTRAINT "+sqlIdentifier("fk_"+entityAlias(a)+"_"+(++fkSeq))+" FOREIGN KEY ("+sqlIdentifier(source.col)+") REFERENCES "+sqlIdentifier(targetInfo.table)+"("+sqlIdentifier(target.col)+");\\n";\r
+    });\r
+  });\r
+  APPS.forEach(a=>(a.relations||[]).filter(r=>r.kind==="REF").forEach(r=>{\r
+    sql+="-- 関連レコード（参照表示）: "+oneLineLabel(a.name)+" / "+exportRelationLabel(r)+" / App "+oneLineLabel(r.toApp)+"\\n";\r
+  }));\r
+  APPS.forEach(a=>(a.relations||[]).filter(r=>r.kind==="ACTION").forEach(r=>{\r
+    sql+="-- アプリアクション（画面遷移）: "+oneLineLabel(a.name)+" / "+exportRelationLabel(r)+" / App "+oneLineLabel(r.toApp)+"\\n";\r
+  }));\r
+  APPS.forEach(a=>(a.relations||[]).filter(r=>!appMap.has(r.toApp)).forEach(r=>{\r
+    sql+="-- 未取得の参照先: "+oneLineLabel(a.name)+" / "+exportRelationLabel(r)+" / App "+oneLineLabel(r.toApp)+"\\n";\r
+  }));\r
+  openModal("SQL DDL",sql,exportFilename("ER図","sql"));\r
+}\r
+\r
+function showPlantUML(){\r
+  let p="@startuml\\n"+exportProvenanceLines("'").join("\\n")+"\\n!theme cerulean\\nskinparam linetype ortho\\n\\n";\r
+  APPS.forEach(a=>{\r
+    const n=entityAlias(a);\r
+    p+="' 取得状態: "+exportStatusLabel(a)+(exportIssueText(a)?" / "+exportIssueText(a):"")+"\\n";\r
+    const visibleName=(exportStatusLabel(a)==="取得完了"?"":("["+exportStatusLabel(a)+"] "))+oneLineLabel(a.name);\r
+    p+='entity "'+visibleName+' (App '+a.id+')" as '+n+' {\\n';\r
+    const subtableFieldCount=exportFieldsForApp(a).filter(f=>f.inSubtable).length;\r
+    if(subtableFieldCount) p+="' サブテーブル内 "+subtableFieldCount+"項目は親エンティティへ平坦化せず省略（ERモデルJSONに所属表を収録）\\n";\r
+    exportFieldsForApp(a).forEach(f=>{\r
+      if(f.type==="SUBTABLE"||f.type==="REFERENCE_TABLE"||f.inSubtable) return;\r
+      let prefix="  ";\r
+      if(f.isPK) prefix="  * ";\r
+      else if(f.isLookup) prefix="  # ";\r
+      const code=oneLineLabel(f.code);\r
+      p+=prefix+code+" : "+(f.label&&f.label!==f.code?oneLineLabel(f.label)+" ":"")+"("+fieldTypeJpLabel(f.type)+")"+(f.required?" <<required>>":"")+"\\n";\r
+      if(f.isPK) p+="  --\\n";\r
+    });\r
+    p+="}\\n\\n";\r
+  });\r
+  const plantExternalIds=new Set();\r
+  APPS.forEach(a=>(a.relations||[]).forEach(r=>{\r
+    if(appMap.has(r.toApp)||plantExternalIds.has(String(r.toApp))) return;\r
+    plantExternalIds.add(String(r.toApp));\r
+    p+='entity "未取得の参照先 (App '+oneLineLabel(r.toApp)+')" as '+entityAlias({id:r.toApp})+' <<external>>\\n';\r
+  }));\r
+  APPS.forEach(a=>{\r
+    a.relations.forEach(r=>{\r
+      const t=appMap.get(r.toApp)||{id:r.toApp};\r
+      const label=exportRelationLabel(r);\r
+      if(r.kind==="LOOKUP") p+=entityAlias(a)+' }o--o| '+entityAlias(t)+' : "'+label+'"\\n';\r
+      else if(r.kind==="REF") p+=entityAlias(a)+' }o--o{ '+entityAlias(t)+' : "'+label+'"\\n';\r
+      else p+=entityAlias(a)+' ..> '+entityAlias(t)+' : "ACTION: '+label+'"\\n';\r
+    });\r
+  });\r
+  p+="@enduml";\r
+  openModal("PlantUML",p,exportFilename("ER図","puml"));\r
+}\r
+\r
+function recomputeErAnalysis(){\r
+  const activeApps=APPS.filter(a=>a&&a.id!=null&&!manuallyRemovedNodeIds.has("a"+a.id));\r
+  const activeIds=new Set(activeApps.map(a=>String(a.id)));\r
+  const unresolvedTargets=[],selfReferences=[];\r
+  const incoming=new Map(),outgoing=new Map();\r
+  activeApps.forEach(a=>{\r
+    const fromId=String(a.id);\r
+    (a.relations||[]).forEach((r,ri)=>{\r
+      const edgeId="e_"+a.id+"_"+ri;\r
+      if(manuallyRemovedEdgeIds.has(edgeId)||nodeHiddenEdgeIds.has(edgeId)) return;\r
+      const toId=String(r.toApp??"");\r
+      const kind=String(r.kind||"UNKNOWN");\r
+      const field=String(r.fromPath||r.from||r.fromLabel||r.controlField||r.sourceJoinField||"");\r
+      outgoing.set(fromId,(outgoing.get(fromId)||0)+1);\r
+      if(!toId||!activeIds.has(toId)){\r
+        unresolvedTargets.push({fromAppId:fromId,fromAppName:String(a.name||("アプリ "+fromId)),toAppId:toId,kind,field,reason:toId?"outside-diagram":"missing-target"});\r
+      }else{\r
+        incoming.set(toId,(incoming.get(toId)||0)+1);\r
+        if(fromId===toId) selfReferences.push({appId:fromId,appName:String(a.name||("アプリ "+fromId)),kind,field});\r
+      }\r
+    });\r
+  });\r
+  const isolatedAppIds=activeApps.filter(a=>!(incoming.get(String(a.id))||0)&&!(outgoing.get(String(a.id))||0)).map(a=>String(a.id));\r
+  const complete=activeApps.filter(a=>(a.status||"complete")==="complete"&&a.ok!==false&&!(Array.isArray(a.issues)&&a.issues.length)).length;\r
+  const failed=activeApps.filter(a=>a.status==="failed"||a.ok===false).length;\r
+  const partial=Math.max(0,activeApps.length-complete-failed);\r
+  ER_ANALYSIS.isolatedAppIds=isolatedAppIds;\r
+  ER_ANALYSIS.unresolvedTargets=unresolvedTargets;\r
+  ER_ANALYSIS.selfReferences=selfReferences;\r
+  ER_ANALYSIS.counts.retrievalComplete=complete;\r
+  ER_ANALYSIS.counts.retrievalPartial=partial;\r
+  ER_ANALYSIS.counts.retrievalFailed=failed;\r
+  return ER_ANALYSIS;\r
+}\r
+\r
+function showJSON(){\r
+  recomputeErAnalysis();\r
+  const schema={\r
+    kind:"kintone-er-model",\r
+    schemaVersion:1,\r
+    title:"kintone ERモデル",\r
+    generated:new Date().toISOString(),\r
+    options:{startAppIds:ER_OPTIONS.startAppIds||[],maxDepth:ER_OPTIONS.maxDepth||0,includeSubtableFields:ER_OPTIONS.includeSubtableFields!==false},\r
+    completeness:{complete:ER_ANALYSIS.counts.retrievalComplete,partial:ER_ANALYSIS.counts.retrievalPartial,failed:ER_ANALYSIS.counts.retrievalFailed,unresolvedTargets:ER_ANALYSIS.unresolvedTargets||[]},\r
+    apps:APPS.map(a=>({\r
+      id:a.id,name:a.name,\r
+      status:a.status|| (a.ok===false?"failed":"complete"),issues:a.issues||[],\r
+      fields:exportFieldsForApp(a).map(f=>({code:f.code,label:f.label,type:f.type,path:f.path||f.code||"",required:f.required||false,unique:f.unique||false,isPrimaryKey:f.isPK||false,isLookup:f.isLookup||false,isRelatedRecord:f.isRef||false,inSubtable:f.inSubtable||false,tableCode:f.tableCode||"",tableLabel:f.tableLabel||""})),\r
+      relations:a.relations.map(r=>({label:r.fromDisplay||r.fromLabel||r.from||r.kind,fromField:r.from,sourceJoinField:r.sourceJoinField||r.from||"",controlField:r.controlField||"",controlFieldLabel:r.controlFieldLabel||"",toApp:r.toApp,toField:r.toField,type:r.kind,copyFields:r.copyFields||[],displayFields:r.displayFields||[],filterCond:r.filterCond||""})),\r
+    })),\r
+  };\r
+  openModal("ERモデル JSON",JSON.stringify(schema,null,2),exportFilename("ERモデル","json"));\r
+}\r
+\r
+// ─── CSV exports ───\r
+function csvCell(v){\r
+  const raw=String(v==null?"":v);\r
+  const s=/^[\\t\\r\\n ]*[=+\\-@]/.test(raw)?"'"+raw:raw;\r
+  return /[",\\n\\r]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;\r
+}\r
+function csvLine(arr){return arr.map(csvCell).join(",");}\r
+function showCSVApps(){\r
+  const rows=[["アプリID","アプリ名","項目数","項目範囲","リレーション数","Lookup数","関連レコード数","アクション数","必須項目数","深さ","開始点","取得状態","取得上の注意"]];\r
+  APPS.forEach(a=>{\r
+    const lookups=(a.relations||[]).filter(r=>r.kind==="LOOKUP").length;\r
+    const refs=(a.relations||[]).filter(r=>r.kind==="REF").length;\r
+    const acts=(a.relations||[]).filter(r=>r.kind==="ACTION").length;\r
+    rows.push([a.id,a.name,exportFieldsForApp(a).length,"取得済み全項目",a.relations.length,lookups,refs,acts,a.requiredCount||0,a.depth||0,startAppIdSet.has(String(a.id))?"1":"0",exportStatusLabel(a),exportIssueText(a)]);\r
+  });\r
+  openModal("CSV (アプリ一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),exportFilename("ER図_アプリ一覧","csv"));\r
+}\r
+function showCSVFields(){\r
+  const rows=[["アプリID","アプリ名","取得状態","取得上の注意","項目範囲","現在の図に表示","フィールドコード","フィールド名","種類","必須","重複禁止","主キー","ルックアップ","関連","サブテーブル内","テーブルコード","テーブル名","技術パス"]];\r
+  APPS.forEach(a=>{\r
+    const visibleFieldSet=new Set(visibleFieldsForNode(a));\r
+    exportFieldsForApp(a).forEach(f=>{\r
+      rows.push([a.id,a.name,exportStatusLabel(a),exportIssueText(a),"取得済み全項目",visibleFieldSet.has(f)?"1":"0",f.code||"",buildFieldDisplayName(f),f.type||"",f.required?"1":"0",f.unique?"1":"0",f.isPK?"1":"0",f.isLookup?"1":"0",f.isRef?"1":"0",f.inSubtable?"1":"0",f.tableCode||"",f.tableLabel||"",f.path||f.code||""]);\r
+    });\r
+  });\r
+  openModal("CSV (フィールド一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),exportFilename("ER図_フィールド一覧","csv"));\r
+}\r
+function showCSVRelations(){\r
+  const rows=[["種類","関連名","起点アプリID","起点アプリ名","起点の取得状態","起点の取得上の注意","表示部品","結合元フィールド","宛先アプリID","宛先アプリ名","宛先の取得状態","宛先フィールド","コピー・表示するフィールド","絞り込み条件"]];\r
+  APPS.forEach(a=>{\r
+    a.relations.forEach(r=>{\r
+      const t=appMap.get(r.toApp);\r
+      rows.push([r.kind,r.fromDisplay||r.fromLabel||r.from||r.kind,a.id,a.name,exportStatusLabel(a),exportIssueText(a),r.controlFieldLabel||r.controlField||"",r.kind==="ACTION"?"":(r.sourceJoinField||r.from||""),r.toApp,t?t.name:"未取得の参照先",t?exportStatusLabel(t):"未取得",r.toField||"",relFieldsText(r),relFilterText(r)]);\r
+    });\r
+  });\r
+  openModal("CSV (リレーション一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),exportFilename("ER図_リレーション一覧","csv"));\r
+}\r
+\r
+// ─── Markdown spec ───\r
+function mdEsc(s){return String(s==null?"":s).replace(/[\\\\|<>]/g,"\\\\$&").replace(/\\n/g," ");}\r
+function showMarkdown(){\r
+  recomputeErAnalysis();\r
+  const lines=[];\r
+  lines.push("# kintone ER図 仕様書");\r
+  lines.push("");\r
+  lines.push("- 生成日時: " + new Date().toLocaleString("ja-JP"));\r
+  lines.push("- 起点アプリ: " + ((ER_OPTIONS.startAppIds||[]).join(", ") || "-"));\r
+  lines.push("- 探索深さ: " + (ER_OPTIONS.maxDepth||"無制限"));\r
+  lines.push("- 逆引き探索: " + (ER_OPTIONS.includeReverseLookup?"ON":"OFF"));\r
+  if(ER_OPTIONS.reverseScanNote) lines.push("- 逆引き走査の注意: " + ER_OPTIONS.reverseScanNote);\r
+  lines.push("- サブテーブル: " + (ER_OPTIONS.includeSubtableFields!==false?"ON":"OFF"));\r
+  lines.push("- 項目範囲: 取得済み全項目（図の表示密度とは独立）");\r
+  lines.push("- 接続: " + (ER_OPTIONS.sourceGuestId?("ゲスト "+ER_OPTIONS.sourceGuestId):"通常空間") + " / " + (ER_OPTIONS.sourcePreview?"プレビュー":"本番"));\r
+  lines.push("- アプリ数: " + APPS.length);\r
+  lines.push("- 総リレーション: " + APPS.reduce((s,a)=>s+a.relations.length,0));\r
+  lines.push("- 取得完了: " + ER_ANALYSIS.counts.retrievalComplete);\r
+  lines.push("- 一部取得: " + ER_ANALYSIS.counts.retrievalPartial);\r
+  lines.push("- 取得失敗: " + ER_ANALYSIS.counts.retrievalFailed);\r
+  lines.push("- 複数アプリの循環候補: " + ER_ANALYSIS.cycles.length);\r
+  lines.push("- 自己参照: " + ER_ANALYSIS.selfReferences.length);\r
+  lines.push("- 図内で関連のないアプリ: " + ER_ANALYSIS.isolatedAppIds.length);\r
+  lines.push("- 未取得の参照先: " + ER_ANALYSIS.unresolvedTargets.length);\r
+  lines.push("");\r
+  {\r
+    lines.push("## グラフ分析サマリ");\r
+    lines.push("");\r
+    lines.push("- 複数アプリの循環参照 (SCC): " + (ER_ANALYSIS.cycles||[]).length + "件");\r
+    lines.push("- ハブアプリ（接続数 " + (ER_ANALYSIS.highConnectionThreshold||3) + "件以上）: " + (ER_ANALYSIS.hubs||[]).length + "件");\r
+    lines.push("- 孤立アプリ（関連なし）: " + (ER_ANALYSIS.isolatedAppIds||[]).length + "件");\r
+    lines.push("- 自己参照: " + (ER_ANALYSIS.selfReferences||[]).length + "件");\r
+    lines.push("- 未取得の参照先: " + (ER_ANALYSIS.unresolvedTargets||[]).length + "件");\r
+    lines.push("");\r
+    if((ER_ANALYSIS.isolatedAppIds||[]).length){\r
+      lines.push("### 孤立アプリ");\r
+      ER_ANALYSIS.isolatedAppIds.forEach(id=>{const app=appMap.get(Number(id))||appMap.get(id);lines.push("- "+mdEsc(app?app.name:("アプリ "+id))+" (App "+id+")");});\r
+      lines.push("");\r
+    }\r
+    if((ER_ANALYSIS.selfReferences||[]).length){\r
+      lines.push("### 自己参照");\r
+      ER_ANALYSIS.selfReferences.forEach(sr=>lines.push("- "+mdEsc(sr.appName)+" (App "+sr.appId+"): "+mdEsc(sr.kind||"")+(sr.field?" ("+mdEsc(sr.field)+")":"")));\r
+      lines.push("");\r
+    }\r
+    if((ER_ANALYSIS.unresolvedTargets||[]).length){\r
+      lines.push("### 未取得の参照先");\r
+      ER_ANALYSIS.unresolvedTargets.forEach(ut=>lines.push("- "+mdEsc(ut.fromAppName)+" (App "+ut.fromAppId+") → App "+mdEsc(ut.toAppId||"不明")+": "+mdEsc(ut.kind||"")+(ut.field?" ("+mdEsc(ut.field)+")":"")));\r
+      lines.push("");\r
+    }\r
+  }\r
+  lines.push("## 構造チェック（事実ベース）");\r
+  lines.push("");\r
+  if(ER_ANALYSIS.cycles.length){\r
+    lines.push("### 複数アプリの循環候補");\r
+    ER_ANALYSIS.cycles.forEach((cycle,i)=>lines.push("- 候補 "+(i+1)+": "+cycle.appNames.map(mdEsc).join(" → ")));\r
+    lines.push("");\r
+  }\r
+  if(ER_ANALYSIS.hubs.length){\r
+    lines.push("### 接続数が多いアプリ（"+ER_ANALYSIS.highConnectionThreshold+"件以上）");\r
+    ER_ANALYSIS.hubs.forEach(hub=>lines.push("- "+mdEsc(hub.name)+" (App "+hub.appId+"): 入 "+hub.incoming+" / 出 "+hub.outgoing+" / 合計 "+hub.total));\r
+    lines.push("");\r
+  }\r
+  lines.push("## ER図");\r
+  lines.push("");\r
+  const mermaidText=buildMermaidText();\r
+  const fence="\\u0060\\u0060\\u0060";\r
+  if(mermaidText.length<=ER_MD_MERMAID_MAX_CHARS) lines.push(fence+"mermaid",mermaidText.trimEnd(),fence);\r
+  else lines.push("図が大きいため省略しました。Mermaid 出力または PNG 出力を利用してください。");\r
+  lines.push("");\r
+  lines.push("## アプリ一覧");\r
+  lines.push("");\r
+  lines.push("| アプリID | アプリ名 | 項目数 | 関連数 | 深さ | 状態 |");\r
+  lines.push("|---:|---|---:|---:|---:|---|");\r
+  APPS.forEach(a=>{\r
+    lines.push("| "+a.id+" | "+mdEsc(a.name)+" | "+exportFieldsForApp(a).length+" | "+a.relations.length+" | "+(a.depth||0)+" | "+(a.status==="partial"?"一部取得":(a.ok?"取得完了":"取得失敗"))+" |");\r
+  });\r
+  lines.push("");\r
+  APPS.forEach(a=>{\r
+    lines.push("## "+mdEsc(a.name)+" (App "+a.id+")");\r
+    lines.push("");\r
+    lines.push("- 取得状態: "+exportStatusLabel(a));\r
+    if(exportIssueText(a)) lines.push("- 取得上の注意: "+mdEsc(exportIssueText(a)));\r
+    lines.push("");\r
+    const vf=exportFieldsForApp(a);\r
+    if(vf.length){\r
+      lines.push("### フィールド");\r
+      lines.push("");\r
+      lines.push("| コード | 名称 | 種類 | 必須 | 主キー | Lookup | 関連 | サブテーブル |");\r
+      lines.push("|---|---|---|:---:|:---:|:---:|:---:|:---:|");\r
+      vf.forEach(f=>{\r
+        lines.push("| "+mdEsc(f.code||"")+" | "+mdEsc(buildFieldDisplayName(f))+" | "+mdEsc(fieldTypeJpLabel(f.type))+" | "+(f.required?"✓":"")+" | "+(f.isPK?"✓":"")+" | "+(f.isLookup?"✓":"")+" | "+(f.isRef?"✓":"")+" | "+(f.inSubtable?"✓":"")+" |");\r
+      });\r
+      lines.push("");\r
+    }\r
+    if(a.relations && a.relations.length){\r
+      lines.push("### リレーション");\r
+      lines.push("");\r
+      lines.push("| 種類 | 関連名 | 表示部品 | 結合元フィールド | 宛先アプリ | 宛先フィールド | コピー・表示するフィールド | 絞り込み条件 |");\r
+      lines.push("|---|---|---|---|---|---|---|---|");\r
+      a.relations.forEach(r=>{\r
+        const t=appMap.get(r.toApp);\r
+        lines.push("| "+r.kind+" | "+mdEsc(r.fromDisplay||r.fromLabel||r.from||r.kind)+" | "+mdEsc(r.controlFieldLabel||r.controlField||"")+" | "+mdEsc(r.kind==="ACTION"?"":(r.sourceJoinField||r.from||""))+" | "+mdEsc(t?t.name+" (App "+r.toApp+")":"未取得 (App "+r.toApp+")")+" | "+mdEsc(r.toField||"")+" | "+mdEsc(relFieldsText(r))+" | "+mdEsc(relFilterText(r))+" |");\r
+      });\r
+      lines.push("");\r
+    }\r
+  });\r
+  openModal("Markdown 仕様書",lines.join("\\n"),exportFilename("ER図仕様書","md"));\r
+}\r
+\r
+\r
+// ─── Share URL (encodes current state in hash) ───\r
+// 配色は保存しない（開いた人の OS の設定に従う）\r
+function encodeState(){\r
+  const state={\r
+    l: ER_OPTIONS.layoutName,\r
+    d: ER_OPTIONS.fieldDensity,\r
+    f: focusMode ? 1 : 0,\r
+    fd: focusDepth,\r
+    fdir: focusDirection,\r
+    rl: relationLabelVisible ? 1 : 0,\r
+    rk: (relationKindState.LOOKUP?"L":"") + (relationKindState.REF?"R":"") + (relationKindState.ACTION?"A":""),\r
+    s: viewScope.mode === "all" ? "all" : { r: viewScope.roots.slice(), d: viewScope.depth }\r
+  };\r
+  return btoa(unescape(encodeURIComponent(JSON.stringify(state))));\r
+}\r
+function applyStateFromHash(){\r
+  try{\r
+    const h=location.hash.replace(/^#/,"");\r
+    if(!h) return;\r
+    const state=JSON.parse(decodeURIComponent(escape(atob(h))));\r
+    if(state.l && normalizeLayoutName(state.l) !== ER_OPTIONS.layoutName) setLayout(normalizeLayoutName(state.l));\r
+    else if(state.l) syncLayoutButtons(ER_OPTIONS.layoutName);\r
+    if(state.d && normalizeDensityName(state.d) !== ER_OPTIONS.fieldDensity) setDensity(normalizeDensityName(state.d));\r
+    if(typeof state.f === "number"){ if(!!state.f !== focusMode) toggleFocusMode(); }\r
+    if(state.fd){ const sel=document.getElementById("focus-depth"); if(sel) sel.value=String(state.fd); }\r
+    if(state.fdir){ const sel=document.getElementById("focus-direction"); if(sel) sel.value=state.fdir; }\r
+    if(typeof state.rk === "string"){\r
+      if(relationKindState.LOOKUP !== state.rk.includes("L")) toggleRelationKind("LOOKUP");\r
+      if(relationKindState.REF !== state.rk.includes("R")) toggleRelationKind("REF");\r
+      if(relationKindState.ACTION !== state.rk.includes("A")) toggleRelationKind("ACTION");\r
+    }\r
+    if(typeof state.rl === "number" && !!state.rl !== relationLabelVisible) toggleRelationLabels();\r
+    if(state.s === "all" && viewScope.mode !== "all") setScope({mode:"all"});\r
+    else if(state.s && Array.isArray(state.s.r)) setScope({mode:"around",roots:state.s.r.map(String),depth:state.s.d});\r
+    updateFocusOptions();\r
+  }catch(_){ /* ignore */ }\r
+}\r
+function copyShareUrl(){\r
+  // blob: や file: のページでは origin + pathname だと不正なURLになるため、現在のURLからハッシュだけを置き換える\r
+  const url=location.href.split("#")[0]+"#"+encodeState();\r
+  const done=()=>toast(location.protocol==="blob:"\r
+    ? "表示状態のURLをコピーしました（この画面を閉じると開けません。共有にはHTML保存を使ってください）"\r
+    : "表示状態のURLをコピーしました");\r
+  const manual=()=>prompt("URLをコピーしてください", url);\r
+  try{\r
+    navigator.clipboard.writeText(url).then(done,manual);\r
+  }catch(_){\r
+    manual();\r
+  }\r
+}\r
+`;
+
+  // raw-text:src/tabs/er-viewer/viewer-boot.js
+  var viewer_boot_default = '// ER図ビューアー: 起動。すべての関数と状態を定義した後に、画面の状態を決めて最初の配置をする。\r\n// 保存した HTML（編集済みHTML）は開いた時点の画面の部品を複製しているため、ここで開閉や表示を初期の状態に戻す。\r\napplyTheme();\r\nsyncLayoutButtons(ER_OPTIONS.layoutName || "dagre");\r\nsyncDensityControl();\r\nsyncSeparateNoLinkButton();\r\nsyncFocusButton();\r\nsyncRelationKindButtons();\r\nsyncBundleButton();\r\nsyncSimpleModeButton();\r\nsyncRelationLabelButton();\r\nsetView("diagram");\r\nhideOverview();\r\ncloseDetail();\r\nsyncSidebarMode();\r\nsyncLegendToggle();\r\nconst restoredScope = applySavedViewState();\r\napplyRelationFilter();\r\napplyRelationLabelVisibility();\r\nupdateFocusOptions();\r\nupdateSearchMeta("", 0);\r\nrenderAnalysisPanel();\r\nrefreshSidebar();\r\nif(hasSavedLayout){\r\n  // 保存した位置をそのまま使い、配置し直さない\r\n  setScope(restoredScope || { mode: "all" }, { initial: true, keepPositions: true });\r\n  if(ER_EDIT_STATE.view && typeof ER_EDIT_STATE.view.zoom === "number" && ER_EDIT_STATE.view.pan){\r\n    cy.viewport({zoom:ER_EDIT_STATE.view.zoom, pan:ER_EDIT_STATE.view.pan});\r\n  }else{\r\n    setTimeout(fit,100);\r\n  }\r\n}else{\r\n  setScope(defaultScope(), { initial: true });\r\n}\r\nsetTimeout(updateZoomLabel, 300);\r\nsetTimeout(applyStateFromHash, 350);\r\n';
+
+  // src/tabs/er-viewer/page.ts
+  var lf = (text) => String(text).replace(/\r\n?/g, "\n");
+  var ER_VIEWER_SCRIPT = [viewer_core_default, viewer_edit_default, viewer_ui_default, viewer_export_default, viewer_boot_default].map(lf).join("\n");
+  var ER_VIEWER_CSS = lf(viewer_default);
+  var LAYOUT_BUTTONS = [
+    ["dagre", "階層", "関連の向きに沿って左から右へ並べます（おすすめ）"],
+    ["cose", "自動", "つながりの強さで自動に並べます"],
+    ["breadthfirst", "ツリー", "起点から木の形に並べます"],
+    ["concentric", "同心円", "関連の多いアプリを中心に並べます"],
+    ["grid", "グリッド", "格子状に並べます"],
+    ["circle", "円形", "円の上に並べます"]
+  ];
+  function renderErViewerPage(ctx) {
+    const a = ctx.analysis;
+    const attention = a.counts.retrievalPartial + a.counts.retrievalFailed;
+    return (
+      /*html*/
+      `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
+<meta name="color-scheme" content="light dark">
+<title>${esc(ctx.pageTitle)}</title>
+${ctx.libraryScripts}
+<style>
+${ER_VIEWER_CSS}
+</style>
+</head>
+<body>
+
+<header id="topbar">
+  <button type="button" class="tb tb-icon" id="sidebar-toggle-btn" onclick="toggleSidebar(undefined,this)" title="アプリ一覧を開閉 (Ctrl+B)" aria-label="アプリ一覧を開閉" aria-controls="sidebar" aria-expanded="true">☰</button>
+  <div class="brand">
+    <h1 id="er-title" title="${esc(ctx.targetTitle)}">kintone ER図<small>${esc(ctx.targetText)}</small></h1>
+    <div class="brand-sub">
+      <button type="button" class="meta-pill meta-pill--btn" id="overview-pill" onclick="toggleOverview()" title="取得・関連サマリーを開く" aria-controls="overview" aria-expanded="false">${ctx.appCount}アプリ · ${ctx.relationCount}関連 · 循環${a.cycles} · 孤立${a.isolated} · 未取得${a.unresolved}<span aria-hidden="true"> ▾</span></button>
+      <span class="brand-meta" title="取得日時と接続先">${esc(ctx.generatedText)} 取得 · ${esc(ctx.connectionText)}</span>
+    </div>
+  </div>
+  <div class="search-wrap" role="search">
+    <input id="search-box" type="search" placeholder="アプリ・項目を検索 (Ctrl+F)" aria-label="アプリ・項目を検索（図・アプリ一覧・表に効きます）" autocomplete="off" oninput="searchGraph(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();focusNextSearchMatch();}">
+    <span class="meta-pill" id="search-meta" hidden aria-live="polite"><b>検索</b> すべて</span>
+  </div>
+  <div class="view-tabs" role="tablist" aria-label="表示の切り替え">
+    <button type="button" role="tab" class="view-tab" id="tab-diagram" aria-selected="true" aria-controls="view-diagram" onclick="setView('diagram')" onkeydown="onViewTabKey(event)" title="図 (Alt+1)">図</button>
+    <button type="button" role="tab" class="view-tab" id="tab-apps" aria-selected="false" aria-controls="view-apps" tabindex="-1" onclick="setView('apps')" onkeydown="onViewTabKey(event)" title="アプリ一覧 (Alt+2)">アプリ<span class="tab-long">一覧</span><span class="tab-count">${ctx.appCount}</span></button>
+    <button type="button" role="tab" class="view-tab" id="tab-relations" aria-selected="false" aria-controls="view-relations" tabindex="-1" onclick="setView('relations')" onkeydown="onViewTabKey(event)" title="関連一覧 (Alt+3)">関連<span class="tab-long">一覧</span><span class="tab-count">${ctx.relationCount}</span></button>
+  </div>
+  <button type="button" class="tb tb-icon" id="mobile-menu-btn" onclick="toggleMobileMenu()" title="ほかの操作" aria-label="ほかの操作" aria-expanded="false">⋯</button>
+  <div class="tb-actions">
+    <div class="tb-menu" id="settings-menu">
+      <button type="button" class="tb tb-menu-btn" id="settings-btn" onclick="toggleMenu('settings-menu')" aria-haspopup="true" aria-expanded="false" title="表示範囲・配置・カードの項目・線・強調">表示設定</button>
+      <div class="tb-menu-panel settings-panel" role="group" aria-label="表示設定">
+        <div class="settings-group">
+          <div class="menu-heading">表示範囲</div>
+          <div class="seg" role="group" aria-label="表示範囲">
+            <button type="button" class="tb" data-scope-btn="start" aria-pressed="false" onclick="showStartScope()" title="起点とその関連先だけを表示します">起点まわり</button>
+            <button type="button" class="tb" data-scope-btn="all" aria-pressed="false" onclick="showAllScope()" title="すべてのアプリを表示します">全体</button>
+          </div>
+          <div class="menu-note">アプリをダブルクリックすると、そのアプリのまわりを表示します。</div>
+          <div class="menu-heading">配置</div>
+          <div class="seg" role="group" aria-label="アプリの並べ方">
+            ${LAYOUT_BUTTONS.map(([name, label, title]) => `<button type="button" class="tb" data-layout-btn="${name}" aria-pressed="false" onclick="setLayout('${name}')" title="${esc(title)}">${esc(label)}</button>`).join("\n            ")}
+          </div>
+          <button type="button" class="tb tb-check active" id="separate-nolink-btn" aria-pressed="true" onclick="toggleSeparateNoLink()" title="関連線のないアプリを、図の下にまとめて置きます">関連のないアプリを下にまとめる</button>
+          <div class="menu-heading">カードの項目</div>
+          <div class="settings-row">
+            <select id="density-select" class="tb-select" onchange="setDensity(this.value)" aria-label="カードに出す項目の量" title="カードに出す項目の量">
+              <option value="none">結合のみ（アプリ名だけ）</option>
+              <option value="compact">コンパクト（結合に使う項目）</option>
+              <option value="standard">標準（結合と必須の項目）</option>
+              <option value="full">詳細（すべての項目）</option>
+            </select>
+          </div>
+          <button type="button" class="tb tb-check" id="simple-mode-btn" aria-pressed="false" onclick="toggleSimpleMode()" title="項目を隠して、アプリのつながりだけを表示します">シンプル（項目を隠す）</button>
+        </div>
+        <div class="settings-group">
+          <div class="menu-heading">関連線</div>
+          <button type="button" class="tb tb-check active" id="rel-lookup-btn" aria-pressed="true" onclick="toggleRelationKind('LOOKUP')">ルックアップ（実線）</button>
+          <button type="button" class="tb tb-check active" id="rel-ref-btn" aria-pressed="true" onclick="toggleRelationKind('REF')">関連レコード一覧（破線）</button>
+          <button type="button" class="tb tb-check active" id="rel-action-btn" aria-pressed="true" onclick="toggleRelationKind('ACTION')">アプリアクション（点線）</button>
+          <button type="button" class="tb tb-check active" id="bundle-btn" aria-pressed="true" onclick="toggleEdgeBundling()" title="同じアプリの組・同じ種類の線を 1 本にまとめ、本数を太さと吹き出しで示します">同じアプリ間の線をまとめる</button>
+          <button type="button" class="tb tb-check" id="rel-label-btn" aria-pressed="false" onclick="toggleRelationLabels()" title="オフのときは、選んだ線・マウスを乗せた線・選んだアプリの線にだけラベルを出します">線のラベルを常に表示</button>
+          <div class="menu-heading">選んだアプリの強調</div>
+          <button type="button" class="tb tb-check active" id="focus-toggle-btn" aria-pressed="true" onclick="toggleFocusMode()" title="アプリを選ぶと、つながるアプリと線を強調します (Shift+F)">関連を強調する</button>
+          <div class="settings-row">
+            <select id="focus-depth" class="tb-select" onchange="updateFocusOptions()" aria-label="強調する深さ">
+              <option value="1">深さ 1</option>
+              <option value="2">深さ 2</option>
+              <option value="3">深さ 3</option>
+            </select>
+            <select id="focus-direction" class="tb-select" onchange="updateFocusOptions()" aria-label="強調する向き">
+              <option value="both">両方向</option>
+              <option value="out">参照している側</option>
+              <option value="in">参照されている側</option>
+            </select>
+          </div>
+          <button type="button" class="tb" onclick="clearFocus();closeAllMenus()">強調を解除</button>
+          <div class="menu-heading">補助</div>
+          <button type="button" class="tb tb-check" id="pathfinder-btn" aria-pressed="false" onclick="togglePathFinder()" title="2 つのアプリをつなぐ関連の道筋を探します">経路探索</button>
+          <button type="button" class="tb tb-check" id="minimap-btn" aria-pressed="false" onclick="toggleMinimap()">ミニマップ</button>
+          <button type="button" class="tb tb-check" id="fs-btn" aria-pressed="false" onclick="toggleFullscreen()">フルスクリーン (F11)</button>
+        </div>
+        <div class="settings-pills"><span class="meta-pill" id="layout-pill"><b>配置</b> ${esc(ctx.layoutLabel)}</span><span class="meta-pill" id="density-pill"><b>密度</b> ${esc(ctx.densityLabel)}</span></div>
+      </div>
+    </div>
+    <div class="tb-menu" id="edit-menu">
+      <button type="button" class="tb tb-menu-btn" onclick="toggleMenu('edit-menu')" aria-haspopup="true" aria-expanded="false" title="図にだけ追加・編集します（kintone は変わりません）">編集</button>
+      <div class="tb-menu-panel" role="group" aria-label="編集">
+        <div class="menu-note">図にだけ反映します。kintone のアプリや設定は変わりません。残すには「出力 → 編集済みHTMLを保存」。</div>
+        <button type="button" class="tb" onclick="undoLast()">元に戻す (Ctrl+Z)</button>
+        <div class="menu-heading">追加</div>
+        <button type="button" class="tb" onclick="openAddApp()">アプリを追加</button>
+        <button type="button" class="tb" onclick="openAddField()">アプリに項目を追加</button>
+        <button type="button" class="tb" onclick="openAddRelation()">関連線を追加</button>
+        <button type="button" class="tb" onclick="openAddNote()">メモ（付箋）を追加</button>
+        <div class="menu-heading">選んだアプリ・線</div>
+        <button type="button" class="tb" onclick="openEditApp()">アプリを編集（名前・枠の色）</button>
+        <button type="button" class="tb" onclick="togglePinFromSelection()">固定 / 固定を解除 (Shift+P)</button>
+        <button type="button" class="tb" onclick="removeSelectedRelations()">選んだ関連線を図から削除 (Delete)</button>
+        <button type="button" class="tb" onclick="removeSelectedApps()">選んだアプリを図から削除 (Delete)</button>
+        <div class="menu-heading">そろえる・色分け</div>
+        <button type="button" class="tb" onclick="alignSelected('x')">左にそろえる</button>
+        <button type="button" class="tb" onclick="alignSelected('y')">上にそろえる</button>
+        <button type="button" class="tb" onclick="distributeSelected('x')">横に等間隔で並べる</button>
+        <button type="button" class="tb" onclick="distributeSelected('y')">縦に等間隔で並べる</button>
+        <button type="button" class="tb" onclick="autoColorByDepth()">探索の深さごとに枠を色分け</button>
+        <button type="button" class="tb" onclick="clearNodeColors()">枠の色分けを解除</button>
+        <div class="menu-heading">戻す</div>
+        <button type="button" class="tb" onclick="restoreRemovedRelations()">削除した関連線を戻す</button>
+        <button type="button" class="tb" onclick="restoreRemovedApps()">削除したアプリを戻す</button>
+        <button type="button" class="tb" onclick="restoreAllHiddenFields()">隠した項目をすべて戻す</button>
+        <button type="button" class="tb" onclick="clearPins()">固定をすべて解除</button>
+      </div>
+    </div>
+    <div class="tb-menu" id="export-menu">
+      <button type="button" class="tb tb-menu-btn" onclick="toggleMenu('export-menu')" aria-haspopup="true" aria-expanded="false">出力</button>
+      <div class="tb-menu-panel" role="group" aria-label="出力">
+        <button type="button" class="tb" onclick="printDiagram()">印刷（見出し・図・一覧の資料）</button>
+        <button type="button" class="tb" onclick="exportEditedHtml()">編集済みHTMLを保存</button>
+        <button type="button" class="tb" onclick="exportPNG()">PNG 画像（白背景・表示中の範囲）</button>
+        <div class="menu-heading">表・仕様書</div>
+        <button type="button" class="tb" onclick="showMarkdown()">Markdown 仕様書</button>
+        <button type="button" class="tb" onclick="showCSVApps()">CSV（アプリ一覧）</button>
+        <button type="button" class="tb" onclick="showCSVFields()">CSV（フィールド）</button>
+        <button type="button" class="tb" onclick="showCSVRelations()">CSV（関連）</button>
+        <button type="button" class="tb" onclick="showJSON()">ERモデル JSON</button>
+        <div class="menu-heading">ほかの作図ツール</div>
+        <button type="button" class="tb" onclick="showMermaid()">Mermaid</button>
+        <button type="button" class="tb" onclick="showDrawio()">draw.io XML</button>
+        <button type="button" class="tb" onclick="showPlantUML()">PlantUML</button>
+        <button type="button" class="tb" onclick="showSQL()">SQL DDL</button>
+        <hr>
+        <button type="button" class="tb" onclick="copyShareUrl()">表示状態のURLをコピー</button>
+      </div>
+    </div>
+    <button type="button" class="tb tb-icon" id="theme-btn" onclick="toggleTheme()" title="配色を切り替える（保存しません）" aria-label="暗い配色に切り替える" aria-pressed="false">◐</button>
+    <button type="button" class="tb tb-icon" id="help-btn" onclick="openHelp()" title="使い方とショートカット (?)" aria-label="ヘルプを開く">?</button>
+  </div>
+</header>
+
+<div id="app-shell">
+  <aside id="sidebar" aria-label="アプリ一覧">
+    <div class="sidebar-head"><h2>アプリ<span class="count" id="sidebar-count">${ctx.appCount}</span></h2><button type="button" class="tb tb-icon tb-quiet" id="sidebar-close" onclick="closeSidebar()" aria-label="アプリ一覧を閉じる">✕</button></div>
+    <div class="sidebar-scroll">
+      <section class="sidebar-checks" aria-label="構造チェック">
+        <strong>構造チェック</strong>
+        <div class="check-facts" id="sidebar-check-facts"></div>
+        <button type="button" class="tb" id="analysis-toggle-btn" onclick="toggleAnalysisPanel()" aria-controls="analysis-panel" aria-expanded="false" title="取得状態・循環候補・自己参照・関連のないアプリ・未取得の参照先">構造チェックを開く</button>
+      </section>
+      <div class="sidebar-filter-row">
+        <select id="app-list-filter" class="tb-select" onchange="refreshAppList()" aria-label="アプリ一覧の絞り込み">
+          <option value="">すべてのアプリ</option>
+          <option value="scope">図に表示中のアプリ</option>
+          <option value="start">起点のアプリ</option>
+          <option value="attention">取得に注意が必要なアプリ</option>
+          <option value="nolink">関連のないアプリ</option>
+        </select>
+      </div>
+      <div id="app-list" role="list" aria-label="アプリ"></div>
+      <details class="sidebar-more"><summary>集計</summary><div id="stats-summary"></div></details>
+      <details class="sidebar-more"><summary>項目の種類で強調</summary><div id="type-filters"></div></details>
+    </div>
+  </aside>
+  <div class="backdrop" id="sidebar-backdrop" onclick="closeSidebar()"></div>
+
+  <main id="main">
+    <section id="view-diagram" class="view-panel" role="tabpanel" aria-labelledby="tab-diagram">
+      <div id="cy" role="img" aria-label="アプリ間の関連図。アプリ一覧・関連一覧のタブで同じ内容を表で読めます"></div>
+      <div id="scope-bar" role="group" aria-label="図の表示範囲"></div>
+      <div id="legend" aria-label="凡例">
+        <button type="button" class="legend-toggle-btn" id="legend-toggle-btn" onclick="toggleLegend()" aria-expanded="false" aria-controls="legend-items">凡例</button>
+        <div class="legend-items" id="legend-items">
+          <button type="button" class="legend-toggle" id="legend-lookup-edge" aria-pressed="true" onclick="toggleRelationKind('LOOKUP')" title="ルックアップの線を表示 / 非表示"><i class="legend-line" style="border-top-style:solid;border-top-color:var(--lookup)"></i>ルックアップ</button>
+          <button type="button" class="legend-toggle" id="legend-ref-edge" aria-pressed="true" onclick="toggleRelationKind('REF')" title="関連レコード一覧の線を表示 / 非表示"><i class="legend-line" style="border-top-style:dashed;border-top-color:var(--ref)"></i>関連レコード一覧</button>
+          <button type="button" class="legend-toggle" id="legend-action-edge" aria-pressed="true" onclick="toggleRelationKind('ACTION')" title="アプリアクションの線を表示 / 非表示"><i class="legend-line" style="border-top-style:dotted;border-top-width:3px;border-top-color:var(--action)"></i>アクション</button>
+          <span class="legend-sep" aria-hidden="true"></span>
+          <span title="レコード番号"><b style="color:var(--pk)">PK</b></span>
+          <span title="ルックアップ項目"><b style="color:var(--lookup)">FK</b></span>
+          <span title="関連レコード一覧"><b style="color:var(--ref)">関連</b></span>
+          <span title="値の重複禁止"><b style="color:var(--accent2)">一意</b></span>
+          <span title="必須項目"><b style="color:var(--req)">必須</b></span>
+          ${a.counts.retrievalPartial ? '<span><i class="legend-box" style="border:2px dashed var(--action)"></i>△ 一部取得</span>' : ""}
+          ${a.counts.retrievalFailed ? '<span><i class="legend-box" style="border:2px solid var(--req)"></i>⚠ 取得失敗</span>' : ""}
+          ${a.unresolved ? '<span><i class="legend-box" style="border:2px dashed var(--dim)"></i>？ 未取得の参照先</span>' : ""}
+        </div>
+      </div>
+      <div id="zoom-ctrl" role="group" aria-label="表示倍率">
+        <button type="button" onclick="zoomIn()" title="拡大 (+)" aria-label="拡大">＋</button>
+        <button type="button" id="zoom-level" onclick="toggleZoomPresets()" title="倍率を選ぶ" aria-label="現在の表示倍率。倍率プリセットを開く" aria-haspopup="true" aria-expanded="false"><span id="zoom-value" aria-live="polite">100%</span><span id="zoom-mode"></span></button>
+        <button type="button" onclick="zoomOut()" title="縮小 (-)" aria-label="縮小">－</button>
+        <button type="button" onclick="zoomReset()" title="100%にリセット (0)" aria-label="表示倍率を100%にリセット">◎</button>
+        <button type="button" onclick="fit()" title="画面に合わせる (Ctrl+0)" aria-label="図を画面に合わせる">⤢</button>
+        <div id="zoom-presets" role="group" aria-label="倍率プリセット">
+          ${[50, 75, 100, 125, 150, 200].map((p) => `<button type="button" class="zoom-preset" data-zoom="${p}" aria-pressed="${p === 100}" onclick="setZoomPercent(${p})">${p}%</button>`).join("\n          ")}
+        </div>
+      </div>
+      <div id="minimap" aria-hidden="true"><canvas id="minimap-canvas"></canvas></div>
+      <div id="pathfinder" role="group" aria-label="経路探索">
+        <span>経路:</span>
+        <select id="pf-from" class="tb-select" aria-label="経路の起点アプリ"></select>
+        <span aria-hidden="true">→</span>
+        <select id="pf-to" class="tb-select" aria-label="経路の終点アプリ"></select>
+        <button type="button" class="tb tb-primary" onclick="findPath()">探す</button>
+        <button type="button" class="tb" onclick="clearPath()">消す</button>
+        <button type="button" class="tb tb-icon tb-quiet" onclick="togglePathFinder()" aria-label="経路探索を閉じる">✕</button>
+        <span id="path-result" aria-live="polite"></span>
+      </div>
+    </section>
+
+    <section id="view-apps" class="view-panel table-view" role="tabpanel" aria-labelledby="tab-apps" hidden>
+      <div class="table-head">
+        <div><h2>アプリ一覧</h2><p>図にあるアプリの取得状態と、参照する・される関連の数です。見出しを押すと並べ替え、アプリ名を押すと図のそのアプリへ移ります。</p></div>
+      </div>
+      <div class="check-chips" id="apps-checks" role="group" aria-label="構造チェックで絞り込む"></div>
+      <div class="table-toolbar">
+        <label class="sr-only" for="apps-status">表示するアプリ</label>
+        <select id="apps-status" class="tb-select" onchange="setAppsStatus(this.value)">
+          <option value="">すべてのアプリ</option>
+          <option value="scope">図に表示中のアプリ</option>
+          <option value="start">起点のアプリ</option>
+          <option value="custom">手動で追加したアプリ</option>
+          <option value="removed">図から削除したアプリ</option>
+        </select>
+        <span class="table-count" id="apps-count" aria-live="polite"></span>
+      </div>
+      <div class="table-wrap" id="apps-table"></div>
+    </section>
+
+    <section id="view-relations" class="view-panel table-view" role="tabpanel" aria-labelledby="tab-relations" hidden>
+      <div class="table-head">
+        <div><h2>関連一覧</h2><p>どのアプリがどのアプリを、どの項目で参照しているかの一覧です。「図で見る」で図のその線へ移ります。</p></div>
+      </div>
+      <div class="check-chips" id="relations-kinds" role="group" aria-label="関連の種類で絞り込む"></div>
+      <div class="table-toolbar">
+        <label class="sr-only" for="relations-state">表示する関連</label>
+        <select id="relations-state" class="tb-select" onchange="setRelationsState(this.value)">
+          <option value="">すべての関連</option>
+          <option value="unresolved">参照先が未取得の関連</option>
+          <option value="self">自己参照</option>
+          <option value="filtered">絞り込み条件のある関連</option>
+          <option value="custom">手動で追加した関連</option>
+          <option value="removed">図から削除した関連</option>
+        </select>
+        <span class="table-count" id="relations-count" aria-live="polite"></span>
+      </div>
+      <div class="table-wrap" id="relations-table"></div>
+    </section>
+  </main>
+
+  <aside id="detail" class="side-panel" aria-label="選んだアプリ・関連の詳細">
+    <button type="button" class="close-btn" onclick="closeDetail()" aria-label="詳細を閉じる">✕</button>
+    <h2 id="detail-title"></h2>
+    <div id="detail-meta"></div>
+    <div id="detail-relations"></div>
+    <div id="detail-fields"></div>
+  </aside>
+
+  <aside id="analysis-panel" class="side-panel" aria-label="構造チェック">
+    <button type="button" class="close-btn" onclick="toggleAnalysisPanel(false)" aria-label="構造チェックを閉じる">✕</button>
+    <div class="analysis-head">
+      <h2>🩺 構造チェック</h2>
+      <p>取得状態、循環候補、自己参照、関連のないアプリなどの事実を示します。項目を押すと図のそのアプリへ移ります。</p>
+    </div>
+    <div class="analysis-facts" id="analysis-facts" aria-label="取得状態の件数">
+      <div class="analysis-fact"><strong>${a.counts.retrievalComplete}</strong><span>取得完了</span></div>
+      <div class="analysis-fact"><strong>${a.counts.retrievalPartial}</strong><span>一部取得</span></div>
+      <div class="analysis-fact"><strong>${a.counts.retrievalFailed}</strong><span>取得失敗</span></div>
+    </div>
+    <div id="analysis-content"></div>
+    <div class="analysis-note">ここでは良否を判定しません。「接続数が多い」は入出力の関連が ${a.highConnectionThreshold} 件以上のアプリを機械的に並べています。</div>
+  </aside>
+
+  <div id="overview" class="collapsed" role="dialog" aria-label="取得・関連サマリー">
+    <div class="ov-head">
+      <div>
+        <div class="ov-title">取得・関連サマリー</div>
+        <div class="ov-sub">取得できた設定と関連の事実です。良否は判定しません。数を押すと該当箇所を確認できます。</div>
+      </div>
+      <button type="button" class="ov-close" onclick="hideOverview()" title="サマリーを閉じる" aria-label="サマリーを閉じる">✕</button>
+    </div>
+    <div class="ov-grid">
+      <button type="button" class="ov-card ov-card--action${attention ? " ov-card--warn" : ""}" onclick="hideOverview();toggleAnalysisPanel(true)"><span class="ov-kpi">${attention}</span><span class="ov-label">取得に注意が必要</span></button>
+      <button type="button" class="ov-card ov-card--action${a.cycles ? " ov-card--risk" : ""}" onclick="hideOverview();toggleAnalysisPanel(true)"><span class="ov-kpi">${a.cycles}</span><span class="ov-label">循環グループ</span></button>
+      <button type="button" class="ov-card ov-card--action${a.isolated ? " ov-card--warn" : ""}" onclick="hideOverview();toggleAnalysisPanel(true)"><span class="ov-kpi">${a.isolated}</span><span class="ov-label">孤立アプリ</span></button>
+      <button type="button" class="ov-card ov-card--action" onclick="hideOverview();toggleAnalysisPanel(true)"><span class="ov-kpi">${a.selfReferences}</span><span class="ov-label">自己参照</span></button>
+      <button type="button" class="ov-card ov-card--action${a.unresolved ? " ov-card--warn" : ""}" onclick="hideOverview();showRelationsTable('unresolved')"><span class="ov-kpi">${a.unresolved}</span><span class="ov-label">未取得の参照先</span></button>
+      <button type="button" class="ov-card ov-card--action" onclick="hideOverview();showRelationsTable('')"><span class="ov-kpi">${ctx.summary.relations}</span><span class="ov-label">総関連</span></button>
+    </div>
+    <dl class="ov-conditions">
+      ${ctx.conditions.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("\n      ")}
+      <dt>関連の内訳</dt><dd>ルックアップ ${ctx.summary.lookups} / 関連レコード一覧 ${ctx.summary.refs} / アプリアクション ${ctx.summary.actions} / 必須項目 ${ctx.summary.required}</dd>
+    </dl>
+  </div>
+</div>
+
+<!-- Command Palette -->
+<div id="cmd-overlay" class="overlay" onclick="if(event.target===this)closeCmd()">
+  <div id="cmd-box" role="dialog" aria-modal="true" aria-label="コマンドパレット">
+    <input id="cmd-input" placeholder="操作やアプリの名前を入力（表示・配置・出力・アプリ名…）" aria-label="操作やアプリを探す" oninput="filterCmd(this.value)">
+    <div id="cmd-results"></div>
+  </div>
+</div>
+
+<!-- Modal -->
+<div id="modal-overlay" class="overlay" onclick="if(event.target===this)closeModal()">
+  <div id="modal" class="dialog" role="dialog" aria-modal="true" aria-labelledby="modal-title"><h2 id="modal-title"></h2><pre id="modal-content"></pre>
+    <div class="actions">
+      <button type="button" class="primary" onclick="copyModal()">コピー</button>
+      <button type="button" onclick="downloadModal()">ファイルに保存</button>
+      <button type="button" onclick="closeModal()">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- Manual add editor -->
+<div id="editor-overlay" class="overlay" onclick="if(event.target===this)closeEditor()">
+  <div id="editor" class="dialog" role="dialog" aria-modal="true" aria-labelledby="editor-title">
+    <h2 id="editor-title"></h2>
+    <div id="editor-sub"></div>
+    <div id="editor-body"></div>
+    <div class="actions">
+      <button type="button" class="danger" id="editor-delete" style="display:none" onclick="deleteFromEditor()">削除</button>
+      <button type="button" class="primary" id="editor-submit" onclick="submitEditor()">追加</button>
+      <button type="button" onclick="closeEditor()">キャンセル</button>
+    </div>
+  </div>
+</div>
+
+<!-- Help / Shortcut modal -->
+<div id="help-overlay" class="overlay" onclick="if(event.target===this)closeHelp()">
+  <div id="help-box" class="dialog" role="dialog" aria-modal="true" aria-labelledby="help-title">
+    <h2 id="help-title">使い方とショートカット</h2>
+    <div class="help-sub">上の「図・アプリ一覧・関連一覧」で表示を切り替えます。アプリが多い図は、起点とその関連先だけを表示して開きます（「全体を表示」でいつでも全体へ）。アプリを押すと右に詳細、線を押すと関連の詳細が出ます。kintone には何も書き込みません。</div>
+    <div class="help-grid">
+      <div class="help-section">
+        <h3>表示</h3>
+        <div class="help-row"><span>図 / アプリ一覧 / 関連一覧</span><kbd>Alt + 1 / 2 / 3</kbd></div>
+        <div class="help-row"><span>アプリ・項目を検索</span><kbd>Ctrl/⌘ + F</kbd></div>
+        <div class="help-row"><span>検索に一致したアプリへ順に移る</span><kbd>検索欄で Enter</kbd></div>
+        <div class="help-row"><span>そのアプリのまわりだけを表示</span><kbd>アプリをダブルクリック</kbd></div>
+        <div class="help-row"><span>画面に合わせる</span><kbd>Ctrl/⌘ + 0</kbd></div>
+        <div class="help-row"><span>拡大 / 縮小 / 100%</span><kbd>+ / - / 0</kbd></div>
+        <div class="help-row"><span>アプリ一覧（左）を開閉</span><kbd>Ctrl/⌘ + B</kbd></div>
+        <div class="help-row"><span>コマンドパレット</span><kbd>Ctrl/⌘ + K</kbd></div>
+        <div class="help-row"><span>印刷（資料として）</span><kbd>Ctrl/⌘ + P</kbd></div>
+        <div class="help-row"><span>ヘルプを開く</span><kbd>?</kbd></div>
+        <div class="help-row"><span>閉じる / 強調を解除</span><kbd>Esc</kbd></div>
+      </div>
+      <div class="help-section">
+        <h3>編集（図にだけ反映）</h3>
+        <div class="help-row"><span>元に戻す</span><kbd>Ctrl/⌘ + Z</kbd></div>
+        <div class="help-row"><span>選んだアプリ・線を図から削除</span><kbd>Delete</kbd></div>
+        <div class="help-row"><span>複数のアプリを選ぶ</span><kbd>Shift + ドラッグ / クリック</kbd></div>
+        <div class="help-row"><span>関連の強調 ON / OFF</span><kbd>Shift + F</kbd></div>
+        <div class="help-row"><span>固定 / 固定を解除</span><kbd>Shift + P・右クリック</kbd></div>
+        <div class="help-row"><span>名前・項目・線の編集</span><kbd>詳細の ✎</kbd></div>
+        <div class="help-row"><span>項目を隠す・線を削除</span><kbd>詳細の ✕</kbd></div>
+        <div class="help-row"><span>メモ（付箋）の編集</span><kbd>メモを押す</kbd></div>
+        <div class="help-row"><span>その位置にアプリを追加</span><kbd>背景をダブルクリック</kbd></div>
+        <div class="help-row"><span>アプリを図から削除</span><kbd>Alt + 右クリック</kbd></div>
+        <div class="help-row"><span>線を図から削除</span><kbd>線を右クリック</kbd></div>
+      </div>
+    </div>
+    <div class="close-row actions"><button type="button" onclick="closeHelp()">閉じる</button><button type="button" onclick="closeHelp();openCmd()">コマンドパレットを開く</button></div>
+  </div>
+</div>
+
+<div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+<div id="print-doc"></div>
+
+<script id="er-main" type="text/plain">
+${ctx.mainScript}
+<\/script>
+<script>
+(function(){
+  const source=document.getElementById("er-main");
+  // 描画ライブラリは head にインラインで同梱している。ブラウザの制限などで初期化できなかったときだけ、取得済みのアプリ一覧を表で示す。
+  if(typeof window.cytoscape==="function"){
+    const runtime=document.createElement("script");
+    runtime.id="er-runtime";
+    runtime.textContent=source.textContent||"";
+    source.after(runtime);
+    return;
+  }
+  const host=document.getElementById("cy");
+  // 図の領域を body の直下へ移してから、操作バー・凡例・ズーム操作などの画面部品をすべて隠す（hidden 属性は CSS の display に負けるため使わない）。
+  document.body.appendChild(host);
+  Array.prototype.forEach.call(document.body.children,function(el){ if(el!==host&&el.tagName!=="SCRIPT") el.style.display="none"; });
+  host.style.cssText="position:fixed;inset:0;overflow:auto;padding:32px;background:#f8fafc;color:#0f172a;font:14px/1.65 sans-serif";
+  host.innerHTML='<style>#cy table{width:100%;border-collapse:collapse}#cy th,#cy td{padding:6px 10px;text-align:left;vertical-align:top;border-bottom:1px solid #cbd5e1}#cy th,#cy td:not(:nth-child(2)){white-space:nowrap}#cy td:nth-child(2){overflow-wrap:anywhere}</style><main style="max-width:960px;margin:auto"><h1 style="font-size:22px;margin-bottom:8px">ER図を描画できませんでした</h1><p>描画ライブラリを初期化できませんでした。ブラウザを再読み込みするか、別のブラウザで開いてください。取得済みのアプリ一覧は下表で確認できます。</p><table style="margin-top:20px"><thead><tr><th>アプリID</th><th>アプリ名</th><th>項目数</th><th>関連数</th><th>取得状態</th></tr></thead><tbody>'+${ctx.fallbackRowsJson}+'</tbody></table></main>';
+})();
+<\/script>
+</body>
+</html>`
+    );
+  }
+
   // src/tabs/er.ts
   var ER_DEFAULTS = {
     maxFields: 220,
@@ -4231,9 +9888,9 @@ ${String(text).trim().replace(/\*\//g, "* /")}
   var ER_TRAVERSE_RELATION_KINDS = /* @__PURE__ */ new Set(["LOOKUP", "REF", "ACTION"]);
   function formatErLayoutLabel(layoutName) {
     const map = {
-      dagre: "Dagre",
+      dagre: "階層",
       breadthfirst: "ツリー",
-      cose: "フォース",
+      cose: "自動",
       concentric: "同心円",
       grid: "グリッド",
       circle: "円形"
@@ -4535,6 +10192,27 @@ ${String(text).trim().replace(/\*\//g, "* /")}
     });
     throw new Error(`ER図を作成できませんでした。${targets.join(" / ")}。アプリIDと閲覧権限を確認してください`);
   };
+  function formatErGeneratedAt(date) {
+    const p = (n) => String(n).padStart(2, "0");
+    return `${date.getFullYear()}/${p(date.getMonth() + 1)}/${p(date.getDate())} ${p(date.getHours())}:${p(date.getMinutes())}`;
+  }
+  function describeErTarget(apps, startAppIds) {
+    const byId = new Map((Array.isArray(apps) ? apps : []).map((app) => [String(app?.id), app]));
+    const names = startAppIds.map((id) => {
+      const app = byId.get(String(id));
+      return app?.name ? String(app.name) : `App ${id}`;
+    });
+    if (!names.length) return { text: "", title: "" };
+    const title = `起点: ${names.join("、")}`;
+    if (names.length === 1) return { text: `${names[0]}（App ${startAppIds[0]}）`, title };
+    if (names.length <= 3) return { text: names.join("、"), title };
+    return { text: `${names[0]} ほか ${names.length - 1} 件`, title };
+  }
+  function describeErConnection(options, host) {
+    const space = options?.source?.guestId ? `ゲストスペース ${String(options.source.guestId)}` : "通常空間";
+    const env = options?.source?.preview ? "プレビュー" : "本番";
+    return [host, space, env].filter(Boolean).join(" / ");
+  }
   var buildHTML = (apps, options = {}) => {
     const safeApps = Array.isArray(apps) ? apps : [];
     const serializedApps = safeApps.map((app) => {
@@ -4543,6 +10221,10 @@ ${String(text).trim().replace(/\*\//g, "* /")}
       return rest;
     });
     const data = safeJsonForScript(serializedApps);
+    const reverseScanNote = describeReverseScan(options);
+    const generatedAt = options.generatedAt ? new Date(options.generatedAt) : /* @__PURE__ */ new Date();
+    const sourceHost = String(options.source?.host || (typeof location !== "undefined" && location && location.host ? location.host : ""));
+    const startAppIdList = (Array.isArray(options.startAppIds) ? options.startAppIds : [options.startAppId || ""]).map((v) => String(v)).filter(Boolean);
     const diagramOptions = safeJsonForScript({
       startAppId: options.startAppId || "",
       startAppIds: Array.isArray(options.startAppIds) ? options.startAppIds : [options.startAppId || ""],
@@ -4556,9 +10238,10 @@ ${String(text).trim().replace(/\*\//g, "* /")}
       spaceAppIds: Array.isArray(options.spaceAppIds) ? options.spaceAppIds.map((v) => String(v)) : [],
       sourceGuestId: options.source?.guestId || "",
       sourcePreview: !!options.source?.preview,
-      reverseScanNote: describeReverseScan(options)
+      sourceHost,
+      generatedAt: generatedAt.toISOString(),
+      reverseScanNote
     });
-    const reverseScanPill = describeReverseScan(options) ? `<span class="meta-pill" title="${esc(describeReverseScan(options))}"><b>逆引き走査</b> ${esc(String(options.reverseScan.incomplete.length))}/${esc(String(options.reverseScan.total))}件が不完全</span>` : "";
     const dependencyAnalysis = analyzeErDependencies(safeApps);
     const dependencyAnalysisData = safeJsonForScript(dependencyAnalysis);
     const densityLabelMap = { none: "結合のみ", compact: "コンパクト", standard: "標準", full: "詳細" };
@@ -4570,4423 +10253,58 @@ ${String(text).trim().replace(/\*\//g, "* /")}
       acc.required += Number(app?.requiredCount || 0);
       return acc;
     }, { relations: 0, lookups: 0, refs: 0, actions: 0, required: 0 });
-    const startAppIdList = (Array.isArray(options.startAppIds) ? options.startAppIds : [options.startAppId || ""]).map((v) => String(v)).filter(Boolean);
-    const startAppText = summarizeErStartIds(startAppIdList);
-    const startAppFullText = startAppIdList.join(", ");
     const erSpaceId = String(options.spaceId || "");
     const spaceAppIdSet = new Set((Array.isArray(options.spaceAppIds) ? options.spaceAppIds : []).map((v) => String(v)));
     const spaceAppCount = erSpaceId ? safeApps.filter((app) => spaceAppIdSet.has(String(app?.id)) || String(app?.spaceId || "") === erSpaceId).length : 0;
-    const spacePill = erSpaceId ? `<span class="meta-pill" title="このスペースに属するアプリは二重枠で表示されます"><b>スペース</b> #${esc(erSpaceId)} (${esc(String(spaceAppCount))}アプリ)</span>` : "";
     const densityLabel = densityLabelMap[options.fieldDensity || ER_DEFAULTS.fieldDensity] || String(options.fieldDensity || ER_DEFAULTS.fieldDensity || "-");
+    const target = describeErTarget(safeApps, startAppIdList);
+    const connectionText = describeErConnection(options, sourceHost);
+    const conditions = [
+      ["起点", summarizeErStartIds(startAppIdList)],
+      ["接続先", connectionText],
+      ["取得日時", formatErGeneratedAt(generatedAt)],
+      ["探索の深さ", options.maxDepth ? String(options.maxDepth) : "無制限"],
+      ["逆引き探索", options.includeReverseLookup ? "ON" : "OFF"],
+      ["サブテーブル", options.includeSubtableFields ? "ON" : "OFF"],
+      ["配置", formatErLayoutLabel(options.layoutName)],
+      ["カードの項目", densityLabel]
+    ];
+    if (erSpaceId) conditions.push(["スペース", `#${erSpaceId}（${spaceAppCount}アプリ。二重枠で表示）`]);
+    if (reverseScanNote) conditions.push(["逆引き走査", `${options.reverseScan.incomplete.length}/${options.reverseScan.total}件が不完全。${reverseScanNote}`]);
     const runtimeFallbackRows = safeApps.map((app) => `<tr><td>${esc(String(app?.id || "-"))}</td><td>${esc(String(app?.name || `アプリ ${app?.id || "-"}`))}</td><td>${esc(String(app?.totalFieldCount ?? app?.allFields?.length ?? app?.fields?.length ?? 0))}</td><td>${esc(String(app?.relations?.length || 0))}</td><td>${esc(app?.status === "partial" ? "一部取得" : app?.ok === false ? "取得失敗" : "取得完了")}</td></tr>`).join("");
-    return (
-      /*html*/
-      `<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
-<title>kintone ER図 v3</title>
-${buildErLibraryScripts()}
-<style>
-
-*{margin:0;padding:0;box-sizing:border-box;}
-
-:root{
-  --bg:#08090d;--surface:#11131a;--surface2:#181c27;--border:#2f384b;
-  --text:#e2e8f0;--dim:#8f9aae;--accent:#5eead4;--accent2:#818cf8;
-  --lookup:#60a5fa;--ref:#34d399;--pk:#fbbf24;--req:#f87171;--action:#f59e0b;
-  --radius:10px;
-  --mono:'Cascadia Mono',Consolas,'Yu Gothic UI','Hiragino Sans',monospace;
-  --topbar-h:52px;
-  --bottom-safe:16px;
-  --pathfinder-lift:0px;
-  --legend-stack-height:50px;
-  --shadow-sm:0 2px 6px rgba(0,0,0,0.18);
-  --shadow-md:0 10px 28px rgba(0,0,0,0.28);
-}
-[data-theme="light"]{
-  --bg:#f0f2f5;--surface:#ffffff;--surface2:#f7f8fa;--border:#d8dce6;
-  --text:#1a1c23;--dim:#6b7280;--accent:#0d9488;--accent2:#6366f1;
-  --lookup:#2563eb;--ref:#047857;--pk:#b45309;--req:#dc2626;--action:#d97706;
-  --shadow-sm:0 1px 3px rgba(15,23,42,0.08);
-  --shadow-md:0 12px 28px rgba(15,23,42,0.14);
-}
-
-body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:
-  radial-gradient(circle at top left, rgba(94,234,212,0.08), transparent 28%),
-  radial-gradient(circle at top right, rgba(129,140,248,0.08), transparent 26%),
-  var(--bg);
-  color:var(--text);overflow:hidden;height:100vh;}
-
-/* ── Command Palette ── */
-#cmd-overlay{display:none;position:fixed;inset:0;z-index:500;background:rgba(0,0,0,0.55);backdrop-filter:blur(6px);justify-content:center;align-items:flex-start;padding-top:12vh;}
-#cmd-overlay.open{display:flex;}
-#cmd-box{width:min(540px,92vw);background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-md);}
-#cmd-input{width:100%;padding:16px 20px;border:none;background:transparent;color:var(--text);font-size:15px;font-family:inherit;outline:none;border-bottom:1px solid var(--border);}
-#cmd-input::placeholder{color:var(--dim);}
-#cmd-results{max-height:min(340px,60vh);overflow-y:auto;}
-.cmd-item{width:100%;padding:10px 20px;cursor:pointer;display:flex;align-items:center;gap:10px;font-size:13px;border:0;border-bottom:1px solid var(--border);background:transparent;color:var(--text);font:inherit;text-align:left;}
-.cmd-item:hover,.cmd-item.active{background:var(--surface2);}
-.cmd-item .kbd{margin-left:auto;font-size:10px;padding:2px 7px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;font-family:var(--mono);color:var(--dim);}
-
-/* ── Top Bar ── */
-#topbar{
-  position:fixed;top:0;left:0;right:0;z-index:100;
-  display:flex;align-items:center;gap:6px;padding:8px 14px;
-  min-height:var(--topbar-h);
-  background:var(--bg);
-  backdrop-filter:blur(12px);
-  border-bottom:1px solid var(--border);
-  flex-wrap:wrap;overflow:visible;white-space:normal;
-}
-#topbar::-webkit-scrollbar{display:none;}
-#topbar h1{font-size:14px;font-weight:700;margin-right:6px;white-space:nowrap;
-  background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
-.tb{padding:6px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-size:12px;cursor:pointer;transition:.15s;font-family:inherit;white-space:nowrap;flex:0 0 auto;display:inline-flex;align-items:center;gap:4px;min-height:30px;}
-.tb:hover{border-color:var(--accent);color:var(--accent);}
-.tb.active{background:var(--accent);color:#000;border-color:var(--accent);font-weight:600;}
-.tb-icon{padding:6px 9px;font-size:13px;}
-.meta-pill{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border:1px solid var(--border);border-radius:999px;background:var(--surface2);font-size:11px;color:var(--dim);max-width:100%;overflow:hidden;}
-.meta-pill[hidden]{display:none;}
-.meta-pill b{color:var(--text);font-weight:700;}
-.meta-pill .pill-val{max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-#topbar select.tb-select{padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);color:var(--text);font-size:12px;font-family:inherit;outline:none;flex:0 0 auto;min-height:30px;}
-#topbar select.tb-select:focus{border-color:var(--accent);}
-#search-box{padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);color:var(--text);font-size:12px;width:210px;font-family:inherit;outline:none;min-height:30px;}
-#search-box:focus{border-color:var(--accent);}
-#search-box::placeholder{color:var(--dim);}
-/* 検索中の件数の表示が加わっても操作バーが 2 行に折り返さないよう、広い画面では検索欄を縮める */
-@media (min-width:901px){#topbar:has(#search-meta:not([hidden])) #search-box{width:110px;}}
-.spacer{flex:1 1 16px;}
-
-/* ── Dropdown menu ── */
-.tb-menu{position:relative;}
-.tb-menu > .tb-menu-btn::after{content:"▾";margin-left:4px;font-size:9px;opacity:0.7;}
-.tb-menu-panel{display:none;position:absolute;top:calc(100% + 6px);right:0;min-width:200px;max-height:min(70vh,480px);overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow-md);padding:6px;z-index:120;}
-.tb-menu-panel--left{left:0;right:auto;}
-.tb-menu.open .tb-menu-panel{display:flex;flex-direction:column;gap:2px;}
-.tb-menu-row{display:flex;gap:6px;padding:4px 2px;}
-.tb-menu-row select{flex:1 1 0;min-width:0;}
-.tb-check::before{content:"";display:inline-block;width:16px;flex:0 0 auto;}
-.tb-menu-panel .tb-check.active{background:transparent;color:var(--text);border-color:transparent;font-weight:600;}
-.tb-check.active::before{content:"✓";color:var(--accent);}
-.tb-menu-panel .tb{background:transparent;border:1px solid transparent;justify-content:flex-start;width:100%;padding:7px 10px;font-size:12px;}
-.tb-menu-panel .tb:hover{background:var(--surface2);border-color:var(--border);}
-.tb-menu-panel hr{border:none;border-top:1px solid var(--border);margin:4px 2px;}
-
-/* mobile menu button (hidden on desktop) */
-#mobile-menu-btn{display:none;}
-
-@media (max-width: 1280px){
-  #topbar{padding:6px 10px;row-gap:6px;}
-  #search-box{width:min(220px,100%);flex:1 1 200px;}
-  #banner .meta-pill--wide{display:none;}
-}
-@media (max-width: 900px){
-  #topbar{padding:6px 8px;gap:4px;}
-  #topbar h1{font-size:12px;margin-right:2px;}
-  #mobile-menu-btn{display:inline-flex;}
-  #topbar > #density-select,
-  #topbar > .tb[data-mobile="hide"],
-  #topbar > .tb-menu[data-mobile="hide"]{display:none;}
-  #topbar.mobile-open > #density-select,
-  #topbar.mobile-open > .tb[data-mobile="hide"],
-  #topbar.mobile-open > .tb-menu[data-mobile="hide"]{display:inline-flex;}
-  #topbar.mobile-open{padding-bottom:10px;}
-  #search-box{flex:1 1 120px;width:100%;}
-  #overview{top:calc(var(--topbar-h, 52px) + 58px);width:calc(100vw - 24px);left:12px;}
-  .ov-grid{grid-template-columns:repeat(2,minmax(0,1fr));}
-  #detail{width:min(96vw,420px);top:calc(var(--topbar-h, 52px) + 6px);}
-  #analysis-panel{width:min(380px,94vw);top:calc(var(--topbar-h, 52px) + 6px);}
-  #banner{top:calc(var(--topbar-h, 52px) + 6px);}
-  #sidebar{top:calc(var(--topbar-h, 52px) + 2px);width:min(300px,92vw);}
-  #legend{font-size:9px;padding:6px 10px;gap:8px;flex-wrap:wrap;max-width:calc(100vw - 92px);}
-  .tb-menu-panel{position:fixed;left:8px;right:8px;top:var(--topbar-h,52px);max-height:calc(100vh - var(--topbar-h,52px) - 16px);}
-}
-@media (max-width: 640px){
-  :root{--bottom-safe:8px;}
-  #detail{width:100vw;right:0;top:0;max-height:100vh;border-radius:0;}
-  #detail.open{top:0;}
-  #analysis-panel{width:100vw;right:0;top:0;max-height:100vh;border-radius:0;}
-  #sidebar{width:100vw;top:0;padding-top:22px;}
-  #overview{top:calc(var(--topbar-h, 52px) + 40px);}
-  .ov-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;}
-  .ov-card{padding:8px;min-height:58px;}
-  .ov-kpi{font-size:16px;}
-  #legend{bottom:8px;right:8px;font-size:9px;padding:5px 8px;gap:6px;max-width:calc(100vw - 16px);}
-  #minimap{display:none !important;}
-  #pathfinder{left:8px;right:8px;transform:none;padding:8px 10px;flex-wrap:wrap;}
-  #path-result{max-width:100%;white-space:normal;}
-  #toast{bottom:80px;font-size:11px;padding:7px 14px;}
-  #banner{top:calc(var(--topbar-h, 52px) + 4px);left:8px;max-width:calc(100vw - 16px);}
-  .meta-pill{font-size:9px;padding:3px 7px;}
-  #zoom-ctrl{bottom:calc(var(--bottom-safe) + var(--pathfinder-lift) + var(--legend-stack-height));right:8px;}
-  #fab-mobile{display:flex;}
-}
-
-/* Floating action button for mobile */
-#fab-mobile{display:none;position:fixed;bottom:16px;left:16px;z-index:110;flex-direction:column;gap:8px;}
-#fab-mobile button{width:44px;height:44px;border-radius:50%;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:16px;cursor:pointer;box-shadow:var(--shadow-md);}
-#fab-mobile button:hover{color:var(--accent);border-color:var(--accent);}
-
-/* ── Zoom controls ── */
-#zoom-ctrl{position:fixed;bottom:calc(var(--bottom-safe) + var(--pathfinder-lift) + var(--legend-stack-height));right:16px;z-index:105;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:visible;box-shadow:var(--shadow-sm);}
-#zoom-ctrl > button{width:38px;min-height:32px;border:none;background:transparent;color:var(--text);cursor:pointer;font-size:13px;font-family:inherit;border-bottom:1px solid var(--border);transition:.12s;}
-#zoom-ctrl > button:first-child{border-radius:var(--radius) var(--radius) 0 0;}
-#zoom-ctrl > button:last-of-type{border-bottom:none;border-radius:0 0 var(--radius) var(--radius);}
-#zoom-ctrl button:hover{background:var(--surface2);color:var(--accent);}
-#zoom-level{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;font-size:9px;color:var(--dim);text-align:center;padding:4px 1px;font-family:var(--mono);line-height:1.15;}
-#zoom-level[aria-expanded="true"]{background:var(--surface2);color:var(--accent);}
-#zoom-mode{font-family:inherit;font-size:9px;font-weight:700;color:var(--action);}
-#zoom-mode:empty{display:none;}
-#zoom-presets{display:none;position:absolute;right:calc(100% + 8px);bottom:0;width:170px;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:6px;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow-md);}
-#zoom-presets.open{display:grid;}
-#zoom-presets button{min-width:0;height:32px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);color:var(--text);font:600 10px var(--mono);cursor:pointer;}
-#zoom-presets button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#000;}
-
-/* ── Sidebar ── */
-#sidebar{
-  position:fixed;top:48px;left:0;bottom:0;width:280px;z-index:97;
-  background:var(--surface);border-right:1px solid var(--border);
-  transform:translateX(-100%);transition:transform .25s;overflow-y:auto;
-  padding:14px;font-size:12px;
-}
-#sidebar.open{transform:translateX(0);}
-#sidebar .sidebar-head{position:sticky;top:-14px;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:8px;margin:-14px -14px 8px;padding:14px;background:var(--surface);border-bottom:1px solid var(--border);}
-#sidebar .sidebar-head h3{margin:0;}
-#sidebar-close{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font:inherit;cursor:pointer;}
-#sidebar-close:hover{color:var(--accent);border-color:var(--accent);}
-#sidebar h3{font-size:13px;margin:14px 0 8px;color:var(--accent);font-weight:600;}
-#sidebar h3:first-child{margin-top:0;}
-.stat-row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);}
-.stat-val{font-weight:600;font-family:var(--mono);color:var(--accent2);}
-.app-list-item{display:block;width:100%;padding:6px 8px;cursor:pointer;border:1px solid transparent;border-radius:6px;margin:2px 0;transition:.1s;background:transparent;color:var(--text);text-align:left;font:inherit;}
-.app-list-group{margin:12px 0 4px;padding-bottom:3px;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;color:var(--dim);letter-spacing:0.04em;}
-.app-list-group:first-child{margin-top:2px;}
-.app-list-item:hover{background:var(--surface2);}
-.app-list-item.highlighted{background:rgba(94,234,212,0.12);border:1px solid var(--accent);}
-.app-list-item.active-app{background:rgba(129,140,248,0.12);border:1px solid var(--accent2);}
-.filter-chip{display:inline-block;padding:3px 8px;margin:2px;border:1px solid var(--border);border-radius:20px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:11px;cursor:pointer;transition:.1s;}
-.filter-chip:hover,.filter-chip.active{background:var(--accent);color:#000;border-color:var(--accent);}
-
-/* ── Architecture analysis ── */
-#analysis-panel{
-  position:fixed;top:54px;right:0;width:360px;max-height:calc(100vh - 62px);
-  overflow-y:auto;z-index:96;background:var(--surface);border-left:1px solid var(--border);
-  padding:20px;display:none;box-shadow:-18px 0 36px rgba(0,0,0,0.22);
-}
-#analysis-panel.open{display:block;}
-.analysis-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:14px;}
-.analysis-head h2{font-size:15px;color:var(--accent);}
-.analysis-head p{font-size:11px;line-height:1.5;color:var(--dim);margin-top:3px;}
-.analysis-score{display:grid;grid-template-columns:84px 1fr;gap:12px;align-items:center;padding:12px;border:1px solid var(--border);border-radius:14px;background:var(--surface2);}
-.analysis-score__value{width:72px;height:72px;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;border:5px solid var(--accent);background:var(--surface);font-family:var(--mono);}
-.analysis-score__value strong{font-size:22px;line-height:1;}
-.analysis-score__value span{font-size:9px;color:var(--dim);margin-top:3px;}
-.analysis-score__copy strong{display:block;font-size:13px;margin-bottom:4px;}
-.analysis-score__copy span{font-size:10px;line-height:1.5;color:var(--dim);}
-.analysis-facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:10px;border:1px solid var(--border);border-radius:14px;background:var(--surface2);}
-.analysis-fact{padding:8px;border-radius:10px;background:var(--surface);text-align:center;}
-.analysis-fact strong{display:block;font:700 20px/1.1 var(--mono);color:var(--accent);}
-.analysis-fact span{display:block;margin-top:5px;font-size:11px;color:var(--dim);}
-.analysis-section{margin-top:18px;}
-.analysis-section h3{font-size:12px;color:var(--text);margin-bottom:7px;display:flex;justify-content:space-between;gap:8px;}
-.analysis-count{color:var(--dim);font-family:var(--mono);}
-.analysis-empty{padding:10px;border:1px dashed var(--border);border-radius:10px;color:var(--dim);font-size:11px;line-height:1.5;}
-.analysis-item{width:100%;text-align:left;padding:9px 10px;margin:4px 0;border:1px solid var(--border);border-radius:10px;background:var(--surface2);color:var(--text);cursor:pointer;font-family:inherit;transition:.12s;}
-.analysis-item:hover{border-color:var(--accent);transform:translateY(-1px);}
-.analysis-item strong{display:block;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.analysis-item span{display:block;font-size:11px;color:var(--dim);margin-top:3px;line-height:1.45;}
-.analysis-item--warn{border-left:3px solid var(--action);}
-.analysis-item--risk{border-left:3px solid var(--req);}
-.analysis-note{margin-top:14px;padding:9px 10px;border-radius:10px;background:rgba(129,140,248,0.1);color:var(--dim);font-size:11px;line-height:1.55;}
-
-/* ── Detail Panel ── */
-#detail{
-  position:fixed;top:54px;right:0;width:390px;max-height:calc(100vh - 62px);
-  overflow-y:auto;z-index:96;background:var(--surface);border-left:1px solid var(--border);
-  padding:20px;display:none;box-shadow:-18px 0 36px rgba(0,0,0,0.18);
-}
-#detail.open{display:block;}
-#detail h2{font-size:15px;margin-bottom:4px;color:var(--accent);}
-#detail .app-meta{font-size:12px;color:var(--dim);margin-bottom:12px;}
-.detail-chip-row{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 12px;}
-.close-btn{position:absolute;top:12px;right:14px;background:none;border:none;color:var(--dim);font-size:16px;cursor:pointer;}
-.field-group-title{font-size:11px;font-weight:600;color:var(--dim);margin:12px 0 6px;text-transform:uppercase;letter-spacing:.05em;}
-.field-row{display:flex;align-items:flex-start;gap:8px;padding:7px 8px;border-radius:8px;font-size:12px;border-bottom:1px solid var(--border);}
-.field-row:hover{background:var(--surface2);}
-.detail-relation-button{width:100%;background:transparent;color:inherit;text-align:left;font-family:inherit;cursor:pointer;border:0;border-bottom:1px solid var(--border);}
-.field-icon{width:18px;text-align:center;flex-shrink:0;}
-.field-main{flex:1;min-width:0;}
-.field-name{display:flex;align-items:center;gap:4px;flex-wrap:wrap;overflow-wrap:anywhere;font-weight:600;}
-.field-sub{margin-top:2px;font-size:11px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);}
-/* 関連の詳細（コピー・表示・絞り込み）は長くなるため、省略せず折り返して全文を読めるようにする */
-.field-detail{margin-top:3px;font-size:11px;line-height:1.5;color:var(--dim);white-space:normal;overflow-wrap:anywhere;word-break:break-word;}
-.field-detail b{color:var(--text);font-weight:600;}
-.field-type{color:var(--dim);font-size:11px;flex-shrink:0;}
-.tag{display:inline-block;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:600;margin-left:4px;}
-.tag-pk{background:rgba(251,191,36,0.15);color:var(--pk);}
-.tag-fk{background:rgba(96,165,250,0.15);color:var(--lookup);}
-.tag-ref{background:rgba(52,211,153,0.15);color:var(--ref);}
-.tag-req{background:rgba(248,113,113,0.12);color:var(--req);}
-.tag-sub{background:rgba(99,110,131,0.15);color:var(--dim);}
-.row-del{flex-shrink:0;align-self:center;width:20px;height:20px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--dim);font-size:11px;line-height:1;cursor:pointer;opacity:0;transition:.12s;}
-.field-row:hover .row-del{opacity:1;}
-.row-del:hover{color:var(--req);border-color:var(--border);background:var(--surface2);}
-.row-del--restore{opacity:1;color:var(--accent);}
-.row-del--restore:hover{color:var(--accent);}
-.field-row--hidden{opacity:0.45;}
-.meta-pill--btn{cursor:pointer;color:var(--accent);border-color:var(--accent);background:transparent;font-family:inherit;}
-.meta-pill--btn:hover{background:var(--surface2);}
-
-/* ── Path Finder ── */
-#pathfinder{
-  position:fixed;bottom:var(--bottom-safe);left:50%;transform:translateX(-50%);z-index:100;
-  background:var(--surface);border:1px solid var(--border);border-radius:12px;
-  padding:10px 16px;display:none;align-items:center;gap:8px;font-size:12px;
-  box-shadow:0 8px 30px rgba(0,0,0,0.4);
-}
-#pathfinder.open{display:flex;}
-#pathfinder select{padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);font-size:11px;font-family:inherit;}
-#pathfinder button{padding:4px 12px;border-radius:6px;}
-#path-result{font-size:11px;color:var(--accent);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-
-/* ── Legend ── */
-#legend{
-  position:fixed;bottom:calc(var(--bottom-safe) + var(--pathfinder-lift));right:16px;z-index:100;
-  display:flex;gap:14px;padding:8px 14px;
-  background:var(--surface);border:1px solid var(--border);
-  border-radius:var(--radius);font-size:11px;box-shadow:var(--shadow-sm);align-items:center;
-}
-#legend span,#legend button{display:flex;align-items:center;gap:4px;}
-#legend button{appearance:none;background:transparent;color:inherit;font:inherit;line-height:inherit;}
-#legend i{display:inline-block;width:10px;height:10px;border-radius:2px;}
-#legend i.legend-line{width:22px;height:0;border-radius:0;border-top-width:2px;}
-#legend b{padding:1px 4px;border-radius:4px;font-size:10px;line-height:1.3;background:color-mix(in srgb,currentColor 16%,transparent);}
-#legend .legend-sep{width:1px;height:16px;background:var(--border);}
-#legend .legend-toggle{cursor:pointer;padding:2px 6px;border:1px solid transparent;border-radius:8px;transition:.12s;}
-#legend .legend-toggle:hover{background:var(--surface2);border-color:var(--border);}
-#legend .legend-toggle.off{opacity:0.35;text-decoration:line-through;}
-
-/* ── Help / Shortcut modal ── */
-#help-overlay{display:none;position:fixed;inset:0;z-index:320;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);justify-content:center;align-items:center;padding:16px;}
-#help-overlay.open{display:flex;}
-#help-box{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:22px;width:min(640px,100%);max-height:85vh;overflow-y:auto;box-shadow:var(--shadow-md);}
-#help-box h2{font-size:16px;margin-bottom:4px;color:var(--accent);}
-#help-box .help-sub{font-size:11px;color:var(--dim);margin-bottom:14px;}
-.help-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;}
-.help-section h3{font-size:12px;font-weight:700;margin-bottom:6px;color:var(--text);text-transform:uppercase;letter-spacing:0.04em;}
-.help-row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px dashed var(--border);gap:10px;}
-.help-row:last-child{border-bottom:none;}
-.help-row span:first-child{font-size:11px;color:var(--text);}
-.help-row kbd{background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:2px 7px;font-size:10px;color:var(--accent2);font-family:var(--mono);white-space:nowrap;}
-#help-box .close-row{margin-top:16px;display:flex;justify-content:flex-end;}
-#help-box .close-row button{padding:7px 14px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);cursor:pointer;font-family:inherit;font-size:12px;}
-
-/* ── Minimap ── */
-#minimap{
-  position:fixed;bottom:52px;right:16px;z-index:100;
-  width:180px;height:130px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
-  overflow:hidden;display:none;
-}
-#minimap.open{display:block;}
-#minimap canvas{width:100%;height:100%;}
-
-/* ── Cy ── */
-#cy{width:100vw;height:100vh;}
-
-/* ── Modal ── */
-#modal-overlay{display:none;position:fixed;inset:0;z-index:300;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);justify-content:center;align-items:center;}
-#modal-overlay.open{display:flex;}
-#modal{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;width:min(600px,calc(100vw - 24px));max-height:80vh;overflow-y:auto;}
-#modal h2{margin-bottom:10px;font-size:15px;}
-#modal pre{background:var(--bg);padding:12px;border-radius:8px;font-size:11px;overflow-x:auto;white-space:pre-wrap;font-family:var(--mono);color:var(--dim);max-height:400px;overflow-y:auto;border:1px solid var(--border);}
-#modal .actions{margin-top:12px;display:flex;gap:8px;}
-#modal .actions button{padding:7px 14px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);cursor:pointer;font-family:inherit;font-size:12px;}
-#modal .actions button.primary{background:var(--accent);color:#000;border-color:var(--accent);font-weight:600;}
-
-/* ── Manual add editor ── */
-#editor-overlay{display:none;position:fixed;inset:0;z-index:310;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);justify-content:center;align-items:center;padding:16px;}
-#editor-overlay.open{display:flex;}
-#editor{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:22px;width:min(440px,100%);max-height:85vh;overflow-y:auto;box-shadow:var(--shadow-md);}
-#editor h2{font-size:15px;margin-bottom:4px;color:var(--accent);}
-#editor-sub{font-size:11px;color:var(--dim);margin-bottom:14px;line-height:1.5;}
-.ed-row{display:flex;flex-direction:column;gap:4px;margin-bottom:12px;}
-.ed-row label{font-size:11px;color:var(--dim);font-weight:600;}
-.ed-row input,.ed-row select,.ed-row textarea{padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-size:12px;font-family:inherit;outline:none;}
-.ed-row input:focus,.ed-row select:focus,.ed-row textarea:focus{border-color:var(--accent);}
-.ed-row textarea{min-height:84px;resize:vertical;}
-.ed-hint{font-size:10px;color:var(--dim);line-height:1.5;}
-#editor .actions{margin-top:14px;display:flex;gap:8px;justify-content:flex-end;}
-#editor .actions button{padding:7px 14px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);cursor:pointer;font-family:inherit;font-size:12px;}
-#editor .actions button.primary{background:var(--accent);color:#000;border-color:var(--accent);font-weight:600;}
-#editor .actions button.danger{color:var(--req);border-color:var(--req);margin-right:auto;}
-.ed-swatches{display:flex;gap:8px;flex-wrap:wrap;}
-.ed-swatch{width:26px;height:26px;border-radius:8px;border:2px solid var(--border);cursor:pointer;padding:0;transition:.12s;}
-.ed-swatch:hover{transform:scale(1.08);}
-.ed-swatch.selected{border-color:var(--text);box-shadow:0 0 0 2px var(--surface),0 0 0 4px var(--accent);}
-.ed-swatch--none{background:linear-gradient(135deg,var(--surface2) 44%,var(--req) 47%,var(--req) 53%,var(--surface2) 56%);}
-.detail-filter{width:100%;margin:10px 0 2px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-size:11px;font-family:inherit;outline:none;}
-.detail-filter:focus{border-color:var(--accent);}
-.detail-filter::placeholder{color:var(--dim);}
-.row-edit{flex-shrink:0;align-self:center;width:20px;height:20px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--dim);font-size:11px;line-height:1;cursor:pointer;opacity:0;transition:.12s;}
-.field-row:hover .row-edit{opacity:1;}
-.row-edit:hover{color:var(--accent);border-color:var(--border);background:var(--surface2);}
-
-/* ── Empty / Banner ── */
-#banner{
-  position:fixed;top:48px;left:16px;z-index:95;display:flex;gap:8px;flex-wrap:wrap;max-width:min(900px,calc(100vw - 32px));
-  pointer-events:none;
-}
-#banner .meta-pill{pointer-events:auto;box-shadow:0 8px 20px rgba(0,0,0,0.18);}
-
-/* ── Overview ── */
-#overview{
-  position:fixed;top:94px;left:16px;z-index:94;width:min(460px,calc(100vw - 32px));
-  background:var(--surface);
-  border:1px solid var(--border);border-radius:16px;padding:16px 16px 14px;
-  box-shadow:0 18px 40px rgba(0,0,0,0.22);backdrop-filter:blur(12px);
-}
-#overview.collapsed,#overview.hidden{display:none;}
-.ov-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px;}
-.ov-close{flex:0 0 auto;background:none;border:1px solid transparent;color:var(--dim);font-size:14px;line-height:1;cursor:pointer;padding:4px 8px;border-radius:8px;transition:.12s;}
-.ov-close:hover{background:var(--surface2);border-color:var(--border);color:var(--text);}
-.ov-title{font-size:14px;font-weight:700;color:var(--text);}
-.ov-sub{margin-top:4px;font-size:12px;line-height:1.6;color:var(--dim);}
-.ov-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;}
-.ov-card{padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--surface2);display:flex;flex-direction:column;gap:4px;min-height:72px;}
-.ov-card--action{cursor:pointer;transition:.15s;text-align:left;color:inherit;font-family:inherit;}
-.ov-card--action:hover{border-color:var(--accent);transform:translateY(-1px);box-shadow:var(--shadow-sm);}
-.ov-card--risk{border-color:rgba(248,113,113,0.55);}
-.ov-card--warn{border-color:rgba(245,158,11,0.55);}
-.ov-kpi{font-size:18px;font-weight:700;line-height:1;color:var(--text);}
-.ov-label{font-size:11px;color:var(--dim);}
-.ov-tip-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;}
-.ov-tip-row span{padding:5px 8px;border-radius:999px;background:var(--surface2);border:1px solid var(--border);font-size:11px;color:var(--dim);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-
-/* ── Toast ── */
-#toast{position:fixed;bottom:60px;left:50%;transform:translateX(-50%) translateY(20px);z-index:600;padding:8px 20px;background:var(--accent);color:#000;border-radius:8px;font-size:12px;font-weight:600;opacity:0;transition:.3s;pointer-events:none;}
-#toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
-
-button:focus-visible,input:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:3px solid var(--accent);outline-offset:2px;}
-@media (prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition-duration:.01ms!important;animation-duration:.01ms!important;animation-iteration-count:1!important;}}
-#banner{top:calc(var(--topbar-h,52px) + 6px);}
-#overview{top:calc(var(--topbar-h,52px) + 48px);}
-#sidebar{top:var(--topbar-h,52px);}
-#detail,#analysis-panel{top:calc(var(--topbar-h,52px) + 6px);max-height:calc(100vh - var(--topbar-h,52px) - 14px);}
-.field-row:focus-within .row-edit,.field-row:focus-within .row-del{opacity:1;}
-@media (min-width:1280px){
-  body:has(#detail.open) #zoom-ctrl,body:has(#detail.open) #legend{right:406px;}
-  body:has(#analysis-panel.open) #zoom-ctrl,body:has(#analysis-panel.open) #legend{right:376px;}
-}
-@media (max-width:1279px){
-  #detail,#analysis-panel{z-index:108;}
-}
-@media (max-width:640px){
-  #detail,#analysis-panel,#sidebar{top:0;max-height:100vh;width:100vw;border-radius:0;z-index:180;}
-  #overview{top:calc(var(--topbar-h,52px) + 42px);}
-  #legend{bottom:calc(var(--bottom-safe) + var(--pathfinder-lift));flex-wrap:nowrap;overflow-x:auto;overscroll-behavior-x:contain;white-space:nowrap;}
-  #zoom-ctrl{right:8px;}
-  #fab-mobile{display:flex;bottom:calc(var(--bottom-safe) + var(--pathfinder-lift) + 50px);}
-  .row-edit,.row-del{opacity:1;width:30px;height:30px;}
-  .tb-menu-panel{position:fixed;left:8px;right:8px;top:var(--topbar-h,52px);max-height:calc(100vh - var(--topbar-h,52px) - 16px);}
-  #sidebar .sidebar-head{top:0;margin:-14px -14px 8px;}
-}
-@media (max-width:420px){
-  #modal,#editor,#help-box{padding:16px;}
-  #modal .actions,#editor .actions{flex-wrap:wrap;}
-  #modal .actions button,#editor .actions button{flex:1 1 112px;min-height:44px;}
-  #editor .actions button.danger{margin-right:0;}
-  .help-grid{grid-template-columns:minmax(0,1fr);}
-  .help-row{align-items:flex-start;flex-wrap:wrap;}
-  #zoom-ctrl > button,#zoom-level{width:42px;min-height:40px;}
-  #sidebar-close{width:44px;height:44px;}
-}
-
-/* scrollbar */
-::-webkit-scrollbar{width:5px;}::-webkit-scrollbar-track{background:transparent;}::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px;}
-</style>
-</head>
-<body>
-
-<!-- Command Palette -->
-<div id="cmd-overlay" onclick="if(event.target===this)closeCmd()">
-  <div id="cmd-box" role="dialog" aria-modal="true" aria-label="コマンドパレット">
-    <input id="cmd-input" placeholder="コマンドを入力... (アプリ検索、エクスポート、レイアウト変更...)" oninput="filterCmd(this.value)">
-    <div id="cmd-results"></div>
-  </div>
-</div>
-
-<!-- Top Bar -->
-<div id="topbar">
-  <button class="tb tb-icon" id="mobile-menu-btn" onclick="toggleMobileMenu()" title="メニュー" aria-label="メニュー" aria-expanded="false">☰</button>
-  <h1>⬡ kintone ER図</h1>
-
-  <input id="search-box" placeholder="アプリ・項目を検索 (Ctrl+F)" oninput="searchGraph(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();focusNextSearchMatch();}">
-  <span class="meta-pill" id="search-meta" hidden><b>検索</b> すべて</span>
-
-  <button class="tb" id="analysis-toggle-btn" data-mobile="hide" onclick="toggleAnalysisPanel()" title="構造チェック: 取得状態・循環候補・接続数を確認">チェック</button>
-
-  <div class="tb-menu" id="view-menu" data-mobile="hide">
-    <button class="tb tb-menu-btn" onclick="toggleMenu('view-menu')" title="パネルと表示">表示</button>
-    <div class="tb-menu-panel tb-menu-panel--left">
-      <button class="tb tb-check" id="sidebar-toggle-btn" onclick="toggleSidebar(undefined,this);closeAllMenus()" title="統計パネル (Ctrl+B)" aria-controls="sidebar" aria-expanded="false">統計パネル</button>
-      <button class="tb tb-check" id="overview-toggle-btn" onclick="toggleOverview();closeAllMenus()" title="取得・関連サマリー">取得・関連サマリー</button>
-      <button class="tb tb-check" onclick="togglePathFinder();closeAllMenus()" title="アプリ間の経路を探す">経路探索</button>
-      <button class="tb tb-check" onclick="toggleMinimap();closeAllMenus()" title="ミニマップ">ミニマップ</button>
-      <button class="tb tb-check" onclick="toggleFullscreen();closeAllMenus()" id="fs-btn" title="フルスクリーン (F11)">フルスクリーン</button>
-    </div>
-  </div>
-
-  <div class="tb-menu" id="layout-menu" data-mobile="hide">
-    <button class="tb tb-menu-btn" onclick="toggleMenu('layout-menu')" title="アプリの並べ方">配置</button>
-    <div class="tb-menu-panel tb-menu-panel--left">
-      <button class="tb tb-check" data-layout-btn="dagre" onclick="setLayout('dagre');closeAllMenus()" title="関連の向きに沿って並べます">階層（推奨）</button>
-      <button class="tb tb-check" data-layout-btn="cose" onclick="setLayout('cose');closeAllMenus()">自動</button>
-      <button class="tb tb-check" data-layout-btn="breadthfirst" onclick="setLayout('breadthfirst');closeAllMenus()">ツリー</button>
-      <button class="tb tb-check" data-layout-btn="concentric" onclick="setLayout('concentric');closeAllMenus()">同心円</button>
-      <button class="tb tb-check" data-layout-btn="grid" onclick="setLayout('grid');closeAllMenus()">グリッド</button>
-      <button class="tb tb-check" data-layout-btn="circle" onclick="setLayout('circle');closeAllMenus()">円形</button>
-      <hr>
-      <button class="tb tb-check active" id="separate-nolink-btn" onclick="toggleSeparateNoLink()" title="紐づき（関連線）のないアプリを下の別枠にまとめて配置">紐づきなしを分離</button>
-    </div>
-  </div>
-
-  <select id="density-select" class="tb-select" onchange="setDensity(this.value)" title="カードに出す項目の量">
-    <option value="none">密度: 結合のみ</option>
-    <option value="compact">密度: コンパクト</option>
-    <option value="standard">密度: 標準</option>
-    <option value="full">密度: 詳細</option>
-  </select>
-
-  <button class="tb" id="simple-mode-btn" data-mobile="hide" onclick="toggleSimpleMode()" title="項目を隠してアプリ同士の結合関係だけを表示（重複する線もまとめます）">シンプル</button>
-
-  <div class="tb-menu" id="line-menu" data-mobile="hide">
-    <button class="tb tb-menu-btn" onclick="toggleMenu('line-menu')" title="表示する関連線">関連線</button>
-    <div class="tb-menu-panel tb-menu-panel--left">
-      <button class="tb tb-check active" id="rel-lookup-btn" onclick="toggleRelationKind('LOOKUP')" title="ルックアップ線">ルックアップ</button>
-      <button class="tb tb-check active" id="rel-ref-btn" onclick="toggleRelationKind('REF')" title="関連レコード線">関連レコード</button>
-      <button class="tb tb-check active" id="rel-action-btn" onclick="toggleRelationKind('ACTION')" title="アクション線">アクション</button>
-      <hr>
-      <button class="tb tb-check active" id="rel-label-btn" onclick="toggleRelationLabels()" title="線ラベル">線のラベル</button>
-    </div>
-  </div>
-
-  <div class="tb-menu" id="focus-menu" data-mobile="hide">
-    <button class="tb tb-menu-btn" onclick="toggleMenu('focus-menu')" title="選択したアプリの周辺を強調">強調</button>
-    <div class="tb-menu-panel tb-menu-panel--left">
-      <button class="tb tb-check active" id="focus-toggle-btn" onclick="toggleFocusMode()" title="関連強調 (Shift+F)">関連強調 ON</button>
-      <div class="tb-menu-row">
-        <select id="focus-depth" class="tb-select" onchange="updateFocusOptions()" title="強調する深さ">
-          <option value="1">深さ1</option>
-          <option value="2">深さ2</option>
-          <option value="3">深さ3</option>
-        </select>
-        <select id="focus-direction" class="tb-select" onchange="updateFocusOptions()" title="強調の方向">
-          <option value="both">双方向</option>
-          <option value="out">出方向</option>
-          <option value="in">入方向</option>
-        </select>
-      </div>
-      <hr>
-      <button class="tb" onclick="clearFocus();closeAllMenus()">強調を解除</button>
-    </div>
-  </div>
-
-  <div class="tb-menu" id="add-menu" data-mobile="hide">
-    <button class="tb tb-menu-btn" onclick="toggleMenu('add-menu')" title="要素を手動追加">追加</button>
-    <div class="tb-menu-panel">
-      <button class="tb" onclick="openAddApp();closeAllMenus()">⬡ アプリ(エンティティ)を追加</button>
-      <button class="tb" onclick="openAddField();closeAllMenus()">📝 アプリに項目を追加</button>
-      <button class="tb" onclick="openAddRelation();closeAllMenus()">🔗 関連線を追加</button>
-      <hr>
-      <button class="tb" onclick="openAddNote();closeAllMenus()">🗒 メモ(付箋)を追加</button>
-    </div>
-  </div>
-
-  <div class="tb-menu" id="edit-menu" data-mobile="hide">
-    <button class="tb tb-menu-btn" onclick="toggleMenu('edit-menu')" title="編集">編集</button>
-    <div class="tb-menu-panel">
-      <button class="tb" onclick="undoLast();closeAllMenus()">↩ 元に戻す (Ctrl+Z)</button>
-      <hr>
-      <button class="tb" onclick="openEditApp();closeAllMenus()">✏ アプリを編集（名前・枠色）</button>
-      <button class="tb" onclick="autoColorByDepth();closeAllMenus()">🎨 深さごとに色分け</button>
-      <button class="tb" onclick="clearNodeColors();closeAllMenus()">🧼 色分けを解除</button>
-      <hr>
-      <button class="tb" onclick="alignSelected('x');closeAllMenus()">⇤ 選択ノードを左揃え</button>
-      <button class="tb" onclick="alignSelected('y');closeAllMenus()">⇞ 選択ノードを上揃え</button>
-      <button class="tb" onclick="distributeSelected('x');closeAllMenus()">⇶ 選択ノードを横に等間隔</button>
-      <button class="tb" onclick="distributeSelected('y');closeAllMenus()">⇩ 選択ノードを縦に等間隔</button>
-      <hr>
-      <button class="tb" onclick="removeSelectedRelations();closeAllMenus()">🗑 選択した関連線を削除 (Delete)</button>
-      <button class="tb" onclick="restoreRemovedRelations();closeAllMenus()">↺ 削除した関連線を復元</button>
-      <hr>
-      <button class="tb" onclick="removeSelectedApps();closeAllMenus()">🗑 選択したアプリを削除 (Delete)</button>
-      <button class="tb" onclick="restoreRemovedApps();closeAllMenus()">↺ 削除したアプリを復元</button>
-      <hr>
-      <button class="tb" onclick="restoreAllHiddenFields();closeAllMenus()">↺ 非表示にした項目をすべて復元</button>
-      <hr>
-      <button class="tb" onclick="togglePinFromSelection();closeAllMenus()">📌 選択ノードを固定/解除 (Shift+P)</button>
-      <button class="tb" onclick="clearPins();closeAllMenus()">📍 固定を全解除</button>
-    </div>
-  </div>
-
-  <div class="spacer"></div>
-
-  <button class="tb" onclick="fit()" title="図全体を表示 (Ctrl+0)" aria-label="図全体を表示">全体表示</button>
-
-  <div class="tb-menu" id="export-menu">
-    <button class="tb tb-menu-btn" onclick="toggleMenu('export-menu')">出力</button>
-    <div class="tb-menu-panel">
-      <button class="tb" onclick="exportEditedHtml();closeAllMenus()">💾 編集済みHTMLを保存</button>
-      <hr>
-      <button class="tb" onclick="exportPNG();closeAllMenus()">🖼 PNG 画像（白背景）</button>
-      <hr>
-      <button class="tb" onclick="showMermaid();closeAllMenus()">🧜 Mermaid</button>
-      <button class="tb" onclick="showDrawio();closeAllMenus()">📊 draw.io XML</button>
-      <button class="tb" onclick="showPlantUML();closeAllMenus()">🌱 PlantUML</button>
-      <button class="tb" onclick="showSQL();closeAllMenus()">🗄 SQL DDL</button>
-      <hr>
-      <button class="tb" onclick="showJSON();closeAllMenus()">{} ERモデル JSON</button>
-      <button class="tb" onclick="showMarkdown();closeAllMenus()">📝 Markdown 仕様書</button>
-      <button class="tb" onclick="showCSVApps();closeAllMenus()">📑 CSV (アプリ一覧)</button>
-      <button class="tb" onclick="showCSVFields();closeAllMenus()">📑 CSV (フィールド)</button>
-      <button class="tb" onclick="showCSVRelations();closeAllMenus()">📑 CSV (関連)</button>
-      <hr>
-      <button class="tb" onclick="copyShareUrl();closeAllMenus()">🔗 表示状態のURLをコピー</button>
-      <button class="tb" onclick="printDiagram();closeAllMenus()">🖨 印刷</button>
-    </div>
-  </div>
-
-  <button class="tb tb-icon" id="theme-btn" onclick="toggleTheme()" title="テーマ切替" aria-label="テーマを切り替え">🌙</button>
-  <button class="tb tb-icon" onclick="openHelp()" title="ヘルプ (?)" aria-label="ヘルプを開く">❓</button>
-  <button class="tb tb-icon" onclick="openCmd()" title="コマンド (Ctrl+K)" aria-label="コマンドパレットを開く">⌘K</button>
-</div>
-
-<!-- Floating action buttons for mobile -->
-<div id="fab-mobile">
-  <button onclick="fit()" title="全体表示" aria-label="図全体を表示">📐</button>
-  <button id="sidebar-fab-btn" onclick="toggleSidebar(undefined,this)" title="統計" aria-label="統計パネルを開閉" aria-controls="sidebar" aria-expanded="false">📊</button>
-</div>
-
-<!-- Zoom controls -->
-<div id="zoom-ctrl" role="group" aria-label="表示倍率">
-  <button type="button" onclick="zoomIn()" title="拡大 (+)" aria-label="拡大">＋</button>
-  <button type="button" id="zoom-level" onclick="toggleZoomPresets()" title="倍率を選択" aria-label="現在の表示倍率。倍率プリセットを開く" aria-haspopup="true" aria-expanded="false"><span id="zoom-value" aria-live="polite">100%</span><span id="zoom-mode"></span></button>
-  <button type="button" onclick="zoomReset()" title="100%にリセット (0)" aria-label="表示倍率を100%にリセット">◎</button>
-  <button type="button" onclick="zoomOut()" title="縮小 (-)" aria-label="縮小">－</button>
-  <div id="zoom-presets" role="group" aria-label="倍率プリセット">
-    <button type="button" class="zoom-preset" data-zoom="50" aria-pressed="false" onclick="setZoomPercent(50)">50%</button>
-    <button type="button" class="zoom-preset" data-zoom="75" aria-pressed="false" onclick="setZoomPercent(75)">75%</button>
-    <button type="button" class="zoom-preset" data-zoom="100" aria-pressed="true" onclick="setZoomPercent(100)">100%</button>
-    <button type="button" class="zoom-preset" data-zoom="125" aria-pressed="false" onclick="setZoomPercent(125)">125%</button>
-    <button type="button" class="zoom-preset" data-zoom="150" aria-pressed="false" onclick="setZoomPercent(150)">150%</button>
-    <button type="button" class="zoom-preset" data-zoom="200" aria-pressed="false" onclick="setZoomPercent(200)">200%</button>
-  </div>
-</div>
-
-<div id="banner">
-  <button type="button" class="meta-pill meta-pill--btn" id="overview-pill" onclick="toggleOverview()" title="取得・関連サマリーを開く" aria-controls="overview">${safeApps.length}アプリ · ${summary.relations}関連 · 循環${dependencyAnalysis.cycles.length} · 孤立${dependencyAnalysis.isolatedAppIds.length} · 未取得${dependencyAnalysis.unresolvedTargets.length}<span aria-hidden="true"> ▾</span></button>
-  <span class="meta-pill" title="開始: ${esc(startAppFullText)}"><b>開始</b> <span class="pill-val">${esc(startAppText)}</span></span>
-  <span class="meta-pill"><b>環境</b> ${esc(options.source?.guestId ? `ゲスト ${String(options.source.guestId)}` : "通常空間")} / ${options.source?.preview ? "プレビュー" : "本番"}</span>
-  <span class="meta-pill meta-pill--wide" id="layout-pill"><b>配置</b> ${esc(formatErLayoutLabel(options.layoutName))}</span>
-  <span class="meta-pill meta-pill--wide" id="density-pill"><b>密度</b> ${esc(densityLabel)}</span>
-  <span class="meta-pill meta-pill--wide"><b>深さ</b> ${esc(String(options.maxDepth || 0))}</span>
-  <span class="meta-pill meta-pill--wide"><b>サブテーブル</b> ${options.includeSubtableFields ? "ON" : "OFF"}</span>
-  ${spacePill}
-  ${reverseScanPill}
-</div>
-
-<div id="overview" class="collapsed">
-  <div class="ov-head">
-    <div>
-      <div class="ov-title">取得・関連サマリー</div>
-      <div class="ov-sub">取得できた設定と関連の事実を表示します。良否は判定せず、数値を選ぶと該当箇所を確認できます。</div>
-    </div>
-    <button class="ov-close" onclick="hideOverview()" title="サマリーを閉じる" aria-label="ガイドを閉じる">✕</button>
-  </div>
-  <div class="ov-grid">
-    <button class="ov-card ov-card--action${dependencyAnalysis.counts.retrievalPartial + dependencyAnalysis.counts.retrievalFailed ? " ov-card--warn" : ""}" onclick="toggleAnalysisPanel(true)"><span class="ov-kpi">${dependencyAnalysis.counts.retrievalPartial + dependencyAnalysis.counts.retrievalFailed}</span><span class="ov-label">取得に注意が必要</span></button>
-    <button class="ov-card ov-card--action${dependencyAnalysis.cycles.length ? " ov-card--risk" : ""}" onclick="toggleAnalysisPanel(true)"><span class="ov-kpi">${dependencyAnalysis.cycles.length}</span><span class="ov-label">循環グループ</span></button>
-    <button class="ov-card ov-card--action${dependencyAnalysis.isolatedAppIds.length ? " ov-card--warn" : ""}" onclick="toggleAnalysisPanel(true)"><span class="ov-kpi">${dependencyAnalysis.isolatedAppIds.length}</span><span class="ov-label">孤立アプリ</span></button>
-    <button class="ov-card ov-card--action" onclick="toggleAnalysisPanel(true)"><span class="ov-kpi">${dependencyAnalysis.selfReferences.length}</span><span class="ov-label">自己参照</span></button>
-    <button class="ov-card ov-card--action${dependencyAnalysis.unresolvedTargets.length ? " ov-card--warn" : ""}" onclick="toggleAnalysisPanel(true)"><span class="ov-kpi">${dependencyAnalysis.unresolvedTargets.length}</span><span class="ov-label">未取得の参照先</span></button>
-    <div class="ov-card"><span class="ov-kpi">${summary.relations}</span><span class="ov-label">総関連</span></div>
-  </div>
-  <div class="ov-tip-row">
-    <span title="開始: ${esc(startAppFullText)}">開始: ${esc(startAppText || "-")}</span>
-    <span>ルックアップ: ${summary.lookups}</span>
-    <span>関連レコード: ${summary.refs}</span>
-    <span>アクション: ${summary.actions}</span>
-    <span>必須項目: ${summary.required}</span>
-    <span>開始アプリの周辺はクリック・検索・関連強調で絞り込めます</span>
-  </div>
-</div>
-
-<!-- Architecture Analysis -->
-<aside id="analysis-panel" aria-label="ER図の構造分析">
-  <div class="analysis-head">
-    <div><h2>🩺 構造チェック</h2><p>取得状態、循環候補、自己参照、関連のないアプリなどの事実を確認します。</p></div>
-    <button class="close-btn" onclick="toggleAnalysisPanel(false)" aria-label="構造分析を閉じる">✕</button>
-  </div>
-  <div class="analysis-facts" aria-label="取得状態の件数">
-    <div class="analysis-fact"><strong>${dependencyAnalysis.counts.retrievalComplete}</strong><span>取得完了</span></div>
-    <div class="analysis-fact"><strong>${dependencyAnalysis.counts.retrievalPartial}</strong><span>一部取得</span></div>
-    <div class="analysis-fact"><strong>${dependencyAnalysis.counts.retrievalFailed}</strong><span>取得失敗</span></div>
-  </div>
-  <div id="analysis-content"></div>
-  <div class="analysis-note">ここでは良否を判定しません。「接続数が多い」は入出力の関連が ${dependencyAnalysis.highConnectionThreshold} 件以上のアプリを機械的に列挙しています。</div>
-</aside>
-
-<!-- Sidebar -->
-<div id="sidebar" role="region" aria-label="統計・フィルター" aria-hidden="true" inert>
-  <div class="sidebar-head"><h3>📊 統計サマリー</h3><button type="button" id="sidebar-close" onclick="closeSidebar()" aria-label="統計パネルを閉じる">✕</button></div>
-  <div id="stats-summary"></div>
-  <h3>🏷 フィールドタイプフィルター</h3>
-  <div id="type-filters"></div>
-  <h3>📱 アプリ一覧</h3>
-  <div id="app-list"></div>
-</div>
-
-<!-- Cytoscape -->
-<div id="cy"></div>
-
-<!-- Detail Panel -->
-<div id="detail" role="complementary" aria-label="選択したアプリの詳細">
-  <button class="close-btn" onclick="closeDetail()">✕</button>
-  <h2 id="detail-title"></h2>
-  <div class="app-meta" id="detail-meta"></div>
-  <div id="detail-relations"></div>
-  <div id="detail-fields"></div>
-</div>
-
-<!-- Path Finder -->
-<div id="pathfinder">
-  <span>経路:</span>
-  <select id="pf-from" aria-label="経路の起点アプリ"></select>
-  <span>→</span>
-  <select id="pf-to" aria-label="経路の終点アプリ"></select>
-  <button class="tb active" onclick="findPath()">検索</button>
-  <button class="tb" onclick="clearPath()">クリア</button>
-  <span id="path-result"></span>
-</div>
-
-<!-- Legend -->
-<div id="legend">
-  <span title="レコード番号"><b style="color:var(--pk)">PK</b></span>
-  <span title="ルックアップ項目"><b style="color:var(--lookup)">FK</b></span>
-  <span title="関連レコード一覧"><b style="color:var(--ref)">関連</b></span>
-  <span title="値の重複禁止"><b style="color:var(--accent2)">一意</b></span>
-  <span title="必須項目"><b style="color:var(--req)">必須</b></span>
-  <span class="legend-sep" aria-hidden="true"></span>
-  <button type="button" class="legend-toggle" id="legend-lookup-edge" aria-pressed="true" onclick="toggleRelationKind('LOOKUP')"><i class="legend-line" style="border-top-style:solid;border-top-color:var(--lookup)"></i>ルックアップ</button>
-  <button type="button" class="legend-toggle" id="legend-ref-edge" aria-pressed="true" onclick="toggleRelationKind('REF')"><i class="legend-line" style="border-top-style:dashed;border-top-color:var(--ref)"></i>関連レコード</button>
-  <button type="button" class="legend-toggle" id="legend-action-edge" aria-pressed="true" onclick="toggleRelationKind('ACTION')"><i class="legend-line" style="border-top-style:dotted;border-top-color:var(--action)"></i>アクション</button>
-  ${dependencyAnalysis.counts.retrievalPartial ? '<span><i style="background:transparent;border:2px dashed var(--action)"></i>一部取得</span>' : ""}
-  ${dependencyAnalysis.counts.retrievalFailed ? '<span><i style="background:transparent;border:2px solid var(--req)"></i>取得失敗</span>' : ""}
-  ${dependencyAnalysis.unresolvedTargets.length ? '<span><i style="background:transparent;border:2px dashed var(--dim)"></i>未取得の参照先</span>' : ""}
-</div>
-
-<!-- Minimap -->
-<div id="minimap"><canvas id="minimap-canvas"></canvas></div>
-
-<!-- Modal -->
-<div id="modal-overlay" onclick="if(event.target===this)closeModal()">
-  <div id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><h2 id="modal-title"></h2><pre id="modal-content"></pre>
-    <div class="actions">
-      <button class="primary" onclick="copyModal()">📋 コピー</button>
-      <button onclick="downloadModal()">💾 ダウンロード</button>
-      <button onclick="closeModal()">閉じる</button>
-    </div>
-  </div>
-</div>
-
-<!-- Manual add editor -->
-<div id="editor-overlay" onclick="if(event.target===this)closeEditor()">
-  <div id="editor" role="dialog" aria-modal="true" aria-labelledby="editor-title">
-    <h2 id="editor-title"></h2>
-    <div id="editor-sub"></div>
-    <div id="editor-body"></div>
-    <div class="actions">
-      <button class="danger" id="editor-delete" style="display:none" onclick="deleteFromEditor()">🗑 削除</button>
-      <button class="primary" id="editor-submit" onclick="submitEditor()">追加</button>
-      <button onclick="closeEditor()">キャンセル</button>
-    </div>
-  </div>
-</div>
-
-<!-- Help / Shortcut modal -->
-<div id="help-overlay" onclick="if(event.target===this)closeHelp()">
-  <div id="help-box" role="dialog" aria-modal="true" aria-labelledby="help-title">
-    <h2 id="help-title">❓ キーボードショートカット ＆ 使い方</h2>
-    <div class="help-sub">クリック: 詳細表示 / 右クリック: 固定 / Alt+右クリック: 非表示 / ドラッグ: 移動</div>
-    <div class="help-grid">
-      <div class="help-section">
-        <h3>表示・ナビゲーション</h3>
-        <div class="help-row"><span>コマンドパレット</span><kbd>Ctrl/⌘ + K</kbd></div>
-        <div class="help-row"><span>アプリ・項目を検索</span><kbd>Ctrl/⌘ + F</kbd></div>
-        <div class="help-row"><span>全体表示 (フィット)</span><kbd>Ctrl/⌘ + 0</kbd></div>
-        <div class="help-row"><span>拡大 / 縮小</span><kbd>+ / -</kbd></div>
-        <div class="help-row"><span>統計パネル</span><kbd>Ctrl/⌘ + B</kbd></div>
-        <div class="help-row"><span>ヘルプを開閉</span><kbd>?</kbd></div>
-        <div class="help-row"><span>閉じる / 強調解除</span><kbd>Esc</kbd></div>
-      </div>
-      <div class="help-section">
-        <h3>操作・編集</h3>
-        <div class="help-row"><span>元に戻す</span><kbd>Ctrl/⌘ + Z</kbd></div>
-        <div class="help-row"><span>選択した要素を削除</span><kbd>Delete</kbd></div>
-        <div class="help-row"><span>複数ノードを選択</span><kbd>Shift + ドラッグ / クリック</kbd></div>
-        <div class="help-row"><span>関連強調 ON/OFF</span><kbd>Shift + F</kbd></div>
-        <div class="help-row"><span>固定 / 固定解除</span><kbd>Shift + P</kbd></div>
-        <div class="help-row"><span>名前・項目・線の編集</span><kbd>詳細パネルの ✎</kbd></div>
-        <div class="help-row"><span>項目・関連線の個別削除</span><kbd>詳細パネルの ✕</kbd></div>
-        <div class="help-row"><span>メモ(付箋)の編集</span><kbd>メモをクリック</kbd></div>
-        <div class="help-row"><span>フルスクリーン</span><kbd>F11</kbd></div>
-        <div class="help-row"><span>背景をクリック</span><kbd>強調解除</kbd></div>
-        <div class="help-row"><span>ノードをダブルクリック</span><kbd>近隣のみ表示</kbd></div>
-        <div class="help-row"><span>背景をダブルクリック</span><kbd>エンティティ追加</kbd></div>
-        <div class="help-row"><span>右クリック (ノード)</span><kbd>固定/解除</kbd></div>
-        <div class="help-row"><span>Alt + 右クリック</span><kbd>非表示</kbd></div>
-      </div>
-    </div>
-    <div class="close-row"><button onclick="closeHelp()">閉じる</button></div>
-  </div>
-</div>
-
-<div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
-
-<script id="er-main" type="text/plain">
-const APPS = ${data};
-const ER_OPTIONS = ${diagramOptions};
-const ER_ANALYSIS = ${dependencyAnalysisData};
-const appMap = new Map(APPS.map(a=>[a.id,a]));
-const ER_LAYOUT_NAMES = new Set(["dagre","breadthfirst","cose","concentric","grid","circle"]);
-const ER_DENSITY_NAMES = new Set(["none","compact","standard","full"]);
-const ER_DAGRE_READY = typeof window.cytoscapeDagre === "function" && !!(window.dagre && window.dagre.graphlib && window.dagre.graphlib.Graph);
-function normalizeLayoutName(name){
-  const normalized=String(name||"").trim();
-  const selected=ER_LAYOUT_NAMES.has(normalized)?normalized:"dagre";
-  return selected==="dagre"&&!ER_DAGRE_READY?"cose":selected;
-}
-function normalizeDensityName(name){
-  const normalized=String(name||"").trim();
-  return ER_DENSITY_NAMES.has(normalized)?normalized:"standard";
-}
-// 「編集済みHTMLを保存」で埋め込まれた編集状態（手動追加・配置・表示設定）
-const ER_EDIT_STATE = window.__ER_EDIT_STATE__ || null;
-if(ER_EDIT_STATE && ER_EDIT_STATE.options){
-  if(ER_EDIT_STATE.options.layoutName) ER_OPTIONS.layoutName = normalizeLayoutName(ER_EDIT_STATE.options.layoutName);
-  if(ER_EDIT_STATE.options.fieldDensity) ER_OPTIONS.fieldDensity = normalizeDensityName(ER_EDIT_STATE.options.fieldDensity);
-}
-ER_OPTIONS.layoutName=normalizeLayoutName(ER_OPTIONS.layoutName);
-ER_OPTIONS.fieldDensity=normalizeDensityName(ER_OPTIONS.fieldDensity);
-if (ER_DAGRE_READY) cytoscape.use(window.cytoscapeDagre);
-
-// ─── Toast ───
-function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2000);}
-function escapeHtml(value){
-  return String(value == null ? "" : value)
-    .replace(/&/g,"&amp;")
-    .replace(/</g,"&lt;")
-    .replace(/>/g,"&gt;")
-    .replace(/"/g,"&quot;")
-    .replace(/'/g,"&#39;");
-}
-
-// ─── Theme ───
-let isDark = true;
-function readCssVar(name, fallback){
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
-}
-function currentPalette(){
-  return {
-    text: readCssVar("--text", isDark ? "#d8dee9" : "#1a1c23"),
-    dim: readCssVar("--dim", isDark ? "#8f9aae" : "#6b7280"),
-    accent: readCssVar("--accent", isDark ? "#5eead4" : "#0d9488"),
-    accent2: readCssVar("--accent2", isDark ? "#818cf8" : "#6366f1"),
-    lookup: readCssVar("--lookup", isDark ? "#60a5fa" : "#2563eb"),
-    ref: readCssVar("--ref", isDark ? "#34d399" : "#047857"),
-    pk: readCssVar("--pk", isDark ? "#fbbf24" : "#b45309"),
-    req: readCssVar("--req", isDark ? "#f87171" : "#dc2626"),
-    action: readCssVar("--action", isDark ? "#f59e0b" : "#d97706"),
-    bg: readCssVar("--bg", isDark ? "#08090d" : "#f0f2f5"),
-    surface: readCssVar("--surface", isDark ? "#11131a" : "#ffffff"),
-    surface2: readCssVar("--surface2", isDark ? "#181c27" : "#f7f8fa"),
-    border: readCssVar("--border", isDark ? "#262d3d" : "#d8dce6")
-  };
-}
-function formatFieldDensityLabel(density){
-  const map = { none:"結合のみ", compact:"コンパクト", standard:"標準", full:"詳細" };
-  return map[density] || density || "-";
-}
-function fieldIconForLabel(f){
-  if(f.isPK) return "🔑";
-  if(f.isLookup) return "🔗";
-  if(f.isRef) return "📋";
-  if(f.unique) return "🔒";
-  if(f.type==="SUBTABLE") return "📦";
-  if(f.inSubtable) return "↳";
-  if(f.required) return "•";
-  return "·";
-}
-// kintone API のフィールド ENUM を日本語化（ER 図側パネル表示用）
-const FIELD_TYPE_JP_LABEL = ${JSON.stringify(ER_FIELD_TYPE_LABELS)};
-function fieldTypeJpLabel(type){
-  if(!type) return "-";
-  const key = String(type).trim().toUpperCase();
-  return FIELD_TYPE_JP_LABEL[key] || type;
-}
-// 手動で非表示にした項目キーの集合（"アプリID::path|code"）
-const hiddenFieldKeys = new Set();
-function fieldHideKey(app, field){
-  return String(app.id) + "::" + String(field.path || field.code || field.label || "");
-}
-function isFieldHidden(app, field){
-  return hiddenFieldKeys.has(fieldHideKey(app, field));
-}
-function hiddenFieldCount(app){
-  return allFieldsForApp(app).filter(f=>isFieldHidden(app, f)).length;
-}
-function allFieldsForApp(app){
-  const fields = Array.isArray(app&&app.allFields) ? app.allFields : (Array.isArray(app&&app.fields) ? app.fields : []);
-  return fields.filter(f=>f&&f.type!=="SUBTABLE"&&(ER_OPTIONS.includeSubtableFields||!f.inSubtable));
-}
-function fieldsForDensity(app){
-  if(ER_OPTIONS.fieldDensity==="none") return [];
-  const candidates=allFieldsForApp(app);
-  const linked=new Set();
-  (app.relations||[]).forEach(r=>{
-    if(r.kind!=="LOOKUP"&&r.kind!=="REF") return;
-    [r.fromPath,r.from,r.controlFieldPath,r.controlField].forEach(v=>{const key=String(v||"").trim();if(key) linked.add(key);});
-  });
-  const essential=f=>f.isPK||f.unique||f.isLookup||f.isRef||linked.has(String(f.path||""))||linked.has(String(f.code||""));
-  let selected;
-  if(ER_OPTIONS.fieldDensity==="full") selected=candidates;
-  else if(ER_OPTIONS.fieldDensity==="standard"){
-    selected=candidates.filter(f=>essential(f)||f.required);
-    if(!selected.length) selected=candidates.slice(0,6);
-  }else{
-    selected=candidates.filter(essential);
-    if(!selected.length) selected=candidates.slice(0,6);
-  }
-  const limit=Math.max(0,Number(ER_OPTIONS.maxFields)||220);
-  return selected.slice(0,limit);
-}
-function visibleFieldsForNode(app){
-  return fieldsForDensity(app).filter(f=>!isFieldHidden(app, f));
-}
-function buildFieldDisplayName(field){
-  if(!field) return "";
-  if(field.inSubtable && field.tableLabel) return field.tableLabel + " > " + (field.label || field.code || "");
-  return field.label || field.code || field.path || "";
-}
-function fieldPrefixForNodeLabel(field){
-  if(field.isPK) return "🔑";
-  if(field.isLookup) return "🔗";
-  if(field.isRef) return "📋";
-  if(field.required) return "✱";
-  if(field.type === "SUBTABLE") return "▤";
-  if(field.inSubtable) return "↳";
-  return "・";
-}
-function buildFieldPreviewLine(field){
-  const label = buildFieldDisplayName(field).trim();
-  const code = String(field.code || "").trim();
-  const type = String(field.type || "").trim();
-  const prefix = fieldPrefixForNodeLabel(field);
-  if(ER_OPTIONS.fieldDensity === "compact"){
-    return prefix + " " + label;
-  }
-  if(ER_OPTIONS.fieldDensity === "full"){
-    const extras = [];
-    if(code && code !== label) extras.push("[" + code + "]");
-    if(type) extras.push(fieldTypeJpLabel(type));
-    return prefix + " " + label + (extras.length ? " • " + extras.join(" • ") : "");
-  }
-  return prefix + " " + label + (code && code !== label ? " [" + code + "]" : "");
-}
-// 全アプリが起点のときは目印が全カードに付いて区別の役に立たないため出さない
-function isMarkedStartApp(app){
-  const ids=(ER_OPTIONS.startAppIds||[]).map(String);
-  return ids.includes(String(app.id))&&new Set(ids).size<APPS.length;
-}
-function nodeCardContent(app){
-  const limits = { none: 0, compact: 6, standard: 10, full: 16 };
-  const maxLines = limits[ER_OPTIONS.fieldDensity] !== undefined ? limits[ER_OPTIONS.fieldDensity] : limits.standard;
-  const fields = visibleFieldsForNode(app);
-  const ordered = fields.slice().sort((a,b)=>{
-    const score = (f)=> (f.isPK ? 0 : (f.isLookup ? 1 : (f.isRef ? 2 : (f.required ? 3 : (f.inSubtable ? 5 : 4)))));
-    const diff = score(a) - score(b);
-    if(diff !== 0) return diff;
-    return String(buildFieldDisplayName(a) || a.code || '').localeCompare(String(buildFieldDisplayName(b) || b.code || ''));
-  });
-  const shown = maxLines > 0 ? ordered.slice(0, maxLines) : [];
-  const moreCount = maxLines > 0 ? Math.max(0, ordered.length - maxLines) : 0;
-  const totalFieldCount = typeof app.totalFieldCount === "number" ? app.totalFieldCount : fields.length;
-  const fieldCountText = totalFieldCount > fields.length
-    ? fields.length + "/" + totalFieldCount + "項目"
-    : fields.length + "項目";
-  const metaParts = [app.isCustom ? "手動追加" : "App " + app.id, fieldCountText, app.relations.length + "関連"];
-  if((app.depth || 0) > 0) metaParts.push("深さ" + app.depth);
-  const meta = metaParts.join(" ・ ");
-  const isStart = isMarkedStartApp(app);
-  const statusPrefix = app.ok === false || app.status === "failed"
-    ? "⚠ 取得失敗 "
-    : (app.status === "partial" ? "△ 一部取得 " : "");
-  const title = statusPrefix + (isStart ? "★ " : "") + app.name;
-  return { title, meta, shown, moreCount };
-}
-function buildNodeLabel(app){
-  const { title, meta, shown, moreCount } = nodeCardContent(app);
-  const preview = shown.map((f)=>buildFieldPreviewLine(f));
-  if(moreCount) preview.push("… 他 " + moreCount + " 項目");
-  return [title, meta, ...preview].join("\\n");
-}
-function buildSemanticNodeLabel(app){
-  const fields = allFieldsForApp(app).filter(f=>!isFieldHidden(app, f));
-  const totalFieldCount = typeof app.totalFieldCount === "number" ? app.totalFieldCount : fields.length;
-  const isStart = isMarkedStartApp(app);
-  const statusPrefix = app.ok === false || app.status === "failed"
-    ? "⚠ 取得失敗 "
-    : (app.status === "partial" ? "△ 一部取得 " : "");
-  const title = statusPrefix + (isStart ? "★ " : "") + app.name;
-  return [title, "App " + app.id + " ・ " + totalFieldCount + "項目 ・ " + app.relations.length + "関連"].join("\\n");
-}
-// ─── アプリカード ───
-// Cytoscape のラベルは1書式しか持てないため、見出しと項目行を書き分けられる SVG 画像として描く。
-// 枠線と地色は Cytoscape 側のままなので、選択・強調などの状態表示はこれまでどおり効く。
-const CARD_FONT="'Yu Gothic UI','Hiragino Sans','Noto Sans JP',Meiryo,sans-serif";
-const cardMeasure=document.createElement("canvas").getContext("2d");
-function cardTextWidth(text,font){
-  cardMeasure.font=font+" "+CARD_FONT;
-  return cardMeasure.measureText(String(text)).width;
-}
-function cardFitText(text,font,maxWidth){
-  const s=String(text||"");
-  if(cardTextWidth(s,font)<=maxWidth) return s;
-  const chars=Array.from(s);
-  let lo=0,hi=chars.length;
-  while(lo<hi){
-    const mid=Math.ceil((lo+hi)/2);
-    if(cardTextWidth(chars.slice(0,mid).join("")+"…",font)<=maxWidth) lo=mid; else hi=mid-1;
-  }
-  return chars.slice(0,lo).join("")+"…";
-}
-function cardXml(text){
-  return String(text).replace(/[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\ufffe\\uffff]/g,"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-}
-function cardFieldBadge(field,palette){
-  if(field.isPK) return {text:"PK",color:palette.pk};
-  if(field.isLookup) return {text:"FK",color:palette.lookup};
-  if(field.isRef) return {text:"関連",color:palette.ref};
-  if(field.unique) return {text:"一意",color:palette.accent2};
-  if(field.required) return {text:"必須",color:palette.req};
-  return null;
-}
-function cardFieldNote(field,name){
-  if(ER_OPTIONS.fieldDensity==="compact") return "";
-  const code=String(field.code||"").trim();
-  const parts=code&&code!==name?[code]:[];
-  if(ER_OPTIONS.fieldDensity==="full"&&field.type) parts.push(fieldTypeJpLabel(field.type));
-  return parts.join(" ・ ");
-}
-function cardHeaderTint(app,palette){
-  if(app.ok===false||app.status==="failed") return {color:palette.req,opacity:0.18};
-  if(app.status==="partial") return {color:palette.action,opacity:0.18};
-  if(isMarkedStartApp(app)) return {color:palette.accent2,opacity:0.2};
-  return {color:palette.text,opacity:0.06};
-}
-function buildNodeCard(app,palette,overview){
-  const content=nodeCardContent(app);
-  const [title,meta]=overview?buildSemanticNodeLabel(app).split("\\n"):[content.title,content.meta];
-  const scale=overview?1.5:1;
-  const pad=14*scale,headerH=52*scale;
-  const titleFont="700 "+(14*scale)+"px",metaFont=(11*scale)+"px";
-  const rowFont="12px",noteFont="10.5px",badgeFont="700 9.5px";
-  const badgeW=28,rowH=22,rowGap=10,bodyPad=8;
-  const rows=overview?[]:content.shown.map(field=>{
-    const name=buildFieldDisplayName(field).trim();
-    return {name,note:cardFieldNote(field,name),badge:cardFieldBadge(field,palette)};
-  });
-  const more=overview?0:content.moreCount;
-  const rowLeft=badgeW+8;
-  const natural=pad*2+Math.max(
-    cardTextWidth(title,titleFont),
-    cardTextWidth(meta,metaFont),
-    ...rows.map(r=>rowLeft+cardTextWidth(r.name,rowFont)+(r.note?rowGap+cardTextWidth(r.note,noteFont):0))
-  );
-  const maxW=overview?420:(ER_OPTIONS.fieldDensity==="full"?380:320);
-  const w=Math.ceil(Math.min(maxW,Math.max(overview?260:200,natural)));
-  const rowCount=rows.length+(more?1:0);
-  const h=headerH+(rowCount?bodyPad*2+rowCount*rowH:0);
-  const inner=w-pad*2;
-  const textAttr='font-family="'+cardXml(CARD_FONT)+'"';
-  const tint=cardHeaderTint(app,palette);
-  const parts=[
-    '<rect width="'+w+'" height="'+headerH+'" fill="'+tint.color+'" fill-opacity="'+tint.opacity+'"/>',
-    '<text x="'+pad+'" y="'+(23*scale)+'" font-size="'+(14*scale)+'" font-weight="700" fill="'+palette.text+'">'+cardXml(cardFitText(title,titleFont,inner))+'</text>',
-    '<text x="'+pad+'" y="'+(41*scale)+'" font-size="'+(11*scale)+'" fill="'+palette.dim+'">'+cardXml(cardFitText(meta,metaFont,inner))+'</text>'
-  ];
-  if(rowCount) parts.push('<rect y="'+(headerH-1)+'" width="'+w+'" height="1" fill="'+palette.border+'"/>');
-  rows.forEach((row,index)=>{
-    const top=headerH+bodyPad+index*rowH;
-    const baseline=top+15;
-    if(row.badge){
-      parts.push('<rect x="'+pad+'" y="'+(top+3)+'" width="'+badgeW+'" height="16" rx="4" fill="'+row.badge.color+'" fill-opacity="0.16"/>');
-      parts.push('<text x="'+(pad+badgeW/2)+'" y="'+(top+14.5)+'" font-size="9.5" font-weight="700" text-anchor="middle" fill="'+row.badge.color+'">'+cardXml(row.badge.text)+'</text>');
-    }
-    const area=inner-rowLeft;
-    const noteW=row.note?cardTextWidth(row.note,noteFont):0;
-    const nameMax=row.note&&noteW+rowGap<area*0.4?area-noteW-rowGap:(row.note?area*0.6:area);
-    const name=cardFitText(row.name,rowFont,nameMax);
-    parts.push('<text x="'+(pad+rowLeft)+'" y="'+baseline+'" font-size="12" fill="'+palette.text+'">'+cardXml(name)+'</text>');
-    const noteMax=area-cardTextWidth(name,rowFont)-rowGap;
-    if(row.note&&noteMax>=24){
-      parts.push('<text x="'+(w-pad)+'" y="'+baseline+'" font-size="10.5" text-anchor="end" fill="'+palette.dim+'">'+cardXml(cardFitText(row.note,noteFont,noteMax))+'</text>');
-    }
-  });
-  if(more){
-    const baseline=headerH+bodyPad+rows.length*rowH+15;
-    parts.push('<text x="'+(pad+rowLeft)+'" y="'+baseline+'" font-size="10.5" fill="'+palette.dim+'">他 '+more+' 項目</text>');
-  }
-  const svg='<svg xmlns="http://www.w3.org/2000/svg" width="'+(w*2)+'" height="'+(h*2)+'" viewBox="0 0 '+w+' '+h+'" '+textAttr+'>'+parts.join("")+'</svg>';
-  return {image:"data:image/svg+xml;charset=utf-8,"+encodeURIComponent(svg),w,h};
-}
-function nodeCardData(app){
-  const palette=currentPalette();
-  const card=buildNodeCard(app,palette,false);
-  const low=buildNodeCard(app,palette,true);
-  return {cardImage:card.image,cardW:card.w,cardH:card.h,lowImage:low.image,lowW:low.w,lowH:low.h};
-}
-function detailFieldGroups(app){
-  const groups={pk:[],lookup:[],ref:[],required:[],subtable:[],normal:[]};
-  visibleFieldsForNode(app).forEach(f=>{
-    if(f.isPK) groups.pk.push(f);
-    else if(f.isLookup) groups.lookup.push(f);
-    else if(f.isRef) groups.ref.push(f);
-    else if(f.type==="SUBTABLE") groups.subtable.push(f);
-    else if(f.required) groups.required.push(f);
-    else groups.normal.push(f);
-  });
-  return groups;
-}
-function layoutDisplayName(name){
-  const map = { dagre:"Dagre", breadthfirst:"ツリー", cose:"フォース", concentric:"同心円", grid:"グリッド", circle:"円形" };
-  return map[name] || name || "-";
-}
-function buildLayoutOptions(name, initial){
-  const base = { padding: 80, animate: !initial, animationDuration: initial ? 0 : 550, fit: true };
-  if(name === "dagre" && ER_DAGRE_READY){
-    return Object.assign(base, { name: "dagre", rankDir: "LR", rankSep: 170, nodeSep: 48, edgeSep: 24, spacingFactor: 1.1 });
-  }
-  if(name === "grid") return Object.assign(base, { name: "grid", rows: Math.ceil(Math.sqrt(APPS.length || 1)) });
-  if(name === "circle") return Object.assign(base, { name: "circle" });
-  if(name === "breadthfirst") return Object.assign(base, { name: "breadthfirst", directed: true, spacingFactor: 1.6, circle: false });
-  if(name === "concentric") return Object.assign(base, { name: "concentric", concentric: n => (n.data("relCount") || 0) + 1, levelWidth: () => 2 });
-  return Object.assign(base, { name: "cose", nodeRepulsion: 900000, idealEdgeLength: 280, gravity: 0.22, numIter: 1400 });
-}
-function densityNodeMetrics(){
-  if(ER_OPTIONS.fieldDensity === "none") return { maxWidth:"240px", fontSize:"11px", padding:"14px", lineHeight:"1.35" };
-  if(ER_OPTIONS.fieldDensity === "compact") return { maxWidth:"230px", fontSize:"9px", padding:"12px", lineHeight:"1.22" };
-  if(ER_OPTIONS.fieldDensity === "full") return { maxWidth:"320px", fontSize:"10.5px", padding:"18px", lineHeight:"1.35" };
-  return { maxWidth:"280px", fontSize:"10px", padding:"15px", lineHeight:"1.3" };
-}
-function buildCyStyle(palette){
-  const nodeMetrics = densityNodeMetrics();
-  return [
-    {selector:"node",style:{
-      "shape":"round-rectangle","label":"data(label)","text-valign":"center","text-halign":"center",
-      "text-justification":"left",
-      "text-wrap":"wrap","text-max-width":nodeMetrics.maxWidth,"font-size":nodeMetrics.fontSize,"line-height":nodeMetrics.lineHeight,"min-zoomed-font-size":6.5,
-      "font-family":CARD_FONT,"font-weight":600,"color":palette.text,
-      "text-outline-color":palette.surface,"text-outline-width":"1px",
-      "background-color":palette.surface,"border-width":1.5,"border-color":palette.border,"padding":nodeMetrics.padding,"width":"label","height":"label"
-    }},
-    {selector:"node[cardImage]",style:{
-      "label":"","padding":0,"width":"data(cardW)","height":"data(cardH)",
-      "background-image":"data(cardImage)","background-fit":"contain","background-clip":"node"
-    }},
-    {selector:"node.no-link",style:{"border-style":"dashed","opacity":0.92}},
-    {selector:"node[?isError]",style:{"border-color":palette.req,"background-color":isDark ? "#220b12" : "#fff1f2"}},
-    {selector:"node[?isPartial]",style:{"border-color":palette.action,"border-style":"dashed","background-color":isDark ? "#211708" : "#fffbeb"}},
-    {selector:"node[?isGhost]",style:{"border-color":palette.dim,"border-style":"dashed","background-color":palette.surface2,"color":palette.dim,"font-style":"italic"}},
-    {selector:"node.semantic-low",style:{"font-size":"18px","font-weight":700,"line-height":"1.35","text-max-width":"300px","min-zoomed-font-size":6,"padding":"16px","width":"label","height":"label"}},
-    {selector:"node[cardImage].semantic-low",style:{"label":"","padding":0,"width":"data(lowW)","height":"data(lowH)","background-image":"data(lowImage)"}},
-    {selector:"node[?isCustom]",style:{"border-style":"dashed","border-color":palette.accent2}},
-    {selector:"node[?isStart]",style:{"border-color":palette.accent2,"border-width":2.5,"background-color":isDark ? "#11162d" : "#eef2ff"}},
-    {selector:"node[?inSpace]",style:{"border-color":"#0ea5a4","border-width":4,"border-style":"double","background-color":isDark ? "#06231f" : "#ecfdf5"}},
-    {selector:"node[?accent]",style:{"border-color":"data(accent)","border-width":3}},
-    {selector:"node:selected",style:{"border-color":palette.accent,"border-width":3,"overlay-color":"transparent"}},
-    {selector:"node.highlighted",style:{"border-color":palette.pk,"border-width":3,"background-color":isDark ? "#1a1805" : "#fffbeb"}},
-    {selector:"node.analysis-hit",style:{"border-color":palette.req,"border-width":5,"background-color":isDark ? "#2a0b16" : "#fff1f2","z-index":1000}},
-    {selector:"node.analysis-dim",style:{"opacity":0.1}},
-    {selector:"node.path-node",style:{"border-color":"#f472b6","border-width":4,"background-color":isDark ? "#1a0a12" : "#fdf2f8"}},
-    {selector:"node.focus-root",style:{"border-color":palette.accent,"border-width":3,"z-index":999}},
-    {selector:"node.focus-neighbor",style:{"border-color":palette.accent,"border-width":1.5}},
-    {selector:"node.pinned-node",style:{"border-color":palette.pk,"border-width":4,"background-color":isDark ? "#2a1f05" : "#fff7ed"}},
-    {selector:"node.note-node",style:{
-      "shape":"round-rectangle","background-color":"data(noteColor)","background-opacity":0.96,
-      "border-width":1,"border-color":"#8a8a8a","color":"#1f2430",
-      "text-outline-width":0,"font-size":"11px","font-weight":500,
-      "text-wrap":"wrap","text-max-width":"230px","text-valign":"center","text-halign":"center",
-      "padding":"12px","width":"label","height":"label","line-height":"1.4","z-index":5
-    }},
-    {selector:"node.note-node:selected",style:{"border-color":palette.accent,"border-width":3}},
-    {selector:"node.isolated-by-filter",style:{"opacity":0.35}},
-    {selector:"node.focus-dim",style:{"opacity":0.08}},
-    {selector:"node.dimmed",style:{"opacity":0.14}},
-    {selector:"node.app-manual-hidden",style:{"display":"none"}},
-    {selector:"edge",style:{
-      "curve-style":"bezier","arrow-scale":1,
-      "label":"data(label)","font-size":"11px","font-weight":600,"min-zoomed-font-size":7,
-      "font-family":CARD_FONT,
-      "text-background-color":palette.surface,"text-background-opacity":1,
-      "text-background-padding":"4px","text-background-shape":"roundrectangle",
-      "text-border-color":palette.border,"text-border-width":1,"text-border-opacity":0.6
-    }},
-    {selector:'edge[kind="LOOKUP"]',style:{
-      "width":1.8,"line-color":palette.lookup,"target-arrow-color":palette.lookup,"target-arrow-shape":"triangle",
-      "source-arrow-shape":"circle","source-arrow-color":palette.lookup,"color":palette.lookup
-    }},
-    {selector:'edge[kind="REF"]',style:{
-      "width":1.8,"line-color":palette.ref,"line-style":"dashed","target-arrow-color":palette.ref,
-      "target-arrow-shape":"triangle","source-arrow-shape":"diamond","source-arrow-color":palette.ref,"color":palette.ref
-    }},
-    {selector:'edge[kind="ACTION"]',style:{
-      "width":1.8,"line-color":palette.action,"line-style":"dotted","target-arrow-color":palette.action,
-      "target-arrow-shape":"triangle","source-arrow-shape":"none","color":palette.action
-    }},
-    {selector:"edge[?isUnresolved]",style:{"line-style":"dashed","opacity":0.75}},
-    {selector:"edge.label-hidden",style:{"text-opacity":0,"text-background-opacity":0,"text-border-opacity":0}},
-    {selector:"edge.edge-hover",style:{"width":4,"z-index":997,"text-opacity":1,"text-background-opacity":0.95,"text-border-opacity":0.9}},
-    {selector:"edge.path-edge",style:{"width":4,"line-color":"#f472b6","target-arrow-color":"#f472b6","source-arrow-color":"#f472b6","z-index":999}},
-    {selector:"edge.focus-edge",style:{"width":2.6,"z-index":998}},
-    {selector:"edge.semantic-low",style:{"text-opacity":0,"text-background-opacity":0,"text-border-opacity":0}},
-    {selector:"edge.rel-hidden",style:{"display":"none"}},
-    {selector:"edge.rel-manual-hidden",style:{"display":"none"}},
-    {selector:"edge.edge-collapsed",style:{"display":"none"}},
-    {selector:"edge.focus-dim",style:{"opacity":0.04}},
-    {selector:"edge.dimmed",style:{"opacity":0.08}}
-  ];
-}
-function applyTheme(){
-  document.documentElement.setAttribute("data-theme",isDark?"":"light");
-  document.getElementById("theme-btn").textContent=isDark?"🌙":"☀️";
-}
-function toggleTheme(){
-  isDark=!isDark;
-  applyTheme();
-  applyCyTheme();
-  toast(isDark?"ダークモード":"ライトモード");
-}
-applyTheme();
-
-// ─── 手動追加のデータ層（編集済みHTMLの復元でも使用） ───
-let customAppSeq=0, customRelSeq=0, customFieldSeq=0;
-
-function findApp(id){
-  if(appMap.has(id)) return appMap.get(id);
-  const n=Number(id);
-  if(appMap.has(n)) return appMap.get(n);
-  const s=String(id);
-  return appMap.has(s) ? appMap.get(s) : null;
-}
-function registerManualApp(app){
-  app.relations = Array.isArray(app.relations) ? app.relations : [];
-  app.fields = Array.isArray(app.fields) ? app.fields : [];
-  app.allFields = Array.isArray(app.allFields) ? app.allFields : app.fields.slice();
-  app.isCustom = true;
-  if(app.ok === undefined) app.ok = true;
-  APPS.push(app);
-  appMap.set(app.id, app);
-}
-// 取得したアプリは allFields だけを持つ（fields は HTML へ埋め込まない）。手動追加のアプリは両方を持つ
-function applyManualFieldData(app, field){
-  if(!Array.isArray(app.allFields)) app.allFields = [];
-  app.allFields.push(field);
-  if(Array.isArray(app.fields)) app.fields.push(field);
-  if(typeof app.totalFieldCount === "number") app.totalFieldCount += 1;
-  if(field.required) app.requiredCount = (app.requiredCount||0)+1;
-}
-function applyManualRelationData(app, rel){
-  app.relations.push(rel);
-  if(rel.kind === "LOOKUP") app.lookupCount = (app.lookupCount||0)+1;
-  if(rel.kind === "REF") app.refCount = (app.refCount||0)+1;
-}
-// ─── 上書き編集のデータ層（アプリ名/枠色・項目・関連線。編集済みHTMLで永続化） ───
-const appOverrides=(ER_EDIT_STATE&&ER_EDIT_STATE.appOverrides)||{};
-const fieldOverrides=(ER_EDIT_STATE&&ER_EDIT_STATE.fieldOverrides)||{};
-const relationOverrides=(ER_EDIT_STATE&&ER_EDIT_STATE.relationOverrides)||{};
-function findFieldByKey(app,key){
-  const prefix=String(app.id)+"::";
-  if(String(key).indexOf(prefix)!==0) return null;
-  const suffix=String(key).slice(prefix.length);
-  const match=(f)=>String(f.path||f.code||f.label||"")===suffix;
-  return (app.allFields||[]).find(match)||(app.fields||[]).find(match)||null;
-}
-function parseEdgeId(edgeId){
-  const m=/^e_(-?\\d+)_(\\d+)$/.exec(String(edgeId||""));
-  if(!m) return null;
-  return {appId:Number(m[1]),ri:Number(m[2])};
-}
-function appAccentColor(app){
-  const o=appOverrides[app.id]||appOverrides[String(app.id)];
-  return (o&&o.color)||"";
-}
-function applyDataOverrides(){
-  Object.keys(appOverrides).forEach(id=>{
-    const o=appOverrides[id];
-    const app=findApp(id);
-    if(app&&o&&o.name) app.name=o.name;
-  });
-  Object.keys(fieldOverrides).forEach(key=>{
-    const app=findApp(String(key).split("::")[0]);
-    if(!app) return;
-    const field=findFieldByKey(app,key);
-    if(field) Object.assign(field,fieldOverrides[key]);
-  });
-  Object.keys(relationOverrides).forEach(edgeId=>{
-    const ref=parseEdgeId(edgeId);
-    if(!ref) return;
-    const app=findApp(ref.appId);
-    const rel=app&&(app.relations||[])[ref.ri];
-    if(rel) Object.assign(rel,relationOverrides[edgeId]);
-  });
-}
-
-// 編集済みHTMLからの復元: 手動追加データを描画前に再適用する
-if(ER_EDIT_STATE){
-  try{
-    (ER_EDIT_STATE.customApps||[]).forEach(raw=>{ if(raw && raw.id !== undefined && !appMap.has(raw.id)) registerManualApp(raw); });
-    (ER_EDIT_STATE.customFields||[]).forEach(item=>{ const app=findApp(item && item.appId); if(app && item.field) applyManualFieldData(app, item.field); });
-    (ER_EDIT_STATE.customRelations||[]).forEach(item=>{ const app=findApp(item && item.fromAppId); if(app && item.rel) applyManualRelationData(app, item.rel); });
-    if(ER_EDIT_STATE.seq){
-      customAppSeq=Number(ER_EDIT_STATE.seq.app)||0;
-      customRelSeq=Number(ER_EDIT_STATE.seq.rel)||0;
-      customFieldSeq=Number(ER_EDIT_STATE.seq.field)||0;
-    }
-  }catch(err){ console.error("[ER] 編集状態の復元に失敗", err); }
-}
-try{ applyDataOverrides(); }catch(err){ console.error("[ER] 上書き編集の復元に失敗", err); }
-
-// ─── Cytoscape Init ───
-const startAppIdSet = new Set((ER_OPTIONS.startAppIds || []).map((id)=>String(id)));
-const spaceAppIdSet = new Set((ER_OPTIONS.spaceAppIds || []).map((id)=>String(id)));
-const erSpaceId = String(ER_OPTIONS.spaceId || "");
-const isInSpaceApp = (app)=> !!erSpaceId && (spaceAppIdSet.has(String(app.id)) || String(app.spaceId || "") === erSpaceId);
-const savedPositions=(ER_EDIT_STATE && ER_EDIT_STATE.view && ER_EDIT_STATE.view.positions) || null;
-const elements=[];
-APPS.forEach(app=>{
-  const el={data:{
-    id:"a"+app.id,
-    label:buildNodeLabel(app),
-    ...nodeCardData(app),
-    appId:app.id,
-    isError:!app.ok,
-    isPartial:app.status==="partial",
-    isStart:isMarkedStartApp(app),
-    inSpace:isInSpaceApp(app),
-    isCustom:!!app.isCustom,
-    accent:appAccentColor(app),
-    fieldCount:visibleFieldsForNode(app).length,
-    relCount:app.relations.length,
-    depth:app.depth || 0
-  }};
-  const sp=savedPositions && savedPositions["a"+app.id];
-  if(sp && typeof sp.x === "number" && typeof sp.y === "number") el.position={x:sp.x,y:sp.y};
-  elements.push(el);
-});
-function edgeDisplayLabel(text){
-  const s=String(text||"");
-  return s.length > 24 ? s.slice(0, 23) + "…" : s;
-}
-// エッジIDは「e_アプリID_リレーション順」で安定化（編集済みHTML復元時に削除状態を引き継ぐため）
-const ghostNodeIds=new Set();
-APPS.forEach(app=>{
-  app.relations.forEach((r,ri)=>{
-    const hasTarget=appMap.has(r.toApp);
-    const targetId=hasTarget?"a"+r.toApp:"g"+String(r.toApp||"unknown").replace(/[^0-9A-Za-z_-]/g,"_");
-    if(!hasTarget&&r.toApp&&!ghostNodeIds.has(targetId)){
-      ghostNodeIds.add(targetId);
-      elements.push({data:{id:targetId,label:"未取得の参照先\\nApp "+r.toApp,appId:null,targetAppId:r.toApp,isGhost:true,fieldCount:0,relCount:0,depth:(app.depth||0)+1}});
-    }
-    if(hasTarget||r.toApp){
-      const fullLabel = r.fromDisplay || r.fromLabel || (r.kind==="LOOKUP"?"ルックアップ":(r.kind==="REF"?"関連":"アクション"));
-      elements.push({data:{id:"e_"+app.id+"_"+ri,source:"a"+app.id,target:targetId,kind:r.kind,label:edgeDisplayLabel(fullLabel),fromLabel:r.fromLabel,fromDisplay:r.fromDisplay || r.fromLabel || "",isCustom:!!r.isCustom,isUnresolved:!hasTarget}});
-    }
-  });
-});
-
-const hasSavedLayout=!!savedPositions;
-// 初期配置は preset で置き、後段の runLayout()（紐づきなし分離対応）で配置する
-const cy=cytoscape({
-  container:document.getElementById("cy"),
-  elements,
-  style: buildCyStyle(currentPalette()),
-  layout: {name:"preset",fit:false},
-  minZoom:0.05,maxZoom:4,wheelSensitivity:0.25,
-  boxSelectionEnabled:true,
-});
-
-function refreshNodeCards(){
-  APPS.forEach(app=>{
-    const node=cy.getElementById("a"+app.id);
-    if(node.length) node.data(nodeCardData(app));
-  });
-}
-function refreshNodeDisplay(node,app){
-  node.data({label:buildNodeLabel(app),...nodeCardData(app)});
-}
-function applyCyTheme(){
-  refreshNodeCards();
-  cy.style().fromJson(buildCyStyle(currentPalette())).update();
-}
-const semanticZoomLabelBackup=new Map();
-let semanticZoomActive=false;
-function applySemanticZoom(zoom, force){
-  const low=Number(zoom)<0.6;
-  if(low===semanticZoomActive&&!force) return;
-  semanticZoomActive=low;
-  if(low){
-    cy.nodes().not(".note-node").forEach(node=>{
-      if(!node.hasClass("semantic-low")) semanticZoomLabelBackup.set(node.id(),String(node.data("label")||""));
-      const app=appMap.get(node.data("appId"));
-      if(app) node.data("label",buildSemanticNodeLabel(app));
-      node.addClass("semantic-low");
+    const mainScript = [
+      `const APPS = ${data};`,
+      `const ER_OPTIONS = ${diagramOptions};`,
+      `const ER_ANALYSIS = ${dependencyAnalysisData};`,
+      // kintone API のフィールド ENUM を日本語化（ER 図側パネル表示用）
+      `const FIELD_TYPE_JP_LABEL = ${safeJsonForScript(ER_FIELD_TYPE_LABELS)};`,
+      `const ER_MD_MERMAID_MAX_CHARS=${ER_MD_MERMAID_MAX_CHARS};`,
+      escapeInlineScriptSource(ER_VIEWER_SCRIPT)
+    ].join("\n");
+    return renderErViewerPage({
+      pageTitle: target.text ? `kintone ER図 - ${target.text}` : "kintone ER図",
+      targetText: target.text,
+      targetTitle: target.title,
+      generatedText: formatErGeneratedAt(generatedAt),
+      connectionText,
+      libraryScripts: buildErLibraryScripts(),
+      appCount: safeApps.length,
+      relationCount: summary.relations,
+      summary,
+      analysis: {
+        counts: dependencyAnalysis.counts,
+        cycles: dependencyAnalysis.cycles.length,
+        isolated: dependencyAnalysis.isolatedAppIds.length,
+        selfReferences: dependencyAnalysis.selfReferences.length,
+        unresolved: dependencyAnalysis.unresolvedTargets.length,
+        highConnectionThreshold: dependencyAnalysis.highConnectionThreshold
+      },
+      conditions,
+      densityLabel,
+      layoutLabel: formatErLayoutLabel(options.layoutName || ER_DEFAULTS.layoutName),
+      mainScript,
+      fallbackRowsJson: safeJsonForScript(runtimeFallbackRows)
     });
-    cy.edges().addClass("semantic-low");
-    return;
-  }
-  cy.nodes(".semantic-low").forEach(node=>{
-    if(semanticZoomLabelBackup.has(node.id())) node.data("label",semanticZoomLabelBackup.get(node.id()));
-    node.removeClass("semantic-low");
-  });
-  cy.edges().removeClass("semantic-low");
-  semanticZoomLabelBackup.clear();
-}
-function syncLayoutButtons(name){
-  document.querySelectorAll("[data-layout-btn]").forEach((btn)=>{
-    btn.classList.toggle("active", btn.dataset.layoutBtn === name);
-  });
-}
-function refreshNodeLabels(){
-  APPS.forEach((app)=>{
-    const node = cy.getElementById("a"+app.id);
-    if(!node.length) return;
-    const fullLabel=buildNodeLabel(app);
-    if(semanticZoomActive){
-      semanticZoomLabelBackup.set(node.id(),fullLabel);
-      node.data("label",buildSemanticNodeLabel(app));
-      node.addClass("semantic-low");
-    }else{
-      node.data("label",fullLabel);
-    }
-    node.data(nodeCardData(app));
-  });
-}
-function syncDensityControl(){
-  const select = document.getElementById("density-select");
-  if(select) select.value = ER_OPTIONS.fieldDensity || "standard";
-  const pill = document.getElementById("density-pill");
-  if(pill) pill.innerHTML = "<b>密度</b> " + formatFieldDensityLabel(ER_OPTIONS.fieldDensity);
-}
-function setDensity(value){
-  const next = ["none","compact","standard","full"].includes(String(value)) ? String(value) : "standard";
-  ER_OPTIONS.fieldDensity = next;
-  // シンプルモード中に「結合のみ」以外へ変更したら、シンプルモードを解除する
-  if(simpleMode && next !== "none") setSimpleMode(false, true);
-  refreshNodeLabels();
-  applyCyTheme();
-  syncDensityControl();
-  toast("表示密度: " + formatFieldDensityLabel(next));
-}
-function hideOverview(){
-  const panel = document.getElementById("overview");
-  const btn = document.getElementById("overview-toggle-btn");
-  if(!panel) return;
-  panel.classList.add("hidden");
-  if(btn){
-    btn.classList.remove("active");
-    btn.title = "ガイドを開く";
-  }
-}
-function toggleOverview(){
-  const panel = document.getElementById("overview");
-  const btn = document.getElementById("overview-toggle-btn");
-  if(!panel) return;
-  if(panel.classList.contains("hidden")){
-    panel.classList.remove("hidden","collapsed");
-    if(btn){ btn.classList.add("active"); btn.title = "ガイドを隠す"; }
-    return;
-  }
-  const nextCollapsed = !panel.classList.contains("collapsed");
-  panel.classList.toggle("collapsed", nextCollapsed);
-  if(btn){
-    btn.classList.toggle("active", !nextCollapsed);
-    btn.title = nextCollapsed ? "ガイドを開く" : "ガイドを隠す";
-  }
-}
-function updateSearchMeta(query, matched, hiddenOnly){
-  const pill = document.getElementById("search-meta");
-  if(!pill) return;
-  const normalized = String(query || "").trim();
-  pill.hidden = !normalized;
-  if(!normalized){
-    pill.innerHTML = "<b>検索</b> すべて";
-    pill.title = "";
-    return;
-  }
-  // 操作バーが折り返さないよう、表示は短いまま、図に出ていない項目で一致した件数は吹き出しで示す
-  pill.innerHTML = "<b>検索</b> " + matched + "件";
-  pill.title = normalized + (hiddenOnly ? "。うち" + hiddenOnly + "件は、現在の表示密度では図に出ていない項目で一致したアプリです（表示密度を「詳細」にすると項目を確認できます）" : "");
-}
-
-const MAX_FIT_ZOOM=1.25;
-function fit(){
-  closeZoomPresets();
-  const eles=cy.elements(":visible");
-  // 縮小すると概要表示に変わりノードの大きさも変わるため、切り替わった後の大きさでもう一度合わせる
-  for(let pass=0;eles.length&&pass<2;pass++){
-    // 図の上に重なるツールバー・表示条件の行と、下の凡例を避けて収める
-    const box=eles.boundingBox();
-    const hostTop=cy.container().getBoundingClientRect().top;
-    const chromeBottom=Math.max(...["topbar","banner"].map(id=>document.getElementById(id)?.getBoundingClientRect().bottom||0));
-    const top=Math.max(0,chromeBottom-hostTop)+20;
-    const bottom=72,side=48;
-    const availW=Math.max(cy.width()-side*2,120),availH=Math.max(cy.height()-top-bottom,120);
-    const zoom=Math.max(cy.minZoom(),Math.min(MAX_FIT_ZOOM,availW/Math.max(box.w,1),availH/Math.max(box.h,1)));
-    cy.viewport({zoom,pan:{x:(cy.width()-box.w*zoom)/2-box.x1*zoom,y:top+(availH-box.h*zoom)/2-box.y1*zoom}});
-  }
-  updateZoomLabel();
-}
-
-// ─── 紐づきなしアプリの分離配置 ───
-// レイアウト適用時、関連線を持たないアプリを本体グラフの下の別枠（グリッド）にまとめる
-let separateNoLink = true;
-
-function nodeHasVisibleLink(n){
-  return n.connectedEdges().some(e=>{
-    if(e.hasClass("rel-hidden") || e.hasClass("rel-manual-hidden")) return false;
-    const other = e.source().id() === n.id() ? e.target() : e.source();
-    return !other.hasClass("app-manual-hidden");
-  });
-}
-function refreshNoLinkClasses(){
-  const nodes = cy.nodes().filter(n=>!n.hasClass("app-manual-hidden") && !n.hasClass("note-node"));
-  const linked = nodes.filter(n=>nodeHasVisibleLink(n));
-  const isolated = nodes.not(linked);
-  cy.nodes().removeClass("no-link");
-  isolated.addClass("no-link");
-  return { linked, isolated };
-}
-function appNameForNode(n){
-  const app = appMap.get(n.data("appId"));
-  return app ? String(app.name || "") : String(n.data("label") || "");
-}
-// 詳細表示と概要表示（縮小時）のカードは大きさが違う。どちらの表示でも重ならないよう、大きい方の寸法で配置を考える
-function nodeSpan(n){
-  return {
-    w: Math.max(Number(n.data("cardW")) || 0, Number(n.data("lowW")) || 0, n.outerWidth()),
-    h: Math.max(Number(n.data("cardH")) || 0, Number(n.data("lowH")) || 0, n.outerHeight())
-  };
-}
-// レイアウトが重ねて置いたアプリ（フォース・同心円・グリッドなど）を、重なりが無くなるまで少しずつ押し広げる。
-// 重なりのない配置は動かさない。動かしたら true を返す（呼び出し側で全体表示に合わせ直す）
-const OVERLAP_GAP = 28;
-const OVERLAP_MAX_NODES = 800;
-function separateOverlappingNodes(nodes, animate){
-  const items = nodes.toArray().filter(n=>!n.hasClass("note-node")).map(n=>{
-    const pos = n.position();
-    const span = nodeSpan(n);
-    return { n, x: pos.x, y: pos.y, w: span.w + OVERLAP_GAP, h: span.h + OVERLAP_GAP, fixed: n.locked() };
-  });
-  if(items.length < 2 || items.length > OVERLAP_MAX_NODES) return false;
-  const start = items.map(item=>({x:item.x,y:item.y}));
-  for(let round = 0; round < 120; round++){
-    let moved = false;
-    for(let i = 0; i < items.length; i++){
-      for(let j = i + 1; j < items.length; j++){
-        const a = items[i], b = items[j];
-        if(a.fixed && b.fixed) continue;
-        let dx = b.x - a.x, dy = b.y - a.y;
-        if(dx === 0 && dy === 0){ dx = 0.01; b.x += dx; }
-        const overlapX = (a.w + b.w) / 2 - Math.abs(dx);
-        const overlapY = (a.h + b.h) / 2 - Math.abs(dy);
-        if(overlapX <= 0 || overlapY <= 0) continue;
-        // 食い込みが浅い向きへ、お互いに半分ずつ（固定のアプリは動かさない）離す
-        const shareA = a.fixed ? 0 : (b.fixed ? 1 : 0.5);
-        const shareB = 1 - shareA;
-        if(overlapX < overlapY){
-          const step = overlapX + 1, sign = dx >= 0 ? 1 : -1;
-          a.x -= sign * step * shareA; b.x += sign * step * shareB;
-        }else{
-          const step = overlapY + 1, sign = dy >= 0 ? 1 : -1;
-          a.y -= sign * step * shareA; b.y += sign * step * shareB;
-        }
-        moved = true;
-      }
-    }
-    if(!moved) break;
-  }
-  let changed = false;
-  items.forEach((item, i)=>{
-    if(Math.abs(item.x - start[i].x) < 0.5 && Math.abs(item.y - start[i].y) < 0.5) return;
-    changed = true;
-    const pos = { x: item.x, y: item.y };
-    if(animate) item.n.animate({position:pos},{duration:380});
-    else item.n.position(pos);
-  });
-  return changed;
-}
-function placeNoLinkGrid(linked, isolated, animate){
-  const bb = linked.boundingBox();
-  let cellW = 0, cellH = 0;
-  isolated.forEach(n=>{
-    const span = nodeSpan(n);
-    cellW = Math.max(cellW, span.w);
-    cellH = Math.max(cellH, span.h);
-  });
-  cellW += 46; cellH += 42;
-  const cols = Math.max(1, Math.min(isolated.length, Math.max(Math.floor(bb.w / cellW), Math.ceil(Math.sqrt(isolated.length)))));
-  const startX = bb.x1 + cellW / 2;
-  const startY = bb.y2 + 80 + cellH / 2;
-  const sorted = isolated.sort((a,b)=>appNameForNode(a).localeCompare(appNameForNode(b), "ja"));
-  sorted.forEach((n,i)=>{
-    const pos = { x: startX + (i % cols) * cellW, y: startY + Math.floor(i / cols) * cellH };
-    if(animate) n.animate({position:pos},{duration:380});
-    else n.position(pos);
-  });
-}
-// 1つの階層に多数のアプリが並ぶと図が縦に細長くなり全体表示で読めなくなるため、
-// 階層内の順序を保ったまま複数列に折り返して画面の縦横比に近づける
-function wrapTallRanks(nodes, animate){
-  const gapX = 70, gapY = 28;
-  const area = nodes.toArray().reduce((sum,n)=>sum+(n.outerWidth()+gapX)*(n.outerHeight()+gapY),0);
-  const maxHeight = Math.max(900, Math.sqrt(area / (cy.width() / Math.max(cy.height(), 1))));
-  const box = nodes.boundingBox();
-  if(box.h <= maxHeight * 1.25) return false;
-  const midY = (box.y1 + box.y2) / 2;
-  const ranks = new Map();
-  nodes.forEach(n=>{
-    const x = Math.round(n.position("x"));
-    if(!ranks.has(x)) ranks.set(x, []);
-    ranks.get(x).push(n);
-  });
-  let shift = 0;
-  [...ranks.keys()].sort((a,b)=>a-b).forEach(x=>{
-    const rank = ranks.get(x).sort((a,b)=>a.position("y")-b.position("y"));
-    const columns = [[]];
-    let height = 0;
-    rank.forEach(n=>{
-      const h = n.outerHeight() + gapY;
-      if(height + h > maxHeight && columns[columns.length-1].length){ columns.push([]); height = 0; }
-      columns[columns.length-1].push(n);
-      height += h;
-    });
-    const cellW = Math.max(...rank.map(n=>n.outerWidth())) + gapX;
-    columns.forEach((column,index)=>{
-      const columnH = column.reduce((sum,n)=>sum+n.outerHeight()+gapY,0);
-      let y = midY - columnH / 2;
-      column.forEach(n=>{
-        const pos = { x: x + shift + index * cellW, y: y + n.outerHeight() / 2 };
-        y += n.outerHeight() + gapY;
-        if(animate) n.animate({position:pos},{duration:380});
-        else n.position(pos);
-      });
-    });
-    shift += (columns.length - 1) * cellW;
-  });
-  return true;
-}
-// 依存が長く連なると階層数だけ横に伸びるため、階層の順を保ったまま複数段に分けて画面の縦横比に近づける
-function wrapWideRanks(nodes){
-  const box = nodes.boundingBox();
-  const aspect = cy.width() / Math.max(cy.height(), 1);
-  const bands = Math.round(Math.sqrt((box.w / Math.max(box.h, 1)) / aspect));
-  if(bands < 2) return false;
-  const gapY = 160;
-  const members = Array.from({length:bands},()=>[]);
-  nodes.forEach(n=>members[Math.min(bands-1,Math.floor((n.position("x")-box.x1)/(box.w/bands)))].push(n));
-  let top = box.y1;
-  members.filter(band=>band.length).forEach(band=>{
-    const left = Math.min(...band.map(n=>n.boundingBox().x1));
-    const upper = Math.min(...band.map(n=>n.boundingBox().y1));
-    const lower = Math.max(...band.map(n=>n.boundingBox().y2));
-    band.forEach(n=>n.position({x:n.position("x")-left+box.x1,y:n.position("y")-upper+top}));
-    top += lower - upper + gapY;
-  });
-  return true;
-}
-function wrapRanks(nodes, animate){
-  const before = nodes.map(n=>({n,pos:Object.assign({},n.position())}));
-  const tall = wrapTallRanks(nodes, false);
-  const wrapped = wrapWideRanks(nodes) || tall;
-  if(wrapped && animate) before.forEach(({n,pos})=>{
-    const target = Object.assign({},n.position());
-    n.position(pos);
-    n.animate({position:target},{duration:380});
-  });
-  return wrapped;
-}
-function runLayout(name, initial){
-  // 概要表示の小さなカードで配置すると、拡大したときに重なるため詳細表示の大きさで計算する
-  applySemanticZoom(1,true);
-  const parts = refreshNoLinkClasses();
-  if(!separateNoLink || !parts.isolated.length || !parts.linked.length){
-    // メモ(付箋)はレイアウトの対象外にして、手で置いた位置を保つ
-    const lay = cy.elements().not(".note-node").layout(buildLayoutOptions(name, initial));
-    const wrapTargets = cy.nodes().not(".note-node").not(".app-manual-hidden");
-    lay.one("layoutstop",()=>{
-      const wrapped = name === "dagre" && ER_DAGRE_READY && wrapTargets.length > 1 && wrapRanks(wrapTargets, !initial);
-      const separated = separateOverlappingNodes(wrapTargets, !initial);
-      if(initial || wrapped || separated) setTimeout(fit, initial ? 200 : 450);
-      else updateZoomLabel();
-    });
-    lay.run();
-    return;
-  }
-  const opts = buildLayoutOptions(name, initial);
-  opts.fit = false;
-  const visibleEdges = parts.linked.edgesWith(parts.linked).filter(e=>!e.hasClass("rel-hidden") && !e.hasClass("rel-manual-hidden"));
-  const lay = parts.linked.union(visibleEdges).layout(opts);
-  lay.one("layoutstop",()=>{
-    if(name === "dagre" && ER_DAGRE_READY) wrapRanks(parts.linked, false);
-    separateOverlappingNodes(parts.linked, false);
-    placeNoLinkGrid(parts.linked, parts.isolated, !initial);
-    setTimeout(fit, initial ? 150 : 450);
-  });
-  lay.run();
-}
-function syncSeparateNoLinkButton(){
-  const btn = document.getElementById("separate-nolink-btn");
-  if(btn) btn.classList.toggle("active", separateNoLink);
-}
-function toggleSeparateNoLink(){
-  separateNoLink = !separateNoLink;
-  syncSeparateNoLinkButton();
-  runLayout(ER_OPTIONS.layoutName || "dagre", false);
-  toast(separateNoLink ? "紐づきなしアプリを別枠にまとめました" : "分離配置を解除しました");
-}
-
-if(hasSavedLayout){
-  refreshNoLinkClasses();
-  if(ER_EDIT_STATE.view && typeof ER_EDIT_STATE.view.zoom === "number" && ER_EDIT_STATE.view.pan){
-    cy.viewport({zoom:ER_EDIT_STATE.view.zoom, pan:ER_EDIT_STATE.view.pan});
-  }else{
-    setTimeout(fit,100);
-  }
-}else{
-  runLayout(ER_OPTIONS.layoutName || "dagre", true);
-}
-syncLayoutButtons(ER_OPTIONS.layoutName || "dagre");
-syncDensityControl();
-updateSearchMeta("", 0);
-
-// ─── Layout Switching ───
-function setLayout(name){
-  name=normalizeLayoutName(name);
-  ER_OPTIONS.layoutName = name;
-  syncLayoutButtons(name);
-  const pill = document.getElementById("layout-pill");
-  if(pill){pill.replaceChildren();const label=document.createElement("b");label.textContent="配置";pill.append(label," "+layoutDisplayName(name));}
-  runLayout(name, false);
-  toast("レイアウト: " + layoutDisplayName(name));
-}
-
-const relationKindState = { LOOKUP: true, REF: true, ACTION: true };
-let relationLabelVisible = true;
-let focusMode = true;
-let focusDepth = 1;
-let focusDirection = "both";
-let currentFocusNodeId = "";
-let lastTappedNodeId = "";
-let activeAppId = 0;
-const pinnedNodeIds = new Set();
-
-// ─── シンプルモード（項目非表示 + 重複線の集約） ───
-let simpleMode = false;
-let simpleModeRestore = null; // { density, labels }
-const collapsedEdgeLabelBackup = new Map(); // 代表エッジの元ラベル退避
-
-function collapseParallelEdges(on){
-  // いったん全解除
-  cy.edges().removeClass("edge-collapsed");
-  collapsedEdgeLabelBackup.forEach((label, id)=>{
-    const e = cy.getElementById(id);
-    if(e.length) e.data("label", label);
-  });
-  collapsedEdgeLabelBackup.clear();
-  if(!on) return;
-  // 同じ「起点→宛先→種類」の可視エッジを1本に集約し、線種の意味を保つ
-  const groups = new Map();
-  cy.edges().forEach(e=>{
-    if(e.hasClass("rel-manual-hidden") || e.hasClass("rel-hidden")) return;
-    const key = e.source().id() + "→" + e.target().id() + "→" + e.data("kind");
-    const list = groups.get(key) || [];
-    list.push(e);
-    groups.set(key, list);
-  });
-  groups.forEach(list=>{
-    if(list.length < 2) return;
-    list.slice(1).forEach(e=>e.addClass("edge-collapsed"));
-    const rep = list[0];
-    collapsedEdgeLabelBackup.set(rep.id(), rep.data("label") || "");
-    rep.data("label", list.length + "本の" + relationKindJp(rep.data("kind")));
-  });
-}
-
-function syncSimpleModeButton(){
-  const btn = document.getElementById("simple-mode-btn");
-  if(btn) btn.classList.toggle("active", simpleMode);
-}
-
-function setSimpleMode(on, keepDensity){
-  if(simpleMode === !!on) { syncSimpleModeButton(); return; }
-  simpleMode = !!on;
-  if(simpleMode){
-    simpleModeRestore = { density: ER_OPTIONS.fieldDensity, labels: relationLabelVisible };
-    ER_OPTIONS.fieldDensity = "none";
-    relationLabelVisible = false;
-    collapseParallelEdges(true);
-  }else{
-    if(!keepDensity) ER_OPTIONS.fieldDensity = (simpleModeRestore && simpleModeRestore.density && simpleModeRestore.density !== "none") ? simpleModeRestore.density : "standard";
-    relationLabelVisible = simpleModeRestore ? !!simpleModeRestore.labels : true;
-    simpleModeRestore = null;
-    collapseParallelEdges(false);
-  }
-  refreshNodeLabels();
-  applyCyTheme();
-  syncDensityControl();
-  applyRelationLabelVisibility();
-  syncSimpleModeButton();
-}
-
-function toggleSimpleMode(){
-  setSimpleMode(!simpleMode);
-  toast(simpleMode ? "シンプルモード ON: アプリの結合関係のみ表示" : "シンプルモード OFF");
-}
-
-function syncLegendState(){
-  const lookup = document.getElementById("legend-lookup-edge");
-  const ref = document.getElementById("legend-ref-edge");
-  const action = document.getElementById("legend-action-edge");
-  if(lookup){ lookup.classList.toggle("off", !relationKindState.LOOKUP); lookup.setAttribute("aria-pressed", String(!!relationKindState.LOOKUP)); }
-  if(ref){ ref.classList.toggle("off", !relationKindState.REF); ref.setAttribute("aria-pressed", String(!!relationKindState.REF)); }
-  if(action){ action.classList.toggle("off", !relationKindState.ACTION); action.setAttribute("aria-pressed", String(!!relationKindState.ACTION)); }
-}
-function syncRelationLabelButton(){
-  const btn = document.getElementById("rel-label-btn");
-  if(!btn) return;
-  btn.classList.toggle("active", relationLabelVisible);
-  btn.textContent = relationLabelVisible ? "線ラベル" : "線ラベル OFF";
-}
-function applyRelationLabelVisibility(){
-  cy.edges().toggleClass("label-hidden", !relationLabelVisible);
-  syncRelationLabelButton();
-}
-function toggleRelationLabels(){
-  relationLabelVisible = !relationLabelVisible;
-  applyRelationLabelVisibility();
-  toast(relationLabelVisible ? "線ラベルを表示" : "線ラベルを非表示");
-}
-function setActiveApp(appId){
-  activeAppId = Number(appId) || 0;
-  refreshAppList();
-}
-
-function applyRelationFilter(){
-  const partialFilter = !relationKindState.LOOKUP || !relationKindState.REF || !relationKindState.ACTION;
-  cy.edges().forEach(e=>{
-    const visible = !!relationKindState[e.data("kind")];
-    e.toggleClass("rel-hidden", !visible);
-  });
-  cy.nodes().forEach(n=>{
-    const visibleEdgeCount = n.connectedEdges().filter(e=>!e.hasClass("rel-hidden") && !e.hasClass("rel-manual-hidden")).length;
-    n.toggleClass("isolated-by-filter", partialFilter && visibleEdgeCount === 0);
-  });
-  if(simpleMode) collapseParallelEdges(true);
-  refreshNoLinkClasses();
-  syncLegendState();
-}
-
-function collectFocusSet(rootNode, depth, direction){
-  let nodes = cy.collection(rootNode);
-  let edges = cy.collection();
-  let frontier = cy.collection(rootNode);
-  const visited = new Set([rootNode.id()]);
-
-  for(let i=0;i<depth;i++){
-    let next = cy.collection();
-    frontier.forEach(n=>{
-      let candidateEdges = n.connectedEdges().filter(e=>!e.hasClass("rel-hidden") && !e.hasClass("rel-manual-hidden"));
-      if(direction==="out") candidateEdges = candidateEdges.filter(e=>e.source().id()===n.id());
-      if(direction==="in") candidateEdges = candidateEdges.filter(e=>e.target().id()===n.id());
-
-      candidateEdges.forEach(e=>{
-        edges = edges.union(e);
-        let linked = cy.collection();
-        if(direction==="out") linked = linked.union(e.target());
-        else if(direction==="in") linked = linked.union(e.source());
-        else linked = linked.union(e.connectedNodes().difference(n));
-
-        linked.forEach(nn=>{
-          if(visited.has(nn.id())) return;
-          visited.add(nn.id());
-          nodes = nodes.union(nn);
-          next = next.union(nn);
-        });
-      });
-    });
-    frontier = next;
-    if(frontier.length===0) break;
-  }
-
-  return { nodes, edges };
-}
-
-function applyFocusToNode(node, silent){
-  cy.elements().removeClass("focus-root focus-neighbor focus-edge focus-dim");
-  if(!focusMode || !node || !node.length) return;
-
-  const depth = Math.max(1, Number(focusDepth) || 1);
-  const result = collectFocusSet(node, depth, focusDirection);
-  cy.elements().not(".note-node").addClass("focus-dim");
-  result.nodes.removeClass("focus-dim").addClass("focus-neighbor");
-  result.edges.removeClass("focus-dim").addClass("focus-edge");
-  node.removeClass("focus-neighbor").addClass("focus-root");
-  currentFocusNodeId = node.id();
-
-  if(!silent){
-    const relatedCount = Math.max(0, result.nodes.length - 1);
-    toast("関連強調: "+relatedCount+"アプリ");
-  }
-}
-
-function clearFocus(silent){
-  currentFocusNodeId = "";
-  cy.elements().removeClass("focus-root focus-neighbor focus-edge focus-dim");
-  if(!silent) toast("関連強調を解除");
-}
-
-function syncFocusButton(){
-  const btn = document.getElementById("focus-toggle-btn");
-  if(!btn) return;
-  btn.classList.toggle("active", focusMode);
-  btn.textContent = focusMode ? "関連強調 ON" : "関連強調 OFF";
-}
-function syncRelationKindButtons(){
-  ["LOOKUP","REF","ACTION"].forEach(kind=>{
-    const btn = document.getElementById(kind==="LOOKUP" ? "rel-lookup-btn" : (kind==="REF" ? "rel-ref-btn" : "rel-action-btn"));
-    if(btn) btn.classList.toggle("active", !!relationKindState[kind]);
-  });
-}
-function toggleFocusMode(){
-  focusMode = !focusMode;
-  syncFocusButton();
-  if(!focusMode) clearFocus(true);
-  else if(currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
-  toast(focusMode ? "関連強調 ON" : "関連強調 OFF");
-}
-
-function updateFocusOptions(){
-  focusDepth = Number(document.getElementById("focus-depth")?.value || 1);
-  focusDirection = document.getElementById("focus-direction")?.value || "both";
-  if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
-}
-
-// ─── 元に戻す (Undo) ───
-const undoStack = [];
-function pushUndo(label, fn){
-  undoStack.push({label, fn});
-  if(undoStack.length > 60) undoStack.shift();
-}
-function undoLast(){
-  const entry = undoStack.pop();
-  if(!entry){toast("元に戻す操作はありません");return;}
-  try{ entry.fn(); }catch(err){ console.error("[ER] undo failed", err); }
-  toast("元に戻す: "+entry.label);
-}
-
-const manuallyRemovedEdgeIds = new Set();
-const manuallyRemovedNodeIds = new Set();
-const nodeHiddenEdgeIds = new Set();
-
-function hideRelationEdges(edges){
-  const ids = edges.map(e=>e.id());
-  edges.forEach((e)=>{ manuallyRemovedEdgeIds.add(e.id()); e.addClass("rel-manual-hidden"); });
-  pushUndo("関連線削除 "+ids.length+"件", ()=>{
-    ids.forEach(id=>{
-      manuallyRemovedEdgeIds.delete(id);
-      const e = cy.getElementById(id);
-      if(e.length) e.removeClass("rel-manual-hidden");
-    });
-    applyRelationFilter();
-    if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
-  });
-}
-
-function removeSelectedRelations(){
-  const edges = cy.edges(":selected");
-  if(!edges.length){toast("削除対象の関連線を選択してください");return;}
-  hideRelationEdges(edges);
-  if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
-  applyRelationFilter();
-  toast("関連線を手動削除: "+edges.length+"件");
-}
-
-function restoreRemovedRelations(){
-  let restored = 0;
-  manuallyRemovedEdgeIds.forEach((id)=>{
-    const edge = cy.getElementById(id);
-    if(edge.length){ edge.removeClass("rel-manual-hidden"); restored += 1; }
-  });
-  manuallyRemovedEdgeIds.clear();
-  if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
-  applyRelationFilter();
-  toast(restored ? ("手動削除した関連線を復元: "+restored+"件") : "復元対象がありません");
-}
-
-function hideAppNodes(nodes){
-  const nodeIds = [], newEdgeIds = [];
-  let edgeCount = 0;
-  nodes.forEach((node)=>{
-    manuallyRemovedNodeIds.add(node.id());
-    nodeIds.push(node.id());
-    node.addClass("app-manual-hidden");
-    node.connectedEdges().forEach((edge)=>{
-      if(!nodeHiddenEdgeIds.has(edge.id()) && !manuallyRemovedEdgeIds.has(edge.id())) newEdgeIds.push(edge.id());
-      nodeHiddenEdgeIds.add(edge.id());
-      if(!edge.hasClass("rel-manual-hidden")) edgeCount += 1;
-      edge.addClass("rel-manual-hidden");
-    });
-  });
-  pushUndo("アプリ削除 "+nodeIds.length+"件", ()=>{
-    nodeIds.forEach(id=>{
-      manuallyRemovedNodeIds.delete(id);
-      const n = cy.getElementById(id);
-      if(n.length) n.removeClass("app-manual-hidden");
-    });
-    newEdgeIds.forEach(id=>{
-      nodeHiddenEdgeIds.delete(id);
-      const e = cy.getElementById(id);
-      if(e.length) e.removeClass("rel-manual-hidden");
-    });
-    applyRelationFilter();
-    refreshAppList();
-    if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
-  });
-  return edgeCount;
-}
-
-function removeSelectedApps(){
-  let nodes = cy.nodes(":selected").not(".app-manual-hidden").not(".note-node");
-  if(!nodes.length && lastTappedNodeId){
-    const n = cy.getElementById(lastTappedNodeId);
-    if(n.length && !n.hasClass("app-manual-hidden") && !n.hasClass("note-node")) nodes = nodes.union(n);
-  }
-  if(!nodes.length){toast("削除対象のアプリを選択してください");return;}
-  const edgeCount = hideAppNodes(nodes);
-  applyRelationFilter();
-  refreshAppList();
-  if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
-  toast("アプリを手動削除: "+nodes.length+"件 / 関連線 "+edgeCount+"件");
-}
-
-function restoreRemovedApps(){
-  let restoredNodes = 0;
-  manuallyRemovedNodeIds.forEach((id)=>{
-    const node = cy.getElementById(id);
-    if(node.length){
-      node.removeClass("app-manual-hidden");
-      restoredNodes += 1;
-    }
-  });
-  let restoredEdges = 0;
-  nodeHiddenEdgeIds.forEach((id)=>{
-    const edge = cy.getElementById(id);
-    if(!edge.length) return;
-    if(manuallyRemovedEdgeIds.has(id)) return;
-    edge.removeClass("rel-manual-hidden");
-    restoredEdges += 1;
-  });
-  manuallyRemovedNodeIds.clear();
-  nodeHiddenEdgeIds.clear();
-  applyRelationFilter();
-  refreshAppList();
-  if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
-  toast(restoredNodes ? ("手動削除したアプリを復元: "+restoredNodes+"件 / 関連線 "+restoredEdges+"件") : "復元対象のアプリがありません");
-}
-function toggleRelationKind(kind){
-  relationKindState[kind] = !relationKindState[kind];
-  const btn = document.getElementById(kind==="LOOKUP" ? "rel-lookup-btn" : (kind==="REF" ? "rel-ref-btn" : "rel-action-btn"));
-  if(btn) btn.classList.toggle("active", !!relationKindState[kind]);
-  applyRelationFilter();
-  if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
-  const label = kind === "LOOKUP" ? "ルックアップ" : (kind === "REF" ? "関連" : "アクション");
-  toast(label + "線: " + (relationKindState[kind] ? "表示" : "非表示"));
-}
-
-function pinNode(node,silent){
-  if(!node || !node.length) return;
-  node.lock();
-  node.addClass("pinned-node");
-  pinnedNodeIds.add(node.id());
-  if(!silent) toast("固定: "+(appMap.get(node.data("appId"))?.name || node.id()));
-}
-
-function unpinNode(node,silent){
-  if(!node || !node.length) return;
-  node.unlock();
-  node.removeClass("pinned-node");
-  pinnedNodeIds.delete(node.id());
-  if(!silent) toast("固定解除: "+(appMap.get(node.data("appId"))?.name || node.id()));
-}
-
-function togglePinFromSelection(){
-  let nodes = cy.nodes(":selected");
-  if(!nodes.length && lastTappedNodeId){
-    const n = cy.getElementById(lastTappedNodeId);
-    if(n.length) nodes = nodes.union(n);
-  }
-  if(!nodes.length){toast("固定対象ノードを選択してください");return;}
-  const allPinned = nodes.every(n=>pinnedNodeIds.has(n.id()));
-  nodes.forEach(n=>{if(allPinned) unpinNode(n,true); else pinNode(n,true);});
-  toast(allPinned ? "選択ノードの固定を解除" : "選択ノードを固定");
-}
-
-function clearPins(){
-  [...pinnedNodeIds].forEach(id=>{
-    const n = cy.getElementById(id);
-    if(n.length) n.unlock().removeClass("pinned-node");
-  });
-  pinnedNodeIds.clear();
-  toast("固定を全解除");
-}
-
-applyRelationFilter();
-applyRelationLabelVisibility();
-updateFocusOptions();
-
-// ─── Manual additions (アプリ / 項目 / 関連線の手動追加 UI) ───
-let editorMode="";
-let pendingNodePos=null;
-let editorReturnFocus=null;
-
-function appOptionsHtml(selectedId){
-  return APPS.map(a=>'<option value="'+escapeHtml(String(a.id))+'"'+(String(a.id)===String(selectedId)?" selected":"")+'>'+escapeHtml(a.name)+(a.isCustom?"（手動）":" (App "+escapeHtml(String(a.id))+")")+'</option>').join("");
-}
-const MANUAL_FIELD_TYPES=[["SINGLE_LINE_TEXT","文字列(1行)"],["MULTI_LINE_TEXT","文字列(複数行)"],["NUMBER","数値"],["CALC","計算"],["DATE","日付"],["DATETIME","日時"],["DROP_DOWN","ドロップダウン"],["CHECK_BOX","チェックボックス"],["USER_SELECT","ユーザー選択"],["FILE","添付ファイル"],["LINK","リンク"],["RECORD_NUMBER","レコード番号"]];
-function openEditor(mode, title, sub, bodyHtml, opts){
-  const o=opts||{};
-  editorMode=mode;
-  document.getElementById("editor-title").textContent=title;
-  document.getElementById("editor-sub").textContent=sub;
-  document.getElementById("editor-body").innerHTML=bodyHtml;
-  const submitBtn=document.getElementById("editor-submit");
-  if(submitBtn) submitBtn.textContent=o.submitLabel||"追加";
-  const delBtn=document.getElementById("editor-delete");
-  if(delBtn) delBtn.style.display=o.showDelete?"":"none";
-  const editorOverlay=document.getElementById("editor-overlay");
-  if(!editorOverlay.classList.contains("open")) editorReturnFocus=rememberDialogFocus();
-  editorOverlay.classList.add("open");
-  const first=document.querySelector("#editor-body input,#editor-body select,#editor-body textarea");
-  if(first) setTimeout(()=>{try{first.focus();}catch(_){}},50);
-}
-function closeEditor(){
-  editorMode=""; pendingNodePos=null; editingNoteId=""; editingAppId=""; editingFieldRef=null; editingRelRef=null;
-  const editorOverlay=document.getElementById("editor-overlay");
-  const wasOpen=editorOverlay.classList.contains("open");
-  editorOverlay.classList.remove("open");
-  if(wasOpen){ const back=editorReturnFocus; editorReturnFocus=null; restoreDialogFocus(back); }
-}
-function submitEditor(){
-  if(editorMode==="app") addCustomApp();
-  else if(editorMode==="field") addCustomField();
-  else if(editorMode==="rel") addCustomRelation();
-  else if(editorMode==="note-add") submitNoteAdd();
-  else if(editorMode==="note-edit") submitNoteEdit();
-  else if(editorMode==="edit-app") submitEditApp();
-  else if(editorMode==="edit-field") submitEditField();
-  else if(editorMode==="edit-rel") submitEditRelation();
-}
-function deleteFromEditor(){
-  if(editorMode==="note-edit"){
-    const node=cy.getElementById(editingNoteId);
-    if(node.length) deleteNoteNodes(node);
-    closeEditor();
-    toast("メモを削除しました");
-  }
-}
-function currentTargetAppId(){
-  if(activeAppId) return activeAppId;
-  if(lastTappedNodeId){
-    const n=cy.getElementById(lastTappedNodeId);
-    if(n.length) return n.data("appId");
-  }
-  return APPS.length ? APPS[0].id : "";
-}
-function openAddApp(pos){
-  pendingNodePos=pos||null;
-  openEditor("app","⬡ アプリ(エンティティ)を追加","図にだけ存在する手動エンティティを追加します（kintone上には作成されません）",
-    '<div class="ed-row"><label>アプリ名 *</label><input id="ed-app-name" placeholder="例: 外部システム / 顧客マスタ(構想)"></div>'
-    +'<div class="ed-row"><label>初期項目（任意・1行に1項目）</label><textarea id="ed-app-fields" placeholder="顧客名&#10;!顧客コード&#10;*金額"></textarea>'
-    +'<div class="ed-hint">行頭の記号で区分を指定できます: <b>!</b> 主キー 🔑 / <b>*</b> 必須 ✱ / 無印 通常項目。項目は後から「項目を追加」でも足せます。</div></div>');
-}
-function openAddField(){
-  if(!APPS.length){toast("追加先のアプリがありません");return;}
-  openEditor("field","📝 アプリに項目を追加","選択したアプリのノード表示・詳細パネル・各エクスポートに項目を追加します",
-    '<div class="ed-row"><label>対象アプリ</label><select id="ed-field-app">'+appOptionsHtml(currentTargetAppId())+'</select></div>'
-    +'<div class="ed-row"><label>項目名 *</label><input id="ed-field-name" placeholder="例: 承認ステータス"></div>'
-    +'<div class="ed-row"><label>フィールドコード（任意）</label><input id="ed-field-code" placeholder="未入力なら自動採番"></div>'
-    +'<div class="ed-row"><label>種類</label><select id="ed-field-type">'+MANUAL_FIELD_TYPES.map(t=>'<option value="'+t[0]+'">'+t[1]+'</option>').join("")+'</select></div>'
-    +'<div class="ed-row"><label>区分</label><select id="ed-field-kind"><option value="">通常</option><option value="pk">主キー 🔑</option><option value="required">必須 ✱</option><option value="lookup">ルックアップ 🔗</option><option value="ref">関連レコード 📋</option></select></div>');
-}
-function openAddRelation(){
-  if(APPS.length<2){toast("関連線を引くにはアプリが2つ以上必要です");return;}
-  openEditor("rel","🔗 関連線を追加","2つのアプリ間に手動で関連線を引きます（リレーション一覧・各エクスポートにも反映）",
-    '<div class="ed-row"><label>起点アプリ</label><select id="ed-rel-from">'+appOptionsHtml(currentTargetAppId())+'</select></div>'
-    +'<div class="ed-row"><label>宛先アプリ</label><select id="ed-rel-to">'+appOptionsHtml("")+'</select></div>'
-    +'<div class="ed-row"><label>種類</label><select id="ed-rel-kind"><option value="LOOKUP">ルックアップ線 🔗</option><option value="REF">関連レコード線 📋</option><option value="ACTION">アクション線 ⚡</option></select></div>'
-    +'<div class="ed-row"><label>ラベル（任意）</label><input id="ed-rel-label" placeholder="例: 顧客参照"></div>');
-}
-function parseManualFieldLines(text){
-  return String(text||"").split(/\\n+/).map(l=>l.trim()).filter(Boolean).slice(0,30).map(line=>{
-    const isPK=line.charAt(0)==="!";
-    const required=line.charAt(0)==="*";
-    const label=line.replace(/^[!*]\\s*/,"").trim();
-    customFieldSeq+=1;
-    return {code:"manual_"+customFieldSeq,label:label||("項目"+customFieldSeq),type:isPK?"RECORD_NUMBER":"SINGLE_LINE_TEXT",required:required||isPK,isPK,unique:isPK,isCustom:true};
-  });
-}
-function addCustomApp(){
-  const name=(document.getElementById("ed-app-name").value||"").trim();
-  if(!name){toast("アプリ名を入力してください");return;}
-  const fields=parseManualFieldLines(document.getElementById("ed-app-fields").value);
-  customAppSeq+=1;
-  const id=-customAppSeq;
-  const app={id,name,fields,totalFieldCount:fields.length,relations:[],ok:true,depth:0,isCustom:true,
-    requiredCount:fields.filter(f=>f.required).length,lookupCount:0,refCount:0};
-  registerManualApp(app);
-  const ext=cy.extent();
-  const pos=pendingNodePos||{x:(ext.x1+ext.x2)/2+(Math.random()*60-30),y:(ext.y1+ext.y2)/2+(Math.random()*60-30)};
-  const node=cy.add({group:"nodes",data:{id:"a"+id,label:buildNodeLabel(app),...nodeCardData(app),appId:id,isError:false,isStart:false,inSpace:false,isCustom:true,accent:"",fieldCount:fields.length,relCount:0,depth:0},position:pos});
-  if(semanticZoomActive) applySemanticZoom(cy.zoom(),true);
-  commands.push({label:"アプリ: "+app.name+" (手動追加)",icon:"⬡",appId:id,action:()=>focusApp(id)});
-  pushUndo("エンティティ追加",()=>{
-    const n=cy.getElementById("a"+id);
-    if(n.length) cy.remove(n);
-    const idx=APPS.indexOf(app);
-    if(idx>=0) APPS.splice(idx,1);
-    appMap.delete(app.id);
-    refreshSidebar();
-    if(String(activeAppId)===String(app.id)) closeDetail();
-  });
-  refreshSidebar();
-  closeEditor();
-  node.select();
-  renderAppDetail(app);
-  toast("エンティティを追加: "+name);
-}
-function addCustomField(){
-  const app=findApp(document.getElementById("ed-field-app").value);
-  if(!app){toast("対象アプリが見つかりません");return;}
-  const name=(document.getElementById("ed-field-name").value||"").trim();
-  if(!name){toast("項目名を入力してください");return;}
-  const codeInput=(document.getElementById("ed-field-code").value||"").trim();
-  const type=document.getElementById("ed-field-type").value||"SINGLE_LINE_TEXT";
-  const kind=document.getElementById("ed-field-kind").value;
-  customFieldSeq+=1;
-  const field={code:codeInput||("manual_"+customFieldSeq),label:name,type,
-    required:kind==="required"||kind==="pk",isPK:kind==="pk",unique:kind==="pk",
-    isLookup:kind==="lookup",isRef:kind==="ref",isCustom:true};
-  applyManualFieldData(app,field);
-  pushUndo("項目追加",()=>{
-    [app.fields,app.allFields].forEach(list=>{
-      if(!Array.isArray(list)) return;
-      const index=list.indexOf(field);
-      if(index>=0) list.splice(index,1);
-    });
-    if(typeof app.totalFieldCount==="number") app.totalFieldCount=Math.max(0,app.totalFieldCount-1);
-    if(field.required) app.requiredCount=Math.max(0,(app.requiredCount||0)-1);
-    afterFieldVisibilityChange(app);
-  });
-  const node=cy.getElementById("a"+app.id);
-  if(node.length){
-    refreshNodeDisplay(node,app);
-    node.data("fieldCount",visibleFieldsForNode(app).length);
-  }
-  refreshSidebar();
-  if(String(activeAppId)===String(app.id)) renderAppDetail(app);
-  closeEditor();
-  toast("項目を追加: "+name+" → "+app.name);
-}
-function addCustomRelation(){
-  const from=findApp(document.getElementById("ed-rel-from").value);
-  const to=findApp(document.getElementById("ed-rel-to").value);
-  if(!from||!to){toast("アプリを選択してください");return;}
-  if(String(from.id)===String(to.id)){toast("起点と宛先が同じアプリです");return;}
-  const kind=document.getElementById("ed-rel-kind").value||"LOOKUP";
-  const kindLabel=kind==="LOOKUP"?"ルックアップ":(kind==="REF"?"関連":"アクション");
-  const label=(document.getElementById("ed-rel-label").value||"").trim()||(kindLabel+"(手動)");
-  customRelSeq+=1;
-  const rel={from:"__MANUAL__"+customRelSeq,fromLabel:label,fromDisplay:label,toApp:to.id,toField:"",kind,isCustom:true};
-  const relIndex=from.relations.length;
-  applyManualRelationData(from,rel);
-  cy.add({group:"edges",data:{id:"e_"+from.id+"_"+relIndex,source:"a"+from.id,target:"a"+to.id,kind,label:edgeDisplayLabel(label),fromLabel:label,fromDisplay:label,isCustom:true}});
-  if(semanticZoomActive) applySemanticZoom(cy.zoom(),true);
-  pushUndo("関連線追加",()=>{
-    const ri=from.relations.indexOf(rel); if(ri>=0) from.relations.splice(ri,1);
-    if(kind==="LOOKUP") from.lookupCount=Math.max(0,(from.lookupCount||0)-1);
-    if(kind==="REF") from.refCount=Math.max(0,(from.refCount||0)-1);
-    const e=cy.getElementById("e_"+from.id+"_"+relIndex);
-    if(e.length) cy.remove(e);
-    const n=cy.getElementById("a"+from.id);
-    if(n.length){ n.data("relCount",from.relations.length); refreshNodeDisplay(n,from); }
-    applyRelationFilter();
-    refreshSidebar();
-    if(String(activeAppId)===String(from.id)) renderAppDetail(from);
-  });
-  const node=cy.getElementById("a"+from.id);
-  if(node.length){
-    node.data("relCount",from.relations.length);
-    refreshNodeDisplay(node,from);
-  }
-  applyRelationFilter();
-  applyRelationLabelVisibility();
-  refreshSidebar();
-  if(String(activeAppId)===String(from.id)) renderAppDetail(from);
-  closeEditor();
-  toast("関連線を追加: "+from.name+" → "+to.name);
-}
-document.getElementById("editor").addEventListener("keydown",e=>{
-  if(e.key==="Enter"&&e.target&&e.target.tagName!=="TEXTAREA"){e.preventDefault();submitEditor();}
-});
-
-// ─── 色スウォッチ（アプリ枠色・メモ色の選択UI） ───
-const APP_ACCENT_COLORS=[["","なし(既定)"],["#818cf8","藍"],["#60a5fa","青"],["#2dd4bf","青緑"],["#34d399","緑"],["#fbbf24","黄"],["#f87171","赤"],["#f472b6","桃"],["#a78bfa","紫"]];
-const NOTE_COLORS=[["#fef08a","黄"],["#fbcfe8","桃"],["#bae6fd","青"],["#bbf7d0","緑"],["#fed7aa","橙"],["#e9d5ff","紫"]];
-function swatchesHtml(colors,selected){
-  return '<div class="ed-swatches">'+colors.map(c=>{
-    const col=c[0];
-    const cls="ed-swatch"+(col?"":" ed-swatch--none")+(String(selected||"")===String(col)?" selected":"");
-    return '<button type="button" class="'+cls+'" data-color="'+escapeHtml(col)+'" title="'+escapeHtml(c[1])+'"'+(col?' style="background:'+escapeHtml(col)+'"':'')+' onclick="selectSwatch(this)"></button>';
-  }).join("")+'</div>';
-}
-function selectSwatch(btn){
-  btn.parentNode.querySelectorAll(".ed-swatch").forEach(b=>b.classList.remove("selected"));
-  btn.classList.add("selected");
-}
-function selectedSwatchColor(){
-  const sel=document.querySelector("#editor-body .ed-swatch.selected");
-  return sel?String(sel.dataset.color||""):"";
-}
-
-// ─── アプリの編集（表示名・枠色） ───
-let editingAppId="";
-function openEditApp(appId){
-  const app=findApp(appId!==undefined&&appId!==""?appId:currentTargetAppId());
-  if(!app){toast("編集対象のアプリがありません（ノードをクリックして選択）");return;}
-  editingAppId=app.id;
-  openEditor("edit-app","✏ アプリを編集","図上の表示名とノードの枠色を変更します（kintone上のアプリ名は変わりません）",
-    '<div class="ed-row"><label>表示名 *</label><input id="ed-eapp-name"></div>'
-    +'<div class="ed-row"><label>枠色（グループ分けに便利）</label>'+swatchesHtml(APP_ACCENT_COLORS,appAccentColor(app))+'</div>',
-    {submitLabel:"保存"});
-  document.getElementById("ed-eapp-name").value=app.name||"";
-}
-function applyAppOverride(app,name,color){
-  app.name=name;
-  appOverrides[app.id]=Object.assign({},appOverrides[app.id],{name:name,color:color||""});
-  const node=cy.getElementById("a"+app.id);
-  if(node.length){
-    node.data("accent",color||"");
-    refreshNodeDisplay(node,app);
-  }
-  commands.forEach(c=>{ if(c.appId!==undefined&&String(c.appId)===String(app.id)) c.label="アプリ: "+name+" (ID:"+app.id+")"; });
-  refreshSidebar();
-  if(String(activeAppId)===String(app.id)) renderAppDetail(app);
-}
-function submitEditApp(){
-  const app=findApp(editingAppId);
-  if(!app){closeEditor();return;}
-  const name=(document.getElementById("ed-eapp-name").value||"").trim();
-  if(!name){toast("表示名を入力してください");return;}
-  const old={name:app.name,color:appAccentColor(app)};
-  applyAppOverride(app,name,selectedSwatchColor());
-  pushUndo("アプリ編集",()=>{applyAppOverride(app,old.name,old.color);});
-  closeEditor();
-  toast("アプリを更新: "+name);
-}
-
-// ─── 項目の編集（表示名・種類・区分） ───
-let editingFieldRef=null;
-function openEditFieldRow(btn){
-  const app=findApp(btn.dataset.app);
-  if(!app) return;
-  const key=decodeURIComponent(btn.dataset.key||"");
-  const field=findFieldByKey(app,key);
-  if(!field){toast("対象の項目が見つかりません");return;}
-  editingFieldRef={appId:app.id,key};
-  const currentKind=field.isPK?"pk":(field.isLookup?"lookup":(field.isRef?"ref":(field.required?"required":"")));
-  const typeOptions=MANUAL_FIELD_TYPES.some(t=>t[0]===field.type)?MANUAL_FIELD_TYPES:[[field.type,fieldTypeJpLabel(field.type)]].concat(MANUAL_FIELD_TYPES);
-  openEditor("edit-field","✎ 項目を編集","図上の表示名・種類・区分を変更します（kintone上の設定は変わりません）",
-    '<div class="ed-row"><label>項目名 *</label><input id="ed-efield-name"></div>'
-    +'<div class="ed-row"><label>種類</label><select id="ed-efield-type">'+typeOptions.map(t=>'<option value="'+escapeHtml(t[0])+'"'+(t[0]===field.type?" selected":"")+'>'+escapeHtml(t[1])+'</option>').join("")+'</select></div>'
-    +'<div class="ed-row"><label>区分</label><select id="ed-efield-kind">'
-      +'<option value=""'+(currentKind===""?" selected":"")+'>通常</option>'
-      +'<option value="pk"'+(currentKind==="pk"?" selected":"")+'>主キー 🔑</option>'
-      +'<option value="required"'+(currentKind==="required"?" selected":"")+'>必須 ✱</option>'
-      +'<option value="lookup"'+(currentKind==="lookup"?" selected":"")+'>ルックアップ 🔗</option>'
-      +'<option value="ref"'+(currentKind==="ref"?" selected":"")+'>関連レコード 📋</option>'
-    +'</select></div>'
-    +'<div class="ed-hint">フィールドコード: <b>'+escapeHtml(field.code||"-")+'</b>（コードは変更できません）</div>',
-    {submitLabel:"保存"});
-  document.getElementById("ed-efield-name").value=field.label||"";
-}
-function fieldPatchFromKind(kind){
-  return {isPK:kind==="pk",unique:kind==="pk",required:kind==="required"||kind==="pk",isLookup:kind==="lookup",isRef:kind==="ref"};
-}
-function applyFieldOverride(app,key,patch){
-  const field=findFieldByKey(app,key);
-  if(!field) return;
-  Object.assign(field,patch);
-  fieldOverrides[key]=Object.assign({},fieldOverrides[key],patch);
-  afterFieldVisibilityChange(app);
-}
-function submitEditField(){
-  if(!editingFieldRef){closeEditor();return;}
-  const appId=editingFieldRef.appId, key=editingFieldRef.key;
-  const app=findApp(appId);
-  const field=app&&findFieldByKey(app,key);
-  if(!field){closeEditor();return;}
-  const name=(document.getElementById("ed-efield-name").value||"").trim();
-  if(!name){toast("項目名を入力してください");return;}
-  const old={label:field.label,type:field.type,isPK:!!field.isPK,unique:!!field.unique,required:!!field.required,isLookup:!!field.isLookup,isRef:!!field.isRef};
-  const patch=Object.assign({label:name,type:document.getElementById("ed-efield-type").value||field.type},fieldPatchFromKind(document.getElementById("ed-efield-kind").value));
-  applyFieldOverride(app,key,patch);
-  pushUndo("項目編集",()=>{const a=findApp(appId);if(a)applyFieldOverride(a,key,old);});
-  closeEditor();
-  toast("項目を更新: "+name);
-}
-
-// ─── 関連線の編集（ラベル・種類） ───
-let editingRelRef=null;
-function openEditRelationRow(btn){
-  const edgeId=String(btn.dataset.edge||"");
-  const ref=parseEdgeId(edgeId);
-  const app=ref&&findApp(ref.appId);
-  const rel=app&&(app.relations||[])[ref.ri];
-  if(!rel){toast("対象の関連線が見つかりません");return;}
-  editingRelRef={appId:app.id,edgeId,ri:ref.ri};
-  openEditor("edit-rel","✎ 関連線を編集","図上のラベルと線の種類を変更します（kintone上の設定は変わりません）",
-    '<div class="ed-row"><label>ラベル</label><input id="ed-erel-label"></div>'
-    +'<div class="ed-row"><label>種類</label><select id="ed-erel-kind">'
-      +'<option value="LOOKUP"'+(rel.kind==="LOOKUP"?" selected":"")+'>ルックアップ線 🔗</option>'
-      +'<option value="REF"'+(rel.kind==="REF"?" selected":"")+'>関連レコード線 📋</option>'
-      +'<option value="ACTION"'+(rel.kind==="ACTION"?" selected":"")+'>アクション線 ⚡</option>'
-    +'</select></div>',
-    {submitLabel:"保存"});
-  document.getElementById("ed-erel-label").value=rel.fromDisplay||rel.fromLabel||"";
-}
-function applyRelationOverride(app,edgeId,ri,patch){
-  const rel=(app.relations||[])[ri];
-  if(!rel) return;
-  Object.assign(rel,patch);
-  relationOverrides[edgeId]=Object.assign({},relationOverrides[edgeId],patch);
-  const edge=cy.getElementById(edgeId);
-  if(edge.length){
-    edge.data("kind",rel.kind);
-    edge.data("label",edgeDisplayLabel(rel.fromDisplay||rel.fromLabel||""));
-    edge.data("fromLabel",rel.fromLabel);
-    edge.data("fromDisplay",rel.fromDisplay||rel.fromLabel||"");
-  }
-  applyRelationFilter();
-  refreshSidebar();
-  if(String(activeAppId)===String(app.id)) renderAppDetail(app);
-}
-function submitEditRelation(){
-  if(!editingRelRef){closeEditor();return;}
-  const appId=editingRelRef.appId, edgeId=editingRelRef.edgeId, ri=editingRelRef.ri;
-  const app=findApp(appId);
-  const rel=app&&(app.relations||[])[ri];
-  if(!rel){closeEditor();return;}
-  const label=(document.getElementById("ed-erel-label").value||"").trim()||rel.fromLabel||"関連";
-  const kind=document.getElementById("ed-erel-kind").value||rel.kind;
-  const old={fromLabel:rel.fromLabel,fromDisplay:rel.fromDisplay,kind:rel.kind};
-  applyRelationOverride(app,edgeId,ri,{fromLabel:label,fromDisplay:label,kind});
-  pushUndo("関連線編集",()=>{const a=findApp(appId);if(a)applyRelationOverride(a,edgeId,ri,old);});
-  closeEditor();
-  toast("関連線を更新しました");
-}
-
-// ─── メモ（付箋）ノード ───
-let noteSeq=(ER_EDIT_STATE&&ER_EDIT_STATE.seq&&Number(ER_EDIT_STATE.seq.note))||0;
-let editingNoteId="";
-function addNoteElement(data){
-  return cy.add({group:"nodes",classes:"note-node",data:{id:data.id,label:data.text,noteColor:data.color||"#fef08a",isNote:true},position:{x:Number(data.x)||0,y:Number(data.y)||0}});
-}
-if(ER_EDIT_STATE&&Array.isArray(ER_EDIT_STATE.notes)){
-  try{ ER_EDIT_STATE.notes.forEach(n=>{ if(n&&n.id&&!cy.getElementById(n.id).length) addNoteElement(n); }); }
-  catch(err){ console.error("[ER] メモの復元に失敗", err); }
-}
-function openAddNote(pos){
-  pendingNodePos=pos||null;
-  openEditor("note-add","🗒 メモ(付箋)を追加","図の好きな位置に補足メモを置けます。エクスポートには含まれず、編集済みHTML保存では復元されます",
-    '<div class="ed-row"><label>メモ内容 *</label><textarea id="ed-note-text" placeholder="例: このアプリ群は受注フロー"></textarea></div>'
-    +'<div class="ed-row"><label>色</label>'+swatchesHtml(NOTE_COLORS,"#fef08a")+'</div>');
-}
-function openEditNote(id){
-  const node=cy.getElementById(id);
-  if(!node.length) return;
-  editingNoteId=id;
-  openEditor("note-edit","🗒 メモを編集","内容と色を変更できます。ドラッグで移動、ここから削除もできます",
-    '<div class="ed-row"><label>メモ内容 *</label><textarea id="ed-note-text"></textarea></div>'
-    +'<div class="ed-row"><label>色</label>'+swatchesHtml(NOTE_COLORS,node.data("noteColor"))+'</div>',
-    {submitLabel:"保存",showDelete:true});
-  document.getElementById("ed-note-text").value=node.data("label")||"";
-}
-function submitNoteAdd(){
-  const text=(document.getElementById("ed-note-text").value||"").trim();
-  if(!text){toast("メモ内容を入力してください");return;}
-  noteSeq+=1;
-  const ext=cy.extent();
-  const pos=pendingNodePos||{x:(ext.x1+ext.x2)/2,y:(ext.y1+ext.y2)/2};
-  const data={id:"note_"+noteSeq,text,color:selectedSwatchColor()||"#fef08a",x:pos.x,y:pos.y};
-  const node=addNoteElement(data);
-  pushUndo("メモ追加",()=>{const n=cy.getElementById(data.id);if(n.length)cy.remove(n);});
-  closeEditor();
-  node.select();
-  toast("メモを追加しました（クリックで編集・ドラッグで移動）");
-}
-function submitNoteEdit(){
-  const node=cy.getElementById(editingNoteId);
-  if(!node.length){closeEditor();return;}
-  const text=(document.getElementById("ed-note-text").value||"").trim();
-  if(!text){toast("メモ内容を入力してください");return;}
-  const noteId=node.id();
-  const old={text:node.data("label"),color:node.data("noteColor")};
-  node.data("label",text);
-  node.data("noteColor",selectedSwatchColor()||old.color);
-  pushUndo("メモ編集",()=>{const n=cy.getElementById(noteId);if(n.length){n.data("label",old.text);n.data("noteColor",old.color);}});
-  closeEditor();
-  toast("メモを更新しました");
-}
-function deleteNoteNodes(nodes){
-  const saved=[];
-  nodes.forEach(n=>{const p=n.position();saved.push({id:n.id(),text:n.data("label"),color:n.data("noteColor"),x:p.x,y:p.y});});
-  cy.remove(nodes);
-  if(saved.length) pushUndo("メモ削除 "+saved.length+"件",()=>{saved.forEach(d=>{if(!cy.getElementById(d.id).length) addNoteElement(d);});});
-}
-
-// ─── 整列ツール（複数選択ノードの位置合わせ） ───
-function selectedMovableNodes(){
-  return cy.nodes(":selected").not(".app-manual-hidden");
-}
-function pushPositionsUndo(nodes,label){
-  const saved=nodes.map(n=>({id:n.id(),x:n.position("x"),y:n.position("y")}));
-  pushUndo(label,()=>{saved.forEach(p=>{const n=cy.getElementById(p.id);if(n.length)n.position({x:p.x,y:p.y});});});
-}
-function alignSelected(axis){
-  const nodes=selectedMovableNodes();
-  if(nodes.length<2){toast("2つ以上のノードを選択してください（Shift+ドラッグ / Shift+クリック）");return;}
-  pushPositionsUndo(nodes,"整列");
-  if(axis==="x"){
-    const v=Math.min.apply(null,nodes.map(n=>n.position("x")));
-    nodes.forEach(n=>n.animate({position:{x:v,y:n.position("y")}},{duration:220}));
-    toast("選択ノードを左揃えしました");
-  }else{
-    const v=Math.min.apply(null,nodes.map(n=>n.position("y")));
-    nodes.forEach(n=>n.animate({position:{x:n.position("x"),y:v}},{duration:220}));
-    toast("選択ノードを上揃えしました");
-  }
-}
-function distributeSelected(axis){
-  const nodes=selectedMovableNodes();
-  if(nodes.length<3){toast("3つ以上のノードを選択してください");return;}
-  pushPositionsUndo(nodes,"等間隔配置");
-  const arr=nodes.sort((a,b)=>a.position(axis)-b.position(axis));
-  const first=arr[0].position(axis), last=arr[arr.length-1].position(axis);
-  const step=(last-first)/(arr.length-1);
-  arr.forEach((n,i)=>{
-    const pos={x:n.position("x"),y:n.position("y")};
-    pos[axis]=first+step*i;
-    n.animate({position:pos},{duration:220});
-  });
-  toast(axis==="x"?"横に等間隔配置しました":"縦に等間隔配置しました");
-}
-
-// ─── 深さごとの色分け ───
-function setAppAccent(app,color){
-  appOverrides[app.id]=Object.assign({},appOverrides[app.id],{name:app.name,color:color||""});
-  const n=cy.getElementById("a"+app.id);
-  if(n.length) n.data("accent",color||"");
-}
-function snapshotAccents(){
-  const map={};
-  APPS.forEach(app=>{map[app.id]=appAccentColor(app);});
-  return map;
-}
-function restoreAccents(map){
-  APPS.forEach(app=>{setAppAccent(app,map[app.id]||"");});
-}
-function autoColorByDepth(){
-  const palette=["#818cf8","#60a5fa","#34d399","#fbbf24","#f87171","#f472b6","#a78bfa","#2dd4bf"];
-  const old=snapshotAccents();
-  APPS.forEach(app=>{setAppAccent(app,palette[(app.depth||0)%palette.length]);});
-  pushUndo("深さで色分け",()=>restoreAccents(old));
-  toast("探索深さごとにノード枠を色分けしました（深さ0=藍）");
-}
-function clearNodeColors(){
-  const old=snapshotAccents();
-  APPS.forEach(app=>{setAppAccent(app,"");});
-  pushUndo("色分け解除",()=>restoreAccents(old));
-  toast("ノードの色分けを解除しました");
-}
-
-// ─── 項目・関連線の個別削除/復元（詳細パネルから操作） ───
-function afterFieldVisibilityChange(app){
-  const node = cy.getElementById("a"+app.id);
-  if(node.length){
-    refreshNodeDisplay(node,app);
-    node.data("fieldCount", visibleFieldsForNode(app).length);
-  }
-  refreshSidebar();
-  renderAppDetail(app);
-}
-function hideFieldFromRow(btn){
-  const app = findApp(btn.dataset.app);
-  if(!app) return;
-  const key = decodeURIComponent(btn.dataset.key || "");
-  if(!key) return;
-  hiddenFieldKeys.add(key);
-  pushUndo("項目非表示",()=>{
-    hiddenFieldKeys.delete(key);
-    const a=findApp(app.id);
-    if(a) afterFieldVisibilityChange(a);
-  });
-  afterFieldVisibilityChange(app);
-  toast("項目を図から非表示にしました（詳細パネルから復元できます）");
-}
-function restoreHiddenFields(appId){
-  const app = findApp(appId);
-  if(!app) return;
-  const prefix = String(app.id) + "::";
-  let restored = 0;
-  [...hiddenFieldKeys].forEach(key=>{
-    if(key.indexOf(prefix) === 0){ hiddenFieldKeys.delete(key); restored += 1; }
-  });
-  afterFieldVisibilityChange(app);
-  toast(restored ? ("非表示項目を復元: "+restored+"件") : "復元対象がありません");
-}
-function restoreAllHiddenFields(){
-  const count = hiddenFieldKeys.size;
-  hiddenFieldKeys.clear();
-  refreshNodeLabels();
-  refreshSidebar();
-  if(activeAppId){
-    const app = findApp(activeAppId);
-    if(app) renderAppDetail(app);
-  }
-  toast(count ? ("全アプリの非表示項目を復元: "+count+"件") : "復元対象がありません");
-}
-function toggleRelationEdgeFromRow(btn){
-  const edgeId = String(btn.dataset.edge || "");
-  const edge = cy.getElementById(edgeId);
-  if(!edge.length){ toast("対応する関連線が見つかりません"); return; }
-  if(edge.hasClass("rel-manual-hidden")){
-    manuallyRemovedEdgeIds.delete(edgeId);
-    nodeHiddenEdgeIds.delete(edgeId);
-    edge.removeClass("rel-manual-hidden");
-    toast("関連線を復元しました");
-  }else{
-    manuallyRemovedEdgeIds.add(edgeId);
-    edge.addClass("rel-manual-hidden");
-    toast("関連線を削除しました（同じボタンで復元）");
-  }
-  applyRelationFilter();
-  if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
-  const app = findApp(btn.dataset.app);
-  if(app) renderAppDetail(app);
-}
-
-// ─── Search & Highlight ───
-function searchGraph(q){
-  cy.elements().removeClass("highlighted dimmed");
-  if(!q.trim()){
-    updateSearchMeta("", 0);
-    searchMatchNodes=[];searchMatchIndex=-1;
-    return;
-  }
-  const low=q.toLowerCase();
-  const fieldMatches=f=>buildFieldDisplayName(f).toLowerCase().includes(low)||(f.code||"").toLowerCase().includes(low)||String(f.path||"").toLowerCase().includes(low);
-  // 項目名は、取得済みの全項目を対象にする（表示密度によってカードに出ない項目でも、どのアプリにあるかを探せるように）
-  searchHiddenOnlyIds=new Set();
-  const matched=cy.nodes().not(".app-manual-hidden").filter(n=>{
-    const app=appMap.get(n.data("appId"));
-    if(!app) return false;
-    if(app.name.toLowerCase().includes(low) || String(app.id).includes(low)) return true;
-    if(visibleFieldsForNode(app).some(fieldMatches)) return true;
-    if(allFieldsForApp(app).some(f=>!isFieldHidden(app,f)&&fieldMatches(f))){ searchHiddenOnlyIds.add(n.id()); return true; }
-    return false;
-  });
-  updateSearchMeta(q, matched.length, searchHiddenOnlyIds.size);
-  searchMatchNodes=matched.sort((a,b)=>String(appMap.get(a.data("appId"))?.name||"").localeCompare(String(appMap.get(b.data("appId"))?.name||""))).toArray();
-  searchMatchIndex=-1;
-  if(matched.length){
-    matched.addClass("highlighted");
-    const visibleEdges = matched.connectedEdges().filter(e=>!e.hasClass("rel-hidden") && !e.hasClass("rel-manual-hidden"));
-    cy.elements().not(matched).not(visibleEdges).not(".note-node").addClass("dimmed");
-  }
-}
-let searchMatchNodes=[],searchMatchIndex=-1,searchHiddenOnlyIds=new Set();
-function focusNextSearchMatch(){
-  if(!searchMatchNodes.length){toast("検索に一致するアプリがありません");return;}
-  searchMatchIndex=(searchMatchIndex+1)%searchMatchNodes.length;
-  const n=searchMatchNodes[searchMatchIndex];
-  cy.animate({center:{eles:n},zoom:Math.max(cy.zoom(),1.1)},{duration:300});
-  toast("一致 "+(searchMatchIndex+1)+"/"+searchMatchNodes.length+": "+(appMap.get(n.data("appId"))?.name||"")+(searchHiddenOnlyIds.has(n.id())?"（一致した項目は現在の表示密度では図に出ていません）":""));
-}
-
-// ─── Click Detail ───
-function renderAppDetail(app){
-  const visibleFields = visibleFieldsForNode(app);
-  const fieldGroups = detailFieldGroups(app);
-  const panel = document.getElementById("detail");
-  document.getElementById("detail-title").textContent = app.name;
-  const realFieldTotal = typeof app.totalFieldCount === "number" ? app.totalFieldCount : visibleFields.length;
-  const fieldPillText = realFieldTotal > visibleFields.length
-    ? '項目 ' + visibleFields.length + '/<small>' + realFieldTotal + '</small>'
-    : '<b>項目</b> ' + visibleFields.length;
-  const hiddenCnt = hiddenFieldCount(app);
-  document.getElementById("detail-meta").innerHTML = (app.isCustom ? "手動追加エンティティ" : "ID: " + escapeHtml(app.id))
-    + (app.createdAt ? " | 作成: " + escapeHtml(new Date(app.createdAt).toLocaleDateString()) : "")
-    + (app.modifiedAt ? " | 更新: " + escapeHtml(new Date(app.modifiedAt).toLocaleDateString()) : "")
-    + '<div class="detail-chip-row">'
-    + '<span class="meta-pill" title="表示中 / 総数（表示数は密度設定に依存）">' + fieldPillText + '</span>'
-    + '<span class="meta-pill"><b>ルックアップ</b> ' + fieldGroups.lookup.length + '</span>'
-    + '<span class="meta-pill"><b>関連</b> ' + fieldGroups.ref.length + '</span>'
-    + '<span class="meta-pill"><b>必須</b> ' + fieldGroups.required.length + '</span>'
-    + '<span class="meta-pill"><b>深さ</b> ' + (app.depth || 0) + '</span>'
-    + '<button type="button" class="meta-pill meta-pill--btn" title="図上の表示名とノード枠色を変更（kintone上は変わりません）" data-app="' + escapeHtml(String(app.id)) + '" onclick="openEditApp(this.dataset.app)">✏ 名前・色を編集</button>'
-    + (hiddenCnt ? '<button type="button" class="meta-pill meta-pill--btn" title="このアプリで非表示にした項目をすべて戻します" data-app="' + escapeHtml(String(app.id)) + '" onclick="restoreHiddenFields(this.dataset.app)">↺ 非表示項目 ' + hiddenCnt + ' を復元</button>' : '')
-    + '</div>'
-    + ((app.issues||[]).length?'<div class="analysis-note" role="status"><strong>'+(app.status==="failed"?'取得失敗':'一部取得')+'</strong><br>'+(app.issues||[]).map(issue=>escapeHtml(issue.message||issue.code||"取得上の注意")).join('<br>')+'</div>':'');
-
-  const relationGroups = [
-    { key:"LOOKUP", label:"ルックアップ", icon:"🔗" },
-    { key:"REF", label:"関連レコード", icon:"📋" },
-    { key:"ACTION", label:"アクション", icon:"⚡" }
-  ];
-  let relHtml = "";
-  const inboundRelations = [];
-  APPS.forEach((sourceApp)=>{
-    (sourceApp.relations || []).forEach((rel)=>{
-      if(String(rel.toApp) === String(app.id)) inboundRelations.push({ sourceApp, rel });
-    });
-  });
-  if(inboundRelations.length){
-    relHtml += '<div class="field-group-title">このアプリを参照している関連 (' + inboundRelations.length + ')</div>';
-    inboundRelations
-      .slice()
-      .sort((a,b)=>String(a.sourceApp.name || a.sourceApp.id).localeCompare(String(b.sourceApp.name || b.sourceApp.id)))
-      .forEach((item)=>{
-        const rel=item.rel;
-        const kindLabel=rel.kind==="LOOKUP"?"ルックアップ":(rel.kind==="REF"?"関連レコード":"アクション");
-        const sourceLabel=(item.sourceApp.name || ("アプリ "+item.sourceApp.id)) + " (App " + item.sourceApp.id + ")";
-        const relationName=rel.fromDisplay || rel.fromLabel || rel.from || kindLabel;
-        const meta=[];
-        meta.push(kindLabel + ": " + relationName);
-        if(rel.toField) meta.push((rel.kind==="REF"?"結合先: ":"接続先項目: ") + rel.toField);
-        relHtml += '<button type="button" class="field-row detail-relation-button" data-app="' + escapeHtml(String(item.sourceApp.id)) + '" onclick="focusApp(this.dataset.app)">'
-          + '<span class="field-icon">↙</span>'
-          + '<div class="field-main"><div class="field-name">' + escapeHtml(sourceLabel) + '</div><div class="field-sub">' + escapeHtml(meta.join(" / ")) + '</div>' + relationDetailHtml(rel) + '</div>'
-          + '<span class="field-type">被参照</span></button>';
-      });
-  }
-  relationGroups.forEach((group)=>{
-    const items = (app.relations || []).map((rel, ri)=>({ rel, ri })).filter((item)=>item.rel.kind === group.key);
-    if(!items.length) return;
-    relHtml += '<div class="field-group-title">' + group.label + ' (' + items.length + ')</div>';
-    items
-      .slice()
-      .sort((a,b)=>String(a.rel.fromDisplay || a.rel.fromLabel || a.rel.from || '').localeCompare(String(b.rel.fromDisplay || b.rel.fromLabel || b.rel.from || '')))
-      .forEach((item)=>{
-        const rel = item.rel;
-        const targetApp = appMap.get(rel.toApp);
-        const targetName = targetApp ? targetApp.name : "アプリ " + rel.toApp;
-        const targetLabel = targetName + " (App " + rel.toApp + ")";
-        const relationLabel = rel.fromDisplay || rel.fromLabel || rel.from || group.label;
-        const relationMeta = [];
-        if(rel.kind==="REF"&&rel.controlFieldLabel) relationMeta.push("関連レコード一覧: "+rel.controlFieldLabel);
-        if(rel.fromPath && rel.fromPath !== rel.from) relationMeta.push("path: " + rel.fromPath);
-        relationMeta.push("接続先: " + targetLabel);
-        if(rel.toField) relationMeta.push((rel.kind==="REF"?"結合: "+(rel.sourceJoinField||rel.from||"?")+" → ":"to: ") + rel.toField);
-        const edgeId = "e_" + app.id + "_" + item.ri;
-        const edge = cy.getElementById(edgeId);
-        const edgeHidden = edge.length && edge.hasClass("rel-manual-hidden");
-        const relEditBtn = '<button type="button" class="row-edit" title="この関連線を編集（ラベル・種類）" data-edge="' + escapeHtml(edgeId) + '" data-app="' + escapeHtml(String(app.id)) + '" onclick="openEditRelationRow(this);event.stopPropagation();">✎</button>';
-        const edgeBtn = edge.length
-          ? relEditBtn + '<button type="button" class="row-del' + (edgeHidden ? ' row-del--restore' : '') + '" title="' + (edgeHidden ? 'この関連線を復元' : 'この関連線を図から削除') + '" data-edge="' + escapeHtml(edgeId) + '" data-app="' + escapeHtml(String(app.id)) + '" onclick="toggleRelationEdgeFromRow(this);event.stopPropagation();">' + (edgeHidden ? '↺' : '✕') + '</button>'
-          : '';
-        relHtml += '<div class="field-row' + (edgeHidden ? ' field-row--hidden' : '') + '" style="cursor:pointer" onclick="focusApp(' + rel.toApp + ')">'
-          + '<span class="field-icon">' + group.icon + '</span>'
-          + '<div class="field-main">'
-          + '<div class="field-name" title="' + escapeHtml(relationLabel + ' → ' + targetLabel) + '">' + escapeHtml(relationLabel) + ' → ' + escapeHtml(targetLabel) + '</div>'
-          + '<div class="field-sub">' + escapeHtml(relationMeta.join(' / ') || '接続先をクリックで移動') + '</div>'
-          + relationDetailHtml(rel)
-          + '</div>'
-          + '<span class="field-type">' + escapeHtml(({LOOKUP:"ルックアップ",REF:"関連レコード",ACTION:"アクション"})[group.key]||group.key) + '</span>'
-          + edgeBtn
-          + '</div>';
-      });
-  });
-  document.getElementById("detail-relations").innerHTML = relHtml || '<div class="field-group-title">リレーション</div><div class="field-sub">関連はありません。</div>';
-
-  let fieldHtml = "";
-  const renderGroup = (title, fields, tagClass, tagLabel) => {
-    if(!fields.length) return;
-    fieldHtml += '<div class="field-group-title">' + title + ' (' + fields.length + ')</div>';
-    fields.forEach((field)=>{
-      let tags = "";
-      if(tagLabel) tags += '<span class="tag ' + tagClass + '">' + tagLabel + '</span>';
-      if(field.required && tagLabel !== "必須") tags += '<span class="tag tag-req">必須</span>';
-      if(field.inSubtable) tags += '<span class="tag tag-sub">表</span>';
-      if(field.unique) tags += '<span class="tag tag-pk">重複不可</span>';
-      const fieldName = buildFieldDisplayName(field);
-      const meta = ["code: " + (field.code || "-")];
-      if(field.path && field.path !== field.code) meta.push("path: " + field.path);
-      if(field.tableLabel) meta.push("table: " + field.tableLabel);
-      fieldHtml += '<div class="field-row" title="' + escapeHtml(fieldName) + '">'
-        + '<span class="field-icon">' + fieldIconForLabel(field) + '</span>'
-        + '<div class="field-main">'
-        + '<div class="field-name">' + escapeHtml(fieldName) + tags + '</div>'
-        + '<div class="field-sub">' + escapeHtml(meta.join(' / ')) + '</div>'
-        + '</div>'
-        + '<span class="field-type">' + escapeHtml(fieldTypeJpLabel(field.type)) + '</span>'
-        + '<button type="button" class="row-edit" title="この項目を編集（名前・種類・区分）" data-app="' + escapeHtml(String(app.id)) + '" data-key="' + escapeHtml(encodeURIComponent(fieldHideKey(app, field))) + '" onclick="openEditFieldRow(this);event.stopPropagation();">✎</button>'
-        + '<button type="button" class="row-del" title="この項目を図から非表示" data-app="' + escapeHtml(String(app.id)) + '" data-key="' + escapeHtml(encodeURIComponent(fieldHideKey(app, field))) + '" onclick="hideFieldFromRow(this);event.stopPropagation();">✕</button>'
-        + '</div>';
-    });
-  };
-  renderGroup("主キー", fieldGroups.pk, "tag-pk", "PK");
-  renderGroup("ルックアップ (FK)", fieldGroups.lookup, "tag-fk", "FK");
-  renderGroup("関連レコード", fieldGroups.ref, "tag-ref", "REF");
-  renderGroup("必須フィールド", fieldGroups.required, "tag-req", "必須");
-  renderGroup("サブテーブル", fieldGroups.subtable, "tag-sub", "Table");
-  renderGroup("その他フィールド", fieldGroups.normal, "", "");
-  const fieldFilterHtml = visibleFields.length > 8
-    ? '<input class="detail-filter" placeholder="🔎 パネル内の項目を絞り込み..." oninput="filterDetailFields(this.value)">'
-    : '';
-  document.getElementById("detail-fields").innerHTML = fieldFilterHtml + (fieldHtml || '<div class="field-group-title">フィールド</div><div class="field-sub">表示できるフィールドはありません。</div>');
-
-  panel.classList.add("open");
-  setActiveApp(app.id);
-}
-function renderGhostDetail(node){
-  const targetAppId=node.data("targetAppId")||"不明";
-  const inbound=[];
-  APPS.forEach((sourceApp)=>{
-    (sourceApp.relations||[]).forEach((rel)=>{
-      if(String(rel.toApp)===String(targetAppId)) inbound.push({sourceApp,rel});
-    });
-  });
-  const panel=document.getElementById("detail");
-  document.getElementById("detail-title").textContent="未取得の参照先";
-  document.getElementById("detail-meta").innerHTML='App '+escapeHtml(String(targetAppId))
-    +'<div class="analysis-note" role="status"><strong>図の外にある参照先です</strong><br>探索深さ・取得権限・削除済みアプリなどにより設定本体を取得できません。下記は取得済みアプリ側に残っている参照情報です。</div>';
-  let relationHtml='<div class="field-group-title">この参照先へ向かう関連 ('+inbound.length+')</div>';
-  inbound.forEach((item)=>{
-    relationHtml+='<button type="button" class="field-row detail-relation-button" data-app="'+escapeHtml(String(item.sourceApp.id))+'" onclick="focusApp(this.dataset.app)">'
-      +'<span class="field-icon">↖</span><div class="field-main"><div class="field-name">'+escapeHtml(item.sourceApp.name+' (App '+item.sourceApp.id+')')+'</div>'
-      +'<div class="field-sub">'+escapeHtml(exportRelationLabel(item.rel))+'</div></div><span class="field-type">'+escapeHtml(({LOOKUP:"ルックアップ",REF:"関連レコード",ACTION:"アクション"})[item.rel.kind]||"関連")+'</span></button>';
-  });
-  document.getElementById("detail-relations").innerHTML=relationHtml;
-  document.getElementById("detail-fields").innerHTML='<div class="field-group-title">項目</div><div class="field-sub">参照先アプリを取得できていないため、項目情報は表示できません。</div>';
-  panel.classList.add("open");
-  setActiveApp(0);
-}
-cy.on("tap","node",e=>{
-  if(e.target.hasClass("note-node")){ openEditNote(e.target.id()); return; }
-  lastTappedNodeId = e.target.id();
-  const app=appMap.get(e.target.data("appId"));
-  if(!app){ if(e.target.data("isGhost")) renderGhostDetail(e.target); return; }
-  renderAppDetail(app);
-  if(focusMode) applyFocusToNode(e.target);
-});
-cy.on("cxttap","node",e=>{
-  const n = e.target;
-  if(n.hasClass("note-node")){ deleteNoteNodes(n); toast("メモを削除しました (Ctrl+Zで復元)"); return; }
-  const oe = e.originalEvent || ({});
-  if(oe.altKey || oe.metaKey){
-    hideAppNodes(n);
-    applyRelationFilter();
-    refreshAppList();
-    if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
-    toast("アプリを手動削除 (Ctrl+Zで復元)");
-    return;
-  }
-  if(pinnedNodeIds.has(n.id())) unpinNode(n);
-  else pinNode(n);
-});
-cy.on("cxttap","edge",e=>{
-  const edge = e.target;
-  hideRelationEdges(edge);
-  applyRelationFilter();
-  if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
-  toast("関連線を手動削除 (Ctrl+Zで復元)");
-});
-cy.on("tap",e=>{if(e.target===cy){closeDetail();cy.elements().removeClass("highlighted dimmed path-node path-edge");clearFocus(true);clearAnalysisHighlight();}});
-
-function closeDetail(){
-  document.getElementById("detail").classList.remove("open");
-  setActiveApp(0);
-}
-
-// 詳細パネル内の項目絞り込み（大きいアプリで目的の項目を探しやすくする）
-function filterDetailFields(q){
-  const low=String(q||"").trim().toLowerCase();
-  document.querySelectorAll("#detail-fields .field-row").forEach(row=>{
-    row.style.display=!low||row.textContent.toLowerCase().includes(low)?"":"none";
-  });
-  document.querySelectorAll("#detail-fields .field-group-title").forEach(title=>{
-    let el=title.nextElementSibling, any=false;
-    while(el&&el.classList&&el.classList.contains("field-row")){
-      if(el.style.display!=="none") any=true;
-      el=el.nextElementSibling;
-    }
-    title.style.display=!low||any?"":"none";
-  });
-}
-
-function focusApp(id){
-  const n=cy.getElementById("a"+id);
-  if(n.length && !n.hasClass("app-manual-hidden")){
-    cy.animate({center:{eles:n},zoom:1.5},{ duration:400 });
-    n.select();
-    const app = appMap.get(Number(id)) || appMap.get(id);
-    if(app) renderAppDetail(app);
-    if(focusMode) applyFocusToNode(n, true);
-    return;
-  }
-  // 取得できていない参照先は「未取得の参照先」ノードへ移動し、詳細を表示する
-  const ghost=cy.getElementById("g"+String(id).replace(/[^0-9A-Za-z_-]/g,"_"));
-  if(ghost.length && ghost.data("isGhost") && !ghost.hasClass("app-manual-hidden")){
-    cy.animate({center:{eles:ghost},zoom:1.5},{ duration:400 });
-    ghost.select();
-    renderGhostDetail(ghost);
-  }
-}
-
-// ─── Architecture analysis ───
-function analysisItem(title, meta, ids, tone){
-  const safeIds=(ids||[]).map(id=>String(id).replace(/[^0-9]/g,"")).filter(Boolean).join(",");
-  return '<button type="button" class="analysis-item'+(tone?' analysis-item--'+tone:'')+'" data-analysis-ids="'+safeIds+'" onclick="focusAnalysisApps(this.dataset.analysisIds)"><strong>'+escapeHtml(title)+'</strong><span>'+escapeHtml(meta)+'</span></button>';
-}
-function renderAnalysisPanel(){
-  const host=document.getElementById("analysis-content");
-  if(!host) return;
-  const cycles=ER_ANALYSIS.cycles||[];
-  const selfReferences=ER_ANALYSIS.selfReferences||[];
-  const isolated=ER_ANALYSIS.isolatedAppIds||[];
-  const hubs=ER_ANALYSIS.hubs||[];
-  const unresolved=ER_ANALYSIS.unresolvedTargets||[];
-  const partialIds=ER_ANALYSIS.partialAppIds||[];
-  const failedIds=ER_ANALYSIS.failedAppIds||[];
-  let html='<section class="analysis-section"><h3><span>取得に注意が必要</span><span class="analysis-count">'+(partialIds.length+failedIds.length)+'</span></h3>';
-  html+=partialIds.concat(failedIds).length?partialIds.concat(failedIds).map(id=>{const app=appMap.get(Number(id))||appMap.get(id);const status=failedIds.includes(id)?'取得失敗':'一部取得';const messages=(app&&app.issues||[]).map(issue=>issue.message).filter(Boolean);return analysisItem((app&&app.name)||('アプリ '+id),status+(messages.length?' / '+messages.slice(0,2).join(' / '):''),[id],failedIds.includes(id)?'risk':'warn');}).join(''):'<div class="analysis-empty">取得上の注意は記録されていません。</div>';
-  html+='</section><section class="analysis-section"><h3><span>複数アプリの循環候補</span><span class="analysis-count">'+cycles.length+'</span></h3>';
-  html+=cycles.length?cycles.map((cycle,i)=>analysisItem('候補 '+(i+1)+': '+cycle.appNames.join(' → '),cycle.appIds.length+'アプリ間で相互に到達できます',cycle.appIds,'risk')).join(''):'<div class="analysis-empty">複数アプリの循環候補は検出されませんでした。</div>';
-  html+='</section><section class="analysis-section"><h3><span>自己参照</span><span class="analysis-count">'+selfReferences.length+'</span></h3>';
-  html+=selfReferences.length?selfReferences.map(item=>analysisItem(item.appName+' (App '+item.appId+')',(item.kind||'関連')+(item.field?' / '+item.field:''),[item.appId],'')).join(''):'<div class="analysis-empty">自己参照はありません。</div>';
-  html+='</section><section class="analysis-section"><h3><span>接続数が多いアプリ（'+(ER_ANALYSIS.highConnectionThreshold||3)+'件以上）</span><span class="analysis-count">'+hubs.length+'</span></h3>';
-  html+=hubs.length?hubs.map(hub=>analysisItem(hub.name+' (App '+hub.appId+')','入 '+hub.incoming+' / 出 '+hub.outgoing+' / 合計 '+hub.total,[hub.appId],'')).join(''):'<div class="analysis-empty">該当するアプリはありません。</div>';
-  html+='</section><section class="analysis-section"><h3><span>図内で関連のないアプリ</span><span class="analysis-count">'+isolated.length+'</span></h3>';
-  html+=isolated.length?isolated.map(id=>{const stat=(ER_ANALYSIS.appStats||[]).find(s=>String(s.appId)===String(id));return analysisItem((stat&&stat.name)||('アプリ '+id),'図内に入出力の関連がありません',[id],'');}).join(''):'<div class="analysis-empty">該当するアプリはありません。</div>';
-  html+='</section><section class="analysis-section"><h3><span>未取得の参照先</span><span class="analysis-count">'+unresolved.length+'</span></h3>';
-  html+=unresolved.length?unresolved.slice(0,20).map(item=>analysisItem(item.fromAppName+' → App '+item.toAppId,(item.kind||'関連')+(item.field?' / '+item.field:''),[item.fromAppId],'warn')).join(''):'<div class="analysis-empty">参照先はすべて図内に取得されています。</div>';
-  if(unresolved.length>20) html+='<div class="analysis-empty">ほか '+(unresolved.length-20)+' 件</div>';
-  html+='</section>';
-  host.innerHTML=html;
-}
-function clearAnalysisHighlight(){
-  cy.elements().removeClass("analysis-hit analysis-dim");
-}
-function focusAnalysisApps(csv){
-  const ids=String(csv||"").split(",").filter(Boolean);
-  clearAnalysisHighlight();
-  const nodes=ids.map(id=>cy.getElementById("a"+id)).filter(node=>node.length&&!node.hasClass("app-manual-hidden"));
-  if(!nodes.length){toast("対象アプリは現在の図にありません");return;}
-  const collection=nodes.reduce((all,node)=>all.union(node),cy.collection());
-  cy.nodes().not(".note-node").not(collection).addClass("analysis-dim");
-  collection.addClass("analysis-hit");
-  if(collection.length===1) focusApp(ids[0]);
-  else cy.animate({fit:{eles:collection,padding:100}},{duration:450});
-  toast(collection.length+"アプリを強調しました（背景クリックで解除）");
-}
-function toggleAnalysisPanel(force){
-  const panel=document.getElementById("analysis-panel");
-  const open=typeof force==="boolean"?force:!panel.classList.contains("open");
-  panel.classList.toggle("open",open);
-  document.getElementById("analysis-toggle-btn")?.classList.toggle("active",open);
-  if(open){closeSidebar();closeDetail();}
-}
-function renderAnalysisSummaryHtml(){renderAnalysisPanel();const h=document.getElementById("analysis-content");return h?h.innerHTML:"";}
-renderAnalysisPanel();
-
-// ─── Sidebar ───
-let sidebarReturnFocus=null;
-function syncSidebarTriggerState(open){
-  ["sidebar-toggle-btn","sidebar-fab-btn"].forEach(id=>{
-    document.getElementById(id)?.setAttribute("aria-expanded",String(open));
-  });
-}
-function toggleSidebar(force, trigger){
-  const sidebar=document.getElementById("sidebar");
-  const wasOpen=sidebar.classList.contains("open");
-  const open=typeof force==="boolean"?force:!sidebar.classList.contains("open");
-  if(open&&!wasOpen){
-    const active=document.activeElement;
-    sidebarReturnFocus=trigger&&typeof trigger.focus==="function"
-      ? trigger
-      : (active&&active.matches?.("#sidebar-toggle-btn,#sidebar-fab-btn") ? active : document.getElementById("sidebar-toggle-btn"));
-  }
-  sidebar.classList.toggle("open",open);
-  sidebar.setAttribute("aria-hidden",String(!open));
-  sidebar.inert=!open;
-  syncSidebarTriggerState(open);
-  if(open){
-    toggleAnalysisPanel(false);
-    closeDetail();
-    document.getElementById("sidebar-close")?.focus();
-  }else if(wasOpen){
-    const restore=sidebarReturnFocus;
-    sidebarReturnFocus=null;
-    if(restore&&document.contains(restore)) restore.focus();
-  }
-}
-function closeSidebar(){toggleSidebar(false);}
-
-// Build stats
-function refreshSidebar(){
-  const activeTypes=new Set([...document.querySelectorAll(".filter-chip.active")].map(e=>e.dataset.type));
-  const visibleFieldsTotal=APPS.reduce((s,a)=>s+visibleFieldsForNode(a).length,0);
-  const totalFieldsAcrossApps=APPS.reduce((s,a)=>s+(typeof a.totalFieldCount==="number"?a.totalFieldCount:visibleFieldsForNode(a).length),0);
-  const totalRels=APPS.reduce((s,a)=>s+a.relations.length,0);
-  const lookups=APPS.reduce((s,a)=>s+a.relations.filter(r=>r.kind==="LOOKUP").length,0);
-  const actions=APPS.reduce((s,a)=>s+a.relations.filter(r=>r.kind==="ACTION").length,0);
-  const refs=totalRels-lookups-actions;
-  const typeCount={};
-  APPS.forEach(a=>visibleFieldsForNode(a).forEach(f=>{typeCount[f.type]=(typeCount[f.type]||0)+1;}));
-
-  let html='<div class="stat-row"><span>アプリ数</span><span class="stat-val">'+APPS.length+'</span></div>';
-  html+='<div class="stat-row"><span>総フィールド数</span><span class="stat-val">'+totalFieldsAcrossApps+'</span></div>';
-  if(visibleFieldsTotal!==totalFieldsAcrossApps){
-    html+='<div class="stat-row"><span>表示中フィールド</span><span class="stat-val">'+visibleFieldsTotal+'</span></div>';
-  }
-  html+='<div class="stat-row"><span>ルックアップ数</span><span class="stat-val">'+lookups+'</span></div>';
-  html+='<div class="stat-row"><span>関連レコード数</span><span class="stat-val">'+refs+'</span></div>';
-  html+='<div class="stat-row"><span>アクション線数</span><span class="stat-val">'+actions+'</span></div>';
-  html+='<div class="stat-row"><span>総リレーション</span><span class="stat-val">'+totalRels+'</span></div>';
-  html+='<div class="stat-row"><span>取得完了</span><span class="stat-val">'+APPS.filter(a=>(a.status||"complete")==="complete"&&a.ok!==false).length+'</span></div>';
-  html+='<div class="stat-row"><span>一部取得</span><span class="stat-val">'+APPS.filter(a=>a.status==="partial").length+'</span></div>';
-  html+='<div class="stat-row"><span>取得失敗</span><span class="stat-val">'+APPS.filter(a=>a.status==="failed"||a.ok===false).length+'</span></div>';
-  document.getElementById("stats-summary").innerHTML=html;
-
-  // type filters
-  const filterHost=document.getElementById("type-filters");
-  filterHost.replaceChildren();
-  Object.entries(typeCount).sort((a,b)=>b[1]-a[1]).forEach(([t,c])=>{
-    const button=document.createElement("button");
-    button.type="button";
-    button.className="filter-chip"+(activeTypes.has(t)?" active":"");
-    button.dataset.type=t;
-    button.textContent=fieldTypeJpLabel(t)+" ("+c+")";
-    button.setAttribute("aria-pressed",activeTypes.has(t)?"true":"false");
-    button.addEventListener("click",()=>filterByType(button,t));
-    filterHost.appendChild(button);
-  });
-
-  refreshAppList();
-}
-refreshSidebar();
-
-function refreshAppList(){
-  const sorted = APPS
-    .slice()
-    .sort((a,b)=>{
-      const aStart = startAppIdSet.has(String(a.id)) ? 0 : 1;
-      const bStart = startAppIdSet.has(String(b.id)) ? 0 : 1;
-      if(aStart !== bStart) return aStart - bStart;
-      if((a.depth || 0) !== (b.depth || 0)) return (a.depth || 0) - (b.depth || 0);
-      return String(a.name || "").localeCompare(String(b.name || ""));
-    });
-  const renderItem = (a)=>{
-    const visibleCount = visibleFieldsForNode(a).length;
-    const node = cy.getElementById('a'+a.id);
-    const hidden = node.length && node.hasClass('app-manual-hidden');
-    const activeCls = Number(activeAppId) === Number(a.id) ? ' active-app' : '';
-    const hiddenCls = hidden ? ' highlighted' : '';
-    const startMeta = startAppIdSet.has(String(a.id)) ? ' / 開始' : '';
-    const hiddenMeta = hidden ? ' / 非表示' : '';
-    return '<button type="button" class="app-list-item'+activeCls+hiddenCls+'" onclick="focusApp('+a.id+')">'+escapeHtml(a.name)+' <span style="color:var(--dim);font-size:10px">('+visibleCount+' 項目 / '+a.relations.length+' 関連 / 深さ '+(a.depth || 0)+startMeta+hiddenMeta+')</span></button>';
-  };
-  // 紐づき（可視の関連線）があるアプリと無いアプリを別グループで表示する
-  const linkedApps=[], noLinkApps=[];
-  sorted.forEach(a=>{
-    const node = cy.getElementById('a'+a.id);
-    const hasLink = node.length ? nodeHasVisibleLink(node) : (a.relations || []).length > 0;
-    (hasLink ? linkedApps : noLinkApps).push(a);
-  });
-  let aHtml="";
-  if(noLinkApps.length && linkedApps.length){
-    aHtml += '<div class="app-list-group">🔗 紐づきあり ('+linkedApps.length+')</div>';
-    linkedApps.forEach(a=>{ aHtml += renderItem(a); });
-    aHtml += '<div class="app-list-group">⬜ 紐づきなし ('+noLinkApps.length+')</div>';
-    noLinkApps.forEach(a=>{ aHtml += renderItem(a); });
-  }else{
-    sorted.forEach(a=>{ aHtml += renderItem(a); });
-  }
-  document.getElementById("app-list").innerHTML=aHtml;
-}
-
-function filterByType(el,type){
-  el.classList.toggle("active");
-  el.setAttribute("aria-pressed",el.classList.contains("active")?"true":"false");
-  const active=[...document.querySelectorAll(".filter-chip.active")].map(e=>e.dataset.type);
-  cy.elements().removeClass("highlighted dimmed");
-  if(!active.length) return;
-  const matched=cy.nodes().not(".app-manual-hidden").filter(n=>{
-    const app=appMap.get(n.data("appId"));
-    return app&&visibleFieldsForNode(app).some(f=>active.includes(f.type));
-  });
-  matched.addClass("highlighted");
-  const visibleEdges = matched.connectedEdges().filter(e=>!e.hasClass("rel-hidden") && !e.hasClass("rel-manual-hidden"));
-  cy.elements().not(matched).not(visibleEdges).not(".note-node").addClass("dimmed");
-}
-
-// ─── Path Finder ───
-function togglePathFinder(){
-  const pf=document.getElementById("pathfinder");
-  pf.classList.toggle("open");
-  if(pf.classList.contains("open")){
-    const apps=APPS.filter(a=>{ const n = cy.getElementById("a"+a.id); return n.length && !n.hasClass("app-manual-hidden"); });
-    ["pf-from","pf-to"].forEach(id=>{
-      const select=document.getElementById(id);
-      select.replaceChildren();
-      apps.forEach(app=>{const option=document.createElement("option");option.value="a"+app.id;option.textContent=String(app.name||("アプリ "+app.id));select.appendChild(option);});
-    });
-  }
-  requestAnimationFrame(syncBottomUiOffsets);
-}
-
-function findPath(){
-  clearPath();
-  const from=document.getElementById("pf-from").value;
-  const to=document.getElementById("pf-to").value;
-  if(from===to){toast("同じアプリです");return;}
-  const dijkstra=cy.elements().not(".rel-hidden").not(".rel-manual-hidden").not(".app-manual-hidden").dijkstra({root:"#"+from,directed:false});
-  const path=dijkstra.pathTo(cy.getElementById(to));
-  if(!path||path.length===0){document.getElementById("path-result").textContent="経路なし";return;}
-  path.addClass("path-node path-edge");
-  cy.elements().not(path).not(".note-node").addClass("dimmed");
-  const names=path.nodes().map(n=>appMap.get(n.data("appId"))?.name||"?").join(" → ");
-  document.getElementById("path-result").textContent=names;
-  toast("経路: "+path.nodes().length+"アプリ");
-}
-
-function clearPath(){
-  cy.elements().removeClass("path-node path-edge dimmed highlighted");
-  document.getElementById("path-result").textContent="";
-}
-
-// ─── Minimap ───
-let minimapOpen=false,minimapTimer;
-function toggleMinimap(){
-  minimapOpen=!minimapOpen;
-  document.getElementById("minimap").classList.toggle("open",minimapOpen);
-  if(minimapOpen) startMinimap(); else clearInterval(minimapTimer);
-}
-function startMinimap(){
-  const canvas=document.getElementById("minimap-canvas");
-  const ctx=canvas.getContext("2d");
-  const render=()=>{
-    canvas.width=180;canvas.height=130;
-    ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue("--surface").trim()||"#11131a";
-    ctx.fillRect(0,0,180,130);
-    const bb=cy.elements().boundingBox();
-    if(bb.w===0) return;
-    const sx=170/bb.w,sy=120/bb.h,s=Math.min(sx,sy);
-    const ox=(180-bb.w*s)/2,oy=(130-bb.h*s)/2;
-    cy.edges().filter(e=>!e.hasClass("rel-hidden") && !e.hasClass("rel-manual-hidden")).forEach(e=>{
-      const sp=e.sourceEndpoint(),tp=e.targetEndpoint();
-      ctx.strokeStyle=e.data("kind")==="LOOKUP"?"#60a5fa":(e.data("kind")==="REF"?"#34d399":"#f59e0b");
-      ctx.lineWidth=0.5;ctx.beginPath();
-      ctx.moveTo((sp.x-bb.x1)*s+ox,(sp.y-bb.y1)*s+oy);
-      ctx.lineTo((tp.x-bb.x1)*s+ox,(tp.y-bb.y1)*s+oy);
-      ctx.stroke();
-    });
-    cy.nodes().forEach(n=>{
-      const p=n.position();
-      if(n.hasClass("pinned-node")) ctx.fillStyle="#fbbf24";
-      else if(n.hasClass("focus-root")) ctx.fillStyle="#5eead4";
-      else if(n.hasClass("focus-neighbor")) ctx.fillStyle="#67e8f9";
-      else if(n.hasClass("path-node")) ctx.fillStyle="#f472b6";
-      else if(n.hasClass("highlighted")) ctx.fillStyle="#fbbf24";
-      else ctx.fillStyle="#5eead4";
-      ctx.globalAlpha=(n.hasClass("dimmed")||n.hasClass("focus-dim"))?0.12:0.8;
-      ctx.fillRect((p.x-bb.x1)*s+ox-2,(p.y-bb.y1)*s+oy-2,4,4);
-      ctx.globalAlpha=1;
-    });
-    // viewport rect
-    const ext=cy.extent();
-    ctx.strokeStyle="#fff";ctx.lineWidth=1;ctx.globalAlpha=0.5;
-    ctx.strokeRect((ext.x1-bb.x1)*s+ox,(ext.y1-bb.y1)*s+oy,(ext.x2-ext.x1)*s,(ext.y2-ext.y1)*s);
-    ctx.globalAlpha=1;
-  };
-  minimapTimer=setInterval(render,500);
-  render();
-}
-
-// ─── Command Palette ───
-const commands=[
-  {label:"全体表示",icon:"📐",action:fit,keys:"Ctrl+0"},
-  {label:"Dagre レイアウト",icon:"⬡",action:()=>setLayout("dagre")},
-  {label:"自動配置 (Cose)",icon:"🔄",action:()=>setLayout("cose")},
-  {label:"グリッド レイアウト",icon:"⊞",action:()=>setLayout("grid")},
-  {label:"円形 レイアウト",icon:"◯",action:()=>setLayout("circle")},
-  {label:"ツリー レイアウト",icon:"🌳",action:()=>setLayout("breadthfirst")},
-  {label:"紐づきなしアプリの分離 ON/OFF",icon:"🗂",action:toggleSeparateNoLink},
-  {label:"同心円 レイアウト",icon:"◎",action:()=>setLayout("concentric")},
-  {label:"シンプルモード ON/OFF（結合のみ表示）",icon:"⬡",action:toggleSimpleMode},
-  {label:"表示密度: 結合のみ（項目非表示）",icon:"⬡",action:()=>setDensity("none")},
-  {label:"表示密度: コンパクト",icon:"🪶",action:()=>setDensity("compact")},
-  {label:"表示密度: 標準",icon:"📄",action:()=>setDensity("standard")},
-  {label:"表示密度: 詳細",icon:"🧾",action:()=>setDensity("full")},
-  {label:"統計パネル",icon:"📊",action:toggleSidebar,keys:"Ctrl+B"},
-  {label:"構造チェック（取得状態・循環候補・接続数）",icon:"🩺",action:()=>toggleAnalysisPanel(true)},
-  {label:"ガイドパネル 表示/非表示",icon:"🧭",action:toggleOverview},
-  {label:"経路探索",icon:"🔍",action:togglePathFinder},
-  {label:"関連強調 ON/OFF",icon:"🎯",action:toggleFocusMode,keys:"Shift+F"},
-  {label:"関連強調解除",icon:"🧹",action:()=>clearFocus()},
-  {label:"ルックアップ線 ON/OFF",icon:"🔗",action:()=>toggleRelationKind("LOOKUP")},
-  {label:"関連線 ON/OFF",icon:"📋",action:()=>toggleRelationKind("REF")},
-  {label:"アクション線 ON/OFF",icon:"⚡",action:()=>toggleRelationKind("ACTION")},
-  {label:"線ラベル ON/OFF",icon:"🏷",action:toggleRelationLabels},
-  {label:"元に戻す",icon:"↩",action:undoLast,keys:"Ctrl+Z"},
-  {label:"アプリ(エンティティ)を追加",icon:"⬡",action:()=>openAddApp()},
-  {label:"アプリに項目を追加",icon:"📝",action:()=>openAddField()},
-  {label:"関連線を追加",icon:"🔗",action:()=>openAddRelation()},
-  {label:"メモ(付箋)を追加",icon:"🗒",action:()=>openAddNote()},
-  {label:"アプリを編集（名前・枠色）",icon:"✏",action:()=>openEditApp()},
-  {label:"深さごとに色分け",icon:"🎨",action:autoColorByDepth},
-  {label:"色分けを解除",icon:"🧼",action:clearNodeColors},
-  {label:"選択ノードを左揃え",icon:"⇤",action:()=>alignSelected("x")},
-  {label:"選択ノードを上揃え",icon:"⇞",action:()=>alignSelected("y")},
-  {label:"選択ノードを横に等間隔",icon:"⇶",action:()=>distributeSelected("x")},
-  {label:"選択ノードを縦に等間隔",icon:"⇩",action:()=>distributeSelected("y")},
-  {label:"選択関連を削除",icon:"🗑",action:removeSelectedRelations,keys:"Delete"},
-  {label:"削除関連を復元",icon:"↺",action:restoreRemovedRelations},
-  {label:"選択アプリを削除",icon:"🗑📱",action:removeSelectedApps,keys:"Delete"},
-  {label:"削除アプリを復元",icon:"↺📱",action:restoreRemovedApps},
-  {label:"非表示にした項目をすべて復元",icon:"↺📝",action:restoreAllHiddenFields},
-  {label:"選択ノード 固定/解除",icon:"📌",action:togglePinFromSelection,keys:"Shift+P"},
-  {label:"固定を全解除",icon:"📍",action:clearPins},
-  {label:"ミニマップ",icon:"🗺",action:toggleMinimap},
-  {label:"テーマ切替",icon:"🌓",action:toggleTheme},
-  {label:"編集済みHTMLを保存",icon:"💾",action:exportEditedHtml},
-  {label:"PNG エクスポート（白背景）",icon:"🖼",action:exportPNG},
-  {label:"Mermaid エクスポート",icon:"🧜",action:showMermaid},
-  {label:"draw.io エクスポート",icon:"📊",action:showDrawio},
-  {label:"SQL DDL エクスポート",icon:"🗄",action:showSQL},
-  {label:"PlantUML エクスポート",icon:"🌱",action:showPlantUML},
-  {label:"ERモデル JSON エクスポート",icon:"{}",action:showJSON},
-  {label:"Markdown 仕様書エクスポート",icon:"📝",action:showMarkdown},
-  {label:"CSV (アプリ一覧) エクスポート",icon:"📑",action:showCSVApps},
-  {label:"CSV (フィールド) エクスポート",icon:"📑",action:showCSVFields},
-  {label:"CSV (リレーション) エクスポート",icon:"📑",action:showCSVRelations},
-  {label:"印刷プレビュー",icon:"🖨",action:printDiagram},
-  {label:"表示状態のURLをコピー",icon:"🔗",action:copyShareUrl},
-  {label:"フルスクリーン",icon:"⛶",action:toggleFullscreen,keys:"F11"},
-  {label:"ズームイン",icon:"➕",action:zoomIn,keys:"+"},
-  {label:"ズームアウト",icon:"➖",action:zoomOut,keys:"-"},
-  {label:"ズームリセット",icon:"◎",action:zoomReset,keys:"0"},
-  {label:"ヘルプ",icon:"❓",action:openHelp,keys:"?"},
-  {label:"ハイライト解除",icon:"✨",action:()=>{cy.elements().removeClass("highlighted dimmed path-node path-edge");document.getElementById("search-box").value="";clearFocus(true);}},
-];
-
-// Add app-focus commands
-APPS.forEach(a=>{
-  commands.push({label:"アプリ: "+a.name+" (ID:"+a.id+")",icon:"📱",appId:a.id,action:()=>focusApp(a.id)});
-});
-
-function openCmd(){
-  document.getElementById("cmd-overlay").classList.add("open");
-  const inp=document.getElementById("cmd-input");inp.value="";inp.focus();
-  filterCmd("");
-}
-function closeCmd(){document.getElementById("cmd-overlay").classList.remove("open");}
-
-function filterCmd(q){
-  const low=q.toLowerCase();
-  const filtered=q?commands.filter(c=>c.label.toLowerCase().includes(low)):commands.slice(0,12);
-  const box=document.getElementById("cmd-results");
-  box.replaceChildren();
-  filtered.forEach((command,index)=>{
-    const item=document.createElement("button");
-    item.type="button";
-    item.className="cmd-item"+(index===0?" active":"");
-    const icon=document.createElement("span");icon.textContent=String(command.icon||"");
-    const label=document.createElement("span");label.textContent=String(command.label||"");
-    item.append(icon,label);
-    if(command.keys){const keys=document.createElement("span");keys.className="kbd";keys.textContent=String(command.keys);item.appendChild(keys);}
-    item.addEventListener("click",()=>runCmd(commands.indexOf(command)));
-    box.appendChild(item);
-  });
-}
-
-function runCmd(idx){commands[idx].action();closeCmd();}
-
-// ─── Keyboard Shortcuts ───
-function isTypingTarget(el){
-  if(!el) return false;
-  const tag=(el.tagName||"").toUpperCase();
-  return tag==="INPUT"||tag==="TEXTAREA"||tag==="SELECT"||el.isContentEditable;
-}
-function isInteractiveShortcutTarget(el){
-  if(isTypingTarget(el)) return true;
-  return !!(el && typeof el.closest === "function" && el.closest("button,a,summary,[role='button']"));
-}
-document.addEventListener("keydown",e=>{
-  if(e.key==="k"&&(e.ctrlKey||e.metaKey)){e.preventDefault();openCmd();}
-  if(e.key==="b"&&(e.ctrlKey||e.metaKey)){e.preventDefault();toggleSidebar();}
-  if(e.key==="f"&&(e.ctrlKey||e.metaKey)){e.preventDefault();document.getElementById("search-box").focus();}
-  if(e.key==="F"&&e.shiftKey&&!e.isComposing&&!e.repeat&&!isInteractiveShortcutTarget(e.target)){e.preventDefault();toggleFocusMode();}
-  if(e.key==="P"&&e.shiftKey&&!e.isComposing&&!e.repeat&&!isInteractiveShortcutTarget(e.target)){e.preventDefault();togglePinFromSelection();}
-  if(e.key==="0"&&(e.ctrlKey||e.metaKey)){e.preventDefault();fit();}
-  if((e.key==="z"||e.key==="Z")&&(e.ctrlKey||e.metaKey)&&!e.shiftKey&&!isTypingTarget(e.target)){e.preventDefault();undoLast();}
-  if(e.key==="Escape"){closeCmd();closeDetail();closeModal();closeHelp();closeEditor();closeAllMenus();closeZoomPresets();closeSidebar();toggleAnalysisPanel(false);clearFocus(true);clearAnalysisHighlight();closeMobileMenu();}
-  if((e.key==="Delete"||e.key==="Backspace")&&!isTypingTarget(e.target)){
-    const selEdges=cy.edges(":selected");
-    const selNotes=cy.nodes(".note-node:selected");
-    const selNodes=cy.nodes(":selected").not(".app-manual-hidden").not(".note-node");
-    if(selEdges.length||selNodes.length||selNotes.length){
-      e.preventDefault();
-      if(selEdges.length) removeSelectedRelations();
-      if(selNodes.length) removeSelectedApps();
-      if(selNotes.length){ deleteNoteNodes(selNotes); toast("メモを削除: "+selNotes.length+"件 (Ctrl+Zで復元)"); }
-    }
-  }
-  if(!isTypingTarget(e.target)){
-    if(e.key==="?"||(e.key==="/"&&e.shiftKey)){e.preventDefault();openHelp();}
-    if(e.key==="+"||e.key==="="){e.preventDefault();zoomIn();}
-    if(e.key==="-"||e.key==="_"){e.preventDefault();zoomOut();}
-    if(e.key==="0"&&!e.ctrlKey&&!e.metaKey){e.preventDefault();zoomReset();}
-    if(e.key==="F11"){e.preventDefault();toggleFullscreen();}
-  }
-  // cmd palette navigation
-  if(document.getElementById("cmd-overlay").classList.contains("open")){
-    const items=[...document.querySelectorAll(".cmd-item")];
-    const ai=items.findIndex(i=>i.classList.contains("active"));
-    if(e.key==="ArrowDown"){e.preventDefault();items[ai]?.classList.remove("active");items[Math.min(ai+1,items.length-1)]?.classList.add("active");}
-    if(e.key==="ArrowUp"){e.preventDefault();items[ai]?.classList.remove("active");items[Math.max(ai-1,0)]?.classList.add("active");}
-    if(e.key==="Enter"){e.preventDefault();items[ai]?.click();}
-  }
-});
-
-// ─── Exports ───
-const EXPORT_CLEARED_CLASSES=["focus-root","focus-neighbor","focus-edge","focus-dim","dimmed","highlighted","analysis-hit","analysis-dim","path-node","path-edge"];
-// カード画像は非同期に読み込まれるため、一度描いて読み込みを始めさせてから完了を待つ
-function waitForCardImages(){
-  cy.png({full:true,scale:0.05});
-  const sources=cy.nodes("[cardImage]").map(node=>node.data("cardImage"));
-  return Promise.all(sources.map(src=>new Promise(done=>{
-    const img=new Image();
-    img.onload=img.onerror=()=>done();
-    img.src=src;
-  }))).then(()=>new Promise(done=>setTimeout(done,150)));
-}
-// 出力は表示倍率やテーマによらず、ライトテーマの詳細カードで描く
-async function withExportView(render){
-  const wasDark=isDark,wasLow=semanticZoomActive;
-  // 画面上の強調は操作中の目印なので、出力には残さず全体図にする
-  const emphasis=EXPORT_CLEARED_CLASSES.map(name=>[name,cy.elements("."+name)]);
-  cy.elements().removeClass(EXPORT_CLEARED_CLASSES.join(" "));
-  if(wasLow) applySemanticZoom(1,true);
-  if(wasDark){isDark=false;document.documentElement.setAttribute("data-theme","light");applyCyTheme();}
-  try{
-    await waitForCardImages();
-    return render();
-  }finally{
-    if(wasDark){isDark=true;document.documentElement.setAttribute("data-theme","");applyCyTheme();}
-    if(wasLow) applySemanticZoom(cy.zoom(),true);
-    emphasis.forEach(([name,elements])=>elements.addClass(name));
-  }
-}
-function exportImageMeta(){
-  const ids=ER_OPTIONS.startAppIds||[];
-  const shown=ids.slice(0,5).join(", ")+(ids.length>5?" ほか"+(ids.length-5)+"件":"");
-  return [
-    "起点: "+(shown||"-"),
-    (ER_OPTIONS.sourceGuestId?("ゲスト "+ER_OPTIONS.sourceGuestId):"通常空間")+" / "+(ER_OPTIONS.sourcePreview?"プレビュー":"本番"),
-    APPS.length+"アプリ",
-    "出力: "+new Date().toLocaleString("ja-JP")
-  ].join("  |  ");
-}
-async function buildExportImage(maxSide=14000){
-  const diagram=await withExportView(()=>{
-    const box=cy.elements(":visible").boundingBox();
-    // cy.png は画面の倍率も掛けるため、高解像度の画面でもキャンバスの上限を超えないように割り戻す
-    return cy.png({bg:"#ffffff",full:true,scale:Math.min(2,maxSide/Math.max(box.w,box.h,1))/(window.devicePixelRatio||1)});
-  });
-  return new Promise(resolve=>{
-    const img=new Image();
-    img.onerror=()=>resolve(diagram);
-    img.onload=()=>{
-      try{
-        // 図が大きいほど見出しも拡大し、縮小して見ても読める大きさを保つ
-        const unit=Math.max(1,img.width/2000);
-        const pad=48,headerH=214;
-        const canvas=document.createElement("canvas");
-        canvas.width=Math.max(img.width+pad*unit*2,1600);
-        canvas.height=img.height+(headerH+pad)*unit;
-        const g=canvas.getContext("2d");
-        const font='"Yu Gothic UI","Hiragino Sans","Noto Sans JP",Meiryo,sans-serif';
-        g.fillStyle="#ffffff";g.fillRect(0,0,canvas.width,canvas.height);
-        g.save();g.scale(unit,unit);
-        g.fillStyle="#111827";g.font="700 40px "+font;g.fillText("kintone ER図",pad,72);
-        g.fillStyle="#4b5563";g.font="26px "+font;g.fillText(exportImageMeta(),pad,116);
-        let x=pad;
-        [["ルックアップ","#2563eb",[]],["関連レコード","#047857",[14,10]],["アクション","#d97706",[4,8]]].forEach(([label,color,dash])=>{
-          g.strokeStyle=color;g.lineWidth=5;g.setLineDash(dash);
-          g.beginPath();g.moveTo(x,150);g.lineTo(x+64,150);g.stroke();
-          g.setLineDash([]);
-          g.fillStyle="#374151";g.font="24px "+font;g.fillText(label,x+76,158);
-          x+=76+g.measureText(label).width+44;
-        });
-        x=pad;
-        [["PK","レコード番号","#b45309"],["FK","ルックアップ項目","#2563eb"],["関連","関連レコード一覧","#047857"],["一意","重複禁止","#6366f1"],["必須","必須項目","#dc2626"]].forEach(([badge,label,color])=>{
-          g.font="700 20px "+font;
-          const badgeW=Math.max(56,g.measureText(badge).width+20);
-          g.fillStyle=color;g.globalAlpha=0.14;g.beginPath();g.roundRect(x,172,badgeW,32,8);g.fill();g.globalAlpha=1;
-          g.textAlign="center";g.fillText(badge,x+badgeW/2,196);g.textAlign="left";
-          g.fillStyle="#374151";g.font="24px "+font;g.fillText(label,x+badgeW+10,197);
-          x+=badgeW+10+g.measureText(label).width+40;
-        });
-        g.restore();
-        g.drawImage(img,Math.round((canvas.width-img.width)/2),Math.round(headerH*unit));
-        resolve(canvas.toDataURL("image/png"));
-      }catch(err){
-        console.error("[ER] 画像の合成に失敗",err);
-        resolve(diagram);
-      }
-    };
-    img.src=diagram;
-  });
-}
-// 大きな図のデータ URL はリンクからダウンロードすると空になるため、Blob にして渡す
-function dataUrlToBlob(data){
-  const [head,body]=data.split(",");
-  const bytes=atob(body);
-  const buffer=new Uint8Array(bytes.length);
-  for(let i=0;i<bytes.length;i++) buffer[i]=bytes.charCodeAt(i);
-  return new Blob([buffer],{type:head.slice(5).split(";")[0]});
-}
-async function exportPNG(){
-  try{
-    const a=document.createElement("a");
-    const data=await buildExportImage();
-    if(data.length<100) throw new Error("図が大きすぎて画像を作成できませんでした");
-    const url=URL.createObjectURL(dataUrlToBlob(data));
-    a.href=url;
-    a.download=exportFilename("ER図","png");a.click();toast("PNG ダウンロード（白背景）");
-    setTimeout(()=>URL.revokeObjectURL(url),60000);
-  }catch(err){
-    console.error("[ER] exportPNG failed", err);
-    toast("PNG出力に失敗: "+((err&&err.message)||err));
-  }
-}
-// ─── 編集済みHTMLの保存 / 復元 ───
-function captureEditState(){
-  const customApps=APPS.filter(a=>a.isCustom).map(a=>({
-    id:a.id,name:a.name,
-    fields:exportFieldsForApp(a).map(f=>Object.assign({},f)),
-    totalFieldCount:a.totalFieldCount,
-    requiredCount:a.requiredCount||0,
-    lookupCount:a.lookupCount||0,
-    refCount:a.refCount||0,
-    depth:a.depth||0,
-    ok:true,isCustom:true
-  }));
-  const customFields=[];
-  APPS.filter(a=>!a.isCustom).forEach(a=>exportFieldsForApp(a).forEach(f=>{
-    if(f.isCustom) customFields.push({appId:a.id,field:Object.assign({},f)});
-  }));
-  const customRelations=[];
-  APPS.forEach(a=>(a.relations||[]).forEach(r=>{
-    if(r.isCustom) customRelations.push({fromAppId:a.id,rel:Object.assign({},r)});
-  }));
-  const positions={};
-  cy.nodes().forEach(n=>{
-    if(n.hasClass("note-node")) return;
-    const p=n.position();
-    positions[n.id()]={x:Math.round(p.x*100)/100,y:Math.round(p.y*100)/100};
-  });
-  const notes=cy.nodes(".note-node").map(n=>{
-    const p=n.position();
-    return {id:n.id(),text:n.data("label"),color:n.data("noteColor"),x:Math.round(p.x*100)/100,y:Math.round(p.y*100)/100};
-  });
-  return {
-    savedAt:new Date().toISOString(),
-    options:{layoutName:ER_OPTIONS.layoutName,fieldDensity:ER_OPTIONS.fieldDensity},
-    seq:{app:customAppSeq,rel:customRelSeq,field:customFieldSeq,note:noteSeq},
-    appOverrides,fieldOverrides,relationOverrides,notes,
-    customApps,customFields,customRelations,
-    view:{
-      positions,
-      zoom:cy.zoom(),
-      pan:cy.pan(),
-      removedEdgeIds:[...manuallyRemovedEdgeIds],
-      removedNodeIds:[...manuallyRemovedNodeIds],
-      nodeHiddenEdgeIds:[...nodeHiddenEdgeIds],
-      pinnedNodeIds:[...pinnedNodeIds],
-      hiddenFieldKeys:[...hiddenFieldKeys],
-      simpleMode,
-      relationKinds:Object.assign({},relationKindState),
-      relationLabels:relationLabelVisible,
-      focusMode,focusDepth,focusDirection,
-      theme:isDark?"d":"l",
-      overviewHidden:document.getElementById("overview").classList.contains("hidden")
-    }
-  };
-}
-function exportEditedHtml(){
-  try{
-    recomputeErAnalysis();
-    const payload=captureEditState();
-    const clone=document.documentElement.cloneNode(true);
-    const cyHost=clone.querySelector("#cy");
-    if(cyHost) cyHost.innerHTML="";
-    const tip=clone.querySelector("#er-tooltip");
-    if(tip && tip.parentNode) tip.parentNode.removeChild(tip);
-    ["#cmd-overlay","#modal-overlay","#editor-overlay","#help-overlay","#detail","#minimap","#sidebar"].forEach(sel=>{
-      const el=clone.querySelector(sel);
-      if(el) el.classList.remove("open");
-    });
-    const toastEl=clone.querySelector("#toast");
-    if(toastEl) toastEl.classList.remove("show");
-    clone.querySelectorAll(".tb-menu.open").forEach(el=>el.classList.remove("open"));
-    const oldState=clone.querySelector("#er-edit-state");
-    if(oldState && oldState.parentNode) oldState.parentNode.removeChild(oldState);
-    const liveRuntime=clone.querySelector("#er-runtime");
-    if(liveRuntime && liveRuntime.parentNode) liveRuntime.parentNode.removeChild(liveRuntime);
-    // 描画ライブラリは head のインライン script として複製に含まれるため、保存した HTML も単体で動く。
-    const main=clone.querySelector("#er-main");
-    if(!main){toast("保存に失敗: 本体スクリプトが見つかりません");return;}
-    const stateScript=document.createElement("script");
-    stateScript.id="er-edit-state";
-    const stateJson=JSON.stringify(payload)
-      .replace(/</g,"\\\\u003c")
-      .replace(/>/g,"\\\\u003e")
-      .replace(/&/g,"\\\\u0026")
-      .replace(/\\u2028/g,"\\\\u2028")
-      .replace(/\\u2029/g,"\\\\u2029");
-    stateScript.textContent="window.__ER_EDIT_STATE__="+stateJson+";";
-    main.parentNode.insertBefore(stateScript,main);
-    const html="<!DOCTYPE html>\\n"+clone.outerHTML;
-    const blob=new Blob([html],{type:"text/html"});
-    const a=document.createElement("a");
-    a.href=URL.createObjectURL(blob);
-    a.download=exportFilename("ER図_編集済み","html");
-    a.style.display="none";
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(()=>{URL.revokeObjectURL(a.href);if(a.parentNode)a.parentNode.removeChild(a);},30000);
-    toast("編集済みHTMLを保存しました（開き直すと編集状態を復元）");
-  }catch(err){
-    console.error("[ER] exportEditedHtml failed",err);
-    toast("編集済みHTMLの保存に失敗: "+((err&&err.message)||err));
-  }
-}
-function applySavedViewState(){
-  if(!ER_EDIT_STATE || !ER_EDIT_STATE.view) return;
-  const view=ER_EDIT_STATE.view;
-  try{
-    (view.removedEdgeIds||[]).forEach(id=>{
-      const e=cy.getElementById(id);
-      if(e.length){manuallyRemovedEdgeIds.add(id);e.addClass("rel-manual-hidden");}
-    });
-    (view.removedNodeIds||[]).forEach(id=>{
-      const n=cy.getElementById(id);
-      if(n.length){manuallyRemovedNodeIds.add(id);n.addClass("app-manual-hidden");}
-    });
-    (view.nodeHiddenEdgeIds||[]).forEach(id=>{
-      const e=cy.getElementById(id);
-      if(e.length){nodeHiddenEdgeIds.add(id);e.addClass("rel-manual-hidden");}
-    });
-    (view.pinnedNodeIds||[]).forEach(id=>{
-      const n=cy.getElementById(id);
-      if(n.length) pinNode(n,true);
-    });
-    (view.hiddenFieldKeys||[]).forEach(key=>hiddenFieldKeys.add(String(key)));
-    if((view.hiddenFieldKeys||[]).length) refreshNodeLabels();
-    if(view.relationKinds){
-      ["LOOKUP","REF","ACTION"].forEach(k=>{relationKindState[k]=view.relationKinds[k]!==false;});
-    }
-    if(typeof view.relationLabels==="boolean") relationLabelVisible=view.relationLabels;
-    if(typeof view.focusMode==="boolean") focusMode=view.focusMode;
-    if(view.focusDepth){const sel=document.getElementById("focus-depth");if(sel)sel.value=String(view.focusDepth);}
-    if(view.focusDirection){const sel=document.getElementById("focus-direction");if(sel)sel.value=view.focusDirection;}
-    updateFocusOptions();
-    syncFocusButton();
-    syncRelationKindButtons();
-    applyRelationFilter();
-    applyRelationLabelVisibility();
-    if(view.theme==="l"&&isDark){isDark=false;applyTheme();applyCyTheme();}
-    if(view.overviewHidden) hideOverview();
-    if(view.simpleMode) setSimpleMode(true);
-    syncSimpleModeButton();
-    refreshSidebar();
-  }catch(err){console.error("[ER] 表示状態の復元に失敗",err);}
-}
-
-let _md={text:"",filename:""};
-let modalReturnFocus=null;
-function openModal(t,text,fn){
-  _md={text,filename:fn};
-  document.getElementById("modal-title").textContent=t;
-  document.getElementById("modal-content").textContent=text;
-  const overlay=document.getElementById("modal-overlay");
-  if(!overlay.classList.contains("open")) modalReturnFocus=rememberDialogFocus();
-  overlay.classList.add("open");
-  const primary=document.querySelector("#modal .actions .primary");
-  if(primary) primary.focus();
-}
-function closeModal(){
-  const overlay=document.getElementById("modal-overlay");
-  const wasOpen=overlay.classList.contains("open");
-  overlay.classList.remove("open");
-  if(wasOpen){ const back=modalReturnFocus; modalReturnFocus=null; restoreDialogFocus(back); }
-}
-function copyModal(){
-  const failed=()=>toast("コピーに失敗しました。内容を選択して手動でコピーしてください");
-  try{ navigator.clipboard.writeText(_md.text).then(()=>toast("コピーしました！"),failed); }
-  catch(_){ failed(); }
-}
-function downloadModal(){const b=new Blob([_md.text],{type:"text/plain"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=_md.filename;a.click();toast("ダウンロード: "+_md.filename);}
-
-const entityAlias=app=>"app_"+String(app&&app.id||"unknown").replace(/[^0-9A-Za-z_]/g,"_");
-const exportFieldsForApp=app=>allFieldsForApp(app);
-const oneLineLabel=value=>String(value==null?"":value).replace(/[\\r\\n]+/g," ").replace(/"/g,"'");
-const sqlIdentifier=value=>String.fromCharCode(96)+String(value==null?"":value).replace(/\`/g,"\`\`")+String.fromCharCode(96);
-const sqlString=value=>"'"+String(value==null?"":value).replace(/\\\\/g,"\\\\\\\\").replace(/'/g,"''")+"'";
-// Mermaid の項目名は ASCII のみ確実に解釈される（v10 系は日本語で構文エラー）。実コードは注釈へ残す。
-const mermaidLabel=value=>oneLineLabel(value).replace(/%%+/g,"%");
-const mermaidAttributeName=(code,used)=>{
-  const base=/^[A-Za-z_][A-Za-z0-9_]*$/.test(code)?code:"field_"+(used.size+1);
-  let name=base;
-  for(let suffix=2;used.has(name);suffix++) name=base+"_"+suffix;
-  used.add(name);
-  return name;
-};
-const exportStatusLabel=app=>app.status==="partial"?"一部取得":((app.status==="failed"||app.ok===false)?"取得失敗":"取得完了");
-const exportIssueText=app=>(app.issues||[]).map(issue=>oneLineLabel(issue.message||issue.code||"取得上の注意")).filter(Boolean).join(" / ");
-const exportRelationLabel=rel=>{
-  const base=oneLineLabel(rel.fromDisplay||rel.fromLabel||rel.from||rel.kind);
-  if(rel.kind==="REF"&&(rel.sourceJoinField||rel.from||rel.toField)) return base+" [結合: "+oneLineLabel(rel.sourceJoinField||rel.from||"?")+" → "+oneLineLabel(rel.toField||"?")+"]";
-  return base;
-};
-function exportProvenanceEntries(){
-  return [
-    ["生成日時",new Date().toLocaleString("ja-JP")],
-    ["起点アプリ",(ER_OPTIONS.startAppIds||[]).join(", ")||"-"],
-    ["探索深さ",ER_OPTIONS.maxDepth?String(ER_OPTIONS.maxDepth):"無制限"],
-    ["逆引き探索",ER_OPTIONS.includeReverseLookup?"ON":"OFF"],
-    ...(ER_OPTIONS.reverseScanNote?[["逆引き走査の注意",ER_OPTIONS.reverseScanNote]]:[]),
-    ["サブテーブル",ER_OPTIONS.includeSubtableFields!==false?"ON":"OFF"],
-    ["項目範囲","取得済み全項目（図の表示密度とは独立）"],
-    ["接続",(ER_OPTIONS.sourceGuestId?("ゲスト "+ER_OPTIONS.sourceGuestId):"通常空間")+"/"+(ER_OPTIONS.sourcePreview?"プレビュー":"本番")],
-    ["取得状態","完了 "+ER_ANALYSIS.counts.retrievalComplete+" / 一部 "+ER_ANALYSIS.counts.retrievalPartial+" / 失敗 "+ER_ANALYSIS.counts.retrievalFailed],
-    ["未取得の参照先",String((ER_ANALYSIS.unresolvedTargets||[]).length)],
-    ["手動編集",(hiddenFieldKeys.size||manuallyRemovedEdgeIds.size||manuallyRemovedNodeIds.size||APPS.some(a=>a.isCustom))?"あり":"なし"]
-  ];
-}
-function exportFilename(base,ext){
-  const ids=ER_OPTIONS.startAppIds||[];
-  const d=new Date(),p=n=>String(n).padStart(2,"0");
-  const stamp=d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+"_"+p(d.getHours())+p(d.getMinutes());
-  return [
-    base,
-    ids.length?("app"+ids[0]+(ids.length>1?"ほか"+(ids.length-1)+"件":"")):"",
-    ER_OPTIONS.sourceGuestId?("guest"+ER_OPTIONS.sourceGuestId):"",
-    ER_OPTIONS.sourcePreview?"プレビュー":"本番",
-    stamp
-  ].filter(Boolean).join("_")+"."+ext;
-}
-const exportProvenanceLines=prefix=>exportProvenanceEntries().map(([key,value])=>(prefix?prefix+" ":"")+key+": "+oneLineLabel(value));
-
-const ER_MD_MERMAID_MAX_CHARS=${ER_MD_MERMAID_MAX_CHARS};
-function buildMermaidText(){
-  let m=exportProvenanceLines("%%").join("\\n")+"\\nerDiagram\\n";
-  APPS.forEach(a=>{
-    const n=entityAlias(a);
-    m+="  %% "+n+": "+mermaidLabel(a.name)+" (App "+a.id+")\\n";
-    m+="  %% 取得状態: "+exportStatusLabel(a)+(exportIssueText(a)?" / "+exportIssueText(a):"")+"\\n";
-    const subtableFieldCount=exportFieldsForApp(a).filter(f=>f.inSubtable).length;
-    if(subtableFieldCount) m+="  %% サブテーブル内 "+subtableFieldCount+"項目は親エンティティへ平坦化せず省略（ERモデルJSONに所属表を収録）\\n";
-    const visibleName=(exportStatusLabel(a)==="取得完了"?"":("["+exportStatusLabel(a)+"] "))+mermaidLabel(a.name)+" (App "+a.id+")";
-    m+="  "+n+'["'+visibleName+'"] {\\n';
-    const usedAttributes=new Set();
-    exportFieldsForApp(a).forEach(f=>{
-      if(f.type==="SUBTABLE"||f.inSubtable) return;
-      let com=""; if(f.isPK) com=" PK"; else if(f.isLookup) com=" FK";
-      const code=String(f.code==null?"":f.code);
-      const note=mermaidLabel(f.label&&f.label!==code?f.label+" ["+code+"]":code);
-      m+="    "+f.type.replace(/[^a-zA-Z0-9_]/g,"")+" "+mermaidAttributeName(code,usedAttributes)+com+' "'+note+'"\\n';
-    });
-    m+="  }\\n";
-  });
-  const mermaidExternalIds=new Set();
-  APPS.forEach(a=>(a.relations||[]).forEach(r=>{
-    if(appMap.has(r.toApp)||mermaidExternalIds.has(String(r.toApp))) return;
-    mermaidExternalIds.add(String(r.toApp));
-    const alias=entityAlias({id:r.toApp});
-    m+="  %% "+alias+": 未取得の参照先 (App "+oneLineLabel(r.toApp)+")\\n";
-    m+="  "+alias+'["未取得の参照先 (App '+oneLineLabel(r.toApp)+')"] {\\n    string unresolved "未取得のアプリ"\\n  }\\n';
-  }));
-  APPS.forEach(a=>{
-    a.relations.forEach(r=>{
-      const t=appMap.get(r.toApp)||{id:r.toApp};
-      const label=mermaidLabel(exportRelationLabel(r));
-      if(r.kind==="ACTION") m+="  %% ACTION "+entityAlias(a)+" -> "+entityAlias(t)+": "+label+"\\n";
-      else m+="  "+entityAlias(a)+(r.kind==="LOOKUP"?" }o--o| ":" }o--o{ ")+entityAlias(t)+' : "'+label+'"\\n';
-    });
-  });
-  return m;
-}
-function showMermaid(){
-  openModal("Mermaid ER図",buildMermaidText(),exportFilename("ER図","mmd"));
-}
-
-function showDrawio(){
-  const esc=s=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-  const nodeId=id=>"A"+String(id==null?"unknown":id).replace(/[^0-9A-Za-z_]/g,"_");
-  const drawioProvenance=exportProvenanceLines("").join(" | ").replace(/--/g,"—");
-  let x='<!-- '+esc(drawioProvenance)+' --><mxfile host="app.diagrams.net"><diagram name="ER"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>';
-  const externalIds=[];
-  APPS.forEach(a=>(a.relations||[]).forEach(r=>{
-    if(!appMap.has(r.toApp)&&!externalIds.some(id=>String(id)===String(r.toApp))) externalIds.push(r.toApp);
-  }));
-  const drawioApps=APPS.map(a=>({app:a,external:false})).concat(externalIds.map(id=>({app:{id,name:"未取得の参照先 (App "+id+")",relations:[],allFields:[],fields:[],status:"failed",ok:false,issues:[{message:"図の探索範囲外または取得権限外"}]},external:true})));
-  const colCount=3,boxWidth=330,rowGap=96,colGap=100;
-  let rowY=0;
-  for(let rowStart=0;rowStart<drawioApps.length;rowStart+=colCount){
-    const row=drawioApps.slice(rowStart,rowStart+colCount);
-    const heights=row.map(item=>Math.max(58,34+exportFieldsForApp(item.app).filter(f=>f.type!=="SUBTABLE").length*28));
-    const rowHeight=Math.max(...heights,58);
-    row.forEach((item,colIndex)=>{
-      const a=item.app;
-      const exportFields=exportFieldsForApp(a).filter(f=>f.type!=="SUBTABLE");
-      const nid=nodeId(a.id),px=colIndex*(boxWidth+colGap),h=heights[colIndex];
-      const status=exportStatusLabel(a);
-      const issue=exportIssueText(a);
-      const header=(status==="取得完了"?"":("["+status+"] "))+(a.name||("App "+a.id))+(issue?("&#xa;"+issue):"");
-      const fill=item.external?"#F3F4F6":(status==="取得失敗"?"#FEE2E2":(status==="一部取得"?"#FEF3C7":"#EDE9FE"));
-      x+='<mxCell id="'+nid+'" value="'+esc(header).replace(/&amp;#xa;/g,"&#xa;")+'" style="shape=table;startSize=34;container=1;childLayout=tableLayout;fillColor='+fill+';rounded=1;'+(item.external?'dashed=1;':'')+'" vertex="1" parent="1"><mxGeometry x="'+px+'" y="'+rowY+'" width="'+boxWidth+'" height="'+h+'" as="geometry"/></mxCell>';
-      exportFields.forEach((f,fi)=>{
-        let c="#FFF";if(f.isPK)c="#FFD700";else if(f.isLookup)c="#DBEAFE";else if(f.isRef)c="#D1FAE5";else if(f.inSubtable)c="#F3F4F6";else if(f.required)c="#FFE4E6";
-        const tablePrefix=f.inSubtable?("["+String(f.tableLabel||f.tableCode||"サブテーブル")+"] "):"";
-        const label=(f.isPK?"PK ":f.isLookup?"FK ":f.isRef?"関連 ":"")+tablePrefix+(f.label||f.code)+" ["+f.code+"]";
-        const rid=nid+"_R"+fi;
-        x+='<mxCell id="'+rid+'" value="" style="shape=tableRow;horizontal=0;startSize=0;swimlaneHead=0;" vertex="1" parent="'+nid+'"><mxGeometry y="'+(34+fi*28)+'" width="'+boxWidth+'" height="28" as="geometry"/></mxCell>';
-        x+='<mxCell id="'+nid+"_F"+fi+'" value="'+esc(label)+'" style="shape=partialRectangle;fillColor='+c+';align=left;spacingLeft=6;strokeColor=#d0d0d0;" vertex="1" parent="'+rid+'"><mxGeometry width="'+boxWidth+'" height="28" as="geometry"/></mxCell>';
-      });
-    });
-    rowY+=rowHeight+rowGap;
-  }
-  let ec=0;
-  APPS.forEach(a=>a.relations.forEach(r=>{
-    const st=r.kind==="LOOKUP"?"edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=classic;startArrow=oval;strokeColor=#0066CC;strokeWidth=2;":(r.kind==="REF"?"edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=classic;startArrow=diamond;dashed=1;strokeColor=#2E8B57;strokeWidth=2;":"edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=classic;dashed=1;strokeColor=#D97706;strokeWidth=2;");
-    const label=(r.kind==="LOOKUP"?"ルックアップ":(r.kind==="REF"?"関連レコード":"アクション"))+": "+exportRelationLabel(r);
-    x+='<mxCell id="E'+(ec++)+'" value="'+esc(label)+'" style="'+st+'" edge="1" parent="1" source="'+nodeId(a.id)+'" target="'+nodeId(r.toApp)+'"><mxGeometry relative="1" as="geometry"/></mxCell>';
-  }));
-  x+="</root></mxGraphModel></diagram></mxfile>";
-  openModal("draw.io 用XML",x,exportFilename("ER図","drawio"));
-}
-
-function showSQL(){
-  let sql="-- kintone ER図 → SQL DDL（MySQL 形式）\\n-- kintone の構造を表す参考資料です。そのままデータ移行に使うものではありません。\\n"+exportProvenanceLines("--").join("\\n")+"\\n\\n";
-  const typeMap={SINGLE_LINE_TEXT:"VARCHAR(256)",MULTI_LINE_TEXT:"TEXT",NUMBER:"DECIMAL(18,4)",CALC:"DECIMAL(18,4)",
-    RICH_TEXT:"TEXT",CHECK_BOX:"TEXT",RADIO_BUTTON:"VARCHAR(128)",DROP_DOWN:"VARCHAR(128)",MULTI_SELECT:"TEXT",
-    DATE:"DATE",TIME:"TIME",DATETIME:"DATETIME",LINK:"VARCHAR(512)",FILE:"TEXT",
-    USER_SELECT:"TEXT",ORGANIZATION_SELECT:"TEXT",GROUP_SELECT:"TEXT",
-    RECORD_NUMBER:"INT AUTO_INCREMENT",CREATOR:"VARCHAR(128)",MODIFIER:"VARCHAR(128)",
-    CREATED_TIME:"DATETIME",UPDATED_TIME:"DATETIME",STATUS:"VARCHAR(64)",
-    STATUS_ASSIGNEE:"TEXT",CATEGORY:"TEXT",LOOKUP:"VARCHAR(256)",REFERENCE_TABLE:"-- ref"};
-
-  const sqlTableInfo=new Map();
-  APPS.forEach(a=>{
-    const tbl=entityAlias(a);
-    sql+="-- "+oneLineLabel(a.name)+" (App "+a.id+")\\n";
-    sql+="-- 取得状態: "+exportStatusLabel(a)+(exportIssueText(a)?" / "+exportIssueText(a):"")+"\\n";
-    const cols=[];
-    const columnByCode=new Map();
-    const usedColumnNames=new Set();
-    let omittedSubtableFields=0;
-    exportFieldsForApp(a).forEach(f=>{
-      if(f.inSubtable){omittedSubtableFields++;return;}
-      if(f.type==="SUBTABLE"||f.type==="REFERENCE_TABLE") return;
-      const baseCol=oneLineLabel(f.code)||"unnamed";
-      let col=baseCol;
-      let suffix=2;
-      while(usedColumnNames.has(col)) col=baseCol+"_"+(suffix++);
-      usedColumnNames.add(col);
-      const dt=typeMap[f.type]||"TEXT";
-      columnByCode.set(String(f.code||""),{col,dt:dt.replace(" AUTO_INCREMENT",""),keyed:!!(f.isPK||f.unique)});
-      if(dt.startsWith("--")) return;
-      let line="  "+sqlIdentifier(col)+" "+dt;
-      if(f.isPK) line+=" PRIMARY KEY";
-      else{
-        if(f.required) line+=" NOT NULL";
-        if(f.unique) line+=" UNIQUE";
-      }
-      if(f.label&&f.label!==f.code) line+=" COMMENT "+sqlString(oneLineLabel(f.label));
-      cols.push(line);
-    });
-    sqlTableInfo.set(String(a.id),{table:tbl,columnByCode,emitted:cols.length>0});
-    if(omittedSubtableFields) sql+="-- サブテーブル内の項目 "+omittedSubtableFields+"件は親テーブルへ平坦化せず省略しました。ERモデルJSONで所属表を確認してください。\\n";
-    if(!cols.length){
-      sql+="-- SQLへ変換できる取得済みフィールドがないため CREATE TABLE を省略しました。\\n\\n";
-      return;
-    }
-    sql+="CREATE TABLE "+sqlIdentifier(tbl)+" (\\n"+cols.join(",\\n")+"\\n) COMMENT="+sqlString(oneLineLabel(a.name))+";\\n\\n";
-  });
-
-  // Foreign keys
-  let fkSeq=0;
-  APPS.forEach(a=>{
-    a.relations.filter(r=>r.kind==="LOOKUP"&&appMap.has(r.toApp)).forEach(r=>{
-      const t=appMap.get(r.toApp);
-      const sourceInfo=sqlTableInfo.get(String(a.id));
-      const targetInfo=sqlTableInfo.get(String(t.id));
-      const source=sourceInfo&&sourceInfo.columnByCode.get(String(r.from||""));
-      const target=targetInfo&&targetInfo.columnByCode.get(String(r.toField||""));
-      const label=oneLineLabel(a.name)+" / "+exportRelationLabel(r)+" → "+oneLineLabel(t.name);
-      if(exportFieldsForApp(a).some(f=>f.inSubtable&&String(f.code)===String(r.from))){
-        sql+="-- テーブル内のルックアップは、テーブルを親へ平坦化しないため外部キーにしていません: "+label+"\\n";
-        return;
-      }
-      if(!sourceInfo?.emitted||!targetInfo?.emitted||!source||!target){
-        sql+="-- Lookupの結合フィールドをSQLへ変換できません: "+label+"\\n";
-        return;
-      }
-      if(!target.keyed||source.dt!==target.dt){
-        sql+="-- 参照先が重複禁止でない、または型が異なるため外部キーにしていません: "+label+"\\n";
-        return;
-      }
-      sql+="ALTER TABLE "+sqlIdentifier(sourceInfo.table)+" ADD CONSTRAINT "+sqlIdentifier("fk_"+entityAlias(a)+"_"+(++fkSeq))+" FOREIGN KEY ("+sqlIdentifier(source.col)+") REFERENCES "+sqlIdentifier(targetInfo.table)+"("+sqlIdentifier(target.col)+");\\n";
-    });
-  });
-  APPS.forEach(a=>(a.relations||[]).filter(r=>r.kind==="REF").forEach(r=>{
-    sql+="-- 関連レコード（参照表示）: "+oneLineLabel(a.name)+" / "+exportRelationLabel(r)+" / App "+oneLineLabel(r.toApp)+"\\n";
-  }));
-  APPS.forEach(a=>(a.relations||[]).filter(r=>r.kind==="ACTION").forEach(r=>{
-    sql+="-- アプリアクション（画面遷移）: "+oneLineLabel(a.name)+" / "+exportRelationLabel(r)+" / App "+oneLineLabel(r.toApp)+"\\n";
-  }));
-  APPS.forEach(a=>(a.relations||[]).filter(r=>!appMap.has(r.toApp)).forEach(r=>{
-    sql+="-- 未取得の参照先: "+oneLineLabel(a.name)+" / "+exportRelationLabel(r)+" / App "+oneLineLabel(r.toApp)+"\\n";
-  }));
-  openModal("SQL DDL",sql,exportFilename("ER図","sql"));
-}
-
-function showPlantUML(){
-  let p="@startuml\\n"+exportProvenanceLines("'").join("\\n")+"\\n!theme cerulean\\nskinparam linetype ortho\\n\\n";
-  APPS.forEach(a=>{
-    const n=entityAlias(a);
-    p+="' 取得状態: "+exportStatusLabel(a)+(exportIssueText(a)?" / "+exportIssueText(a):"")+"\\n";
-    const visibleName=(exportStatusLabel(a)==="取得完了"?"":("["+exportStatusLabel(a)+"] "))+oneLineLabel(a.name);
-    p+='entity "'+visibleName+' (App '+a.id+')" as '+n+' {\\n';
-    const subtableFieldCount=exportFieldsForApp(a).filter(f=>f.inSubtable).length;
-    if(subtableFieldCount) p+="' サブテーブル内 "+subtableFieldCount+"項目は親エンティティへ平坦化せず省略（ERモデルJSONに所属表を収録）\\n";
-    exportFieldsForApp(a).forEach(f=>{
-      if(f.type==="SUBTABLE"||f.type==="REFERENCE_TABLE"||f.inSubtable) return;
-      let prefix="  ";
-      if(f.isPK) prefix="  * ";
-      else if(f.isLookup) prefix="  # ";
-      const code=oneLineLabel(f.code);
-      p+=prefix+code+" : "+(f.label&&f.label!==f.code?oneLineLabel(f.label)+" ":"")+"("+fieldTypeJpLabel(f.type)+")"+(f.required?" <<required>>":"")+"\\n";
-      if(f.isPK) p+="  --\\n";
-    });
-    p+="}\\n\\n";
-  });
-  const plantExternalIds=new Set();
-  APPS.forEach(a=>(a.relations||[]).forEach(r=>{
-    if(appMap.has(r.toApp)||plantExternalIds.has(String(r.toApp))) return;
-    plantExternalIds.add(String(r.toApp));
-    p+='entity "未取得の参照先 (App '+oneLineLabel(r.toApp)+')" as '+entityAlias({id:r.toApp})+' <<external>>\\n';
-  }));
-  APPS.forEach(a=>{
-    a.relations.forEach(r=>{
-      const t=appMap.get(r.toApp)||{id:r.toApp};
-      const label=exportRelationLabel(r);
-      if(r.kind==="LOOKUP") p+=entityAlias(a)+' }o--o| '+entityAlias(t)+' : "'+label+'"\\n';
-      else if(r.kind==="REF") p+=entityAlias(a)+' }o--o{ '+entityAlias(t)+' : "'+label+'"\\n';
-      else p+=entityAlias(a)+' ..> '+entityAlias(t)+' : "ACTION: '+label+'"\\n';
-    });
-  });
-  p+="@enduml";
-  openModal("PlantUML",p,exportFilename("ER図","puml"));
-}
-
-function recomputeErAnalysis(){
-  const activeApps=APPS.filter(a=>a&&a.id!=null&&!manuallyRemovedNodeIds.has("a"+a.id));
-  const activeIds=new Set(activeApps.map(a=>String(a.id)));
-  const fieldCount=activeApps.reduce((s,a)=>s+exportFieldsForApp(a).filter(f=>!isFieldHidden(a,f)).length,0);
-  const relationCount=activeApps.reduce((s,a)=>s+(a.relations||[]).filter((_,ri)=>!manuallyRemovedEdgeIds.has("e_"+a.id+"_"+ri)&&!nodeHiddenEdgeIds.has("e_"+a.id+"_"+ri)).length,0);
-  const unresolvedTargets=[],selfReferences=[];
-  const incoming=new Map(),outgoing=new Map();
-  activeApps.forEach(a=>{
-    const fromId=String(a.id);
-    (a.relations||[]).forEach((r,ri)=>{
-      const edgeId="e_"+a.id+"_"+ri;
-      if(manuallyRemovedEdgeIds.has(edgeId)||nodeHiddenEdgeIds.has(edgeId)) return;
-      const toId=String(r.toApp??"");
-      const kind=String(r.kind||"UNKNOWN");
-      const field=String(r.fromPath||r.from||r.fromLabel||r.controlField||r.sourceJoinField||"");
-      outgoing.set(fromId,(outgoing.get(fromId)||0)+1);
-      if(!toId||!activeIds.has(toId)){
-        unresolvedTargets.push({fromAppId:fromId,fromAppName:String(a.name||("アプリ "+fromId)),toAppId:toId,kind,field,reason:toId?"outside-diagram":"missing-target"});
-      }else{
-        incoming.set(toId,(incoming.get(toId)||0)+1);
-        if(fromId===toId) selfReferences.push({appId:fromId,appName:String(a.name||("アプリ "+fromId)),kind,field});
-      }
-    });
-  });
-  const isolatedAppIds=activeApps.filter(a=>!(incoming.get(String(a.id))||0)&&!(outgoing.get(String(a.id))||0)).map(a=>String(a.id));
-  const complete=activeApps.filter(a=>(a.status||"complete")==="complete"&&a.ok!==false&&!(Array.isArray(a.issues)&&a.issues.length)).length;
-  const failed=activeApps.filter(a=>a.status==="failed"||a.ok===false).length;
-  const partial=Math.max(0,activeApps.length-complete-failed);
-  ER_ANALYSIS.appCount=activeApps.length;
-  ER_ANALYSIS.fieldCount=fieldCount;
-  ER_ANALYSIS.relationCount=relationCount;
-  ER_ANALYSIS.edgeCount=relationCount;
-  ER_ANALYSIS.isolatedAppIds=isolatedAppIds;
-  ER_ANALYSIS.unresolvedTargets=unresolvedTargets;
-  ER_ANALYSIS.selfReferences=selfReferences;
-  if(ER_ANALYSIS.counts){
-    ER_ANALYSIS.counts.apps=activeApps.length;
-    ER_ANALYSIS.counts.appCount=activeApps.length;
-    ER_ANALYSIS.counts.fieldCount=fieldCount;
-    ER_ANALYSIS.counts.relations=relationCount;
-    ER_ANALYSIS.counts.relationCount=relationCount;
-    ER_ANALYSIS.counts.unresolvedRelations=unresolvedTargets.length;
-    ER_ANALYSIS.counts.selfReferences=selfReferences.length;
-    ER_ANALYSIS.counts.appsWithNoRelations=isolatedAppIds.length;
-    ER_ANALYSIS.counts.retrievalComplete=complete;
-    ER_ANALYSIS.counts.retrievalPartial=partial;
-    ER_ANALYSIS.counts.retrievalFailed=failed;
-  }
-  return ER_ANALYSIS;
-}
-
-function showJSON(){
-  recomputeErAnalysis();
-  const schema={
-    kind:"kintone-er-model",
-    schemaVersion:1,
-    title:"kintone ERモデル",
-    generated:new Date().toISOString(),
-    options:{startAppIds:ER_OPTIONS.startAppIds||[],maxDepth:ER_OPTIONS.maxDepth||0,includeSubtableFields:ER_OPTIONS.includeSubtableFields!==false},
-    completeness:{complete:ER_ANALYSIS.counts.retrievalComplete,partial:ER_ANALYSIS.counts.retrievalPartial,failed:ER_ANALYSIS.counts.retrievalFailed,unresolvedTargets:ER_ANALYSIS.unresolvedTargets||[]},
-    apps:APPS.map(a=>({
-      id:a.id,name:a.name,
-      status:a.status|| (a.ok===false?"failed":"complete"),issues:a.issues||[],
-      fields:exportFieldsForApp(a).map(f=>({code:f.code,label:f.label,type:f.type,path:f.path||f.code||"",required:f.required||false,unique:f.unique||false,isPrimaryKey:f.isPK||false,isLookup:f.isLookup||false,isRelatedRecord:f.isRef||false,inSubtable:f.inSubtable||false,tableCode:f.tableCode||"",tableLabel:f.tableLabel||""})),
-      relations:a.relations.map(r=>({label:r.fromDisplay||r.fromLabel||r.from||r.kind,fromField:r.from,sourceJoinField:r.sourceJoinField||r.from||"",controlField:r.controlField||"",controlFieldLabel:r.controlFieldLabel||"",toApp:r.toApp,toField:r.toField,type:r.kind,copyFields:r.copyFields||[],displayFields:r.displayFields||[],filterCond:r.filterCond||""})),
-    })),
-  };
-  openModal("ERモデル JSON",JSON.stringify(schema,null,2),exportFilename("ERモデル","json"));
-}
-
-// ─── CSV exports ───
-function csvCell(v){
-  const raw=String(v==null?"":v);
-  const s=/^[\\t\\r\\n ]*[=+\\-@]/.test(raw)?"'"+raw:raw;
-  return /[",\\n\\r]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
-}
-function csvLine(arr){return arr.map(csvCell).join(",");}
-function showCSVApps(){
-  const rows=[["アプリID","アプリ名","項目数","項目範囲","リレーション数","Lookup数","関連レコード数","アクション数","必須項目数","深さ","開始点","取得状態","取得上の注意"]];
-  APPS.forEach(a=>{
-    const lookups=(a.relations||[]).filter(r=>r.kind==="LOOKUP").length;
-    const refs=(a.relations||[]).filter(r=>r.kind==="REF").length;
-    const acts=(a.relations||[]).filter(r=>r.kind==="ACTION").length;
-    rows.push([a.id,a.name,exportFieldsForApp(a).length,"取得済み全項目",a.relations.length,lookups,refs,acts,a.requiredCount||0,a.depth||0,startAppIdSet.has(String(a.id))?"1":"0",exportStatusLabel(a),exportIssueText(a)]);
-  });
-  openModal("CSV (アプリ一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),exportFilename("ER図_アプリ一覧","csv"));
-}
-function showCSVFields(){
-  const rows=[["アプリID","アプリ名","取得状態","取得上の注意","項目範囲","現在の図に表示","フィールドコード","フィールド名","種類","必須","重複禁止","主キー","ルックアップ","関連","サブテーブル内","テーブルコード","テーブル名","技術パス"]];
-  APPS.forEach(a=>{
-    const visibleFieldSet=new Set(visibleFieldsForNode(a));
-    exportFieldsForApp(a).forEach(f=>{
-      rows.push([a.id,a.name,exportStatusLabel(a),exportIssueText(a),"取得済み全項目",visibleFieldSet.has(f)?"1":"0",f.code||"",buildFieldDisplayName(f),f.type||"",f.required?"1":"0",f.unique?"1":"0",f.isPK?"1":"0",f.isLookup?"1":"0",f.isRef?"1":"0",f.inSubtable?"1":"0",f.tableCode||"",f.tableLabel||"",f.path||f.code||""]);
-    });
-  });
-  openModal("CSV (フィールド一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),exportFilename("ER図_フィールド一覧","csv"));
-}
-function showCSVRelations(){
-  const rows=[["種類","関連名","起点アプリID","起点アプリ名","起点の取得状態","起点の取得上の注意","表示部品","結合元フィールド","宛先アプリID","宛先アプリ名","宛先の取得状態","宛先フィールド","コピー・表示するフィールド","絞り込み条件"]];
-  APPS.forEach(a=>{
-    a.relations.forEach(r=>{
-      const t=appMap.get(r.toApp);
-      rows.push([r.kind,r.fromDisplay||r.fromLabel||r.from||r.kind,a.id,a.name,exportStatusLabel(a),exportIssueText(a),r.controlFieldLabel||r.controlField||"",r.kind==="ACTION"?"":(r.sourceJoinField||r.from||""),r.toApp,t?t.name:"未取得の参照先",t?exportStatusLabel(t):"未取得",r.toField||"",relFieldsText(r),relFilterText(r)]);
-    });
-  });
-  openModal("CSV (リレーション一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),exportFilename("ER図_リレーション一覧","csv"));
-}
-
-// ─── Markdown spec ───
-function mdEsc(s){return String(s==null?"":s).replace(/[\\\\|<>]/g,"\\\\$&").replace(/\\n/g," ");}
-function showMarkdown(){
-  recomputeErAnalysis();
-  const lines=[];
-  lines.push("# kintone ER図 仕様書");
-  lines.push("");
-  lines.push("- 生成日時: " + new Date().toLocaleString("ja-JP"));
-  lines.push("- 起点アプリ: " + ((ER_OPTIONS.startAppIds||[]).join(", ") || "-"));
-  lines.push("- 探索深さ: " + (ER_OPTIONS.maxDepth||"無制限"));
-  lines.push("- 逆引き探索: " + (ER_OPTIONS.includeReverseLookup?"ON":"OFF"));
-  if(ER_OPTIONS.reverseScanNote) lines.push("- 逆引き走査の注意: " + ER_OPTIONS.reverseScanNote);
-  lines.push("- サブテーブル: " + (ER_OPTIONS.includeSubtableFields!==false?"ON":"OFF"));
-  lines.push("- 項目範囲: 取得済み全項目（図の表示密度とは独立）");
-  lines.push("- 接続: " + (ER_OPTIONS.sourceGuestId?("ゲスト "+ER_OPTIONS.sourceGuestId):"通常空間") + " / " + (ER_OPTIONS.sourcePreview?"プレビュー":"本番"));
-  lines.push("- アプリ数: " + APPS.length);
-  lines.push("- 総リレーション: " + APPS.reduce((s,a)=>s+a.relations.length,0));
-  lines.push("- 取得完了: " + ER_ANALYSIS.counts.retrievalComplete);
-  lines.push("- 一部取得: " + ER_ANALYSIS.counts.retrievalPartial);
-  lines.push("- 取得失敗: " + ER_ANALYSIS.counts.retrievalFailed);
-  lines.push("- 複数アプリの循環候補: " + ER_ANALYSIS.cycles.length);
-  lines.push("- 自己参照: " + ER_ANALYSIS.selfReferences.length);
-  lines.push("- 図内で関連のないアプリ: " + ER_ANALYSIS.isolatedAppIds.length);
-  lines.push("- 未取得の参照先: " + ER_ANALYSIS.unresolvedTargets.length);
-  lines.push("");
-  if(typeof ER_ANALYSIS!=="undefined"&&ER_ANALYSIS){
-    lines.push("## グラフ分析サマリ");
-    lines.push("");
-    lines.push("- 複数アプリの循環参照 (SCC): " + (ER_ANALYSIS.cycles||[]).length + "件");
-    lines.push("- ハブアプリ（接続数 " + (ER_ANALYSIS.highConnectionThreshold||3) + "件以上）: " + (ER_ANALYSIS.hubs||[]).length + "件");
-    lines.push("- 孤立アプリ（関連なし）: " + (ER_ANALYSIS.isolatedAppIds||[]).length + "件");
-    lines.push("- 自己参照: " + (ER_ANALYSIS.selfReferences||[]).length + "件");
-    lines.push("- 未取得の参照先: " + (ER_ANALYSIS.unresolvedTargets||[]).length + "件");
-    lines.push("");
-    if((ER_ANALYSIS.isolatedAppIds||[]).length){
-      lines.push("### 孤立アプリ");
-      ER_ANALYSIS.isolatedAppIds.forEach(id=>{const app=appMap.get(Number(id))||appMap.get(id);lines.push("- "+mdEsc(app?app.name:("アプリ "+id))+" (App "+id+")");});
-      lines.push("");
-    }
-    if((ER_ANALYSIS.selfReferences||[]).length){
-      lines.push("### 自己参照");
-      ER_ANALYSIS.selfReferences.forEach(sr=>lines.push("- "+mdEsc(sr.appName)+" (App "+sr.appId+"): "+mdEsc(sr.kind||"")+(sr.field?" ("+mdEsc(sr.field)+")":"")));
-      lines.push("");
-    }
-    if((ER_ANALYSIS.unresolvedTargets||[]).length){
-      lines.push("### 未取得の参照先");
-      ER_ANALYSIS.unresolvedTargets.forEach(ut=>lines.push("- "+mdEsc(ut.fromAppName)+" (App "+ut.fromAppId+") → App "+mdEsc(ut.toAppId||"不明")+": "+mdEsc(ut.kind||"")+(ut.field?" ("+mdEsc(ut.field)+")":"")));
-      lines.push("");
-    }
-  }
-  lines.push("## 構造チェック（事実ベース）");
-  lines.push("");
-  if(ER_ANALYSIS.cycles.length){
-    lines.push("### 複数アプリの循環候補");
-    ER_ANALYSIS.cycles.forEach((cycle,i)=>lines.push("- 候補 "+(i+1)+": "+cycle.appNames.map(mdEsc).join(" → ")));
-    lines.push("");
-  }
-  if(ER_ANALYSIS.hubs.length){
-    lines.push("### 接続数が多いアプリ（"+ER_ANALYSIS.highConnectionThreshold+"件以上）");
-    ER_ANALYSIS.hubs.forEach(hub=>lines.push("- "+mdEsc(hub.name)+" (App "+hub.appId+"): 入 "+hub.incoming+" / 出 "+hub.outgoing+" / 合計 "+hub.total));
-    lines.push("");
-  }
-  lines.push("## ER図");
-  lines.push("");
-  const mermaidText=buildMermaidText();
-  const fence="\\u0060\\u0060\\u0060";
-  if(mermaidText.length<=ER_MD_MERMAID_MAX_CHARS) lines.push(fence+"mermaid",mermaidText.trimEnd(),fence);
-  else lines.push("図が大きいため省略しました。Mermaid 出力または PNG 出力を利用してください。");
-  lines.push("");
-  lines.push("## アプリ一覧");
-  lines.push("");
-  lines.push("| アプリID | アプリ名 | 項目数 | 関連数 | 深さ | 状態 |");
-  lines.push("|---:|---|---:|---:|---:|---|");
-  APPS.forEach(a=>{
-    lines.push("| "+a.id+" | "+mdEsc(a.name)+" | "+exportFieldsForApp(a).length+" | "+a.relations.length+" | "+(a.depth||0)+" | "+(a.status==="partial"?"一部取得":(a.ok?"取得完了":"取得失敗"))+" |");
-  });
-  lines.push("");
-  APPS.forEach(a=>{
-    lines.push("## "+mdEsc(a.name)+" (App "+a.id+")");
-    lines.push("");
-    lines.push("- 取得状態: "+exportStatusLabel(a));
-    if(exportIssueText(a)) lines.push("- 取得上の注意: "+mdEsc(exportIssueText(a)));
-    lines.push("");
-    const vf=exportFieldsForApp(a);
-    if(vf.length){
-      lines.push("### フィールド");
-      lines.push("");
-      lines.push("| コード | 名称 | 種類 | 必須 | 主キー | Lookup | 関連 | サブテーブル |");
-      lines.push("|---|---|---|:---:|:---:|:---:|:---:|:---:|");
-      vf.forEach(f=>{
-        lines.push("| "+mdEsc(f.code||"")+" | "+mdEsc(buildFieldDisplayName(f))+" | "+mdEsc(fieldTypeJpLabel(f.type))+" | "+(f.required?"✓":"")+" | "+(f.isPK?"✓":"")+" | "+(f.isLookup?"✓":"")+" | "+(f.isRef?"✓":"")+" | "+(f.inSubtable?"✓":"")+" |");
-      });
-      lines.push("");
-    }
-    if(a.relations && a.relations.length){
-      lines.push("### リレーション");
-      lines.push("");
-      lines.push("| 種類 | 関連名 | 表示部品 | 結合元フィールド | 宛先アプリ | 宛先フィールド | コピー・表示するフィールド | 絞り込み条件 |");
-      lines.push("|---|---|---|---|---|---|---|---|");
-      a.relations.forEach(r=>{
-        const t=appMap.get(r.toApp);
-        lines.push("| "+r.kind+" | "+mdEsc(r.fromDisplay||r.fromLabel||r.from||r.kind)+" | "+mdEsc(r.controlFieldLabel||r.controlField||"")+" | "+mdEsc(r.kind==="ACTION"?"":(r.sourceJoinField||r.from||""))+" | "+mdEsc(t?t.name+" (App "+r.toApp+")":"未取得 (App "+r.toApp+")")+" | "+mdEsc(r.toField||"")+" | "+mdEsc(relFieldsText(r))+" | "+mdEsc(relFilterText(r))+" |");
-      });
-      lines.push("");
-    }
-  });
-  openModal("Markdown 仕様書",lines.join("\\n"),exportFilename("ER図仕様書","md"));
-}
-
-// ─── Zoom controls ───
-function closeZoomPresets(){
-  const presets=document.getElementById("zoom-presets");
-  const trigger=document.getElementById("zoom-level");
-  const restoreFocus=!!(presets&&presets.contains(document.activeElement));
-  presets?.classList.remove("open");
-  trigger?.setAttribute("aria-expanded","false");
-  if(restoreFocus) trigger?.focus();
-}
-function toggleZoomPresets(){
-  const presets=document.getElementById("zoom-presets");
-  const trigger=document.getElementById("zoom-level");
-  if(!presets||!trigger) return;
-  const open=!presets.classList.contains("open");
-  presets.classList.toggle("open",open);
-  trigger.setAttribute("aria-expanded",String(open));
-  if(open){
-    const current=presets.querySelector('[aria-pressed="true"]')||presets.querySelector("button");
-    current?.focus();
-  }
-}
-function updateZoomLabel(){
-  const percent=Math.round(cy.zoom()*100);
-  applySemanticZoom(cy.zoom());
-  const value=document.getElementById("zoom-value");
-  const mode=document.getElementById("zoom-mode");
-  const trigger=document.getElementById("zoom-level");
-  if(value) value.textContent=percent+"%";
-  if(mode) mode.textContent=cy.zoom()<0.35?"構造":(cy.zoom()<0.6?"概要":"");
-  if(trigger){
-    trigger.setAttribute("aria-label","現在の表示倍率 "+percent+"%。倍率プリセットを開く");
-    trigger.title=cy.zoom()<0.35
-      ? "低倍率のため文字を隠した構造表示です。クリックして倍率を選択"
-      : cy.zoom()<0.7
-      ? "アプリ名と件数に絞った概要表示です。クリックして倍率を選択"
-      : "倍率を選択";
-  }
-  document.querySelectorAll(".zoom-preset").forEach(button=>{
-    button.setAttribute("aria-pressed",String(Number(button.dataset.zoom)===percent));
-  });
-}
-function setZoomLevel(level){
-  cy.zoom({level:Math.max(cy.minZoom(),Math.min(level,cy.maxZoom())),renderedPosition:{x:cy.width()/2,y:cy.height()/2}});
-  updateZoomLabel();
-}
-function setZoomPercent(percent){setZoomLevel(Number(percent)/100);closeZoomPresets();document.getElementById("zoom-level")?.focus();}
-function zoomIn(){closeZoomPresets();setZoomLevel(cy.zoom()*1.25);}
-function zoomOut(){closeZoomPresets();setZoomLevel(cy.zoom()/1.25);}
-function zoomReset(){closeZoomPresets();cy.zoom(1);cy.center();updateZoomLabel();}
-cy.on("zoom", updateZoomLabel);
-setTimeout(updateZoomLabel, 300);
-
-// ─── Fullscreen ───
-function toggleFullscreen(){
-  const doc=document;
-  const el=doc.documentElement;
-  try{
-    if(!doc.fullscreenElement){
-      (el.requestFullscreen||el.webkitRequestFullscreen||el.msRequestFullscreen).call(el);
-    }else{
-      (doc.exitFullscreen||doc.webkitExitFullscreen||doc.msExitFullscreen).call(doc);
-    }
-  }catch(_){ toast("フルスクリーンに対応していません"); }
-}
-document.addEventListener("fullscreenchange",()=>{
-  const btn=document.getElementById("fs-btn");
-  if(btn) btn.classList.toggle("active", !!document.fullscreenElement);
-});
-
-// ─── Dropdown menus ───
-function toggleMenu(id){
-  const m=document.getElementById(id);
-  if(!m) return;
-  const willOpen=!m.classList.contains("open");
-  closeAllMenus();
-  if(willOpen) m.classList.add("open");
-}
-function closeAllMenus(){ document.querySelectorAll(".tb-menu.open").forEach(x=>x.classList.remove("open")); }
-document.addEventListener("click",(e)=>{
-  const inside=e.target.closest(".tb-menu");
-  if(!inside) closeAllMenus();
-  if(!e.target.closest("#zoom-ctrl")) closeZoomPresets();
-});
-
-// ─── Mobile menu toggle ───
-function toggleMobileMenu(){
-  const topbar=document.getElementById("topbar");
-  const open=!topbar.classList.contains("mobile-open");
-  topbar.classList.toggle("mobile-open",open);
-  document.getElementById("mobile-menu-btn")?.setAttribute("aria-expanded",String(open));
-  requestAnimationFrame(syncTopbarHeight);
-}
-function closeMobileMenu(){
-  document.getElementById("topbar")?.classList.remove("mobile-open");
-  document.getElementById("mobile-menu-btn")?.setAttribute("aria-expanded","false");
-  requestAnimationFrame(syncTopbarHeight);
-}
-function syncTopbarHeight(){
-  const topbar=document.getElementById("topbar");
-  if(!topbar) return;
-  const height=Math.max(52,Math.ceil(topbar.getBoundingClientRect().height));
-  document.documentElement.style.setProperty("--topbar-h",height+"px");
-}
-function syncBottomUiOffsets(){
-  const root=document.documentElement;
-  const legend=document.getElementById("legend");
-  const pathfinder=document.getElementById("pathfinder");
-  const legendHeight=legend?Math.ceil(legend.getBoundingClientRect().height)+8:50;
-  const shouldStackPath=!!pathfinder?.classList.contains("open");
-  const pathfinderLift=shouldStackPath?Math.ceil(pathfinder.getBoundingClientRect().height)+12:0;
-  root.style.setProperty("--legend-stack-height",legendHeight+"px");
-  root.style.setProperty("--pathfinder-lift",pathfinderLift+"px");
-}
-const erTopbar=document.getElementById("topbar");
-if(erTopbar&&typeof ResizeObserver==="function") new ResizeObserver(syncTopbarHeight).observe(erTopbar);
-const erBottomResizeObserver=typeof ResizeObserver==="function"?new ResizeObserver(syncBottomUiOffsets):null;
-erBottomResizeObserver?.observe(document.getElementById("legend"));
-erBottomResizeObserver?.observe(document.getElementById("pathfinder"));
-window.addEventListener("resize",()=>{syncTopbarHeight();syncBottomUiOffsets();},{passive:true});
-syncTopbarHeight();
-syncBottomUiOffsets();
-if(window.matchMedia&&window.matchMedia("(max-width:640px)").matches){
-  document.getElementById("overview")?.classList.add("collapsed");
-}
-
-// ─── ダイアログのフォーカス管理（開くと中へ移し、閉じると開いた操作の位置へ戻す） ───
-function rememberDialogFocus(){
-  const active=document.activeElement;
-  if(!active||active===document.body||typeof active.focus!=="function") return null;
-  // メニュー項目から開いた場合、項目はメニューを閉じると消えるため、メニューの開閉ボタンへ戻す
-  const menu=typeof active.closest==="function"?active.closest(".tb-menu"):null;
-  return (menu&&menu.querySelector(".tb-menu-btn"))||active;
-}
-function restoreDialogFocus(target){
-  if(target&&target.isConnected&&target.getClientRects().length>0) target.focus();
-}
-
-// ─── Help modal ───
-let helpReturnFocus=null;
-function openHelp(){
-  const overlay=document.getElementById("help-overlay");
-  if(!overlay.classList.contains("open")) helpReturnFocus=rememberDialogFocus();
-  overlay.classList.add("open");
-  const close=document.querySelector("#help-box .close-row button");
-  if(close) close.focus();
-}
-function closeHelp(){
-  const overlay=document.getElementById("help-overlay");
-  const wasOpen=overlay.classList.contains("open");
-  overlay.classList.remove("open");
-  if(wasOpen){ const back=helpReturnFocus; helpReturnFocus=null; restoreDialogFocus(back); }
-}
-
-// ─── Share URL (encodes current state in hash) ───
-function encodeState(){
-  const state={
-    l: ER_OPTIONS.layoutName,
-    d: ER_OPTIONS.fieldDensity,
-    f: focusMode ? 1 : 0,
-    fd: focusDepth,
-    fdir: focusDirection,
-    rl: relationLabelVisible ? 1 : 0,
-    rk: (relationKindState.LOOKUP?"L":"") + (relationKindState.REF?"R":"") + (relationKindState.ACTION?"A":""),
-    t: isDark ? "d" : "l"
-  };
-  return btoa(unescape(encodeURIComponent(JSON.stringify(state))));
-}
-function applyStateFromHash(){
-  try{
-    const h=location.hash.replace(/^#/,"");
-    if(!h) return;
-    const state=JSON.parse(decodeURIComponent(escape(atob(h))));
-    if(state.l) setLayout(normalizeLayoutName(state.l));
-    if(state.d) setDensity(normalizeDensityName(state.d));
-    if(typeof state.f === "number"){ if(!!state.f !== focusMode) toggleFocusMode(); }
-    if(state.fd){ const sel=document.getElementById("focus-depth"); if(sel) sel.value=String(state.fd); }
-    if(state.fdir){ const sel=document.getElementById("focus-direction"); if(sel) sel.value=state.fdir; }
-    if(state.rk){
-      if(relationKindState.LOOKUP !== state.rk.includes("L")) toggleRelationKind("LOOKUP");
-      if(relationKindState.REF !== state.rk.includes("R")) toggleRelationKind("REF");
-      if(relationKindState.ACTION !== state.rk.includes("A")) toggleRelationKind("ACTION");
-    }
-    if(typeof state.rl === "number" && !!state.rl !== relationLabelVisible) toggleRelationLabels();
-    if(state.t === "l" && isDark) toggleTheme();
-    if(state.t === "d" && !isDark) toggleTheme();
-    updateFocusOptions();
-  }catch(_){ /* ignore */ }
-}
-function copyShareUrl(){
-  // blob: や file: のページでは origin + pathname だと不正なURLになるため、現在のURLからハッシュだけを置き換える
-  const url=location.href.split("#")[0]+"#"+encodeState();
-  const done=()=>toast(location.protocol==="blob:"
-    ? "表示状態のURLをコピーしました（この画面を閉じると開けません。共有にはHTML保存を使ってください）"
-    : "表示状態のURLをコピーしました");
-  const manual=()=>prompt("URLをコピーしてください", url);
-  try{
-    navigator.clipboard.writeText(url).then(done,manual);
-  }catch(_){
-    manual();
-  }
-}
-setTimeout(applyStateFromHash, 350);
-
-// ─── Print ───
-function printDiagram(){
-  const w=window.open("","_blank");
-  if(!w){ toast("別タブを開けませんでした"); return; }
-  try{w.opener=null;}catch(_){}
-  w.document.write('<title>kintone ER図 印刷</title><style>@page{size:A3 landscape;margin:8mm}img{display:block;margin:auto;max-width:100%;max-height:100vh}</style><body style="margin:0;padding:0;text-align:center;">印刷用の画像を作成中...</body>');
-  w.document.close();
-  // A3 の印刷に足りる解像度に抑え、大きな図でも印刷用タブが画像を読み込めるようにする
-  buildExportImage(6000).then(data=>{
-    w.document.body.innerHTML='<img src="'+data+'" alt="kintone ER図"/>';
-    setTimeout(()=>{ try{ w.focus(); w.print(); }catch(_){} }, 500);
-  });
-}
-
-// ─── Double-click to isolate ───
-cy.on("dbltap","node",e=>{
-  const n=e.target;
-  if(n.hasClass("note-node")) return;
-  const neighborhood=n.closedNeighborhood();
-  cy.elements().not(".note-node").addClass("dimmed");
-  neighborhood.removeClass("dimmed").addClass("highlighted");
-  toast("ダブルクリック: 接続アプリのみ表示（背景クリックで解除）");
-});
-
-// ─── Double-click background to add an entity at that position ───
-cy.on("dbltap",e=>{
-  if(e.target===cy) openAddApp({x:e.position.x,y:e.position.y});
-});
-
-// ─── Hover tooltip（ノード / 関連線） ───
-let tipEl;
-function ensureTip(){
-  if(tipEl) return tipEl;
-  tipEl=document.createElement("div");
-  tipEl.id="er-tooltip";
-  Object.assign(tipEl.style,{position:"fixed",zIndex:"999",background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"8px",padding:"8px 12px",fontSize:"11px",fontFamily:"var(--mono)",pointerEvents:"none",boxShadow:"0 4px 16px rgba(0,0,0,0.3)",maxWidth:"300px"});
-  document.body.appendChild(tipEl);
-  return tipEl;
-}
-// 関連の詳細（コピーするフィールド・表示するフィールド・絞り込み条件）。er-model.ts の describeErRelation* と同じ結果にする。
-function relCopyText(r){
-  const pairs=Array.isArray(r&&r.copyFields)?r.copyFields:[];
-  return pairs.filter(m=>m&&m.from&&m.to).map(m=>r.kind==="ACTION"?m.from+" → 起動先 "+m.to:"参照先 "+m.from+" → "+m.to).join(" / ");
-}
-function relDisplayText(r){
-  return (Array.isArray(r&&r.displayFields)?r.displayFields:[]).filter(Boolean).join(" / ");
-}
-function relFilterText(r){
-  return typeof (r&&r.filterCond)==="string"?r.filterCond.trim():"";
-}
-function relFieldsText(r){
-  return r&&r.kind==="REF"?relDisplayText(r):relCopyText(r);
-}
-// 詳細パネルの関連の行に出す、コピー・表示・絞り込みの説明（折り返して全文を示す）
-function relationDetailHtml(rel){
-  const rows=[["コピー",relCopyText(rel)],["表示",relDisplayText(rel)],["絞り込み",relFilterText(rel)]].filter(row=>row[1]);
-  return rows.map(row=>'<div class="field-detail"><b>'+row[0]+'</b>: '+escapeHtml(row[1])+'</div>').join("");
-}
-function relationKindJp(kind){
-  return kind==="LOOKUP"?"ルックアップ":(kind==="REF"?"関連レコード":"アクション");
-}
-cy.on("mouseover","node",e=>{
-  if(e.target.hasClass("note-node")) return;
-  const app=appMap.get(e.target.data("appId"));
-  if(!app) return;
-  ensureTip();
-  const _v = visibleFieldsForNode(app).length;
-  const _t = typeof app.totalFieldCount === "number" ? app.totalFieldCount : _v;
-  const _itemText = _t > _v ? (_v + "/" + _t) : _v;
-  tipEl.innerHTML="<b>"+escapeHtml(app.name)+"</b> "+(app.isCustom?"(手動追加)":"(ID:"+escapeHtml(String(app.id))+")")+"<br>項目: "+_itemText+" | 関連: "+app.relations.length+" | 深さ: "+(app.depth || 0);
-  tipEl.style.display="block";
-});
-cy.on("mouseout","node",()=>{if(tipEl) tipEl.style.display="none";});
-// 線にマウスを乗せると強調 + ラベル非表示中でも内容をその場で確認できる
-// 線にマウスを乗せたときの補足（コピーするフィールド・表示するフィールド・絞り込み条件）。長いときは省略する
-function edgeDetailTipHtml(edge){
-  const app=appMap.get(edge.source().data("appId"));
-  const m=String(edge.id()).match(/^e_(.+)_(\\d+)$/);
-  const rel=app&&m&&app.relations?app.relations[Number(m[2])]:null;
-  if(!rel) return "";
-  const short=text=>text.length>140?text.slice(0,139)+"…":text;
-  let html="";
-  if(relCopyText(rel)) html+="<br>コピー: "+escapeHtml(short(relCopyText(rel)));
-  if(relDisplayText(rel)) html+="<br>表示: "+escapeHtml(short(relDisplayText(rel)));
-  if(relFilterText(rel)) html+="<br>絞り込み: "+escapeHtml(short(relFilterText(rel)));
-  return html;
-}
-cy.on("mouseover","edge",e=>{
-  const edge=e.target;
-  if(edge.hasClass("rel-hidden")||edge.hasClass("rel-manual-hidden")||edge.hasClass("edge-collapsed")) return;
-  edge.addClass("edge-hover");
-  const src=appMap.get(edge.source().data("appId"));
-  const dst=appMap.get(edge.target().data("appId"));
-  ensureTip();
-  tipEl.innerHTML="<b>"+escapeHtml(edge.data("fromDisplay")||edge.data("fromLabel")||relationKindJp(edge.data("kind")))+"</b><br>"
-    +escapeHtml(src?src.name:"?")+" → "+escapeHtml(dst?dst.name:"?")
-    +"<br>種類: "+relationKindJp(edge.data("kind"))+(edge.data("isCustom")?"（手動追加）":"")
-    +edgeDetailTipHtml(edge);
-  tipEl.style.display="block";
-});
-cy.on("mouseout","edge",e=>{
-  e.target.removeClass("edge-hover");
-  if(tipEl) tipEl.style.display="none";
-});
-cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=(e.originalEvent.clientX+14)+"px";tipEl.style.top=(e.originalEvent.clientY+14)+"px";}});
-
-// ─── 編集済みHTMLの表示状態を復元（全初期化の最後に実行） ───
-applySavedViewState();
-<\/script>
-<script>
-(function(){
-  const source=document.getElementById("er-main");
-  // 描画ライブラリは head にインラインで同梱している。ブラウザの制限などで初期化できなかったときだけ、取得済みのアプリ一覧を表で示す。
-  if(typeof window.cytoscape==="function"){
-    const runtime=document.createElement("script");
-    runtime.id="er-runtime";
-    runtime.textContent=source.textContent||"";
-    source.after(runtime);
-    return;
-  }
-  const host=document.getElementById("cy");
-  // 操作バー・凡例・ズーム操作などが案内の表に重ならないよう、図の領域以外の画面部品をすべて隠す（hidden 属性は CSS の display に負けるため使わない）。
-  Array.prototype.forEach.call(document.body.children,function(el){ if(el!==host&&el.tagName!=="SCRIPT") el.style.display="none"; });
-  host.style.cssText="position:fixed;inset:0;overflow:auto;padding:32px;background:#f8fafc;color:#0f172a;font:14px/1.65 sans-serif";
-  host.innerHTML='<style>#cy table{width:100%;border-collapse:collapse}#cy th,#cy td{padding:6px 10px;text-align:left;vertical-align:top;border-bottom:1px solid #cbd5e1}#cy th,#cy td:not(:nth-child(2)){white-space:nowrap}#cy td:nth-child(2){overflow-wrap:anywhere}</style><main style="max-width:960px;margin:auto"><h1 style="font-size:22px;margin-bottom:8px">ER図を描画できませんでした</h1><p>描画ライブラリを初期化できませんでした。ブラウザを再読み込みするか、別のブラウザで開いてください。取得済みのアプリ一覧は下表で確認できます。</p><table style="margin-top:20px"><thead><tr><th>アプリID</th><th>アプリ名</th><th>項目数</th><th>関連数</th><th>取得状態</th></tr></thead><tbody>'+${safeJsonForScript(runtimeFallbackRows)}+'</tbody></table></main>';
-})();
-<\/script>
-</body>
-</html>`
-    );
   };
 
   // src/tabs/er-standalone.ts
