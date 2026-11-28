@@ -11,6 +11,7 @@ import { downloadCustomizeFile } from '../reflect/customizeFiles.js';
 import { createCancelReport, formatCancelledHeadline, isCancelStop } from './run-cancel-summary.js';
 import { CaseInsensitiveNameSet, sanitizeFolderName } from './jsconfig-standalone.js';
 import { uniqueZipEntryName } from './record-query.js';
+import { buildDesignSnapshot } from '../design/snapshot.js';
 
 /** apps.json の 1 回あたり取得上限。検索結果がこの件数に達したら絞り込みを促す。 */
 const APP_SEARCH_LIMIT = 100;
@@ -185,6 +186,80 @@ function parseAppIdList(text) {
   return out;
 }
 
+/**
+ * アプリの設定の中身の件数。取得できたセクションだけを数える（取得失敗・取得しなかったセクションは入れない）。
+ * 件数の数え方は設計書（Markdown のサマリー・取得状態）と同じ。
+ */
+export interface SettingsExportContentCounts {
+  /** フィールド設定のフィールド（システム項目・グループ・テーブルの枠を含む。テーブル内のフィールドは含まない） */
+  fields?: number;
+  /** テーブル内のフィールド */
+  subtableFields?: number;
+  views?: number;
+  reports?: number;
+  /** プロセス管理の有効・無効とステータスの数 */
+  process?: { enabled: boolean; states: number };
+  /** アプリアクション */
+  appActions?: number;
+  plugins?: number;
+  /** JS/CSS 設定のファイル・URL の数（PC・モバイルの合計） */
+  customizeResources?: number;
+  /** 通知（一般・レコード条件・リマインダーの合計。取得した通知のセクションがすべて取得できたときだけ） */
+  notifications?: number;
+}
+
+const NOTIFICATION_SECTION_KEYS = ['notifications', 'perRecordNotifications', 'reminderNotifications'];
+
+/** アプリの設定の中身の件数（結果表・INDEX.md・manifest.json に出す）。 */
+export function settingsExportContentCounts(bundle: any, scopes: string[]): SettingsExportContentCounts {
+  const snapshot = buildDesignSnapshot(bundle);
+  const countOf = (key: string): number | undefined => {
+    if (!scopes.includes(key)) return undefined;
+    const row = snapshot.sections.find((item) => item.key === key);
+    if (!row || row.status === 'fetch-error' || row.status === 'missing' || row.count == null) return undefined;
+    return row.count;
+  };
+  const out: SettingsExportContentCounts = {};
+  const fields = countOf('fieldSettings');
+  if (fields !== undefined) {
+    out.fields = fields;
+    if (snapshot.counts.subtableChildren != null) out.subtableFields = snapshot.counts.subtableChildren;
+  }
+  const views = countOf('viewSettings');
+  if (views !== undefined) out.views = views;
+  const reports = countOf('reportSettings');
+  if (reports !== undefined) out.reports = reports;
+  const states = countOf('processSettings');
+  if (states !== undefined) out.process = { enabled: bundle?.sections?.processSettings?.enable === true, states };
+  const appActions = countOf('actionSettings');
+  if (appActions !== undefined) out.appActions = appActions;
+  const plugins = countOf('pluginSettings');
+  if (plugins !== undefined) out.plugins = plugins;
+  const customizeResources = countOf('customizeSettings');
+  if (customizeResources !== undefined) out.customizeResources = customizeResources;
+  const notificationKeys = NOTIFICATION_SECTION_KEYS.filter((key) => scopes.includes(key));
+  const notificationCounts = notificationKeys.map(countOf);
+  if (notificationKeys.length && notificationCounts.every((count) => count !== undefined)) {
+    out.notifications = notificationCounts.reduce((sum: number, count) => sum + (count || 0), 0);
+  }
+  return out;
+}
+
+/** 件数を 1 行の文にする（例: 「フィールド 38（テーブル内 6）・一覧 5・プロセス管理 有効（ステータス 4）」）。数えられる件数が無ければ空文字。 */
+export function formatSettingsExportContentCounts(counts: SettingsExportContentCounts | undefined): string {
+  if (!counts) return '';
+  const parts: string[] = [];
+  if (counts.fields !== undefined) parts.push(`フィールド ${counts.fields}${counts.subtableFields ? `（テーブル内 ${counts.subtableFields}）` : ''}`);
+  if (counts.views !== undefined) parts.push(`一覧 ${counts.views}`);
+  if (counts.reports !== undefined) parts.push(`グラフ ${counts.reports}`);
+  if (counts.process) parts.push(counts.process.enabled ? `プロセス管理 有効（ステータス ${counts.process.states}）` : 'プロセス管理 無効');
+  if (counts.appActions !== undefined) parts.push(`アクション ${counts.appActions}`);
+  if (counts.plugins !== undefined) parts.push(`プラグイン ${counts.plugins}`);
+  if (counts.customizeResources !== undefined) parts.push(`JS/CSS ${counts.customizeResources}`);
+  if (counts.notifications !== undefined) parts.push(`通知 ${counts.notifications}`);
+  return parts.join('・');
+}
+
 export interface SettingsMarkdownIndexInput {
   generatedAt?: string;
   environment?: string;
@@ -203,6 +278,8 @@ export interface SettingsMarkdownIndexInput {
     omittedCustomizeBodies?: number;
     omittedPluginConfigs?: number;
     customizeFiles?: { folder: string; saved: number; failed: number; files?: SettingsExportCustomizeFile[] };
+    /** 設定の中身の件数（取得できたセクションだけ） */
+    counts?: SettingsExportContentCounts;
   }>;
 }
 
@@ -228,8 +305,8 @@ export function buildSettingsMarkdownIndex(input: SettingsMarkdownIndexInput): s
   }
   lines.push(
     '',
-    '| アプリID | アプリ名 | ゲスト | ファイル | 取得OK | 取得NG | JS/CSS本文省略 | 備考 |',
-    '| --- | --- | --- | --- | --- | --- | --- | --- |'
+    '| アプリID | アプリ名 | ゲスト | ファイル | 内容 | 取得OK | 取得NG | JS/CSS本文省略 | 備考 |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- | --- |'
   );
   for (const app of apps) {
     const omitted = Number(app?.omittedCustomizeBodies || 0);
@@ -247,7 +324,7 @@ export function buildSettingsMarkdownIndex(input: SettingsMarkdownIndexInput): s
     }
     const cell = (v: string) => String(v || '-').replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
     lines.push(
-      `| ${cell(app.appId)} | ${cell(app.appName || '-')} | ${cell(app.guestId ? `guest:${app.guestId}` : '通常')} | ${cell(app.file || '-')} | ${Number(app?.sections?.ok ?? 0)} | ${Number(app?.sections?.ng ?? 0)} | ${omitted > 0 ? `${omitted}件` : '0件'} | ${cell(notes.join(' / ') || 'OK')} |`
+      `| ${cell(app.appId)} | ${cell(app.appName || '-')} | ${cell(app.guestId ? `guest:${app.guestId}` : '通常')} | ${cell(app.file || '-')} | ${cell(formatSettingsExportContentCounts(app.counts) || '-')} | ${Number(app?.sections?.ok ?? 0)} | ${Number(app?.sections?.ng ?? 0)} | ${omitted > 0 ? `${omitted}件` : '0件'} | ${cell(notes.join(' / ') || 'OK')} |`
     );
   }
   return lines.join('\n') + '\n';
@@ -259,6 +336,8 @@ export interface SettingsExportRowSummary {
   guestId?: string;
   okCount: number;
   ngCount: number;
+  /** 設定の中身の件数を 1 行にした文（例: 「フィールド 38・一覧 5」）。取得しなかったアプリは無し。 */
+  contents?: string;
   /** 取得できなかった JS/CSS ファイルの数（「設定とJS/CSSファイルをZIPで保存」のとき）。 */
   failedFiles?: number;
   /** 中止で取得しなかったアプリ。 */
@@ -298,7 +377,10 @@ export function renderSettingsExportSummaryHtml(rows: SettingsExportRowSummary[]
     <td>${esc(String(r.okCount))}</td>
     <td>${esc(String(r.ngCount))}</td>
     <td style="overflow-wrap:anywhere">${esc(r.note || '-')}</td>
-  </tr>`
+  </tr>${r.contents
+    // 設定の中身の件数は、狭い画面でも 1 文字ずつ折り返さないよう、表の幅いっぱいの行にする
+    ? `<tr data-settings-contents="${esc(r.appId)}"><td colspan="6" style="padding:0 4px 6px;color:#334155;border-bottom:1px solid #e2e8f0">内容: ${esc(r.contents)}</td></tr>`
+    : ''}`
     )
     .join('');
   return `
@@ -471,6 +553,8 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
   const rows = [];
   /** bundles と同じ並び。JS/CSSファイルを保存しない場合は null。 */
   const customizeFilesByApp: Array<AppCustomizeFiles | null> = [];
+  /** bundles と同じ並び。設定の中身の件数。 */
+  const contentCounts: SettingsExportContentCounts[] = [];
   /** 中止で止めたアプリの位置。-1 は最後まで実行した。 */
   let stoppedAt = -1;
   for (let i = 0; i < targets.length; i++) {
@@ -540,12 +624,15 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
     if (omittedPlugins) noteParts.push(`プラグインの設定値は含めず ${omittedPlugins}件`);
     const filesNote = customizeFilesNote(customizeFiles);
     if (filesNote) noteParts.push(filesNote);
+    const counts = settingsExportContentCounts(bundle, scopes);
+    contentCounts.push(counts);
     rows.push({
       appId,
       appName: extractAppNameFromBundle(bundle) || '',
       guestId,
       okCount,
       ngCount,
+      contents: formatSettingsExportContentCounts(counts),
       omittedBodies,
       omittedPlugins,
       savedFiles: customizeFiles?.saved || 0,
@@ -579,7 +666,8 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
         error: sectionFetchError(bundle.sections?.[key])
       })),
       omittedCustomizeBodies: rows[i].omittedBodies,
-      ...(rows[i].omittedPlugins ? { omittedPluginConfigs: rows[i].omittedPlugins } : {})
+      ...(rows[i].omittedPlugins ? { omittedPluginConfigs: rows[i].omittedPlugins } : {}),
+      counts: contentCounts[i]
     };
   });
   const payload = {
@@ -628,6 +716,7 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
         file,
         fetchedAt: bundle.fetchedAt || '',
         sections: { ok: rows[i].okCount, ng: rows[i].ngCount },
+        counts: contentCounts[i],
         omittedCustomizeBodies: rows[i].omittedBodies,
         ...(rows[i].omittedPlugins ? { omittedPluginConfigs: rows[i].omittedPlugins } : {}),
         failedSections: failedSections.map((key) => ({

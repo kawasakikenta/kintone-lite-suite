@@ -214,6 +214,20 @@ async function main() {
   const resultText = await settings.page.locator('.kus-lp__panel-html').innerText();
   assert.match(resultText, /プラグインの設定値を含みます/, '結果表: 設定値を含むことを示す');
   assert.match(resultText, /取得NG[\s\S]*601[\s\S]*一部セクション取得失敗あり: ビュー設定、フィールド権限、リマインダー通知/, '結果表: 取得失敗のセクションを示す');
+  assert.match(resultText, /401[\s\S]*内容: フィールド \d+(?:（テーブル内 \d+）)?・一覧 \d+・グラフ \d+・プロセス管理 (?:有効（ステータス \d+）|無効)/, '結果表: アプリごとの設定の中身の件数');
+  {
+    // 結果表に列を足しても、狭い画面で横にはみ出さない
+    const viewport = settings.page.viewportSize();
+    await settings.page.setViewportSize({ width: 320, height: viewport.height });
+    const measured = await settings.page.evaluate(() => {
+      const table = document.querySelector('.kus-lp__panel-html');
+      return { page: document.documentElement.scrollWidth, width: window.innerWidth, table: table.scrollWidth - table.clientWidth };
+    });
+    await settings.page.locator('.kus-lp__panel-html table').scrollIntoViewIfNeeded();
+    await settings.shot('settings-zip-result-320');
+    await settings.page.setViewportSize(viewport);
+    assert.ok(measured.page <= measured.width + 1 && measured.table <= 1, `結果表: 320px で横にはみ出さない ${JSON.stringify(measured)}`);
+  }
   const zipFile = (await settings.files()).find(file => file.name.endsWith('.zip'));
   const settingsZip = readZip(zipFile.buffer);
   const manifest = JSON.parse(zipText(settingsZip, 'manifest.json'));
@@ -232,7 +246,11 @@ async function main() {
   assert.match(index, /JS\/CSSファイルの本文: 各アプリの JSON に含みます/);
   assert.match(index, /\| 601 \| 取得に一部失敗するアプリ \|[^\n]*取得失敗: ビュー設定、フィールド権限、リマインダー通知/);
   assert.match(index, /\| 501 \| 営業日報（ゲスト） \| guest:7 \|/);
-  ok('設定取得: INDEX.md に機微な値の注意・取得失敗・ゲストスペースを書く');
+  assert.match(index, /\| 401 \| [^|\n]+ \| 通常 \| [^|\n]+ \| フィールド \d+(?:（テーブル内 \d+）)?・一覧 \d+・グラフ \d+・プロセス管理 [^|\n]+・アクション \d+・プラグイン \d+・JS\/CSS \d+・通知 \d+ \|/, 'INDEX.md: アプリごとの設定の中身の件数');
+  const contents601 = index.split('\n').find(line => line.startsWith('| 601 |')).split(' | ')[4];
+  assert.ok(/フィールド \d+/.test(contents601) && !/一覧|通知/.test(contents601), `INDEX.md: 取得に失敗したセクション（一覧・通知）は数えない: ${contents601}`);
+  assert.equal(typeof manifest.apps.find(app => app.appId === '401').counts.fields, 'number', 'manifest: アプリごとの件数');
+  ok('設定取得: INDEX.md に機微な値の注意・取得失敗・ゲストスペース・設定の中身の件数を書く');
   const jsFolder = [...settingsZip.keys()].filter(key => key.startsWith('案件管理(app401)_本番_JS_CSS/') && !key.endsWith('/'));
   assert.deepEqual(jsFolder.sort(), ['案件管理(app401)_本番_JS_CSS/desktop/css/style.css', '案件管理(app401)_本番_JS_CSS/desktop/js/board_main.js', '案件管理(app401)_本番_JS_CSS/desktop/js/core.js', '案件管理(app401)_本番_JS_CSS/desktop/js/core_2.js', '案件管理(app401)_本番_JS_CSS/mobile/js/mobile.js'].sort(), 'JS/CSS: PC/モバイル・JS/CSS 別のフォルダ。同名は _2 を付けて残す。URL 指定は含まない');
   assert.ok(settingsZip.get('案件管理(app401)_本番_JS_CSS/desktop/js/core.js').toString('utf8').includes('tok_live_SECRET_in_js_body'), 'JS/CSS: ファイル本体が取得元と同じ内容');
