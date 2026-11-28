@@ -2422,7 +2422,7 @@ ${message}`);
       const message = String(e?.message || e || "不明なエラー");
       const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
       const [first, ...rest] = lines.length ? lines : [message];
-      if (e?.partialSuccess === true) {
+      if (e?.partialSuccess === true || e?.writeUnconfirmed === true) {
         const logNote = rest.length ? /[）)]$/.test(first) ? "。詳細は下のログを確認してください" : "（詳細は下のログ）" : "";
         panel.setStatus(`${first}${logNote}`, "warn");
         if (rest.length) panel.setResult(lines.join("\n"));

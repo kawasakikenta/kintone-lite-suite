@@ -1490,6 +1490,95 @@ ${base}`
     return [...byId.entries()].sort(([a], [b]) => BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0).map(([, app]) => app);
   }
 
+  // src/settingsWrite.ts
+  var DEFAULT_ATTEMPTS = 3;
+  var RETRY_BASE_DELAY_MS = 500;
+  var RETRY_MAX_DELAY_MS = 3e3;
+  var KINTONE_ERROR_CODE = /^[A-Z][A-Z0-9]*_[A-Z]{2}\d{2}$/;
+  function isKintoneRejection(error) {
+    for (let current = error, depth = 0; current && typeof current === "object" && depth < 5; current = current.original, depth++) {
+      if (current.id || current.errors && typeof current.errors === "object") return true;
+      if (KINTONE_ERROR_CODE.test(String(current.code ?? ""))) return true;
+    }
+    return false;
+  }
+  function isTransientWriteFailure(method, error) {
+    for (let current = error, depth = 0; current && depth < 5; current = current.original, depth++) {
+      if (isRetriableMutation(method, current)) return true;
+    }
+    return false;
+  }
+  var SettingsWriteUnconfirmedError = class extends Error {
+    constructor(message, sentRevision, currentRevision, cause) {
+      super(message);
+      this.sentRevision = sentRevision;
+      this.currentRevision = currentRevision;
+      this.cause = cause;
+      __publicField(this, "writeUnconfirmed", true);
+      /** プレビュー反映の書き込みの連鎖を止める（次の書き込みに使う revision を決められない） */
+      __publicField(this, "stopReflection", true);
+      this.name = "SettingsWriteUnconfirmedError";
+    }
+  };
+  function isSettingsWriteUnconfirmed(error) {
+    for (let current = error, depth = 0; current && typeof current === "object" && depth < 5; current = current.original, depth++) {
+      if (current.writeUnconfirmed === true) return true;
+    }
+    return false;
+  }
+  var firstLine = (error) => String(error?.message ?? error ?? "").split("\n").map((line) => line.trim()).find(Boolean) || "不明なエラー";
+  async function writeSettingsWithRevision(method, prefix, path, body, options) {
+    assertAllowsMutatingRestCall(prefix, path, method);
+    const send = () => (method === "POST" ? apiPost : apiPut)(prefix, path, body, 1);
+    const sent = String(body?.revision ?? "");
+    if (!/^\d+$/.test(sent)) return send();
+    const attempts = Math.max(1, Number.isFinite(options.attempts) ? Number(options.attempts) : DEFAULT_ATTEMPTS);
+    const readRevision = options.readRevision || (async () => pickRevision(await apiGet(prefix, path, { app: body.app })));
+    const { subject, howToCheck } = options;
+    const unconfirmed = (detail, current, cause) => new SettingsWriteUnconfirmedError(
+      `${subject}の書き込みは、${detail}反映されたか分かりません。${howToCheck}${cause ? `
+（原因: ${firstLine(cause)}）` : ""}`,
+      sent,
+      current,
+      cause
+    );
+    let resent = false;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await send();
+      } catch (error) {
+        if (isRunCancelledError(error)) throw error;
+        if (isKintoneRejection(error)) {
+          if (resent && isRevisionConflictError(error)) {
+            throw unconfirmed(`応答が届かなかったため送り直したところ、その間に設定の更新番号（revision）が ${sent} から進んでいました。先に送った分が遅れて反映されたか、ほかの更新が入ったかのどちらかで、`, "", null);
+          }
+          throw error;
+        }
+        let current = "";
+        try {
+          current = await readRevision();
+        } catch (readError) {
+          if (isRunCancelledError(readError)) throw unconfirmed("応答が届かず、確かめる前に中止したため、", "", error);
+          throw unconfirmed(`応答が届かず、反映先の設定も読み取れなかったため（${firstLine(readError)}）、`, "", error);
+        }
+        if (!/^\d+$/.test(current)) throw unconfirmed("応答が届かず、反映先の設定の更新番号（revision）も確かめられなかったため、", "", error);
+        if (current !== sent) {
+          throw unconfirmed(`応答が届かなかったため、設定の更新番号（revision）を読み直したところ ${sent} から ${current} に進んでいました。この書き込みが反映されたか、ほかの更新が入ったかのどちらかで、`, current, error);
+        }
+        if (attempt + 1 < attempts && isTransientWriteFailure(method, error)) {
+          await sleepUnlessCancelled(computeRetryDelayMs(attempt, RETRY_BASE_DELAY_MS, RETRY_MAX_DELAY_MS));
+          resent = true;
+          continue;
+        }
+        if (error && typeof error === "object" && typeof error.message === "string") {
+          error.message += `
+反映先の設定の更新番号（revision）は ${sent} のままで、この書き込みは反映されていません。`;
+        }
+        throw error;
+      }
+    }
+  }
+
   // src/reflect/customizeFiles.ts
   function customizeSlotKey(platform, kind, fileKey) {
     return `${platform}/${kind}/${fileKey}`;
@@ -3687,6 +3776,8 @@ ${base}`
     if (isRevisionConflictError(error)) return "conflict";
     const status = resolveHttpStatus(error) || resolveHttpStatus(error?.original);
     if (status >= 500 || status === 0 && (isRetriableApiError(error) || isRetriableApiError(error?.original))) return "unknown";
+    const sent = error?.__apiDiag === true || error?.original?.__apiDiag === true;
+    if (sent && !isKintoneRejection(error)) return "unknown";
     return "failed";
   }
   async function runDeployStandalone(opts) {
@@ -4153,7 +4244,7 @@ ${base}`
   function describeDeployMessage(message) {
     return String(message || "").split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !/^\[API\]/.test(line)).join("\n");
   }
-  function firstLine(message, limit = 120) {
+  function firstLine2(message, limit = 120) {
     const line = describeDeployMessage(message).split("\n")[0] || "";
     return line.length > limit ? `${line.slice(0, limit)}…` : line;
   }
@@ -4162,7 +4253,7 @@ ${base}`
     const failed = problems.filter((app) => app.status === "failed");
     const list2 = failed.length ? failed : problems;
     const shown = list2.slice(0, limit).map((app) => {
-      const reason = firstLine(app.message);
+      const reason = firstLine2(app.message);
       return reason ? `${shortDeployApp(app)}: ${reason}` : shortDeployApp(app);
     });
     const rest = list2.length - shown.length;
@@ -4262,19 +4353,26 @@ ${base}`
     return withoutApiContextLines(message).replace("（revision 競合）", "（ほかの更新と重なったため。revision 競合）");
   }
   function summarizeApplyOutcome(sections) {
-    const out = { ok: 0, ng: 0, stopped: 0, pending: 0, skip: 0 };
+    const out = { ok: 0, ng: 0, stopped: 0, unconfirmed: 0, pending: 0, skip: 0 };
     for (const s of sections || []) {
       if (s.status === "ok") out.ok += 1;
-      else if (s.status === "ng") out[s.stopped ? "stopped" : "ng"] += 1;
+      else if (s.status === "ng") out[s.stopped ? "stopped" : s.unconfirmed ? "unconfirmed" : "ng"] += 1;
       else if (s.status === "pending") out.pending += 1;
       else out.skip += 1;
     }
     return out;
   }
+  function applySectionStatusText(section) {
+    if (!section || section.status === "pending") return "未実行";
+    if (section.status === "ok") return "成功";
+    if (section.status === "skip") return "変更なし";
+    if (section.stopped) return "途中で停止";
+    return section.unconfirmed ? "反映されたか不明" : "失敗";
+  }
   function previewWriteState(sections) {
     const list2 = sections || [];
     const written = list2.some((section) => section.status === "ok" || section.status === "ng" && (section.stopped === true || section.partiallyWritten === true));
-    if (!written) return "none";
+    if (!written) return list2.some((section) => section.status === "ng" && section.unconfirmed === true) ? "unknown" : "none";
     return list2.some((section) => section.status === "ng" || section.status === "pending") ? "partial" : "all";
   }
 
@@ -5246,8 +5344,9 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
   var REFLECT_UNDO_GUIDANCE = "取り消す場合: 反映前に反映先プレビューへ未公開の変更が無ければ、アプリの設定画面の『変更を中止』で今回の反映を含む未公開の変更をすべて破棄できます。または自動保存したバックアップJSONを『設定JSONから取得』で反映元に読み込み、差分を確認して戻せます（追加したフィールドは削除されません）。";
 
   // src/reflect/applyProgress.ts
-  function describeApplyProgressStatus(status, stopped = false) {
+  function describeApplyProgressStatus(status, stopped = false, unconfirmed = false) {
     if (status === "ng" && stopped) return { icon: "■", text: "途中で停止", tone: "ng" };
+    if (status === "ng" && unconfirmed) return { icon: "?", text: "反映されたか不明", tone: "pending" };
     if (status === "running") return { icon: "…", text: "実行中…", tone: "running" };
     if (status === "ok") return { icon: "✓", text: "成功", tone: "ok" };
     if (status === "ng") return { icon: "✕", text: "失敗", tone: "ng" };
@@ -5264,16 +5363,24 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
     return [...new Set(sectionKeys)].sort((a, b) => order(a) - order(b)).map((sectionKey) => ({ sectionKey, label: labelOf(sectionKey), status: "waiting" }));
   }
   function applyProgressUpdate(rows, update) {
-    return rows.map((row) => row.sectionKey === update.sectionKey ? { sectionKey: row.sectionKey, label: row.label, status: update.status, ...update.message ? { message: update.message } : {}, ...update.status === "ng" && update.stopped ? { stopped: true } : {} } : row);
+    return rows.map((row) => row.sectionKey === update.sectionKey ? {
+      sectionKey: row.sectionKey,
+      label: row.label,
+      status: update.status,
+      ...update.message ? { message: update.message } : {},
+      ...update.status === "ng" && update.stopped ? { stopped: true } : {},
+      ...update.status === "ng" && update.unconfirmed ? { unconfirmed: true } : {}
+    } : row);
   }
   function summarizeApplyProgress(rows) {
     if (!rows.length) return "";
     const settled = rows.filter((row) => ["ok", "ng", "skip"].includes(row.status)).length;
-    const failed = rows.filter((row) => row.status === "ng" && !row.stopped).length;
+    const failed = rows.filter((row) => row.status === "ng" && !row.stopped && !row.unconfirmed).length;
     const stopped = rows.filter((row) => row.status === "ng" && row.stopped).length;
+    const unconfirmed = rows.filter((row) => row.status === "ng" && !row.stopped && row.unconfirmed).length;
     const skipped = rows.filter((row) => row.status === "pending").length;
     const running = rows.find((row) => row.status === "running");
-    return `${settled} / ${rows.length} 項目が完了${failed ? `（失敗 ${failed}）` : ""}${stopped ? `（途中で停止 ${stopped}）` : ""}${skipped ? `、未実行 ${skipped}` : ""}${running ? `。実行中: ${running.label}` : ""}`;
+    return `${settled} / ${rows.length} 項目が完了${failed ? `（失敗 ${failed}）` : ""}${stopped ? `（途中で停止 ${stopped}）` : ""}${unconfirmed ? `（反映されたか不明 ${unconfirmed}）` : ""}${skipped ? `、未実行 ${skipped}` : ""}${running ? `。実行中: ${running.label}` : ""}`;
   }
   function describeUndoGuidance(targetPending) {
     if (targetPending?.state === "clean") {
@@ -7118,7 +7225,7 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
       const message = String(e?.message || e || "不明なエラー");
       const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
       const [first, ...rest] = lines.length ? lines : [message];
-      if (e?.partialSuccess === true) {
+      if (e?.partialSuccess === true || e?.writeUnconfirmed === true) {
         const logNote = rest.length ? /[）)]$/.test(first) ? "。詳細は下のログを確認してください" : "（詳細は下のログ）" : "";
         panel.setStatus(`${first}${logNote}`, "warn");
         if (rest.length) panel.setResult(lines.join("\n"));
@@ -8306,11 +8413,18 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
   }
   function describeSourceResult(input) {
     const counts = summarizeApplyOutcome([...input.sections]);
-    const total = counts.ok + counts.ng + counts.stopped + counts.pending + counts.skip;
+    const total = counts.ok + counts.ng + counts.stopped + counts.unconfirmed + counts.pending + counts.skip;
     const written = counts.ok;
     if (input.cancelled) {
       return {
         text: `中止しました（${written}/${total} 項目を反映先プレビューへ反映${counts.stopped ? `、${counts.stopped} 項目は途中で停止` : ""}${counts.ng ? `、${counts.ng} 項目は失敗` : ""}、残り ${counts.pending} 項目は未実行）。書き込み済みの分は反映先プレビューに残っています。本番へは反映していません。`,
+        tone: "warn"
+      };
+    }
+    if (counts.unconfirmed) {
+      const unknown = input.sections.find((section) => section.status === "ng" && !section.stopped && section.unconfirmed);
+      return {
+        text: `${total} 項目中 ${written} 項目を反映先プレビューへ反映しました。反映されたか分からない項目が ${counts.unconfirmed} 項目あります${unknown ? `（${unknown.label}）` : ""}${counts.ng ? `。失敗 ${counts.ng} 項目` : ""}${counts.pending ? `、未実行 ${counts.pending} 項目` : ""}。本番へは反映していません。差分を抽出し直して、反映先プレビューの状態を確認してください。`,
         tone: "warn"
       };
     }
@@ -8391,7 +8505,7 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
     if (result.mismatches.length) return "mismatch";
     return result.unknownCount > 0 || result.total === 0 ? "unknown" : "all";
   }
-  var firstLine2 = (text) => String(text || "").split("\n")[0].trim();
+  var firstLine3 = (text) => String(text || "").split("\n")[0].trim();
   function compareVerifyExpectations(expectations, read, meta) {
     const result = { checkedAt: meta.checkedAt, side: meta.side, total: expectations.length, reflected: 0, mismatches: [], unknown: [], unknownCount: 0, editedTotal: 0, editedReflected: 0, notes: [] };
     const unknownBySection = /* @__PURE__ */ new Map();
@@ -8399,7 +8513,7 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
       if (item.edited) result.editedTotal += 1;
       const section = own4(read, item.sectionKey) ? read[item.sectionKey] : void 0;
       if (!section || section.ok === false) {
-        const reason = section && section.ok === false ? firstLine2(section.message) || "設定を取得できませんでした" : "設定を読み取れませんでした";
+        const reason = section && section.ok === false ? firstLine3(section.message) || "設定を取得できませんでした" : "設定を読み取れませんでした";
         const entry = unknownBySection.get(item.sectionKey) ?? { sectionKey: item.sectionKey, sectionLabel: item.sectionLabel, count: 0, reason };
         entry.count += 1;
         unknownBySection.set(item.sectionKey, entry);
@@ -8912,6 +9026,7 @@ ${lines.join("\n")}` : lines.join("\n"), added: lines.length };
   }
 
   // src/tabs/reflect-standalone.ts
+  var REFLECT_UNCONFIRMED_CHECK = "以降の項目は書き込んでいません。差分を取得し直して、この項目が反映先プレビューに反映されているか確認してください。";
   function reflectConnectionError(opts) {
     for (const [label, value, optional] of [
       ["反映元アプリID", opts.sourceAppId, !!opts.sourceBundle],
@@ -9203,7 +9318,10 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     }
     const write = async (operation, body) => {
       try {
-        const response = await (operation.method === "POST" ? apiPost : apiPut)(prefix, operation.endpoint, { ...body, app: opts.targetAppId, revision });
+        const response = await writeSettingsWithRevision(operation.method, prefix, operation.endpoint, { ...body, app: opts.targetAppId, revision }, {
+          subject: operation.label,
+          howToCheck: REFLECT_UNCONFIRMED_CHECK
+        });
         const next = pickRevision(response);
         if (!/^\d+$/.test(next)) {
           const error = new Error(`${operation.label}の書き込みは完了しましたが、更新後のrevisionを確認できません。以降の反映を中止します。差分を取得し直して状態を確認してください。`);
@@ -9218,9 +9336,9 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     logs.push(`反映元: ${opts.sourceBundle ? "設定JSON" : opts.sourceAppId} → 反映先(プレビュー): ${opts.targetAppId}`);
     const sections = [];
     let cancelled = false;
-    const notify = (plan, status, message, stopped = false) => {
+    const notify = (plan, status, message, stopped = false, unconfirmed = false) => {
       try {
-        opts.onSectionUpdate?.({ sectionKey: plan.sectionKey, label: plan.label, status, ...message ? { message } : {}, ...stopped ? { stopped: true } : {} });
+        opts.onSectionUpdate?.({ sectionKey: plan.sectionKey, label: plan.label, status, ...message ? { message } : {}, ...stopped ? { stopped: true } : {}, ...unconfirmed ? { unconfirmed: true } : {} });
       } catch {
       }
     };
@@ -9272,9 +9390,11 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
         }
         const message = `${error.message || String(error)}${written.length ? `
 （この項目では ${written.join("・")} まで書き込み済みです。差分を取得し直して現在の状態を確認してください）` : ""}`;
-        sections.push({ ...outcome, status: "ng", message, ...written.length ? { partiallyWritten: true } : {} });
-        notify(plan, "ng", message);
-        pushReflectErrorLog(logs, `NG ${plan.label}: ${message}`, message);
+        const unconfirmed = isSettingsWriteUnconfirmed(error);
+        sections.push({ ...outcome, status: "ng", message, ...written.length ? { partiallyWritten: true } : {}, ...unconfirmed ? { unconfirmed: true } : {} });
+        notify(plan, "ng", message, false, unconfirmed);
+        if (unconfirmed) logs.push(`不明 ${plan.label}: ${message}`);
+        else pushReflectErrorLog(logs, `NG ${plan.label}: ${message}`, message);
         if (opts.stopOnError !== false || error.stopReflection || isRevisionConflictError(error)) {
           for (const pending of plans.slice(index + 1)) {
             sections.push({ sectionKey: pending.sectionKey, label: pending.label, status: "pending", message: "中断のため未実行" });
@@ -9287,11 +9407,13 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       onProgress(logs);
     }
     const count = (status) => sections.filter((section) => section.status === status).length;
-    const stoppedCount = sections.filter((section) => section.status === "ng" && section.stopped).length, failedCount = count("ng") - stoppedCount;
-    logs.push(`=== 完了: OK ${count("ok")} / NG ${failedCount}${stoppedCount ? ` / 途中で停止 ${stoppedCount}` : ""} / 未実行 ${count("pending")} / 変更なし ${count("skip")} ===`);
+    const stoppedCount = sections.filter((section) => section.status === "ng" && section.stopped).length;
+    const unconfirmedCount = sections.filter((section) => section.status === "ng" && !section.stopped && section.unconfirmed).length;
+    const failedCount = count("ng") - stoppedCount - unconfirmedCount;
+    logs.push(`=== 完了: OK ${count("ok")} / NG ${failedCount}${stoppedCount ? ` / 途中で停止 ${stoppedCount}` : ""}${unconfirmedCount ? ` / 反映されたか不明 ${unconfirmedCount}` : ""} / 未実行 ${count("pending")} / 変更なし ${count("skip")} ===`);
     onProgress(logs);
     if (cancelled) setStatus(`反映を中止しました（反映済み ${count("ok")} / 途中で停止 ${stoppedCount} / 未実行 ${count("pending")}）。反映先プレビューは一部だけ更新されている可能性があります。`, true);
-    else setStatus(failedCount ? "反映完了（一部エラーあり）" : "反映完了");
+    else setStatus(unconfirmedCount ? "反映を止めました（反映されたか分からない項目があります）" : failedCount ? "反映完了（一部エラーあり）" : "反映完了");
     return { logs, sections, backup, finalRevision: revision, ...cancelled ? { cancelled: true } : {} };
   }
   async function preflightLookupMapStandalone(lookupMap, opts = {}) {
@@ -9352,11 +9474,13 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     const writeState = previewWriteState(apply.sections);
     const UNCHANGED_NOTE = "反映先プレビューは変わっていません。";
     const PARTIAL_NOTE = "反映先プレビューには一部だけ書き込まれています。差分を取得し直して現在の状態を確認してください。";
-    if (apply.cancelled) return skip(`中止したため、本番へは反映していません。${writeState === "none" ? UNCHANGED_NOTE : "反映先プレビューは一部だけ更新されている可能性があります。差分を取得し直して現在の状態を確認してください。"}`);
+    const UNKNOWN_NOTE = "反映先プレビューが変わったかどうか分かりません（書き込みの応答が届かなかった項目があります）。差分を抽出し直して現在の状態を確認してください。";
+    const writeNote = writeState === "none" ? UNCHANGED_NOTE : writeState === "unknown" ? UNKNOWN_NOTE : PARTIAL_NOTE;
+    if (apply.cancelled) return skip(`中止したため、本番へは反映していません。${writeState === "none" ? UNCHANGED_NOTE : writeState === "unknown" ? UNKNOWN_NOTE : "反映先プレビューは一部だけ更新されている可能性があります。差分を取得し直して現在の状態を確認してください。"}`);
     const incomplete = apply.sections.filter((section) => section.status === "ng" || section.status === "pending");
     if (incomplete.length) {
-      const list2 = incomplete.map((section) => `${section.label}: ${section.status === "ng" ? "失敗" : "未実行"}`).join("、");
-      return skip(`反映先プレビューへの書き込みが完了しなかった項目があるため（${list2}）、本番へは反映していません。${writeState === "none" ? UNCHANGED_NOTE : PARTIAL_NOTE}`);
+      const list2 = incomplete.map((section) => `${section.label}: ${applySectionStatusText(section)}`).join("、");
+      return skip(`反映先プレビューへの書き込みが完了しなかった項目があるため（${list2}）、本番へは反映していません。${writeNote}`);
     }
     const pending = opts.targetPending;
     if (pending?.state !== "clean" && pending?.state !== "own" && !opts.allowPendingChanges) {
@@ -9478,11 +9602,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     return `${esc3(app.name || "（名前なし）")}（${parts.map(esc3).join(" / ")}）`;
   }
   function outcomeLabel(section) {
-    if (!section) return "未実行";
-    if (section.status === "ok") return "成功";
-    if (section.status === "skip") return "変更なし";
-    if (section.status === "pending") return "未実行";
-    return section.stopped ? "途中で停止" : "失敗";
+    return applySectionStatusText(section);
   }
   function buildSourceDeployRecordMarkdown(input) {
     const { result } = input;
@@ -9503,7 +9623,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
       lines.push(`- 反映先の未公開の変更: ${esc3(input.targetPending.message)}${acknowledged}`);
     }
     lines.push(`- 結果: ${esc3(message.text)}`);
-    lines.push(`- 件数（プレビューへの書き込み）: 成功 ${counts.ok}・失敗 ${counts.ng}・途中で停止 ${counts.stopped}・未実行 ${counts.pending}・変更なし ${counts.skip}`);
+    lines.push(`- 件数（プレビューへの書き込み）: 成功 ${counts.ok}・失敗 ${counts.ng}・途中で停止 ${counts.stopped}${counts.unconfirmed ? `・反映されたか不明 ${counts.unconfirmed}` : ""}・未実行 ${counts.pending}・変更なし ${counts.skip}`);
     if (result.apply.cancelled) lines.push("- 利用者の操作で中止しました。");
     if (result.apply.backup) lines.push(`- バックアップ（反映前のプレビュー）: ${esc3(formatStamp2(result.apply.backup.generatedAt))} に保存（項目: ${esc3(result.apply.backup.scopes.join("、"))}）`);
     else lines.push("- バックアップ（反映前のプレビュー）: 保存していません");
@@ -10190,7 +10310,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
     const paint = (row) => {
       const node = nodes.get(row.sectionKey);
       if (!node) return;
-      const display = describeApplyProgressStatus(row.status, row.stopped);
+      const display = describeApplyProgressStatus(row.status, row.stopped, row.unconfirmed);
       node.item.className = `kus-rl-result-item kus-rl-result-item--${display.tone}`;
       node.state.className = `kus-rl-result-state kus-rl-result-state--${display.tone}`;
       node.icon.textContent = display.icon;
@@ -12203,7 +12323,8 @@ ${P} .kus-ds-impact{margin-top:6px;font-size:13px;line-height:1.6;font-weight:60
         label: section.label,
         status: section.status,
         ...section.message ? { message: section.message } : {},
-        ...section.stopped ? { stopped: true } : {}
+        ...section.stopped ? { stopped: true } : {},
+        ...section.unconfirmed ? { unconfirmed: true } : {}
       }));
     }
     function renderFinalProgress(last) {
@@ -12458,7 +12579,7 @@ ${P} .kus-ds-impact{margin-top:6px;font-size:13px;line-height:1.6;font-weight:60
               sections: run.map((section) => {
                 const row = rows.find((candidate) => candidate.sectionKey === section.sectionKey);
                 const status = row?.status === "ok" || row?.status === "skip" || row?.status === "ng" ? row.status : row?.status === "running" ? "ng" : "pending";
-                return { sectionKey: section.sectionKey, label: section.label, status, message: status === "ng" ? row?.message || `処理が中断されました。反映先プレビューの状態を確認してください。（${reason}）` : status === "pending" ? "実行前に処理が止まりました。" : row?.message, ...row?.stopped ? { stopped: true } : {} };
+                return { sectionKey: section.sectionKey, label: section.label, status, message: status === "ng" ? row?.message || `処理が中断されました。反映先プレビューの状態を確認してください。（${reason}）` : status === "pending" ? "実行前に処理が止まりました。" : row?.message, ...row?.stopped ? { stopped: true } : {}, ...row?.unconfirmed ? { unconfirmed: true } : {} };
               })
             },
             deploySkipped: goal === "production" ? `実行中にエラーが発生したため、本番の状態をアプリの設定画面で確認してください。（${reason}）` : void 0

@@ -1084,6 +1084,9 @@
   async function apiPut(prefix, path, body, retries) {
     return executeMutatingApiWithRetry("PUT", prefix, path, body, retries);
   }
+  async function apiPost(prefix, path, body, retries) {
+    return executeMutatingApiWithRetry("POST", prefix, path, body, retries);
+  }
   var REVISION_CONFLICT_CODES = /* @__PURE__ */ new Set(["GAIA_CO02"]);
   function isRevisionConflictError(error) {
     if (!error) return false;
@@ -2810,7 +2813,7 @@ ${base}`
       const message = String(e?.message || e || "不明なエラー");
       const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
       const [first, ...rest] = lines.length ? lines : [message];
-      if (e?.partialSuccess === true) {
+      if (e?.partialSuccess === true || e?.writeUnconfirmed === true) {
         const logNote = rest.length ? /[）)]$/.test(first) ? "。詳細は下のログを確認してください" : "（詳細は下のログ）" : "";
         panel.setStatus(`${first}${logNote}`, "warn");
         if (rest.length) panel.setResult(lines.join("\n"));
@@ -3256,6 +3259,95 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     selected.onSelect?.();
     show(0);
     return { refresh, show };
+  }
+
+  // src/settingsWrite.ts
+  var DEFAULT_ATTEMPTS = 3;
+  var RETRY_BASE_DELAY_MS = 500;
+  var RETRY_MAX_DELAY_MS = 3e3;
+  var KINTONE_ERROR_CODE = /^[A-Z][A-Z0-9]*_[A-Z]{2}\d{2}$/;
+  function isKintoneRejection(error) {
+    for (let current = error, depth = 0; current && typeof current === "object" && depth < 5; current = current.original, depth++) {
+      if (current.id || current.errors && typeof current.errors === "object") return true;
+      if (KINTONE_ERROR_CODE.test(String(current.code ?? ""))) return true;
+    }
+    return false;
+  }
+  function isTransientWriteFailure(method, error) {
+    for (let current = error, depth = 0; current && depth < 5; current = current.original, depth++) {
+      if (isRetriableMutation(method, current)) return true;
+    }
+    return false;
+  }
+  var SettingsWriteUnconfirmedError = class extends Error {
+    constructor(message, sentRevision, currentRevision, cause) {
+      super(message);
+      this.sentRevision = sentRevision;
+      this.currentRevision = currentRevision;
+      this.cause = cause;
+      __publicField(this, "writeUnconfirmed", true);
+      /** プレビュー反映の書き込みの連鎖を止める（次の書き込みに使う revision を決められない） */
+      __publicField(this, "stopReflection", true);
+      this.name = "SettingsWriteUnconfirmedError";
+    }
+  };
+  function isSettingsWriteUnconfirmed(error) {
+    for (let current = error, depth = 0; current && typeof current === "object" && depth < 5; current = current.original, depth++) {
+      if (current.writeUnconfirmed === true) return true;
+    }
+    return false;
+  }
+  var firstLine = (error) => String(error?.message ?? error ?? "").split("\n").map((line) => line.trim()).find(Boolean) || "不明なエラー";
+  async function writeSettingsWithRevision(method, prefix, path, body, options) {
+    assertAllowsMutatingRestCall(prefix, path, method);
+    const send = () => (method === "POST" ? apiPost : apiPut)(prefix, path, body, 1);
+    const sent = String(body?.revision ?? "");
+    if (!/^\d+$/.test(sent)) return send();
+    const attempts = Math.max(1, Number.isFinite(options.attempts) ? Number(options.attempts) : DEFAULT_ATTEMPTS);
+    const readRevision = options.readRevision || (async () => pickRevision(await apiGet(prefix, path, { app: body.app })));
+    const { subject, howToCheck } = options;
+    const unconfirmed = (detail, current, cause) => new SettingsWriteUnconfirmedError(
+      `${subject}の書き込みは、${detail}反映されたか分かりません。${howToCheck}${cause ? `
+（原因: ${firstLine(cause)}）` : ""}`,
+      sent,
+      current,
+      cause
+    );
+    let resent = false;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await send();
+      } catch (error) {
+        if (isRunCancelledError(error)) throw error;
+        if (isKintoneRejection(error)) {
+          if (resent && isRevisionConflictError(error)) {
+            throw unconfirmed(`応答が届かなかったため送り直したところ、その間に設定の更新番号（revision）が ${sent} から進んでいました。先に送った分が遅れて反映されたか、ほかの更新が入ったかのどちらかで、`, "", null);
+          }
+          throw error;
+        }
+        let current = "";
+        try {
+          current = await readRevision();
+        } catch (readError) {
+          if (isRunCancelledError(readError)) throw unconfirmed("応答が届かず、確かめる前に中止したため、", "", error);
+          throw unconfirmed(`応答が届かず、反映先の設定も読み取れなかったため（${firstLine(readError)}）、`, "", error);
+        }
+        if (!/^\d+$/.test(current)) throw unconfirmed("応答が届かず、反映先の設定の更新番号（revision）も確かめられなかったため、", "", error);
+        if (current !== sent) {
+          throw unconfirmed(`応答が届かなかったため、設定の更新番号（revision）を読み直したところ ${sent} から ${current} に進んでいました。この書き込みが反映されたか、ほかの更新が入ったかのどちらかで、`, current, error);
+        }
+        if (attempt + 1 < attempts && isTransientWriteFailure(method, error)) {
+          await sleepUnlessCancelled(computeRetryDelayMs(attempt, RETRY_BASE_DELAY_MS, RETRY_MAX_DELAY_MS));
+          resent = true;
+          continue;
+        }
+        if (error && typeof error === "object" && typeof error.message === "string") {
+          error.message += `
+反映先の設定の更新番号（revision）は ${sent} のままで、この書き込みは反映されていません。`;
+        }
+        throw error;
+      }
+    }
   }
 
   // src/reflect/customizeFiles.ts
@@ -4143,7 +4235,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         uploaded.set(item, await uploadKintoneFile(targetGuestId, blob, item.name));
       } catch (error) {
         if (isRunCancelledError(error)) throw error;
-        throw new Error(`${where}のアップロードに失敗しました（${firstLine(error)}）。`);
+        throw new Error(`${where}のアップロードに失敗しました（${firstLine2(error)}）。`);
       }
     }
     return uploaded;
@@ -4214,7 +4306,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     setStatus("JS/CSS設定を反映中...");
     let res;
     try {
-      res = await apiPut(prefix, "/app/customize.json", body);
+      res = await writeSettingsWithRevision("PUT", prefix, "/app/customize.json", body, { subject: "JS/CSS設定の反映", howToCheck: JS_CONFIG_UNCONFIRMED_CHECK });
     } catch (e) {
       throw decorateRevisionConflict(e, "JS/CSS設定の反映");
     }
@@ -4230,20 +4322,22 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     setStatus("JS/CSS設定反映完了");
     return { revision: pickRevision(res) };
   }
+  var JS_CONFIG_UNCONFIRMED_CHECK = "kintone で反映先アプリの「JavaScript / CSSでカスタマイズ」の設定を開き、反映した内容になっているか確認してください。";
   var JS_CONFIG_MULTI_STATUS_LABEL = {
     success: "成功",
     failed: "失敗",
     conflict: "競合",
+    unconfirmed: "反映されたか不明",
     notExecuted: "未実行（中止）"
   };
   function multiTargetLabel(t) {
     return `App ${t.appId}${t.appName ? `（${t.appName}）` : ""}${t.guestId ? ` / ゲストスペース ${t.guestId}` : ""}`;
   }
-  function firstLine(message) {
+  function firstLine2(message) {
     return String(message?.message ?? message ?? "不明なエラー").split("\n").map((l) => l.trim()).find(Boolean) || "不明なエラー";
   }
   function renderJsConfigMultiResultHtml(res) {
-    const color = { success: "#15803d", failed: "#b91c1c", conflict: "#b45309", notExecuted: "#64748b" };
+    const color = { success: "#15803d", failed: "#b91c1c", conflict: "#b45309", unconfirmed: "#b45309", notExecuted: "#64748b" };
     const rows = res.results.map((r) => {
       const fileNote = r.files && r.files.uploaded + r.files.reused + r.files.kept > 0 ? ` / ファイル: アップロード ${r.files.uploaded}件・再利用 ${r.files.reused}件・そのまま ${r.files.kept}件` : "";
       const detail = r.status === "success" ? `revision ${r.revision || "-"} / 外れた現在の設定 ${r.removed ?? 0}件${fileNote}` : (r.precheck && r.status === "failed" ? "事前確認で失敗（書き込みなし）: " : "") + (r.message || "");
@@ -4300,7 +4394,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
           originBlocked++;
           originSample = e.plan;
         }
-        results.push({ ...target, status: "failed", precheck: true, message: firstLine(e) });
+        results.push({ ...target, status: "failed", precheck: true, message: firstLine2(e) });
       }
     }
     if (originBlocked === total && originSample) throw new Error(`${formatJsConfigFileProblems(originSample)}
@@ -4315,9 +4409,10 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         success: results.filter((r) => r.status === "success").length,
         failed: results.filter((r) => r.status === "failed").length,
         conflict: results.filter((r) => r.status === "conflict").length,
+        unconfirmed: results.filter((r) => r.status === "unconfirmed").length,
         notExecuted: results.filter((r) => r.status === "notExecuted").length
       };
-      const detail = `失敗 ${counts.failed}件 / 競合 ${counts.conflict}件${counts.notExecuted ? ` / 未実行（中止） ${counts.notExecuted}件` : ""}`;
+      const detail = `失敗 ${counts.failed}件 / 競合 ${counts.conflict}件${counts.unconfirmed ? ` / 反映されたか分からない ${counts.unconfirmed}件` : ""}${counts.notExecuted ? ` / 未実行（中止） ${counts.notExecuted}件` : ""}`;
       let headline = "";
       let tone = "ok";
       if (declined) {
@@ -4332,7 +4427,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
         headline = `${total}件中 ${counts.success}件を反映しました。${detail}（詳細は下のログ）`;
         tone = "warn";
       } else {
-        headline = `反映できた反映先がありません。${detail}（詳細は下のログ）`;
+        headline = `${counts.unconfirmed ? "反映を確かめられた" : "反映できた"}反映先がありません。${detail}（詳細は下のログ）`;
         tone = "err";
       }
       results.sort((x, y) => order(x) - order(y));
@@ -4368,7 +4463,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       ].filter((line) => line !== null).join("\n");
       if (!kusConfirm(text)) {
         setStatus("JS/CSS設定の複数反映をキャンセルしました（何も書き込んでいません）");
-        return { declined: true, cancelled: false, results: [], counts: { total, success: 0, failed: 0, conflict: 0, notExecuted: 0 }, headline: "", tone: "info" };
+        return { declined: true, cancelled: false, results: [], counts: { total, success: 0, failed: 0, conflict: 0, unconfirmed: 0, notExecuted: 0 }, headline: "", tone: "info" };
       }
     }
     let cancelled = false;
@@ -4396,14 +4491,14 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
               results.push({ ...target, status: "notExecuted", message: "アップロード中に中止したため、この反映先には書き込んでいません" });
               continue;
             }
-            results.push({ ...target, status: "failed", message: `${firstLine(e)} この反映先には書き込んでいません` });
+            results.push({ ...target, status: "failed", message: `${firstLine2(e)} この反映先には書き込んでいません` });
             continue;
           }
           payload = jsConfigPayloadWithFiles(plan.payload, filePlan, uploaded);
         }
         const body = { app: target.appId, ...payload, revision };
         if (plan.scope) body.scope = plan.scope;
-        const res2 = await apiPut(buildApiPrefix(target.guestId, true), "/app/customize.json", body);
+        const res2 = await writeSettingsWithRevision("PUT", buildApiPrefix(target.guestId, true), "/app/customize.json", body, { subject: "JS/CSS設定の反映", howToCheck: JS_CONFIG_UNCONFIRMED_CHECK });
         results.push({
           ...target,
           status: "success",
@@ -4417,8 +4512,12 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
           results.push({ ...target, status: "notExecuted" });
           continue;
         }
+        if (isSettingsWriteUnconfirmed(e)) {
+          results.push({ ...target, status: "unconfirmed", message: String(e?.message || e).split("\n").map((line) => line.trim()).filter(Boolean).join(" ") });
+          continue;
+        }
         const decorated = decorateRevisionConflict(e, "JS/CSS設定の反映");
-        results.push({ ...target, status: decorated?.revisionConflict ? "conflict" : "failed", message: firstLine(decorated) });
+        results.push({ ...target, status: decorated?.revisionConflict ? "conflict" : "failed", message: firstLine2(decorated) });
       }
     }
     if (cancelled && unusedUploads) note = `中止した反映先でアップロード済みの ${unusedUploads}件のファイルは、使われずに残ります（反映先の設定には影響しません）。`;
