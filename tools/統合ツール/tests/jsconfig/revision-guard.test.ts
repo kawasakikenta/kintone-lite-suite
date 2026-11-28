@@ -43,7 +43,8 @@ describe('JS/CSS apply revision guard', () => {
     expect(text).toContain('App 5（ゲストスペース 2）');
     expect(text).toContain('反映先の現在の設定: Desktop JS 2 / CSS 0、Mobile JS 0 / CSS 1');
     expect(text).toContain('外れる現在の設定: 2件');
-    expect(apiPut).toHaveBeenCalledWith('/k/guest/2/v1/preview', '/app/customize.json', expect.objectContaining({ app: '5', revision: '7' }));
+    // 1 回だけ送る（応答が届かなかったときに送り直すかは、読み直して決める。settingsWrite.ts）
+    expect(apiPut).toHaveBeenCalledWith('/k/guest/2/v1/preview', '/app/customize.json', expect.objectContaining({ app: '5', revision: '7' }), 1);
   });
 
   it('does not PUT when the confirmation is cancelled', async () => {
@@ -81,7 +82,7 @@ describe('JS/CSS apply revision guard', () => {
     vi.mocked(apiPut).mockResolvedValue({ revision: '8' });
     await expect(runApplyJsConfigStandalone({ targetAppId: '5', jsonText: json, baseRevision: '7', skipConfirm: true }, vi.fn(), vi.fn()))
       .resolves.toEqual({ revision: '8' });
-    expect(apiPut).toHaveBeenCalledWith('/k/v1/preview', '/app/customize.json', expect.objectContaining({ revision: '7' }));
+    expect(apiPut).toHaveBeenCalledWith('/k/v1/preview', '/app/customize.json', expect.objectContaining({ revision: '7' }), 1);
   });
 
   it('rejects non-numeric targetAppId or targetGuestId before calling API', async () => {

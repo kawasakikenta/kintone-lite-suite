@@ -272,6 +272,13 @@ describe('describeSourceResult', () => {
     expect(result.text).toBe('3 項目中 1 項目を反映先プレビューへ反映しました。失敗 1 項目、未実行 1 項目（一覧: 権限がありません（CB_NO02））。本番へは反映していません。');
   });
 
+  it('書き込みの応答が届かず反映されたか分からない項目は、失敗と言い切らず警告にし、確かめ方を示す', () => {
+    const result = describeSourceResult({ goal: 'production', sections: [ok('fieldSettings'), { sectionKey: 'viewSettings', label: '一覧', status: 'ng', unconfirmed: true, message: '反映されたか分かりません' }, { sectionKey: 'layoutSettings', label: 'レイアウト', status: 'pending' }] });
+    expect(result.tone).toBe('warn');
+    expect(result.text).toBe('3 項目中 1 項目を反映先プレビューへ反映しました。反映されたか分からない項目が 1 項目あります（一覧）、未実行 1 項目。本番へは反映していません。差分を抽出し直して、反映先プレビューの状態を確認してください。');
+    expect(result.text).not.toContain('失敗');
+  });
+
   it('1 項目も反映できなければエラー', () => {
     expect(describeSourceResult({ goal: 'production', sections: [{ sectionKey: 'fieldSettings', label: 'フィールド設定', status: 'ng', message: '失敗' }] }).tone).toBe('err');
   });

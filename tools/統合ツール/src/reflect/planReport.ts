@@ -36,8 +36,11 @@ const ENVIRONMENT_LABELS: Record<ReflectReportInput['sourceEnvironment'], string
 const STATUS_LABELS: Record<string, string> = { change: '差分あり', same: '一致', 'src-missing': '確認が必要', 'tgt-missing': '確認が必要', error: '確認が必要' };
 const OUTCOME_LABELS: Record<ApplySectionOutcome['status'], string> = { ok: '成功', ng: '失敗', skip: '変更なし', pending: '未実行' };
 const STOPPED_LABEL = '途中で停止';
+const UNCONFIRMED_LABEL = '反映されたか不明';
 const KIND_ORDER = ['削除', '変更', '追加', '保持'] as const;
-const outcomeLabel = (outcome: { status: string; stopped?: boolean }) => outcome.status === 'ng' && outcome.stopped ? STOPPED_LABEL : OUTCOME_LABELS[outcome.status as ApplySectionOutcome['status']] || outcome.status;
+const outcomeLabel = (outcome: { status: string; stopped?: boolean; unconfirmed?: boolean }) => outcome.status === 'ng' && outcome.stopped ? STOPPED_LABEL
+  : outcome.status === 'ng' && outcome.unconfirmed ? UNCONFIRMED_LABEL
+  : OUTCOME_LABELS[outcome.status as ApplySectionOutcome['status']] || outcome.status;
 const listOf = <T,>(value: T[] | undefined): T[] => Array.isArray(value) ? value : [];
 
 /** 本文中で強調・リンク・表・HTMLとして解釈される記号を退避する（行頭には置かないため見出し等は対象外。改行は空白にまとめる）。 */

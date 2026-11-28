@@ -268,6 +268,50 @@ module.exports = function (scenario, c) {
     await shot('field-multi-result');
   });
 
+  // 応答が届かなかった追加（kintone では反映済み）を同じ revision で送り直すと、進んだ revision と食い違って「revision 競合」と表示していた。
+  scenario('フィールド追加: 応答が届かなかった追加は送り直さず、反映されたか分からないと示す（複数の反映先では残りを続ける）', async () => {
+    await reset('field', world({ loseWrites: { '/202/app/form/fields.json': { commit: true, method: 'POST', times: 1 } } }));
+    await pickFromSource('101', ['priority', 'tags']);
+    await fieldApply('202');
+    await fieldRun();
+    let snap = await assertNoViolations('フィールド 応答が届かなかった追加', { allowedWrites: ['/202'] });
+    assert.equal(snap.writes.length, 1, '同じ revision で送り直さない');
+    assert.equal(snap.writes[0].lost, 'after-commit');
+    assert.ok(fieldsOf(snap, '202').priority && fieldsOf(snap, '202').tags, 'kintone では追加されている');
+    let text = await statusText();
+    assert.match(text, /フィールド追加の書き込みは、応答が届かなかったため[\s\S]*反映されたか分かりません/, text);
+    assert.match(text, /フォームの設定を開き、追加するフィールドがあるか確認/);
+    assert.doesNotMatch(text, /revision 競合|^エラー/, '競合・失敗と言い切らない');
+    assert.equal(await statusTone(), 'warn', '反映されたか分からない結果は警告の色');
+    await shot('field-lost-response');
+
+    // 複数の反映先: 応答が届かなかった反映先だけを「反映されたか不明」にして、残りを続ける
+    await reset('field', world({ loseWrites: { '/204/app/form/fields.json': { commit: true, kind: 'bad-gateway', method: 'POST', times: 1 } } }));
+    await toSetup();
+    await label('反映元アプリID').fill('101');
+    await openAdvanced();
+    await button('反映元フィールド一覧を取得').click();
+    await page.getByRole('checkbox', { name: /^priority( |$)/ }).waitFor({ timeout: 20000 });
+    await page.getByRole('checkbox', { name: /^priority( |$)/ }).check();
+    await button('選択したフィールドを JSON に挿入（マージ）').click();
+    await closeAdvanced();
+    await fieldMulti(['202', '204', '205']);
+    await fieldRunMulti();
+    snap = await assertNoViolations('フィールド 複数の反映先で応答が届かなかった', { allowedWrites: ['/202', '/204', '/205'] });
+    assert.equal(snap.writes.filter(write => write.appKey === '/204').length, 1, '応答が届かなかった反映先へ送り直さない');
+    const result = await panelText();
+    for (const [app, expected] of [['202', '成功'], ['204', '反映されたか不明'], ['205', '成功']]) {
+      // 反映先ごとの行（[結果] App …）を見る（見出しの行にも最初の問題の App が入るため）
+      const line = result.split('\n').find(row => row.startsWith('[') && new RegExp(`App ${app}\\b`).test(row));
+      assert.ok(line && new RegExp(expected).test(line), `App ${app}: ${expected} / ${line}`);
+    }
+    text = await statusText();
+    assert.match(text, /反映されたか分からない 1 件/);
+    assert.doesNotMatch(text, /競合/);
+    assert.equal(await statusTone(), 'warn');
+    ok('応答が届かなかった追加は、競合と取り違えず「反映されたか分からない」と確かめ方を示す');
+  });
+
   scenario('フィールド追加: 複数の反映先で中止すると、残りは未実行になる', async () => {
     await reset('field');
     await toSetup();

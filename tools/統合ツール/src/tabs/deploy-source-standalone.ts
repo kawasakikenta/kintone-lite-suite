@@ -13,7 +13,7 @@ import { compareVerifyExpectations, type SourceVerifyResult, type VerifyExpectat
 import type { SourceDeployOptions, SourceDeployResult, SourceApplyResult } from '../deploy/sourceTypes.js';
 import type { DeployAppInspection } from '../deploy/types.js';
 import { isRunCancelledError, RUN_CANCELLED_MESSAGE } from '../runControl.js';
-import { previewWriteState } from '../reflect/applyOutcome.js';
+import { applySectionStatusText, previewWriteState } from '../reflect/applyOutcome.js';
 import { buildReflectSectionPlan } from '../reflect/standalonePlan.js';
 import { isCompleteReflectSection } from '../reflect/standalonePreflight.js';
 import { runApplyPreviewStandalone } from './reflect-standalone.js';
@@ -51,11 +51,14 @@ export async function runSourceToProductionStandalone(opts: SourceDeployOptions)
   const writeState = previewWriteState(apply.sections);
   const UNCHANGED_NOTE = '反映先プレビューは変わっていません。';
   const PARTIAL_NOTE = '反映先プレビューには一部だけ書き込まれています。差分を取得し直して現在の状態を確認してください。';
-  if (apply.cancelled) return skip(`中止したため、本番へは反映していません。${writeState === 'none' ? UNCHANGED_NOTE : '反映先プレビューは一部だけ更新されている可能性があります。差分を取得し直して現在の状態を確認してください。'}`);
+  // 書き込みの応答が届かず反映されたか分からない項目しかないときは、プレビューが変わったかも分からない。
+  const UNKNOWN_NOTE = '反映先プレビューが変わったかどうか分かりません（書き込みの応答が届かなかった項目があります）。差分を抽出し直して現在の状態を確認してください。';
+  const writeNote = writeState === 'none' ? UNCHANGED_NOTE : writeState === 'unknown' ? UNKNOWN_NOTE : PARTIAL_NOTE;
+  if (apply.cancelled) return skip(`中止したため、本番へは反映していません。${writeState === 'none' ? UNCHANGED_NOTE : writeState === 'unknown' ? UNKNOWN_NOTE : '反映先プレビューは一部だけ更新されている可能性があります。差分を取得し直して現在の状態を確認してください。'}`);
   const incomplete = apply.sections.filter(section => section.status === 'ng' || section.status === 'pending');
   if (incomplete.length) {
-    const list = incomplete.map(section => `${section.label}: ${section.status === 'ng' ? '失敗' : '未実行'}`).join('、');
-    return skip(`反映先プレビューへの書き込みが完了しなかった項目があるため（${list}）、本番へは反映していません。${writeState === 'none' ? UNCHANGED_NOTE : PARTIAL_NOTE}`);
+    const list = incomplete.map(section => `${section.label}: ${applySectionStatusText(section)}`).join('、');
+    return skip(`反映先プレビューへの書き込みが完了しなかった項目があるため（${list}）、本番へは反映していません。${writeNote}`);
   }
 
   // 2. 以前からの未公開の変更がある、または有無を確認できなかったときは、利用者の了承がなければ本番へ反映しない

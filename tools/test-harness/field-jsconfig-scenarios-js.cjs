@@ -105,6 +105,30 @@ module.exports = function (scenario, c) {
     ok('競合は上書きせず利用者へ示す');
   });
 
+  // 応答が届かなかった PUT（kintone では反映済み）を同じ revision で送り直すと、進んだ revision と食い違って「競合」と表示していた。
+  scenario('JS/CSS: 応答が届かなかった反映は送り直さず「反映されたか不明」、反映前に失われたら確かめて送り直す', async () => {
+    await reset('js', world({ loseWrites: { '/202/app/customize.json': { commit: true, times: 1 }, '/205/app/customize.json': { commit: false, kind: 'bad-gateway', times: 1 } } }));
+    await jsFetch('101');
+    await jsMulti(['202', '204', '205']);
+    await jsRunMulti();
+    const snap = await assertNoViolations('JS/CSS 応答が届かなかった反映', { allowedWrites: ['/202', '/204', '/205'] });
+    const puts = snap.writes.filter(write => write.method === 'PUT').map(write => write.appKey);
+    assert.deepEqual(puts, ['/202', '/204', '/205', '/205'], '反映済みかもしれない 202 へは送り直さず、反映前に失われた 205 へは 1 回だけ送り直す');
+    for (const [app, expected] of [['202', '反映されたか不明'], ['204', '成功'], ['205', '成功']]) {
+      const row = page.locator('tr', { hasText: `App ${app}` }).last();
+      assert.match(await row.innerText(), new RegExp(expected), `App ${app}: ${expected}`);
+    }
+    const unknownRow = await page.locator('tr', { hasText: 'App 202' }).last().innerText();
+    assert.match(unknownRow, /JavaScript \/ CSSでカスタマイズ/, '確かめ方を示す');
+    assert.doesNotMatch(unknownRow, /競合/);
+    assert.equal(appState(snap, '202').preview.customize.desktop.js.length, 3, 'kintone では反映されている');
+    assert.equal(appState(snap, '205').preview.customize.desktop.js.length, 3);
+    assert.match(await statusText(), /反映されたか分からない 1件/);
+    assert.equal(await statusTone(), 'warn');
+    await shot('js-lost-response');
+    ok('応答が届かなかった反映は競合と取り違えず、反映前に失われた反映は確かめて送り直す');
+  });
+
   scenario('JS/CSS: アップロードが 1 件失敗したら設定を書き込まない', async () => {
     await reset('js', world({ failUpload: { 'util.js': { status: 413, code: 'GAIA_FL02', message: 'ファイルサイズが大きすぎます。' } } }));
     await jsFetch('101');

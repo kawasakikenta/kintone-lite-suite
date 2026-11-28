@@ -2849,7 +2849,7 @@ ${message}`);
       const message = String(e?.message || e || "不明なエラー");
       const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
       const [first, ...rest] = lines.length ? lines : [message];
-      if (e?.partialSuccess === true) {
+      if (e?.partialSuccess === true || e?.writeUnconfirmed === true) {
         const logNote = rest.length ? /[）)]$/.test(first) ? "。詳細は下のログを確認してください" : "（詳細は下のログ）" : "";
         panel.setStatus(`${first}${logNote}`, "warn");
         if (rest.length) panel.setResult(lines.join("\n"));
@@ -3669,6 +3669,16 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     return [`${label}: ${first}`, ...rest.map((line) => `  ${line}`)];
   }
 
+  // src/settingsWrite.ts
+  var KINTONE_ERROR_CODE = /^[A-Z][A-Z0-9]*_[A-Z]{2}\d{2}$/;
+  function isKintoneRejection(error) {
+    for (let current = error, depth = 0; current && typeof current === "object" && depth < 5; current = current.original, depth++) {
+      if (current.id || current.errors && typeof current.errors === "object") return true;
+      if (KINTONE_ERROR_CODE.test(String(current.code ?? ""))) return true;
+    }
+    return false;
+  }
+
   // src/tabs/record-query.ts
   var RECORDS_WRITE_CHUNK = 100;
   function csvEscape(val) {
@@ -3744,15 +3754,9 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     });
     return lines.length > RECORD_ERROR_DETAIL_LIMIT ? [...lines.slice(0, RECORD_ERROR_DETAIL_LIMIT), `ほか ${lines.length - RECORD_ERROR_DETAIL_LIMIT}件のエラー`] : lines;
   }
-  var COMMUNICATION_FAILURE = /network|timeout|timed out|failed to fetch|econnreset|通信|タイムアウト|接続/i;
   function isUnconfirmedWriteFailure(error) {
-    const texts = [];
-    for (let current = error, depth = 0; current && typeof current === "object" && depth < 5; current = current.original, depth++) {
-      if (current.id || current.errors && typeof current.errors === "object") return false;
-      texts.push(`${current.code ?? ""} ${current.message ?? ""}`);
-      if (Number(current.status) >= 500) return true;
-    }
-    return COMMUNICATION_FAILURE.test(texts.join(" "));
+    if (error == null || isRunCancelledError(error)) return false;
+    return !isKintoneRejection(error);
   }
   function describeBatchWriteFailure(label, failure, error, details = []) {
     const reason = error instanceof Error ? error.message : String(error ?? "");

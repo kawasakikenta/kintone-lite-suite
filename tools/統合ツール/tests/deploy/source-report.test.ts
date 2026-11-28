@@ -107,7 +107,7 @@ describe('buildSourceDeployResultJson', () => {
       { sectionKey: 'fieldSettings', label: 'フィールド設定', selectedCount: 1, totalCount: 3, editedCount: 1 },
       { sectionKey: 'viewSettings', label: '一覧', selectedCount: 0, totalCount: 1, editedCount: 0 }
     ]);
-    expect(json.apply.summary).toEqual({ ok: 1, ng: 0, stopped: 0, pending: 0, skip: 1 });
+    expect(json.apply.summary).toEqual({ ok: 1, ng: 0, stopped: 0, unconfirmed: 0, pending: 0, skip: 1 });
     expect(json.apply.backup).toEqual({ generatedAt: '2026-01-01T00:00:03.000Z', scopes: ['fieldSettings', 'viewSettings'] });
     expect(json.deploy.kind).toBe('kintone-deploy-result');
     expect(json.deploySummary.success).toBe(1);

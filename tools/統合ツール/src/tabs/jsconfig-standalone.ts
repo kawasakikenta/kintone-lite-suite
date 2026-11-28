@@ -2,7 +2,8 @@
 
 import { buildCustomizeSettingsPutPayload } from '../constants.js';
 import { normalize, nowStamp, downloadText, downloadBlob, esc, kusConfirm, buildExportFilename, summarizeList, deepClone } from '../utils.js';
-import { FILE_DOWNLOAD_TIMEOUT_MS, apiGet, apiPut, buildApiPrefix, decorateRevisionConflict, isRetriableApiError, pickRevision, uploadKintoneFile } from '../api.js';
+import { FILE_DOWNLOAD_TIMEOUT_MS, apiGet, buildApiPrefix, decorateRevisionConflict, isRetriableApiError, pickRevision, uploadKintoneFile } from '../api.js';
+import { isSettingsWriteUnconfirmed, writeSettingsWithRevision } from '../settingsWrite.js';
 import { customizeSlotKey, downloadCustomizeFile, resolveCustomizeFiles, type CustomizeFileDownloader } from '../reflect/customizeFiles.js';
 import { loadJSZipLite } from '../jszipLoader.js';
 import { RunCancelledError, createRequestSignal, isRunCancelledError, sleepUnlessCancelled, throwIfCancelled } from '../runControl.js';
@@ -604,7 +605,8 @@ export async function runApplyJsConfigStandalone(p, setStatus, setLogHtml) {
   setStatus('JS/CSS設定を反映中...');
   let res: any;
   try {
-    res = await apiPut(prefix, '/app/customize.json', body);
+    // 応答が届かなかったときは、読み直して反映されていないと確かめたときだけ送り直す（settingsWrite.ts）。
+    res = await writeSettingsWithRevision('PUT', prefix, '/app/customize.json', body, { subject: 'JS/CSS設定の反映', howToCheck: JS_CONFIG_UNCONFIRMED_CHECK });
   } catch (e) {
     throw decorateRevisionConflict(e, 'JS/CSS設定の反映');
   }
@@ -626,7 +628,11 @@ export async function runApplyJsConfigStandalone(p, setStatus, setLogHtml) {
 
 export interface JsConfigMultiTarget { appId: string; guestId?: string; appName?: string }
 
-export type JsConfigMultiStatus = 'success' | 'failed' | 'conflict' | 'notExecuted';
+/** 応答が届かず反映されたか分からないときの、確かめ方。 */
+const JS_CONFIG_UNCONFIRMED_CHECK = 'kintone で反映先アプリの「JavaScript / CSSでカスタマイズ」の設定を開き、反映した内容になっているか確認してください。';
+
+/** unconfirmed: 書き込みの応答が届かず、反映されたか分からない（成功とも失敗とも数えない） */
+export type JsConfigMultiStatus = 'success' | 'failed' | 'conflict' | 'unconfirmed' | 'notExecuted';
 
 export interface JsConfigMultiTargetResult {
   appId: string;
@@ -651,7 +657,7 @@ export interface JsConfigMultiApplyResult {
   /** 中止された（残りは notExecuted） */
   cancelled: boolean;
   results: JsConfigMultiTargetResult[];
-  counts: { total: number; success: number; failed: number; conflict: number; notExecuted: number };
+  counts: { total: number; success: number; failed: number; conflict: number; unconfirmed: number; notExecuted: number };
   /** 完了時のステータス行と色。declined の場合は空 */
   headline: string;
   tone: 'ok' | 'warn' | 'err' | 'info';
@@ -663,6 +669,7 @@ export const JS_CONFIG_MULTI_STATUS_LABEL: Record<JsConfigMultiStatus, string> =
   success: '成功',
   failed: '失敗',
   conflict: '競合',
+  unconfirmed: '反映されたか不明',
   notExecuted: '未実行（中止）'
 };
 
@@ -675,7 +682,7 @@ function firstLine(message: unknown): string {
 }
 
 export function renderJsConfigMultiResultHtml(res: JsConfigMultiApplyResult): string {
-  const color: Record<JsConfigMultiStatus, string> = { success: '#15803d', failed: '#b91c1c', conflict: '#b45309', notExecuted: '#64748b' };
+  const color: Record<JsConfigMultiStatus, string> = { success: '#15803d', failed: '#b91c1c', conflict: '#b45309', unconfirmed: '#b45309', notExecuted: '#64748b' };
   const rows = res.results.map((r) => {
     const fileNote = r.files && r.files.uploaded + r.files.reused + r.files.kept > 0 ? ` / ファイル: アップロード ${r.files.uploaded}件・再利用 ${r.files.reused}件・そのまま ${r.files.kept}件` : '';
     const detail = r.status === 'success'
@@ -772,9 +779,10 @@ export async function runApplyJsConfigMultiStandalone(
       success: results.filter((r) => r.status === 'success').length,
       failed: results.filter((r) => r.status === 'failed').length,
       conflict: results.filter((r) => r.status === 'conflict').length,
+      unconfirmed: results.filter((r) => r.status === 'unconfirmed').length,
       notExecuted: results.filter((r) => r.status === 'notExecuted').length
     };
-    const detail = `失敗 ${counts.failed}件 / 競合 ${counts.conflict}件${counts.notExecuted ? ` / 未実行（中止） ${counts.notExecuted}件` : ''}`;
+    const detail = `失敗 ${counts.failed}件 / 競合 ${counts.conflict}件${counts.unconfirmed ? ` / 反映されたか分からない ${counts.unconfirmed}件` : ''}${counts.notExecuted ? ` / 未実行（中止） ${counts.notExecuted}件` : ''}`;
     let headline = '';
     let tone: JsConfigMultiApplyResult['tone'] = 'ok';
     if (declined) {
@@ -791,7 +799,7 @@ export async function runApplyJsConfigMultiStandalone(
       headline = `${total}件中 ${counts.success}件を反映しました。${detail}（詳細は下のログ）`;
       tone = 'warn';
     } else {
-      headline = `反映できた反映先がありません。${detail}（詳細は下のログ）`;
+      headline = `${counts.unconfirmed ? '反映を確かめられた' : '反映できた'}反映先がありません。${detail}（詳細は下のログ）`;
       tone = 'err';
     }
     results.sort((x, y) => order(x) - order(y));
@@ -831,7 +839,7 @@ export async function runApplyJsConfigMultiStandalone(
     ].filter((line): line is string => line !== null).join('\n');
     if (!kusConfirm(text)) {
       setStatus('JS/CSS設定の複数反映をキャンセルしました（何も書き込んでいません）');
-      return { declined: true, cancelled: false, results: [], counts: { total, success: 0, failed: 0, conflict: 0, notExecuted: 0 }, headline: '', tone: 'info' };
+      return { declined: true, cancelled: false, results: [], counts: { total, success: 0, failed: 0, conflict: 0, unconfirmed: 0, notExecuted: 0 }, headline: '', tone: 'info' };
     }
   }
 
@@ -869,7 +877,7 @@ export async function runApplyJsConfigMultiStandalone(
       }
       const body: Record<string, unknown> = { app: target.appId, ...payload, revision };
       if (plan.scope) body.scope = plan.scope;
-      const res = await apiPut(buildApiPrefix(target.guestId, true), '/app/customize.json', body);
+      const res = await writeSettingsWithRevision('PUT', buildApiPrefix(target.guestId, true), '/app/customize.json', body, { subject: 'JS/CSS設定の反映', howToCheck: JS_CONFIG_UNCONFIRMED_CHECK });
       results.push({
         ...target, status: 'success', revision: pickRevision(res), removed,
         ...(filePlan?.items.length ? { files: { uploaded: countAction(filePlan, 'upload'), reused: countAction(filePlan, 'reuse'), kept: countAction(filePlan, 'keep') } } : {})
@@ -878,6 +886,11 @@ export async function runApplyJsConfigMultiStandalone(
       if (isCancelStop(e)) {
         cancelled = true;
         results.push({ ...target, status: 'notExecuted' });
+        continue;
+      }
+      // 応答が届かず反映されたか分からない反映先は、確かめ方を添えて残し、次の反映先へ進む（反映先ごとに revision は別）。
+      if (isSettingsWriteUnconfirmed(e)) {
+        results.push({ ...target, status: 'unconfirmed', message: String(e?.message || e).split('\n').map((line: string) => line.trim()).filter(Boolean).join(' ') });
         continue;
       }
       const decorated = decorateRevisionConflict(e, 'JS/CSS設定の反映');

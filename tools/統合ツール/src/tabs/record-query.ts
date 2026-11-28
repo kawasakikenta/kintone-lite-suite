@@ -2,6 +2,8 @@
 
 import { hasKintoneOrderByClause, hasKintonePagingClause } from '../kintone-query.js';
 import { UNSAFE_FILENAME_CHARS } from '../utils.js';
+import { isRunCancelledError } from '../runControl.js';
+import { isKintoneRejection } from '../settingsWrite.js';
 
 /**
  * レコード一括取得・CSV・ZIP 命名の純粋ヘルパー。
@@ -196,21 +198,16 @@ export function describeKintoneRecordErrors(
     : lines;
 }
 
-const COMMUNICATION_FAILURE = /network|timeout|timed out|failed to fetch|econnreset|通信|タイムアウト|接続/i;
-
 /**
  * 書き込みの失敗が「kintone が拒否した」のではなく「応答が届かなかった」ためか。
- * kintone が拒否した（エラー応答の id や errors がある）なら、その塊は書き込まれていない。
- * 通信エラー・タイムアウト・応答の無い 5xx では、サーバー側で確定したか分からない。
+ * kintone が拒否した（エラー応答の id・code・errors がある）なら、その塊は書き込まれていない。
+ * それ以外（通信エラー・タイムアウト・応答の無い 5xx、中継装置の HTML など形の分からない失敗）は、サーバー側で確定したか分からない。
+ * 形が分からない失敗を「書き込まれていない」と言い切ると、利用者が再実行して二重に登録するため、確認できないものとして扱う。
+ * 中止（送る前に止めた）と、失敗の内容が無いものは除く。
  */
 export function isUnconfirmedWriteFailure(error: unknown): boolean {
-  const texts: string[] = [];
-  for (let current: any = error, depth = 0; current && typeof current === 'object' && depth < 5; current = current.original, depth++) {
-    if (current.id || (current.errors && typeof current.errors === 'object')) return false;
-    texts.push(`${current.code ?? ''} ${current.message ?? ''}`);
-    if (Number(current.status) >= 500) return true;
-  }
-  return COMMUNICATION_FAILURE.test(texts.join(' '));
+  if (error == null || isRunCancelledError(error)) return false;
+  return !isKintoneRejection(error);
 }
 
 /**

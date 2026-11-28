@@ -20,6 +20,7 @@ import {
   requestAppDeploy,
   resolveHttpStatus
 } from '../api.js';
+import { isKintoneRejection } from '../settingsWrite.js';
 import { buildDeployBackup, downloadBackupFile } from '../deploy/backup.js';
 import { buildDeployWarnings, compareDeploySection, findRemovedFields } from '../deploy/inspect.js';
 import { waitForDeploy, type DeployWaitResult } from '../deploy/poll.js';
@@ -262,11 +263,17 @@ function revisionMismatch(target: DeployAppInspection, current: RevisionPair): s
   return parts.length ? `確認した後に${parts.join('と')}の設定が更新されました。差分を確認し直してください。` : '';
 }
 
-/** 依頼の失敗が「受け付けられなかった」と言い切れるか。通信の途絶や 5xx は、サーバーで確定したか分からない。 */
+/**
+ * 依頼の失敗が「受け付けられなかった」と言い切れるか。通信の途絶や 5xx は、サーバーで確定したか分からない。
+ * 送った後の失敗で kintone のエラー応答（id・code）が無いもの（中継装置の HTML など形の分からない失敗）も、届いたか分からないものとする。
+ */
 function classifyRequestError(error: any): 'conflict' | 'unknown' | 'failed' {
   if (isRevisionConflictError(error)) return 'conflict';
   const status = resolveHttpStatus(error) || resolveHttpStatus(error?.original);
   if (status >= 500 || (status === 0 && (isRetriableApiError(error) || isRetriableApiError(error?.original)))) return 'unknown';
+  // requestAppDeploy は送った後の失敗だけを API の文脈付き（__apiDiag）で包む。送る前の入力の検査の失敗は「受け付けなかった」のまま。
+  const sent = error?.__apiDiag === true || error?.original?.__apiDiag === true;
+  if (sent && !isKintoneRejection(error)) return 'unknown';
   return 'failed';
 }
 

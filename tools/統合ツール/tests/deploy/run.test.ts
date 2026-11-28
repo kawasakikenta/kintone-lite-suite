@@ -195,6 +195,19 @@ describe('runDeployStandalone: 1 件ずつ反映', () => {
     expect(env.api.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(1);
   });
 
+  // 中継装置の HTML や本文を読めなかった応答など、kintone のエラー応答（code・id）が無い失敗は、依頼が届いたか分からない。
+  // 「受け付けませんでした」と言い切ると、利用者が反映されていないと思って同じ依頼を出し直してしまう。
+  it('kintone のエラー応答が無い形の分からない失敗は、受け付けなかったと言い切らず unknown にする（再送しない）', async () => {
+    for (const postError of ['<html><body>502 Bad Gateway</body></html>', new Error('予期しない応答です'), {}]) {
+      const env = setup({ '1': changedApp(), '2': changedApp() }, { postError });
+      const { result, statuses } = await run(await inspectApps(['1', '2']));
+      expect(statuses).toEqual(['unknown', 'pending']);
+      expect(result.apps[0].message).toContain('届いたか確認できませんでした');
+      expect(result.apps[0].message).toContain('二重に実行しないよう');
+      expect(env.api.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(1);
+    }
+  });
+
   it('完了を確認できないまま時間切れになったら unknown とし、残りを未実行にする', async () => {
     const env = setup({ '1': changedApp(), '2': changedApp() }, { neverFinish: true });
     const { result, statuses } = await run(await inspectApps(['1', '2']), { poll: { initialMs: 1, maxMs: 2, timeoutMs: 20 } });

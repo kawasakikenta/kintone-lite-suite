@@ -123,6 +123,34 @@ describe('runSourceToProductionStandalone: プレビューへ書き込み、続�
     expect(previewWriteState(result.apply.sections)).toBe('partial');
   });
 
+  // 応答が届かなかった書き込みを送り直して「revision 競合」（失敗）と取り違えない。反映されたか分からない項目があれば、本番へは反映しない。
+  it('最初の書き込みが反映されたのに応答が届かなかったときは、反映されたか不明として止め、本番へは反映しない', async () => {
+    let writes = 0;
+    const lost = () => Object.assign(new Error('Network Error'), { code: 'NETWORK' });
+    const world = makeWorld({ afterWrite: () => { writes += 1; if (writes === 1) throw lost(); } });
+    const { result } = await run(world);
+    // 送り直していない（送り直すと、進んだ revision と食い違って競合に見える）
+    expect(world.writes()).toHaveLength(1);
+    expect(result.apply.sections.map(section => section.status)).toEqual(['ng', 'pending', 'pending', 'pending']);
+    expect(result.apply.sections[0]).toMatchObject({ unconfirmed: true });
+    expect(result.apply.sections[0].message).toContain('反映されたか分かりません');
+    expect(result.apply.sections[0].message).not.toContain('revision 競合');
+    expect(previewWriteState(result.apply.sections)).toBe('unknown');
+    expect(result.deploy).toBeUndefined();
+    expect(result.deploySkipped).toContain('フィールド設定: 反映されたか不明');
+    expect(result.deploySkipped).toContain('反映先プレビューが変わったかどうか分かりません');
+    expect(requestsOf(world)).toEqual([]);
+  });
+
+  it('応答が届かなかった書き込みが反映されていなかったと読み直して確かめたら、送り直して続け、本番まで反映する', async () => {
+    let writes = 0;
+    const world = makeWorld({ onWrite: () => { writes += 1; if (writes === 1) throw Object.assign(new Error('Bad Gateway'), { status: 502 }); } });
+    const { result } = await run(world);
+    expect(result.apply.sections.every(section => section.status === 'ok' || section.status === 'skip')).toBe(true);
+    expect(world.writes()[0].params.revision).toBe(world.writes()[1].params.revision);
+    expect(result.deploy?.apps.map(app => app.status)).toEqual(['success']);
+  });
+
   it('書き込みを中止したら、例外にせず結果で返し、本番へは反映しない', async () => {
     let writes = 0;
     const world = makeWorld({ onWrite: () => { writes += 1; if (writes === 2) requestCancel(); } });

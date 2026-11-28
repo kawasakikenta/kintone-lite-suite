@@ -62,7 +62,7 @@ describe('apply JS/CSS to many preview targets', () => {
       ['/k/guest/2/v1/preview/app/customize.json', '7', '11', 'ADMIN']
     ]);
     expect(calls.every(c => c.url.includes('/preview/'))).toBe(true);
-    expect(res.counts).toEqual({ total: 3, success: 3, failed: 0, conflict: 0, notExecuted: 0 });
+    expect(res.counts).toEqual({ total: 3, success: 3, failed: 0, conflict: 0, unconfirmed: 0, notExecuted: 0 });
     expect(res.tone).toBe('ok');
     expect(res.results.map(r => [r.appId, r.status, r.revision])).toEqual([['5', 'success', '8'], ['6', 'success', '4'], ['7', 'success', '12']]);
     expect(html.mock.calls[0][0]).toContain('成功');
@@ -126,7 +126,7 @@ describe('apply JS/CSS to many preview targets', () => {
     expect(puts().map(c => c.body.app)).toEqual(['5', '6', '7']);
     expect(res.results.map(r => r.status)).toEqual(['success', 'conflict', 'success']);
     expect(res.results[1].message).toContain('revision 競合');
-    expect(res.counts).toEqual({ total: 3, success: 2, failed: 0, conflict: 1, notExecuted: 0 });
+    expect(res.counts).toEqual({ total: 3, success: 2, failed: 0, conflict: 1, unconfirmed: 0, notExecuted: 0 });
     expect(res.tone).toBe('warn');
     expect(res.headline).toContain('競合 1件');
   });
@@ -152,7 +152,7 @@ describe('apply JS/CSS to many preview targets', () => {
     expect(puts().map(c => c.body.app)).toEqual(['5', '6']);
     expect(res.cancelled).toBe(true);
     expect(res.results.map(r => r.status)).toEqual(['success', 'notExecuted', 'notExecuted']);
-    expect(res.counts).toEqual({ total: 3, success: 1, failed: 0, conflict: 0, notExecuted: 2 });
+    expect(res.counts).toEqual({ total: 3, success: 1, failed: 0, conflict: 0, unconfirmed: 0, notExecuted: 2 });
     expect(res.tone).toBe('warn');
     expect(res.headline).toContain('中止しました（1/3 件を処理、残り 2 件は未実行）');
     expect(res.headline).toContain('反映済みの 1件は取り消していません');
