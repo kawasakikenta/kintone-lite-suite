@@ -5884,10 +5884,47 @@ function nodeSpan(n){\r
     h: Math.max(Number(n.data("cardH")) || 0, Number(n.data("lowH")) || 0, n.outerHeight())\r
   };\r
 }\r
-// レイアウトが重ねて置いたアプリ（フォース・同心円・グリッドなど）を、重なりが無くなるまで少しずつ押し広げる。\r
-// 重なりのない配置は動かさない。動かしたら true を返す（呼び出し側で全体表示に合わせ直す）\r
+// レイアウトが重ねて置いたアプリ（フォース・同心円・グリッドなど）を、重なりが無くなるまで押し広げる。\r
+// 重なりのない配置は動かさない。固定したアプリは動かさない。動かしたら true を返す（呼び出し側で全体表示に合わせ直す）\r
 const OVERLAP_GAP = 28;\r
 const OVERLAP_MAX_NODES = 800;\r
+const OVERLAP_PUSH_ROUNDS = 120;\r
+// 2 つのカード（間隔を含めた大きさ）が重なっているか\r
+function overlapItems(a, b){\r
+  return (a.w + b.w) / 2 - Math.abs(b.x - a.x) > 0 && (a.h + b.h) / 2 - Math.abs(b.y - a.y) > 0;\r
+}\r
+// 押し広げても決まった回数で収まらなかったときの最後の手（アプリが多い図の「自動」で起きる）。\r
+// 重なっていないアプリと固定したアプリはそのまま置き、重なっているアプリを図の中心に近い順に 1 つずつ、\r
+// 置き終えたアプリに重ならないところまで、上下左右のうち動く距離が一番短い向きへずらす。これで必ず重なりが無くなる\r
+function settleRemainingOverlaps(items){\r
+  const pending = items.filter(a=>!a.fixed && items.some(b=>b !== a && overlapItems(a, b)));\r
+  if(!pending.length) return;\r
+  const pendingSet = new Set(pending);\r
+  const placed = items.filter(a=>!pendingSet.has(a));\r
+  const centerX = items.reduce((sum, a)=>sum + a.x, 0) / items.length;\r
+  const centerY = items.reduce((sum, a)=>sum + a.y, 0) / items.length;\r
+  pending.sort((a, b)=>Math.hypot(a.x - centerX, a.y - centerY) - Math.hypot(b.x - centerX, b.y - centerY));\r
+  pending.forEach(a=>{\r
+    let best = null;\r
+    [[1,0],[-1,0],[0,1],[0,-1]].forEach(([sx, sy])=>{\r
+      const probe = { x: a.x, y: a.y, w: a.w, h: a.h };\r
+      // その向きに、ぶつかったアプリの向こう側へ進む（進んだ先でまたぶつかったら、その向こうへ）。ほかの向きより遠くなったらやめる\r
+      for(;;){\r
+        const blockers = placed.filter(b=>overlapItems(probe, b));\r
+        if(!blockers.length) break;\r
+        blockers.forEach(b=>{\r
+          if(sx) probe.x = sx > 0 ? Math.max(probe.x, b.x + (a.w + b.w) / 2 + 1) : Math.min(probe.x, b.x - (a.w + b.w) / 2 - 1);\r
+          else probe.y = sy > 0 ? Math.max(probe.y, b.y + (a.h + b.h) / 2 + 1) : Math.min(probe.y, b.y - (a.h + b.h) / 2 - 1);\r
+        });\r
+        if(best && Math.abs(probe.x - a.x) + Math.abs(probe.y - a.y) >= best.distance) return;\r
+      }\r
+      const distance = Math.abs(probe.x - a.x) + Math.abs(probe.y - a.y);\r
+      if(!best || distance < best.distance) best = { x: probe.x, y: probe.y, distance };\r
+    });\r
+    a.x = best.x; a.y = best.y;\r
+    placed.push(a);\r
+  });\r
+}\r
 function separateOverlappingNodes(nodes, animate){\r
   const items = nodes.toArray().filter(n=>!n.hasClass("note-node")).map(n=>{\r
     const pos = n.position();\r
@@ -5896,7 +5933,8 @@ function separateOverlappingNodes(nodes, animate){\r
   });\r
   if(items.length < 2 || items.length > OVERLAP_MAX_NODES) return false;\r
   const start = items.map(item=>({x:item.x,y:item.y}));\r
-  for(let round = 0; round < 120; round++){\r
+  let settled = false;\r
+  for(let round = 0; round < OVERLAP_PUSH_ROUNDS && !settled; round++){\r
     let moved = false;\r
     for(let i = 0; i < items.length; i++){\r
       for(let j = i + 1; j < items.length; j++){\r
@@ -5920,8 +5958,9 @@ function separateOverlappingNodes(nodes, animate){\r
         moved = true;\r
       }\r
     }\r
-    if(!moved) break;\r
+    settled = !moved;\r
   }\r
+  if(!settled) settleRemainingOverlaps(items);\r
   let changed = false;\r
   items.forEach((item, i)=>{\r
     if(Math.abs(item.x - start[i].x) < 0.5 && Math.abs(item.y - start[i].y) < 0.5) return;\r
