@@ -11661,7 +11661,7 @@ ${ER_VIEWER_CSS}
     const tokens = normalizeIdInputText(value).split(/[\s,\u3001\uFF0C]+/).filter(Boolean);
     const invalid = tokens.filter((id) => !/^\d+$/.test(id) || Number(id) <= 0);
     if (invalid.length) throw new Error(`アプリIDは正の数値で入力してください: ${invalid.join(", ")}`);
-    return [...new Set(tokens)];
+    return [...new Set(tokens.map((id) => id.replace(/^0+/, "")))];
   }
 
   // src/entries/recordTargetApps.ts

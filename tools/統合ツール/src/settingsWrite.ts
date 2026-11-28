@@ -26,11 +26,13 @@ const KINTONE_ERROR_CODE = /^[A-Z][A-Z0-9]*_[A-Z]{2}\d{2}$/;
 
 /**
  * kintone がエラーの応答を返した（＝その書き込みは反映されていない）か。
- * エラーの応答には id・code（GAIA_CO02 など）・errors がある。通信エラーや、応答の本文が無い 5xx（中継装置の 502・504 など）には無い。
+ * kintone のエラーの応答には必ず code（GAIA_CO02・CB_VA01 など）・id・message があり、拒否かどうかは code の形で見分ける。
+ * 通信エラーや、応答の本文が無い 5xx（中継装置の 502・504 など）には無い。
+ * id・errors だけでは拒否と見なさない。中継装置・ゲートウェイの JSON のエラー（要求ID の id、errors の配列など）にもあり、
+ * それを拒否と取り違えると、反映済みかもしれない書き込みを「書き込まれていない」と言い切ってしまう（再実行で二重に登録する）。
  */
 export function isKintoneRejection(error: unknown): boolean {
   for (let current: any = error, depth = 0; current && typeof current === 'object' && depth < 5; current = current.original, depth++) {
-    if (current.id || (current.errors && typeof current.errors === 'object')) return true;
     if (KINTONE_ERROR_CODE.test(String(current.code ?? ''))) return true;
   }
   return false;
