@@ -373,4 +373,12 @@ describe('設計書 Markdown 一括出力: overview.md の表記', () => {
     expect(zipFiles['overview.md']).toContain('| 400 | &lt;b>太字&lt;/b>\\|名前 2行目 |');
     expect(zipFiles['overview.md']).not.toContain('<b>');
   });
+
+  it('overview.md のアプリ名のリンク・画像の記法を働かせない（外部の画像を読みに行かない）', async () => {
+    await runBatchDesignExportMdZipStandalone({
+      apps: [{ appId: '401', bundle: bundle('401', { ...emptySections(), appSettings: { name: '![x](https://evil.example/p.png) [開く](javascript:alert(1))' } }) }],
+      format: 'md'
+    }, vi.fn());
+    expect(zipFiles['overview.md']).toContain('| 401 | !\\[x](https://evil.example/p.png) \\[開く](javascript:alert(1)) |');
+  });
 });

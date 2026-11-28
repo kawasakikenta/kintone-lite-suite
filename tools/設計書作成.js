@@ -13635,10 +13635,10 @@ Apache License
     return map[key] || key;
   }
   function mdEsc(value) {
-    return decodeHtmlEntities(value).replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\*/g, "\\*").replace(/</g, "&lt;").replace(/\r?\n/g, "<br>");
+    return decodeHtmlEntities(value).replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\*/g, "\\*").replace(/\[/g, "\\[").replace(/</g, "&lt;").replace(/\r?\n/g, "<br>");
   }
   function mdLine(value) {
-    return decodeHtmlEntities(value).replace(/\s*\r?\n\s*/g, " ").replace(/\*/g, "\\*").replace(/</g, "&lt;").trim();
+    return decodeHtmlEntities(value).replace(/\s*\r?\n\s*/g, " ").replace(/\\/g, "\\\\").replace(/\*/g, "\\*").replace(/\[/g, "\\[").replace(/</g, "&lt;").trim();
   }
   function mdCode(value) {
     const text = String(value ?? "").replace(/\s*\r?\n\s*/g, " ").trim();
@@ -14483,7 +14483,7 @@ ${body}`;
         lines.push(`（取得失敗: ${mdLine(plan.detail)}）`);
         if (!includeRawJson) lines.push("", "（原文JSONは rawJson:false のため省略されています）");
       } else if (plan.mode === "partial") {
-        lines.push(`（部分取得: ${plan.detail}）`);
+        lines.push(`（部分取得: ${mdLine(plan.detail)}）`);
         if (renderer) {
           try {
             rendered = renderer(sec, sections, renderContext) || "";
@@ -21654,7 +21654,7 @@ ${lines.join("\n")}`), { partialSuccess: true });
     return candidate;
   }
   function escapeOverviewCell(value) {
-    return String(value ?? "").replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/</g, "&lt;").replace(/\s*[\r\n]+\s*/g, " ").trim();
+    return String(value ?? "").replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\[/g, "\\[").replace(/</g, "&lt;").replace(/\s*[\r\n]+\s*/g, " ").trim();
   }
   function firstErrorLine(error) {
     const raw = error instanceof Error ? error.message : String(error ?? "不明なエラー");

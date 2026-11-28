@@ -323,7 +323,8 @@ export function buildSettingsMarkdownIndex(input: SettingsMarkdownIndexInput): s
     if (app?.customizeFiles) {
       notes.push(`JS/CSSファイル保存 ${app.customizeFiles.saved}件${app.customizeFiles.failed ? `（失敗 ${app.customizeFiles.failed}件）` : ''}`);
     }
-    const cell = (v: string) => String(v || '-').replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+    // アプリ名などの HTML のタグ・リンクと画像の記法（[）が、INDEX.md を表示したときに働かないよう逃がす
+    const cell = (v: string) => String(v || '-').replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\[/g, '\\[').replace(/</g, '&lt;').replace(/\r?\n/g, ' ');
     lines.push(
       `| ${cell(app.appId)} | ${cell(app.appName || '-')} | ${cell(app.guestId ? `guest:${app.guestId}` : '通常')} | ${cell(app.file || '-')} | ${cell(formatSettingsExportContentCounts(app.counts) || '-')} | ${Number(app?.sections?.ok ?? 0)} | ${Number(app?.sections?.ng ?? 0)} | ${omitted > 0 ? `${omitted}件` : '0件'} | ${cell(notes.join(' / ') || 'OK')} |`
     );

@@ -4255,7 +4255,7 @@ ${String(text).trim().replace(/\*\//g, "* /")}
     return count;
   }
   function erMdEsc(s) {
-    return String(s == null ? "" : s).replace(/[\\|<>]/g, "\\$&").replace(/[\r\n]+/g, " ").trim();
+    return String(s == null ? "" : s).replace(/[\\|<>[]/g, "\\$&").replace(/[\r\n]+/g, " ").trim();
   }
   function erRelationKeyConditionDetail(r) {
     if (!r) return "";
@@ -9596,7 +9596,8 @@ function showCSVRelations(){\r
 }\r
 \r
 // ─── Markdown spec ───\r
-function mdEsc(s){return String(s==null?"":s).replace(/[\\\\|<>]/g,"\\\\$&").replace(/\\n/g," ");}\r
+// HTML のタグ・表の区切りに加え、名前の中のリンク・画像の記法（[）も働かないよう逃がす\r
+function mdEsc(s){return String(s==null?"":s).replace(/[\\\\|<>[]/g,"\\\\$&").replace(/\\n/g," ");}\r
 function showMarkdown(){\r
   recomputeErAnalysis();\r
   const lines=[];\r

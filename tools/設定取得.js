@@ -4473,7 +4473,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       if (app?.customizeFiles) {
         notes.push(`JS/CSSファイル保存 ${app.customizeFiles.saved}件${app.customizeFiles.failed ? `（失敗 ${app.customizeFiles.failed}件）` : ""}`);
       }
-      const cell = (v) => String(v || "-").replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+      const cell = (v) => String(v || "-").replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\[/g, "\\[").replace(/</g, "&lt;").replace(/\r?\n/g, " ");
       lines.push(
         `| ${cell(app.appId)} | ${cell(app.appName || "-")} | ${cell(app.guestId ? `guest:${app.guestId}` : "通常")} | ${cell(app.file || "-")} | ${cell(formatSettingsExportContentCounts(app.counts) || "-")} | ${Number(app?.sections?.ok ?? 0)} | ${Number(app?.sections?.ng ?? 0)} | ${omitted > 0 ? `${omitted}件` : "0件"} | ${cell(notes.join(" / ") || "OK")} |`
       );
