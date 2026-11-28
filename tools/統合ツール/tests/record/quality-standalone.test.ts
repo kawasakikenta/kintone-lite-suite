@@ -100,7 +100,7 @@ describe('quality inspection and CSV templates from API settings', () => {
       memo: { type: 'SINGLE_LINE_TEXT', defaultValue: '' },
       owners: { type: 'USER_SELECT', defaultValue: [{ type: 'USER', code: 'u1' }, { type: 'USER', code: 'u2' }] }
     });
-    const guide = parseCsvText(template.guideCsv.replace(/^﻿/, ''));
+    const guide = parseCsvText(template.guideCsv.replace(/^\uFEFF/, ''));
     expect(guide[1].slice(5, 7)).toEqual(['A,B', 'B / A']);
     expect(guide[2][5]).toBe('');
     expect(guide[3][5]).toBe('u1,u2');

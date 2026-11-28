@@ -52,7 +52,7 @@ describe('buildProcessBatchDiagramFileName', () => {
   });
 
   it('removes control characters, trailing dots and truncates long names', () => {
-    const name = buildProcessBatchDiagramFileName({ appId: '7', appName: `a\u0000b‮c.${'あ'.repeat(100)}` }, new Set());
+    const name = buildProcessBatchDiagramFileName({ appId: '7', appName: `a\u0000b\u202Ec.${'あ'.repeat(100)}` }, new Set());
     expect(name).toMatch(/^diagrams\/7_abc\.あ+\.mmd$/);
     expect(Array.from(name).filter(c => c === 'あ').length).toBeLessThanOrEqual(60);
     expect(buildProcessBatchDiagramFileName({ appId: '8', appName: 'con' }, new Set())).toBe('diagrams/8__con.mmd');
