@@ -158,6 +158,8 @@ export interface BatchWriteFailure {
   total: number;
   /** unconfirmed のとき、再実行の前に kintone 画面で確かめるもの（既定は「対象アプリのレコード件数」） */
   checkBeforeRetry?: string;
+  /** unconfirmed のとき、失敗チャンクに入っていたレコード（行）の呼び名。先頭と末尾（1 件ならその 1 つ）。「101～200件目」の位置だけでは何を確かめるか分からないため */
+  chunkSpan?: { first: string; last: string };
 }
 
 const RECORD_ERROR_DETAIL_LIMIT = 10;
@@ -220,6 +222,9 @@ export function describeBatchWriteFailure(label: string, failure: BatchWriteFail
     `${label}が途中で失敗しました。`,
     `確定済み: ${failure.done}件 / 失敗チャンク: ${failure.from}～${failure.to}件目 / 未処理: ${remaining}件（全${failure.total}件）`,
     failure.unconfirmed ? `失敗チャンク（${failure.from}～${failure.to}件目）は、応答が届かなかったため、kintone に書き込まれたかどうか確認できません。再実行する前に、kintone 画面で${failure.checkBeforeRetry || DEFAULT_CHECK_BEFORE_RETRY}を確認してください。` : '',
+    failure.unconfirmed && failure.chunkSpan
+      ? `この塊の ${failure.to - failure.from + 1}件: ${failure.chunkSpan.first === failure.chunkSpan.last ? failure.chunkSpan.first : `${failure.chunkSpan.first} 〜 ${failure.chunkSpan.last}`}`
+      : '',
     reason ? `原因: ${reason}` : '',
     ...(details.length ? ['エラーの詳細（このチャンクは全体が取り消されています）:', ...details] : [])
   ].filter(Boolean).join('\n');
@@ -249,7 +254,8 @@ export async function writeInChunks<T>(
     } catch (error) {
       const details = describeKintoneRecordErrors(error, i, describeItem, describeField);
       const unconfirmed = isUnconfirmedWriteFailure(error);
-      const wrapped = new Error(describeBatchWriteFailure(label, { done, from: i + 1, to: i + chunk.length, total: items.length, unconfirmed, checkBeforeRetry }, error, details));
+      const chunkSpan = unconfirmed && describeItem ? { first: describeItem(i), last: describeItem(i + chunk.length - 1) } : undefined;
+      const wrapped = new Error(describeBatchWriteFailure(label, { done, from: i + 1, to: i + chunk.length, total: items.length, unconfirmed, checkBeforeRetry, chunkSpan }, error, details));
       (wrapped as any).partial = { done, from: i + 1, to: i + chunk.length, total: items.length, ...(unconfirmed ? { unconfirmed } : {}) };
       (wrapped as any).original = error;
       throw wrapped;

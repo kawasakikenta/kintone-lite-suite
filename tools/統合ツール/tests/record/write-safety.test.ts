@@ -110,6 +110,18 @@ describe('a chunk whose response never arrived is reported as unconfirmed', () =
     expect(error.partial).toEqual({ done: 100, from: 101, to: 200, total: 250, unconfirmed: true });
   });
 
+  // 「101～200件目」は取得・CSV の並びの位置で、利用者には kintone で何を確かめればよいか分からない。どのレコード（行）かを示す
+  it('names the first and last record of the uncertain chunk, so the user knows what to check', async () => {
+    const items = Array.from({ length: 250 }, (_, i) => i);
+    const lost = Object.assign(new Error('wrapped'), { original: Object.assign(new Error('Network Error'), { code: 'NETWORK' }) });
+    const error: any = await writeInChunks(items, 'CSV取込', async (_chunk, index) => { if (index === 1) throw lost; }, undefined, 100, index => `CSV ${index + 2}行目`).catch(caught => caught);
+    expect(error.message).toContain('この塊の 100件: CSV 102行目 〜 CSV 201行目');
+    const single: any = await writeInChunks([1], 'CSV取込', async () => { throw lost; }, undefined, 100, index => `CSV ${index + 2}行目`).catch(caught => caught);
+    expect(single.message).toContain('この塊の 1件: CSV 2行目');
+    // 拒否された塊（書き込まれていない）には出さない
+    const rejected: any = await writeInChunks([1, 2], 'CSV取込', async () => { throw rejection; }, undefined, 100, index => `CSV ${index + 2}行目`).catch(caught => caught);
+    expect(rejected.message).not.toContain('この塊の');
+  });
   it('does not add the line when kintone rejected the chunk', async () => {
     const error: any = await writeInChunks([1, 2, 3], 'CSV取込', async () => { throw rejection; }).catch(caught => caught);
     expect(error.message).not.toContain('書き込まれたかどうか確認できません');

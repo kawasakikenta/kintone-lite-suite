@@ -150,6 +150,7 @@ describe('record status updates preserve the reviewed revisions', () => {
     expect(writes()).toHaveLength(2);
     expect(error.message).toContain('確定済み: 100件 / 失敗チャンク: 101～150件目');
     expect(error.message).toContain('kintone に書き込まれたかどうか確認できません。再実行する前に、kintone 画面で失敗チャンクのレコードのステータスを確認してください。');
+    expect(error.message).toContain('この塊の 50件: レコードID 101 〜 レコードID 150');
     expect(error.message).not.toContain('revision 競合');
     expect(error.partial).toEqual({ done: 100, from: 101, to: 150, total: 150, unconfirmed: true });
   });

@@ -3641,6 +3641,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       `${label}が途中で失敗しました。`,
       `確定済み: ${failure.done}件 / 失敗チャンク: ${failure.from}～${failure.to}件目 / 未処理: ${remaining}件（全${failure.total}件）`,
       failure.unconfirmed ? `失敗チャンク（${failure.from}～${failure.to}件目）は、応答が届かなかったため、kintone に書き込まれたかどうか確認できません。再実行する前に、kintone 画面で${failure.checkBeforeRetry || DEFAULT_CHECK_BEFORE_RETRY}を確認してください。` : "",
+      failure.unconfirmed && failure.chunkSpan ? `この塊の ${failure.to - failure.from + 1}件: ${failure.chunkSpan.first === failure.chunkSpan.last ? failure.chunkSpan.first : `${failure.chunkSpan.first} 〜 ${failure.chunkSpan.last}`}` : "",
       reason ? `原因: ${reason}` : "",
       ...details.length ? ["エラーの詳細（このチャンクは全体が取り消されています）:", ...details] : []
     ].filter(Boolean).join("\n");
@@ -3655,7 +3656,8 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
       } catch (error) {
         const details = describeKintoneRecordErrors(error, i, describeItem, describeField);
         const unconfirmed = isUnconfirmedWriteFailure(error);
-        const wrapped = new Error(describeBatchWriteFailure(label, { done, from: i + 1, to: i + chunk.length, total: items.length, unconfirmed, checkBeforeRetry }, error, details));
+        const chunkSpan = unconfirmed && describeItem ? { first: describeItem(i), last: describeItem(i + chunk.length - 1) } : void 0;
+        const wrapped = new Error(describeBatchWriteFailure(label, { done, from: i + 1, to: i + chunk.length, total: items.length, unconfirmed, checkBeforeRetry, chunkSpan }, error, details));
         wrapped.partial = { done, from: i + 1, to: i + chunk.length, total: items.length, ...unconfirmed ? { unconfirmed } : {} };
         wrapped.original = error;
         throw wrapped;
