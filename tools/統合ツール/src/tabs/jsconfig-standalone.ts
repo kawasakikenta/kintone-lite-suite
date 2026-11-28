@@ -981,7 +981,8 @@ export interface BatchJsConfigManifest {
 export function buildJsConfigBatchIndexMarkdown(manifest: Partial<BatchJsConfigManifest>): string {
   const apps = Array.isArray(manifest?.apps) ? manifest.apps : [];
   const exportedAt = manifest?.exportedAt || manifest?.generatedAt || '-';
-  const cell = (v: unknown) => String(v ?? '-').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+  // アプリ名・ファイル名・失敗理由の HTML のタグ・リンクと画像の記法（[）が、INDEX.md を表示したときに働かないよう逃がす（バックスラッシュを先に逃がす）
+  const cell = (v: unknown) => String(v ?? '-').replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\[/g, '\\[').replace(/</g, '&lt;').replace(/\r?\n/g, ' ');
   const lines: string[] = [
     '# JS/CSS設定 一括取得 INDEX',
     '',

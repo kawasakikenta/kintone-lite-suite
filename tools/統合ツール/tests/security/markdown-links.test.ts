@@ -3,6 +3,8 @@ import { buildDiffHtml, bundleToMarkdown } from '../../src/diff/export';
 import { buildHTML } from '../../src/tabs/er.js';
 import { buildErMarkdownSpec } from '../../src/tabs/er-model';
 import { buildSettingsMarkdownIndex } from '../../src/tabs/settings-export-standalone';
+import { buildProcessBatchOverviewMarkdown, buildProcessSpecMarkdown, formatProcessSimulationHistory } from '../../src/tabs/process-standalone';
+import { buildJsConfigBatchIndexMarkdown } from '../../src/tabs/jsconfig-standalone';
 
 /**
  * kintone の設定の文字列（アプリ名・フィールド名・選択肢など。アプリの管理者なら誰でも書ける）や、読み込んだ設定JSONの文字列に
@@ -31,16 +33,22 @@ function outsideFences(md: string): string {
   return out.join('\n');
 }
 
-/** 宛先が攻撃者の URL・javascript のリンクと画像のうち、「[」が逃がされていない（直前のバックスラッシュが偶数個の）もの。 */
+/**
+ * 宛先が攻撃者の URL・javascript のリンクと画像のうち、「[」が逃がされていない（直前のバックスラッシュが偶数個の）もの。
+ * リンクの文字の部分は CommonMark と同じく、逃がした文字（`\]` など）と 1 段の対になった角かっこを含められ、逃がした `]` では閉じない
+ * （ツールが自分で付ける角かっこ `[名前]` の中に、名前の `](https://…)` で閉じさせる書き方も見つける）。
+ * 逃がした「[」の中に、逃がしていない記法が入っていても見落とさないよう、見つけた位置の次の文字から探し直す。
+ */
 function liveHostileLinks(md: string): string[] {
   const text = outsideFences(md);
   const found: string[] = [];
-  const re = /\[[^\]\n]*\]\((?:https?:\/\/evil\.example|javascript:)/g;
+  const re = /\[(?:\\.|[^\\[\]\n]|\[(?:\\.|[^\\[\]\n])*\])*\]\((?:https?:\/\/evil\.example|javascript:)/g;
   let match: RegExpExecArray | null;
   while ((match = re.exec(text))) {
     let slashes = 0;
     for (let i = match.index - 1; i >= 0 && text[i] === '\\'; i -= 1) slashes += 1;
     if (slashes % 2 === 0) found.push(text.slice(Math.max(0, match.index - 1), match.index + match[0].length));
+    re.lastIndex = match.index + 1;
   }
   return found;
 }
@@ -70,6 +78,13 @@ describe('Markdown の出力: kintone の文字列のリンク・画像の記法
     expect(liveHostileLinks(`a \\\\${LINK}`)).toHaveLength(1);
     expect(liveHostileLinks(`a !\\[x](https://evil.example/p.png) ${ESCAPED_LINK}`)).toEqual([]);
     expect(liveHostileLinks(`\`\`\`json\n${IMAGE}\n\`\`\``)).toEqual([]);
+    // ツールが付ける角かっこを名前の「](…)」で閉じさせる書き方・対になった角かっこ・逃がした「[」の中の記法も見つける
+    expect(liveHostileLinks('[x](https://evil.example/p.png)] → 完了')).toHaveLength(1);
+    expect(liveHostileLinks('[[x]](javascript:alert(1))')).toHaveLength(1);
+    expect(liveHostileLinks(`\\[a ${IMAGE}`)).toHaveLength(1);
+    expect(liveHostileLinks('[x\\] y](https://evil.example/p.png)')).toHaveLength(1);
+    // 逃がした「]」では閉じない（リンクにならない）
+    expect(liveHostileLinks('[x\\](https://evil.example/p.png)] → 完了')).toEqual([]);
     expect(liveTags(`x ${TAG}`)).toHaveLength(1);
     expect(liveTags(`x &lt;img src=1> \\<img src=2> \\\\<img src=3>`)).toHaveLength(1);
   });
@@ -134,5 +149,65 @@ describe('Markdown の出力: kintone の文字列のリンク・画像の記法
     expectNoLiveMarkup(`| ${mdCell(HOSTILE, 500)} | ${mdCell(`\\${LINK}`, 500)} |`);
     // 表のセルの区切りと改行は、これまでどおり逃がす
     expect(mdCell('a|b\nc')).toBe('a\\|b<br>c');
+  });
+});
+
+describe('lite にしかない Markdown の出力: kintone の文字列のリンク・画像の記法を逃がす', () => {
+  // 状態名・アクション名・作業者のコードはプロセス管理の設定で、アプリの管理者が書ける
+  const CLOSE_BRACKET = 'x](https://evil.example/p.png)';
+  const hostileStates = {
+    [HOSTILE]: { index: '0', assignee: { type: 'ONE', entities: [{ entity: { type: 'USER', code: IMAGE } }] } },
+    [`\\${LINK}`]: { index: '1', assignee: { type: 'ONE', entities: [] } }
+  };
+  const hostileActions = [
+    { name: HOSTILE, from: HOSTILE, to: `\\${LINK}`, filterCond: HOSTILE, type: 'PRIMARY' },
+    { name: CLOSE_BRACKET, from: `\\${LINK}`, to: IMAGE, filterCond: '', type: 'PRIMARY' }
+  ];
+
+  it('プロセス管理仕様書 Markdown: アプリ名（見出し）・状態名・アクション名・始点と終端・構造上の注意', () => {
+    const md = buildProcessSpecMarkdown({ appId: '1', appName: HOSTILE, states: hostileStates, actions: hostileActions });
+    expect(md).toContain('ここを開く');
+    expectNoLiveMarkup(md);
+  });
+
+  it('プロセス遷移シミュレーション履歴: 状態名・アクション名（ツールが付ける [ ] の中を閉じさせない）・作業者', () => {
+    const history = [
+      { from: HOSTILE, action: CLOSE_BRACKET, to: `\\${LINK}`, condition: HOSTILE },
+      { from: `\\${LINK}`, action: HOSTILE, to: HOSTILE }
+    ];
+    const md = formatProcessSimulationHistory(history, HOSTILE, hostileStates);
+    expect(md).toContain('ここを開く');
+    expectNoLiveMarkup(md);
+    expectNoLiveMarkup(formatProcessSimulationHistory([], HOSTILE, hostileStates));
+    // ふだんの名前は今までどおり読める形のまま
+    expect(formatProcessSimulationHistory([{ from: '未処理', action: '申請', to: '完了' }], '完了')).toContain('- 遷移経路: 未処理 [申請] → 完了');
+  });
+
+  it('プロセス図の一括出力 overview.md: アプリ名・構造上の注意・失敗理由・状態とアクションの表', () => {
+    const md = buildProcessBatchOverviewMarkdown([
+      { appId: '1', guestId: '', appName: HOSTILE, outcome: 'enabled', stateCount: 2, actionCount: 2, warnings: [HOSTILE], reason: '', file: 'diagrams/1.mmd', states: hostileStates, actions: hostileActions },
+      { appId: '2', guestId: '', appName: `\\${IMAGE}`, outcome: 'failed', stateCount: 0, actionCount: 0, warnings: [], reason: HOSTILE, file: '' }
+    ], { 'diagrams/1.mmd': 'stateDiagram-v2\n' }, { generatedAt: 'x', preview: false, cancelled: false, total: 2 });
+    expect(md).toContain('ここを開く');
+    expectNoLiveMarkup(md);
+  });
+
+  it('kintoneJS取得の一括 ZIP の INDEX.md: アプリ名・ファイル名・失敗理由', () => {
+    const md = buildJsConfigBatchIndexMarkdown({
+      guestId: '',
+      apps: [{
+        appId: '1', name: HOSTILE, folder: '1_x', scope: 'ALL', revision: '3',
+        files: [{ entry: '1_x/desktop/js/0_a.js', area: 'desktop', kind: 'js', order: 0, name: 'a.js', fileKey: 'k', size: '1' }],
+        urlEntries: [{ type: 'js', scope: 'desktop', url: 'https://cdn.example.com/a.js', order: 1 }],
+        failures: []
+      }, {
+        appId: '2', name: `\\${IMAGE}`, folder: '2_x', scope: 'ALL', revision: '1', files: [], urlEntries: [], failures: []
+      }],
+      failures: [{ type: 'file', appId: '1', fileName: HOSTILE, reason: HOSTILE }]
+    });
+    expect(md).toContain('ここを開く');
+    // 設定された外部 URL はこれまでどおりそのまま一覧する
+    expect(md).toContain('| URL | https://cdn.example.com/a.js |');
+    expectNoLiveMarkup(md);
   });
 });
