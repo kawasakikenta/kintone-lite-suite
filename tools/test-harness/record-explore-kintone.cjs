@@ -422,6 +422,11 @@ function installRecordKintone(config) {
           throw error;
         }
         if (failure.kind === 'network-before-commit') { const error = new Error('Network Error'); error.code = 'NETWORK'; throw error; }
+        if (failure.kind === 'gateway-json-after-commit') {
+          // サーバー側では確定したが、応答は中継装置の JSON のエラーになった（要求ID の id だけ。kintone のエラーコードは無い）。
+          await route(url, method, params);
+          throw { id: 'gw-7f3a91', message: 'Service Unavailable' };
+        }
         throw kerr('GAIA_UN99', 'サーバーエラーです。', { status: 500 });
       }
       return route(url, method, params);

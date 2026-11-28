@@ -618,12 +618,16 @@ async function main() {
       const input = Shared.makeInput({ ariaLabel: '一つ目の入力' });
       window.firstPanel.body.append(input);
     });
+    // 開いた直後の「最初の入力欄へ移す」は次の描画で行う。描画の遅い環境でも、それが済んでから操作する
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     await page.getByRole('textbox', { name: '一つ目の入力', exact: true }).focus();
     await page.evaluate(() => {
       window.secondPanel = Shared.createLitePanel({ id: 'escape-second', title: '二つ目', accent: 'settings' });
       const input = Shared.makeInput({ ariaLabel: '二つ目の入力' });
       window.secondPanel.body.append(input);
     });
+    // 開いた直後の「最初の入力欄へ移す」は次の描画で行う。描画の遅い環境でも、それが済んでから操作する
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const secondInput = page.getByRole('textbox', { name: '二つ目の入力', exact: true });
     await secondInput.focus();
     await page.locator('#launcher').focus();
