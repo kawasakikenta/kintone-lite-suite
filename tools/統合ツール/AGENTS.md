@@ -13,7 +13,7 @@
 | `設計書作成.js` | `design-lite-entry.ts` | `tabs/design-standalone.ts`, `tabs/design-xlsx.ts` |
 | `kintoneJS取得.js` | `jsconfig-lite-entry.ts` | `tabs/jsconfig-standalone.ts` |
 | `設定取得.js` | `settings-export-lite-entry.ts` | `tabs/settings-export-standalone.ts` |
-| `ER図.js` | `er-lite-entry.ts` | `tabs/er.ts`, `tabs/er-standalone.ts` |
+| `ER図.js` | `er-lite-entry.ts` | `tabs/er.ts`, `tabs/er-standalone.ts`, `tabs/er-viewer/`（図の HTML の画面） |
 | `プロセス実行.js` | `process-lite-entry.ts` | `tabs/process-standalone.ts` |
 | `プレビュー反映.js` | `reflect-lite-entry.ts` | `tabs/reflect-standalone.ts` |
 | `本番反映.js` | `deploy-lite-entry.ts` | `tabs/deploy-standalone.ts`・`tabs/deploy-source-standalone.ts`（取り決めの型は `deploy/types.ts`・`deploy/sourceTypes.ts`・`reflect/selectionTypes.ts`、画面は `entries/deploy-lite-ui.ts`・`entries/deploy-source-ui.ts`） |
@@ -80,7 +80,8 @@ tools/統合ツール/
 - `tabs/design-xlsx.ts` は `tabs/design-standalone.ts`（lite 版）からインポートされる。
 - `tabs/er.ts` の `crawl`/`buildHTML` は `tabs/er-standalone.ts`（lite 版）から使用される。`crawl` は深さごとに同時 `ER_DEFAULTS.concurrency`（4）アプリまで読み取り、結果は見つけた順に取り込む（`runOrdered`。並び・深さ・関連は直列のときと同じ。中止の件数は読み取りを終えたアプリを数える）。
 - ER図 HTML の描画ライブラリ（Cytoscape・Dagre・cytoscape-dagre）は `tabs/er-libraries.ts` が `?raw` で取り込み、`buildHTML` が head へインラインで埋め込む。`build.js` は `rawTextPlugin.js`（`?raw` を文字列として取り込む esbuild プラグイン。`tools/test-harness/run-output-layouts.mjs` も使う。生成物にビルドした場所の絶対パスが残らないよう、esbuild には相対パスを渡す。`tests/raw-text-plugin.test.ts` で検査）、単体テスト（Vitest）は標準の `?raw` で解決する。版は `package.json` の devDependencies で固定し、`tests/er-html.test.ts` が同梱版との一致を検査する。`EXTERNAL_LIBRARIES`（`constants.ts`）に ER図のライブラリは無い。同梱するのは `ER図.js` だけで、ほかの bundle に入らないことをサイズで確認する。図の本体（`er-main`）は `type="text/plain"` の script で、起動用の script が `window.cytoscape` の有無を見て実行する。
-- ER図の関連（`ErRelation`）は、キーと結合条件に加えて `copyFields`（コピーするフィールドの対応）・`displayFields`・`filterCond` を持つ。説明文は `er-model.ts` の `describeErRelationCopy`・`describeErRelationDisplay`・`describeErRelationFilter` が正で、図の画面（`er.ts` の埋め込みスクリプトの `relCopyText` ほか）は同じ結果にする（`tests/er-relation-details.test.ts` で照合）。
+- ER図の HTML の画面は `tabs/er-viewer/` に置く。`page.ts` が骨組み（`renderErViewerPage`）で、`viewer.css` と `viewer-core.js`・`viewer-edit.js`・`viewer-ui.js`・`viewer-export.js`・`viewer-boot.js` を `?raw` で取り込み、`er.ts` の `buildHTML` がデータの定数（`APPS`・`ER_OPTIONS`・`ER_ANALYSIS` など）の後ろにこの順でつないで `er-main` へ埋め込む。`viewer-*.js` は生成する HTML の中で動くブラウザ用のスクリプトで、型検査の対象外（`tsconfig.json` の `exclude`）。単体テストで CSS を文字列として読むため `vitest.config.mjs` で `viewer.css` を `?raw` の対象にしている。`build.js`・`run-output-layouts.mjs` の `cssPlugin` は `namespace: 'file'` に限り、`?raw` の CSS は `rawTextPlugin` が文字列のまま渡す。編集済みHTMLの編集状態は `stateVersion: 2`（表示範囲・範囲ごとの位置・線のまとめ）で保存し、`stateVersion` の無い以前の形式も読む（`viewer-export.js` の `applySavedViewState`。`tools/test-harness/er-edit-state-v1*.json` で検査）。描画ライブラリは dagre 0.8.5 と cytoscape-dagre 2.5.0 を別々に同梱しているため、「階層」の配置は `window.cytoscapeDagre` と `window.dagre` の両方がそろったときだけ使う（`viewer-core.js` の `ER_DAGRE_READY`）。
+- ER図の関連（`ErRelation`）は、キーと結合条件に加えて `copyFields`（コピーするフィールドの対応）・`displayFields`・`filterCond` を持つ。説明文は `er-model.ts` の `describeErRelationCopy`・`describeErRelationDisplay`・`describeErRelationFilter` が正で、図の画面（`er-viewer/viewer-ui.js` の `relCopyText` ほか）は同じ結果にする（`tests/er-relation-details.test.ts` で照合）。
 - `entries/litePanelTheme.ts` の `createLitePanel`／`makeRow` 等は全 lite 系パネルの共通 UI 基盤。変更時は軽量バンドル全体に影響する。
 - `createLitePanel` の `setStatus` は、色（tone）が同じなら文言だけを書き換え、アイコンは作り直さない（処理中のスピナーが進捗のたびに最初から回り直さないようにする。作り直すと、1 回の書き換えにかかる描画も約 2 倍になる）。色が変わるときだけ、アイコンと文言を入れ替える。
 - `makeDialog`（ポップアップ）は、閉じたら開いたボタンへフォーカスを戻す。`<dialog>` の `close` イベントは `close()` の直後ではなく次の描画のときに届くので、イベントの処理でフォーカスを動かすときは、それまでに利用者が移った先から奪わないこと（`showModal()` で開いたポップアップは、閉じた時点でブラウザが戻している）。`run-lite-shared-dom.cjs` で検査する。

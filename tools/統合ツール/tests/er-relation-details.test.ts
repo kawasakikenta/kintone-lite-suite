@@ -207,9 +207,9 @@ describe('ER relation details in the viewer', () => {
     // 詳細パネルの行は、省略せず折り返して全文を示す専用の行（field-detail）に出す
     expect(script).toContain('function relationDetailHtml(rel){');
     expect(script).toContain('[["コピー",relCopyText(rel)],["表示",relDisplayText(rel)],["絞り込み",relFilterText(rel)]]');
-    expect(script.match(/relationDetailHtml\(rel\)/g)).toHaveLength(3);
+    expect(script.match(/relationDetailHtml\(rel\)/g)).toHaveLength(4);
     expect(html).toMatch(/\.field-detail\{[^}]*white-space:normal;overflow-wrap:anywhere/);
-    expect(script).toContain('+edgeDetailTipHtml(edge);');
+    expect(script).toContain(':edgeDetailTipHtml(edge));');
     expect(script).toContain('copyFields:r.copyFields||[],displayFields:r.displayFields||[],filterCond:r.filterCond||""');
     expect(script).toContain('"コピー・表示するフィールド","絞り込み条件"]];');
     expect(script).toContain('relFieldsText(r),relFilterText(r)]);');

@@ -1,0 +1,238 @@
+{
+  "savedAt": "2026-11-28T04:24:40.869Z",
+  "options": {
+    "layoutName": "dagre",
+    "fieldDensity": "standard"
+  },
+  "seq": {
+    "app": 1,
+    "rel": 1,
+    "field": 4,
+    "note": 1
+  },
+  "appOverrides": {
+    "101": {
+      "name": "顧客マスタ（編集済み）",
+      "color": "#f472b6"
+    }
+  },
+  "fieldOverrides": {
+    "113::案件名": {
+      "label": "案件名（編集）",
+      "type": "SINGLE_LINE_TEXT",
+      "isPK": false,
+      "unique": false,
+      "required": true,
+      "isLookup": false,
+      "isRef": false
+    }
+  },
+  "relationOverrides": {
+    "e_113_0": {
+      "fromLabel": "顧客参照（編集）",
+      "fromDisplay": "顧客参照（編集）",
+      "kind": "LOOKUP"
+    }
+  },
+  "notes": [
+    {
+      "id": "note_1",
+      "text": "受注フローの中心",
+      "color": "#fef08a",
+      "x": -600,
+      "y": -650
+    }
+  ],
+  "customApps": [
+    {
+      "id": -1,
+      "name": "外部会計システム",
+      "fields": [
+        {
+          "code": "manual_1",
+          "label": "会計コード",
+          "type": "RECORD_NUMBER",
+          "required": true,
+          "isPK": true,
+          "unique": true,
+          "isCustom": true
+        },
+        {
+          "code": "manual_2",
+          "label": "金額",
+          "type": "SINGLE_LINE_TEXT",
+          "required": true,
+          "isPK": false,
+          "unique": false,
+          "isCustom": true
+        },
+        {
+          "code": "manual_3",
+          "label": "メモ",
+          "type": "SINGLE_LINE_TEXT",
+          "required": false,
+          "isPK": false,
+          "unique": false,
+          "isCustom": true
+        }
+      ],
+      "totalFieldCount": 3,
+      "requiredCount": 2,
+      "lookupCount": 0,
+      "refCount": 0,
+      "depth": 0,
+      "ok": true,
+      "isCustom": true
+    }
+  ],
+  "customFields": [
+    {
+      "appId": 113,
+      "field": {
+        "code": "manual_4",
+        "label": "承認ステータス",
+        "type": "SINGLE_LINE_TEXT",
+        "required": true,
+        "isPK": false,
+        "unique": false,
+        "isLookup": false,
+        "isRef": false,
+        "isCustom": true
+      }
+    }
+  ],
+  "customRelations": [
+    {
+      "fromAppId": 113,
+      "rel": {
+        "from": "__MANUAL__1",
+        "fromLabel": "会計連携",
+        "fromDisplay": "会計連携",
+        "toApp": -1,
+        "toField": "",
+        "kind": "ACTION",
+        "isCustom": true
+      }
+    }
+  ],
+  "view": {
+    "positions": {
+      "a113": {
+        "x": 123.5,
+        "y": 456.25
+      },
+      "a101": {
+        "x": 1202,
+        "y": 539.88
+      },
+      "a111": {
+        "x": -31.5,
+        "y": 1056.38
+      },
+      "a104": {
+        "x": 815.5,
+        "y": 936.88
+      },
+      "a102": {
+        "x": 787,
+        "y": 539.88
+      },
+      "a114": {
+        "x": 391.5,
+        "y": 1094.13
+      },
+      "a116": {
+        "x": -31.5,
+        "y": 1427.38
+      },
+      "a124": {
+        "x": 378,
+        "y": 587.25
+      },
+      "a133": {
+        "x": 378,
+        "y": 429.5
+      },
+      "a103": {
+        "x": -31.5,
+        "y": 1230.88
+      },
+      "a109": {
+        "x": 391.5,
+        "y": 908.63
+      },
+      "a105": {
+        "x": 1223.5,
+        "y": 1100.38
+      },
+      "a106": {
+        "x": 1223.5,
+        "y": 1252.88
+      },
+      "a112": {
+        "x": 815.5,
+        "y": 1111.38
+      },
+      "a118": {
+        "x": 391.5,
+        "y": 1323.63
+      },
+      "a117": {
+        "x": 391.5,
+        "y": 1553.13
+      },
+      "a110": {
+        "x": 815.5,
+        "y": 1252.88
+      },
+      "a119": {
+        "x": 815.5,
+        "y": 1416.38
+      },
+      "a107": {
+        "x": 815.5,
+        "y": 1590.88
+      },
+      "a108": {
+        "x": 1223.5,
+        "y": 1405.38
+      },
+      "a-1": {
+        "x": -600,
+        "y": -400
+      }
+    },
+    "zoom": 0.5817157799456905,
+    "pan": {
+      "x": 373.2973951523685,
+      "y": -121.14200945388717
+    },
+    "removedEdgeIds": [
+      "e_113_1"
+    ],
+    "removedNodeIds": [
+      "a110"
+    ],
+    "nodeHiddenEdgeIds": [
+      "e_118_2"
+    ],
+    "pinnedNodeIds": [
+      "a113"
+    ],
+    "hiddenFieldKeys": [
+      "113::顧客"
+    ],
+    "simpleMode": false,
+    "relationKinds": {
+      "LOOKUP": true,
+      "REF": true,
+      "ACTION": false
+    },
+    "relationLabels": true,
+    "focusMode": true,
+    "focusDepth": 1,
+    "focusDirection": "both",
+    "theme": "d",
+    "overviewHidden": true
+  }
+}

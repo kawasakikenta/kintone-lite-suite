@@ -128,8 +128,8 @@ describe('ER viewer: overlapping cards after a layout', () => {
 
   it('runs after the layout in both layout paths, and sizes the no-link grid by the larger card', () => {
     expect(script).toContain('const separated = separateOverlappingNodes(wrapTargets, !initial);');
-    expect(script).toContain('if(initial || wrapped || separated) setTimeout(fit, initial ? 200 : 450);');
-    expect(script).toContain('separateOverlappingNodes(parts.linked, false);\n    placeNoLinkGrid(parts.linked, parts.isolated, !initial);');
+    expect(script).toContain('if(initial || wrapped || separated) finish(initial ? 200 : 450);');
+    expect(script).toContain('separateOverlappingNodes(parts.linked, false);\n      placeNoLinkGrid(parts.linked, parts.isolated, !initial);');
     expect(script).toContain('const span = nodeSpan(n);\n    cellW = Math.max(cellW, span.w);');
   });
 });

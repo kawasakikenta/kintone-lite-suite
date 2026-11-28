@@ -34,10 +34,11 @@ const jsToTsResolver = {
   }
 };
 
+// `?raw` で取り込む CSS（ER図ビューアーの viewer.css）は rawTextPlugin が文字列のまま渡すため、ここでは扱わない（namespace: 'file'）。
 const cssPlugin = {
   name: 'inline-css',
   setup(build) {
-    build.onLoad({ filter: /\.css$/ }, async (args) => {
+    build.onLoad({ filter: /\.css$/, namespace: 'file' }, async (args) => {
       const fs = await import('node:fs/promises');
       const css = await fs.readFile(args.path, 'utf8');
       const escaped = css.replace(/`/g, '\\`').replace(/\$/g, '\\$');

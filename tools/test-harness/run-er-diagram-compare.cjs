@@ -57,6 +57,8 @@ const RESPONSIVE_VIEWPORTS = [
   { width: 1440, height: 900 }
 ];
 const ZOOM_RESET_SELECTOR = 'button[aria-label="表示倍率を100%にリセット"][onclick="zoomReset()"]';
+// 図を画面に収めるボタン。作業ツリー版はズーム操作の中の「図を画面に合わせる」、以前の版は操作バーの「図全体を表示」
+const FIT_SELECTORS = ['button[aria-label="図を画面に合わせる"]', 'button[aria-label="図全体を表示"]'];
 const MALICIOUS_APP_NAME = '攻撃テスト</title><img id="er-xss-image" src="x" onerror="window.__ER_XSS_EXECUTED__=1"><script id="er-xss-script">window.__ER_XSS_EXECUTED__=2</script>';
 
 function argValue(name, fallback = '') {
@@ -449,7 +451,7 @@ async function inspectPanelOverlap(page) {
 }
 
 async function inspectScaleState(page, browserZoomPercent = 100) {
-  return page.evaluate(({ browserZoomPercent, zoomResetSelector }) => {
+  return page.evaluate(({ browserZoomPercent, zoomResetSelector, fitSelectors }) => {
     const visible = (element) => {
       if (!element) return false;
       const rect = element.getBoundingClientRect();
@@ -480,7 +482,7 @@ async function inspectScaleState(page, browserZoomPercent = 100) {
       zoomIn: 'button[aria-label="拡大"]',
       zoomReset: zoomResetSelector,
       zoomOut: 'button[aria-label="縮小"]',
-      fit: 'button[aria-label="図全体を表示"]'
+      fit: fitSelectors.join(', ')
     };
     const controls = Object.fromEntries(Object.entries(controlSelectors).map(([name, selector]) => {
       const element = firstVisible(selector);
@@ -570,12 +572,13 @@ async function inspectScaleState(page, browserZoomPercent = 100) {
       noFixedControlOverlap: fixedOverlaps.length === 0,
       pageHorizontalOverflow
     };
-  }, { browserZoomPercent, zoomResetSelector: ZOOM_RESET_SELECTOR });
+  }, { browserZoomPercent, zoomResetSelector: ZOOM_RESET_SELECTOR, fitSelectors: FIT_SELECTORS });
 }
 
 async function exerciseZoomControls(page) {
   const clickVisible = async (selector) => {
-    const control = page.locator(`${selector}:visible`).first();
+    const list = Array.isArray(selector) ? selector : [selector];
+    const control = page.locator(list.map((item) => `${item}:visible`).join(', ')).first();
     if (!(await control.count())) return false;
     await control.click();
     await page.waitForTimeout(100);
@@ -587,7 +590,7 @@ async function exerciseZoomControls(page) {
   const zoomIn = await inspectScaleState(page);
   const zoomOutClicked = await clickVisible('button[aria-label="縮小"]');
   const zoomOut = await inspectScaleState(page);
-  const fitClicked = await clickVisible('button[aria-label="図全体を表示"]');
+  const fitClicked = await clickVisible(FIT_SELECTORS);
   const fit = await inspectScaleState(page);
   return {
     resetClicked,
@@ -683,7 +686,12 @@ async function exerciseFullDensity(page, screenshotFile) {
   if (!(await select.count())) {
     return { controlFound: false, selectedValue: '', pillText: '', searchMeta: '', graphContainsOptional: false, optionalFieldFound: false };
   }
+  // 作業ツリー版は「表示設定」の中にある。見えていなければ開いて選び、閉じる
+  const settings = page.locator('#settings-btn');
+  const openedSettings = !(await select.isVisible()) && (await settings.count()) > 0;
+  if (openedSettings) await settings.click();
   await select.selectOption('full');
+  if (openedSettings) await settings.click();
   await page.waitForTimeout(150);
   const search = page.locator('#search-box');
   if (await search.count()) await search.fill(OPTIONAL_FIELD_LABEL);

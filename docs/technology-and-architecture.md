@@ -58,7 +58,7 @@ flowchart LR
 | JS/CSS 設定 | `tools/kintoneJS取得.js` | `entries/jsconfig-lite-entry.ts` | `tabs/jsconfig*.ts` |
 | 設定一括取得 | `tools/設定取得.js` | `entries/settings-export-lite-entry.ts` | `tabs/settings-export*.ts` |
 | 設計書 | `tools/設計書作成.js` | `entries/design-lite-entry.ts` | `tabs/design*.ts` |
-| ER図 | `tools/ER図.js` | `entries/er-lite-entry.ts` | `tabs/er*.ts`, `tabs/er-model.ts`, `tabs/er-analysis.ts` |
+| ER図 | `tools/ER図.js` | `entries/er-lite-entry.ts` | `tabs/er*.ts`, `tabs/er-model.ts`, `tabs/er-analysis.ts`, `tabs/er-viewer/`（図の HTML の画面） |
 | プロセス図 | `tools/プロセス実行.js` | `entries/process-lite-entry.ts` | `tabs/process*.ts` |
 | レコード管理 | `tools/kintoneレコード取得.js` | `entries/record-lite-entry.ts` | `tabs/record*.ts` |
 | CSV出力 | `tools/CSV出力.js` | `entries/csv-export-lite-entry.ts` | `tabs/record-csv-export.ts`, `tabs/record-standalone.ts` |

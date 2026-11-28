@@ -148,7 +148,8 @@ tools/統合ツール/
 │       ├── field-standalone.ts            # フィールド追加
 │       ├── jsconfig-standalone.ts         # JS/CSS設定
 │       ├── design-standalone.ts           # 設計書
-│       ├── er-standalone.ts               # ER図（描画本体は er.ts）
+│       ├── er-standalone.ts               # ER図（図の HTML の生成は er.ts）
+│       ├── er-viewer/                     # ER図の HTML の画面（page.ts が骨組み、viewer.css と viewer-*.js を文字列で埋め込む）
 │       ├── process-standalone.ts          # プロセス図
 │       ├── settings-export-standalone.ts  # 設定一括取得
 │       ├── record-standalone.ts           # レコード管理・CSV出力
@@ -157,6 +158,7 @@ tools/統合ツール/
 ├── tests/                    # vitest ユニットテスト（diff/design/record/reflect）
 ├── scripts/                  # 検査スクリプト（check-no-browser-storage）
 ├── build.js                  # esbuild バンドルスクリプト
+├── vitest.config.mjs         # 単体テストでも ER図の画面の CSS を `?raw` で読めるようにする
 ├── package.json
 └── README.md
 ```

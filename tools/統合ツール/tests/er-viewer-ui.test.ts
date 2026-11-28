@@ -168,7 +168,8 @@ describe('ER viewer navigation to unresolved targets', () => {
     };
     const cy = {
       getElementById: (id: string) => element(id),
-      animate: (options: any) => calls.animated.push(options.center.eles.id())
+      animate: (options: any) => calls.animated.push(options.center.eles.id()),
+      zoom: () => 0.4
     };
     const context: any = {
       cy,

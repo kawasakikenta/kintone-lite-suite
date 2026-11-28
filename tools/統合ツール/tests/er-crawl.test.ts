@@ -117,7 +117,7 @@ describe('ER crawl', () => {
     expect(describeReverseScan(opts)).toMatch(/全3アプリ中 1アプリ/);
 
     const html = buildHTML(apps, { ...opts, startAppId: '1', startAppIds: ['1'], source: {} });
-    expect(html).toContain('<b>逆引き走査</b> 1/3件が不完全');
+    expect(html).toContain('<dt>逆引き走査</dt><dd>1/3件が不完全。');
     expect(html).toContain('"reverseScanNote":"逆引き走査: 全3アプリ中 1アプリ');
     expect(summarizeCrawl(apps, opts)).toMatchObject({ tone: 'warn' });
     expect(summarizeCrawl(apps, opts).note).toContain('逆引き走査');
@@ -129,6 +129,6 @@ describe('ER crawl', () => {
     const apps = await crawl(['1'], opts);
     expect(describeReverseScan(opts)).toBe('');
     expect(summarizeCrawl(apps, opts)).toMatchObject({ tone: false, note: '' });
-    expect(buildHTML(apps, { ...opts, startAppId: '1', startAppIds: ['1'], source: {} })).not.toContain('<b>逆引き走査</b>');
+    expect(buildHTML(apps, { ...opts, startAppId: '1', startAppIds: ['1'], source: {} })).not.toContain('<dt>逆引き走査</dt>');
   });
 });

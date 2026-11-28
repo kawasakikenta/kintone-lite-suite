@@ -40,7 +40,8 @@ describe('rawTextPlugin（?raw でファイルを文字列として取り込む�
     const erBundle = readFileSync(join(toolDir, '..', 'ER図.js'), 'utf8');
     const origins = erBundle.match(/^\s*\/\/ raw-text:.*$/gm) || [];
     expect(origins.length).toBeGreaterThan(0);
-    for (const origin of origins) expect(origin).toMatch(/\/\/ raw-text:node_modules\//);
+    // 同梱ライブラリ（node_modules）と ER図ビューアーの画面（src/tabs/er-viewer）は、どちらもビルドした場所によらない相対パス
+    for (const origin of origins) expect(origin).toMatch(/\/\/ raw-text:(?:node_modules\/|src\/tabs\/er-viewer\/)/);
   });
 
   it('見つからないファイルはビルドの失敗として知らせる', async () => {
