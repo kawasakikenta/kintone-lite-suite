@@ -2,7 +2,8 @@
 
 import { SYSTEM_FIELD_TYPES } from '../constants.js';
 import { deepClone, kusConfirm, summarizeList } from '../utils.js';
-import { apiGet, apiPost, apiPut, buildApiPrefix, decorateRevisionConflict, isRevisionConflictError, pickRevision } from '../api.js';
+import { apiGet, buildApiPrefix, decorateRevisionConflict, isRevisionConflictError, pickRevision } from '../api.js';
+import { isSettingsWriteUnconfirmed, writeSettingsWithRevision } from '../settingsWrite.js';
 import { isCancelRequested, isRunCancelledError } from '../runControl.js';
 import { createCancelReport, isCancelReportError, isCancelStop } from './run-cancel-summary.js';
 import { collectFormulaRefs, rewriteFormulaRefs } from './field.js';
@@ -130,7 +131,7 @@ export function parseLookupMapInput(text: unknown): Record<string, string> {
 
 function withPartialNotice(error: any, notice: string): any {
   const wrapped = new Error(`${notice}\n${error?.message != null ? String(error.message) : String(error)}`) as any;
-  for (const key of ['revisionConflict', 'original', 'code', 'id', '__apiDiag', 'stack']) {
+  for (const key of ['revisionConflict', 'writeUnconfirmed', 'original', 'code', 'id', '__apiDiag', 'stack']) {
     if (error && error[key] !== undefined) wrapped[key] = error[key];
   }
   return wrapped;
@@ -458,6 +459,9 @@ async function inspectFieldTarget(
 const FIELD_CODE_CONFLICT_MESSAGE = (conflicts: string[]) =>
   `反映後のフィールドコードが既存のフィールドと重複するため、何も反映せずに中止しました: ${conflicts.join('、')}`;
 const FIELD_REVISION_MISSING_MESSAGE = '反映先のフィールド設定の revision を確認できないため反映を中止しました。最新の設定を取得し直してください';
+/** 応答が届かず反映されたか分からないときの、確かめ方。 */
+const FIELD_ADD_UNCONFIRMED_CHECK = '以降の書き込みはしていません。kintone で反映先アプリのフォームの設定を開き、追加するフィールドがあるか確認してから再実行してください。';
+const FIELD_UPDATE_UNCONFIRMED_CHECK = 'kintone で反映先アプリのフォームの設定を開き、更新するフィールドが反映元の内容になっているか確認してください。';
 
 /**
  * 計画の追加（POST）→更新（PUT）を、事前に取得した revision を添えて順に送る。
@@ -475,7 +479,8 @@ async function writeFieldPlan(
   if (addCount) {
     setStatus(`フィールド追加中... (${addCount}件)`);
     try {
-      const res = await apiPost(prefix, '/app/form/fields.json', withRevision({ app: tgtApp, properties: plan.adds }));
+      // 応答が届かなかったときは、読み直して反映されていないと確かめたときだけ送り直す（settingsWrite.ts）。
+      const res = await writeSettingsWithRevision('POST', prefix, '/app/form/fields.json', withRevision({ app: tgtApp, properties: plan.adds }), { subject: 'フィールド追加', howToCheck: FIELD_ADD_UNCONFIRMED_CHECK });
       const nextRevision = pickRevision(res);
       if (!/^\d+$/.test(nextRevision)) {
         logs.push(`OK フィールド追加 ${addCount}件 (revision 不明)`);
@@ -489,7 +494,9 @@ async function writeFieldPlan(
         logs.push(`未実行（中止） フィールド追加 ${addCount}件${updateCount ? ` / フィールド更新 ${updateCount}件` : ''}`);
         throw createCancelReport(0, addCount + updateCount, logs);
       }
-      if (!logs.some((l) => l.startsWith('OK フィールド追加'))) {
+      if (isSettingsWriteUnconfirmed(e)) {
+        logs.push(`不明 フィールド追加 ${addCount}件（反映されたか分かりません）${updateCount ? ` / 未実行 フィールド更新 ${updateCount}件` : ''}`);
+      } else if (!logs.some((l) => l.startsWith('OK フィールド追加'))) {
         logs.push(`NG フィールド追加 ${addCount}件`);
       }
       throw attachLogsToError(decorateRevisionConflict(e, 'フィールド追加'), logs);
@@ -498,7 +505,7 @@ async function writeFieldPlan(
   if (updateCount) {
     setStatus(`フィールド更新中... (${updateCount}件)`);
     try {
-      const res = await apiPut(prefix, '/app/form/fields.json', withRevision({ app: tgtApp, properties: plan.updates }));
+      const res = await writeSettingsWithRevision('PUT', prefix, '/app/form/fields.json', withRevision({ app: tgtApp, properties: plan.updates }), { subject: 'フィールド更新', howToCheck: FIELD_UPDATE_UNCONFIRMED_CHECK });
       const nextRevision = pickRevision(res);
       if (!/^\d+$/.test(nextRevision)) {
         logs.push(`OK フィールド更新 ${updateCount}件 (revision 不明)`);
@@ -511,12 +518,17 @@ async function writeFieldPlan(
         logs.push(`未実行（中止） フィールド更新 ${updateCount}件${addCount ? '（追加 ' + addCount + '件は反映済み）' : ''}`);
         throw createCancelReport(addCount, addCount + updateCount, logs);
       }
-      if (!logs.some((l) => l.startsWith('OK フィールド更新'))) {
+      const unconfirmed = isSettingsWriteUnconfirmed(e);
+      if (unconfirmed) {
+        logs.push(`不明 フィールド更新 ${updateCount}件（反映されたか分かりません）${addCount ? '（追加 ' + addCount + '件は反映済み）' : ''}`);
+      } else if (!logs.some((l) => l.startsWith('OK フィールド更新'))) {
         logs.push(`NG フィールド更新 ${updateCount}件${addCount ? '（追加 ' + addCount + '件は反映済み）' : ''}`);
       }
       let failure = decorateRevisionConflict(e, 'フィールド更新');
       // 例外ではログが渡らないため、追加が反映済みであることをエラー文面の先頭に含める（部分成功を隠さない）
-      if (addCount) failure = withPartialNotice(failure, `フィールド追加 ${addCount}件は反映済みですが、フィールド更新 ${updateCount}件は反映されませんでした。`);
+      if (addCount) failure = withPartialNotice(failure, unconfirmed
+        ? `フィールド追加 ${addCount}件は反映済みです。フィールド更新 ${updateCount}件は反映されたか分かりません。`
+        : `フィールド追加 ${addCount}件は反映済みですが、フィールド更新 ${updateCount}件は反映されませんでした。`);
       // 完了済みの処理があるときだけログを添える（何も反映されていなければ元のエラーのまま）
       throw logs.some((l) => l.startsWith('OK ')) ? attachLogsToError(failure, logs) : failure;
     }
@@ -569,13 +581,15 @@ export interface FieldMultiTarget {
   appName?: string;
 }
 
-export type FieldMultiStatus = 'success' | 'unchanged' | 'failed' | 'conflict' | 'not-run';
+/** unconfirmed: 書き込みの応答が届かず、反映されたか分からない（成功とも失敗とも数えない） */
+export type FieldMultiStatus = 'success' | 'unchanged' | 'failed' | 'conflict' | 'unconfirmed' | 'not-run';
 
 export const FIELD_MULTI_STATUS_LABEL: Record<FieldMultiStatus, string> = {
   success: '成功',
   unchanged: 'スキップ（変更なし）',
   failed: '失敗',
   conflict: '競合',
+  unconfirmed: '反映されたか不明',
   'not-run': '未実行（中止）'
 };
 
@@ -655,12 +669,12 @@ export function findFieldMultiApplyProblem(input: { targets: FieldMultiTarget[];
 
 function singleLineMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String((error as any)?.message ?? error ?? 'エラーが発生しました');
-  // 内部ログの「NG …」行は説明の重複になるので除き、反映済みの内訳（OK …）は残す。通信の詳細（[API] GET …）は利用者向けの結果に出さない。
-  return message.split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('NG ') && !line.startsWith('[API]')).join(' / ');
+  // 内部ログの「NG …」「不明 …」行は説明の重複になるので除き、反映済みの内訳（OK …）は残す。通信の詳細（[API] GET …）は利用者向けの結果に出さない。
+  return message.split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('NG ') && !line.startsWith('不明 ') && !line.startsWith('[API]')).join(' / ');
 }
 
 function countByStatus(results: FieldMultiTargetResult[]): Record<FieldMultiStatus, number> {
-  const counts: Record<FieldMultiStatus, number> = { success: 0, unchanged: 0, failed: 0, conflict: 0, 'not-run': 0 };
+  const counts: Record<FieldMultiStatus, number> = { success: 0, unchanged: 0, failed: 0, conflict: 0, unconfirmed: 0, 'not-run': 0 };
   for (const r of results) counts[r.status] += 1;
   return counts;
 }
@@ -704,9 +718,10 @@ function finishFieldMultiReport(results: FieldMultiTargetResult[], flags: { decl
     const detail = r.status === 'success' ? describePlanCounts(r) : r.status === 'unchanged' ? `スキップ ${r.skip}` : '';
     return `[${FIELD_MULTI_STATUS_LABEL[r.status]}] ${fieldMultiLabel(r)}${detail ? `: ${detail}` : ''}${r.message ? `${detail ? ' / ' : ': '}${r.message}` : ''}`;
   });
-  const problems = results.filter((r) => r.status === 'failed' || r.status === 'conflict');
+  const problems = results.filter((r) => r.status === 'failed' || r.status === 'conflict' || r.status === 'unconfirmed');
   const parts: string[] = [];
   if (counts.unchanged) parts.push(`変更なし ${counts.unchanged} 件`);
+  if (counts.unconfirmed) parts.push(`反映されたか分からない ${counts.unconfirmed} 件`);
   if (counts.conflict) parts.push(`競合 ${counts.conflict} 件`);
   if (counts.failed) parts.push(`失敗 ${counts.failed} 件`);
   if (counts['not-run']) parts.push(`未実行（中止） ${counts['not-run']} 件`);
@@ -718,14 +733,14 @@ function finishFieldMultiReport(results: FieldMultiTargetResult[], flags: { decl
     headline = `フィールド反映をキャンセルしました（何も書き込んでいません。${total} 件の反映先のうち ${counts.failed + counts.conflict} 件は事前確認に失敗）`;
     tone = 'info';
   } else if (flags.cancelled) {
-    const done = counts.success + counts.unchanged + counts.failed + counts.conflict;
+    const done = counts.success + counts.unchanged + counts.failed + counts.conflict + counts.unconfirmed;
     headline = `中止しました（${done}/${total} 件を処理、残り ${counts['not-run']} 件は未実行）。成功 ${counts.success} 件${parts.filter((p) => !p.startsWith('未実行')).length ? `、${parts.filter((p) => !p.startsWith('未実行')).join('、')}` : ''}。反映済みの分は取り消していません${firstProblem}`;
     tone = 'warn';
   } else if (!counts.success && !problems.length && !counts['not-run']) {
     headline = `反映する変更がありませんでした（${total} 件すべて変更なし）`;
     tone = 'info';
   } else if (!counts.success && problems.length) {
-    headline = `${total} 件のうち反映できたアプリはありません。${parts.join('、')}${firstProblem}`;
+    headline = `${total} 件のうち${counts.unconfirmed ? '反映を確かめられた' : '反映できた'}アプリはありません。${parts.join('、')}${firstProblem}`;
     tone = 'err';
   } else {
     headline = `${total} 件中 ${counts.success} 件を反映しました（追加 ${totals.add} / 更新 ${totals.update}）${parts.length ? `。${parts.join('、')}` : ''}${firstProblem}`;
@@ -829,6 +844,10 @@ export async function runFieldApplyMultiStandalone(
         markNotRun(entry, applied
           ? `追加 ${applied}件は反映済みですが、残りは中止したため反映していません`
           : '中止したため反映していません');
+      } else if (isSettingsWriteUnconfirmed(e)) {
+        // 応答が届かず反映されたか分からない。この反映先は確かめてもらい、次の反映先へ進む（反映先ごとに revision は別）。
+        entry.status = 'unconfirmed';
+        entry.message = singleLineMessage(e);
       } else if (e?.revisionConflict || isRevisionConflictError(e)) {
         entry.status = 'conflict';
         entry.message = `取得後に別の更新が入ったため上書きせず中止しました（revision 競合）${logs.some((l) => l.startsWith('OK ')) ? `。${logs.filter((l) => l.startsWith('OK ')).join('、')}` : ''}`;

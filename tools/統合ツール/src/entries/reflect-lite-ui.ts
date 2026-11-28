@@ -146,6 +146,8 @@ interface RolloutLogEntry {
   ng: number;
   /** 中止で途中停止した項目数（失敗には数えない） */
   stopped?: number;
+  /** 書き込みの応答が届かず、反映されたか分からない項目数（失敗には数えない） */
+  unconfirmed?: number;
   pending: number;
   at: number;
   /** 利用者の操作で中止した反映先（途中まで書き込んでいる可能性がある） */
@@ -185,6 +187,8 @@ interface LiteMemoryState {
     ng: number;
     /** 中止で途中停止したセクション数（失敗には数えない） */
     stopped: number;
+    /** 書き込みの応答が届かず、反映されたか分からないセクション数（失敗には数えない） */
+    unconfirmed?: number;
     /** エラー中断により未実行のまま残ったセクション数 */
     pending: number;
     /** 利用者の「中止」で途中停止した反映（未実行の項目は pending、途中まで書いた項目は stopped に入る） */
@@ -198,6 +202,8 @@ interface LiteMemoryState {
     failedLabels: string[];
     /** 中止で途中停止したセクションの表示ラベル */
     stoppedLabels: string[];
+    /** 反映されたか分からないセクションの表示ラベル */
+    unconfirmedLabels?: string[];
     /** JSON 反映元が差し替えられたかを検知する UI 内の一時トークン。 */
     sourceBundleToken?: string;
     /** 反映前に自動保存したバックアップと同じ内容（「バックアップから戻す」用）。実行結果JSONには含めない。 */
@@ -1655,10 +1661,12 @@ export function mountReflectLitePanel() {
       body.textContent = '同じ反映元・項目・設定で差分を取得するだけで、まだ書き込みません。反映先ごとに差分確認と最終確認を行います。';
       rolloutNote.append(head, body);
     }
-    rolloutWarn.hidden = !(last && (last.ng > 0 || last.stopped > 0 || last.pending > 0));
+    rolloutWarn.hidden = !(last && (last.ng > 0 || last.stopped > 0 || (last.unconfirmed || 0) > 0 || last.pending > 0));
     rolloutWarn.textContent = last?.cancelled
       ? '直前の反映先は中止したため、一部の項目だけ反映されている可能性があります。結果を確認してから進んでください。'
-      : '直前の反映先に失敗・未実行の項目があります。結果を確認してから進んでください。';
+      : (last?.unconfirmed || 0) > 0
+        ? '直前の反映先に、反映されたか分からない項目があります。差分を取得し直して確認してから進んでください。'
+        : '直前の反映先に失敗・未実行の項目があります。結果を確認してから進んでください。';
     rolloutError.hidden = queue.ok;
     rolloutError.textContent = 'error' in queue ? `続けて反映する反映先を読み取れません。${queue.error}` : '';
     rolloutNextRow.hidden = !next && queue.ok;
@@ -1986,7 +1994,7 @@ export function mountReflectLitePanel() {
       if (blocker) { panel.setStatus(`反映先 ${formatRolloutTarget(picked)} へ進めません。${blocker}`, 'warn'); return; }
       // これまでの反映先は、まだ反映していなければ、選んだ反映先と入れ替えて続けて反映する反映先へ戻す（反映先の数は変えない）。
       const current: AppReference | null = appId && isLookupableReflectApp(appId, guestId) ? { appId, guestId } : null;
-      const done = !!current && (memoryState.rolloutKey === rolloutConditionKey() ? memoryState.rolloutLog || [] : []).some(entry => rolloutRowKey(entry) === rolloutRowKey(current) && entry.ng === 0 && entry.pending === 0 && !(entry.stopped || 0) && !entry.cancelled);
+      const done = !!current && (memoryState.rolloutKey === rolloutConditionKey() ? memoryState.rolloutLog || [] : []).some(entry => rolloutRowKey(entry) === rolloutRowKey(current) && entry.ng === 0 && entry.pending === 0 && !(entry.stopped || 0) && !(entry.unconfirmed || 0) && !entry.cancelled);
       const rest = queue.targets.flatMap(target => rolloutRowKey(target) === rolloutRowKey(picked) ? (current && !done ? [current] : []) : [target]);
       tgtApp.value = picked.appId;
       tgtGuest.value = picked.guestId;
@@ -2893,7 +2901,7 @@ export function mountReflectLitePanel() {
     const payload = {
       schemaVersion: 1,
       executedAt: new Date(last.at).toISOString(),
-      summary: { ok: last.ok, ng: last.ng, ...(last.stopped ? { stopped: last.stopped } : {}), pending: last.pending, ...(last.cancelled ? { cancelled: true } : {}) },
+      summary: { ok: last.ok, ng: last.ng, ...(last.stopped ? { stopped: last.stopped } : {}), ...(last.unconfirmed ? { unconfirmed: last.unconfirmed } : {}), pending: last.pending, ...(last.cancelled ? { cancelled: true } : {}) },
       ...last.report
     };
     const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
@@ -2941,18 +2949,22 @@ export function mountReflectLitePanel() {
       return;
     }
     const stamp = formatReflectDateTime(last.at);
-    const hasIssue = last.ng > 0 || last.stopped > 0 || last.pending > 0;
+    const unconfirmed = last.unconfirmed || 0;
+    const hasIssue = last.ng > 0 || last.stopped > 0 || unconfirmed > 0 || last.pending > 0;
     const tone = hasIssue ? 'color:#9a3412' : 'color:#065f46';
     const labelSummary = (title: string, labels: string[]) => labels.length
       ? `<div>${title}: ${escapeHtml(labels.slice(0, 5).join(' / '))}${labels.length > 5 ? ` ほか ${labels.length - 5} 件` : ''}</div>`
       : '';
-    const failedSummary = labelSummary('失敗', last.failedLabels) + labelSummary('途中で停止', last.stoppedLabels);
-    lastResultBody.innerHTML = `<div style="${tone};font-weight:600">${last.cancelled ? '⚠ 中止しました。書き込み済みの分は反映先に残っています' : hasIssue ? '⚠ 一部の項目を反映できませんでした' : `✓ ${last.ok} 項目を反映しました`}</div>`
-      + `<div>反映先 #${escapeHtml(last.appId || '-')} / 成功 ${last.ok} / 失敗 ${last.ng}${last.stopped ? ` / 途中で停止 ${last.stopped}` : ''}${last.pending ? ` / 未実行 ${last.pending}` : ''}</div>`
+    const failedSummary = labelSummary('失敗', last.failedLabels) + labelSummary('途中で停止', last.stoppedLabels) + labelSummary('反映されたか不明', last.unconfirmedLabels || []);
+    const headline = last.cancelled ? '⚠ 中止しました。書き込み済みの分は反映先に残っています'
+      : unconfirmed ? '⚠ 反映されたか分からない項目があります'
+        : hasIssue ? '⚠ 一部の項目を反映できませんでした' : `✓ ${last.ok} 項目を反映しました`;
+    lastResultBody.innerHTML = `<div style="${tone};font-weight:600">${headline}</div>`
+      + `<div>反映先 #${escapeHtml(last.appId || '-')} / 成功 ${last.ok} / 失敗 ${last.ng}${last.stopped ? ` / 途中で停止 ${last.stopped}` : ''}${unconfirmed ? ` / 反映されたか不明 ${unconfirmed}` : ''}${last.pending ? ` / 未実行 ${last.pending}` : ''}</div>`
       + failedSummary
       + `<div>${stamp}</div>`
       + (hasIssue
-        ? `<div style="margin-top:4px">${last.cancelled ? '差分を取得し直して現在の状態を確認してから、' : ''}「失敗・未実行だけ選択」で対象を絞って再実行してください。</div>`
+        ? `<div style="margin-top:4px">${last.cancelled || unconfirmed ? '差分を取得し直して現在の状態を確認してから、' : ''}「失敗・未実行だけ選択」で対象を絞って再実行してください。</div>`
         : '<div style="margin-top:4px">変わったのは反映先のプレビューだけです。本番へ公開するには、反映先の設定画面で公開するか、「本番反映」ツールを使ってください。</div>');
     renderApplySectionResults(lastResultSections, last.report.sections);
     // 反映前に反映先プレビューへ未公開の変更があったかで、取り消しの案内を出し分ける。
@@ -3073,13 +3085,15 @@ export function mountReflectLitePanel() {
         ok: counts.ok,
         ng: counts.ng,
         stopped: counts.stopped,
+        ...(counts.unconfirmed ? { unconfirmed: counts.unconfirmed } : {}),
         pending: counts.pending,
         at: Date.now(),
         appId: applyOptions.targetAppId,
         guestId: applyOptions.targetGuestId,
         retryScopes: collectRetrySectionKeys(applyOutcome.sections),
-        failedLabels: applyOutcome.sections.filter((s) => s.status === 'ng' && !s.stopped).map((s) => s.label),
+        failedLabels: applyOutcome.sections.filter((s) => s.status === 'ng' && !s.stopped && !s.unconfirmed).map((s) => s.label),
         stoppedLabels: applyOutcome.sections.filter((s) => s.status === 'ng' && s.stopped).map((s) => s.label),
+        ...(counts.unconfirmed ? { unconfirmedLabels: applyOutcome.sections.filter((s) => s.status === 'ng' && !s.stopped && s.unconfirmed).map((s) => s.label) } : {}),
         sourceBundleToken: sourceMode === 'json' ? sourceBundleToken : '',
         ...(applyOutcome.cancelled ? { cancelled: true } : {}),
         ...(applyOutcome.backup ? { backup: applyOutcome.backup } : {}),
@@ -3104,10 +3118,10 @@ export function mountReflectLitePanel() {
       memoryState.staleResult = null;
       if (applyOutcome.finalRevision) memoryState.lastWrite = { targetAppId: applyOptions.targetAppId, targetGuestId: applyOptions.targetGuestId || '', finalRevision: applyOutcome.finalRevision, priorState: targetPendingAtApply?.state };
       // 複数アプリへの展開の記録。バックアップから戻す操作は展開に含めない。
-      if (!wasRestoreMode) recordRolloutResult({ appId: applyOptions.targetAppId, guestId: applyOptions.targetGuestId || '', name: plannedSnapshot.identities.target.name, ok: counts.ok, ng: counts.ng, ...(counts.stopped ? { stopped: counts.stopped } : {}), pending: counts.pending, at: memoryState.lastResult.at, ...(applyOutcome.cancelled ? { cancelled: true } : {}) });
+      if (!wasRestoreMode) recordRolloutResult({ appId: applyOptions.targetAppId, guestId: applyOptions.targetGuestId || '', name: plannedSnapshot.identities.target.name, ok: counts.ok, ng: counts.ng, ...(counts.stopped ? { stopped: counts.stopped } : {}), ...(counts.unconfirmed ? { unconfirmed: counts.unconfirmed } : {}), pending: counts.pending, at: memoryState.lastResult.at, ...(applyOutcome.cancelled ? { cancelled: true } : {}) });
       renderLastResult();
       showWorkflowStage('result');
-      return { cancelled: false, hadError: counts.ng > 0 || counts.stopped > 0 || counts.pending > 0, counts, failureNote: describeFirstFailure(applyOutcome.sections), stopped: counts.ng + counts.stopped + counts.pending > 0 && !!applyOutcome.cancelled ? { ok: counts.ok, ng: counts.ng, stopped: counts.stopped, pending: counts.pending } : null };
+      return { cancelled: false, hadError: counts.ng > 0 || counts.stopped > 0 || counts.unconfirmed > 0 || counts.pending > 0, counts, failureNote: describeFirstFailure(applyOutcome.sections), unconfirmedNote: describeFirstUnconfirmed(applyOutcome.sections), stopped: counts.ng + counts.stopped + counts.pending > 0 && !!applyOutcome.cancelled ? { ok: counts.ok, ng: counts.ng, stopped: counts.stopped, pending: counts.pending } : null };
     });
 
     if (!outcome) return;
@@ -3131,8 +3145,14 @@ export function mountReflectLitePanel() {
     }
     if (!outcome.counts) return;
     if (outcome.hadError) {
-      const { ok, ng, pending } = outcome.counts;
-      panel.setStatus(`${ok + ng + outcome.counts.stopped + pending} 項目中 ${ok} 項目を反映しました。失敗 ${ng} 項目${pending ? `、未実行 ${pending} 項目` : ''}${outcome.failureNote ? `（${outcome.failureNote}）` : ''}。「失敗・未実行だけ選択」で再実行してください。`, 'warn');
+      const { ok, ng, pending, unconfirmed } = outcome.counts;
+      const total = ok + ng + outcome.counts.stopped + unconfirmed + pending;
+      if (unconfirmed) {
+        // 応答が届かず反映されたか分からない項目がある。失敗と言い切らず、差分の取り直しで確かめてもらう。
+        panel.setStatus(`${total} 項目中 ${ok} 項目を反映しました。反映されたか分からない項目が ${unconfirmed} 項目あります${outcome.unconfirmedNote ? `（${outcome.unconfirmedNote}）` : ''}${ng ? `。失敗 ${ng} 項目` : ''}${pending ? `、未実行 ${pending} 項目` : ''}。差分を取得し直して、反映されているか確認してください。`, 'warn');
+        return;
+      }
+      panel.setStatus(`${total} 項目中 ${ok} 項目を反映しました。失敗 ${ng} 項目${pending ? `、未実行 ${pending} 項目` : ''}${outcome.failureNote ? `（${outcome.failureNote}）` : ''}。「失敗・未実行だけ選択」で再実行してください。`, 'warn');
       return;
     }
     panel.setStatus(`${outcome.counts.ok} 項目を反映先プレビューへ反映しました。本番へ公開するには、「反映先の設定画面を開く」から kintone の設定画面で公開するか、「本番反映」ツールを使ってください。`, 'ok');
@@ -3489,12 +3509,19 @@ function describeConfirmUndo(pending: ReflectTargetPending | undefined): string 
 }
 
 /** 一部失敗のステータスに添える、最初の失敗の項目名と理由（1 行目だけ・長いときは省略）。 */
-function describeFirstFailure(sections: ReadonlyArray<{ status: string; label?: string; sectionKey?: string; message?: string; stopped?: boolean }>): string {
-  const failed = sections.find((section) => section.status === 'ng' && !section.stopped);
+function describeFirstFailure(sections: ReadonlyArray<{ status: string; label?: string; sectionKey?: string; message?: string; stopped?: boolean; unconfirmed?: boolean }>): string {
+  const failed = sections.find((section) => section.status === 'ng' && !section.stopped && !section.unconfirmed);
   if (!failed) return '';
   const label = failed.label && failed.label !== failed.sectionKey ? failed.label : reflectSectionLabel(failed.sectionKey || '');
   const reason = String(failed.message || '').split('\n')[0].trim();
   return reason ? `${label}: ${reason.length > 80 ? `${reason.slice(0, 80)}…` : reason}` : label;
+}
+
+/** 反映されたか分からない最初の項目名（ステータスに添える）。 */
+function describeFirstUnconfirmed(sections: ReadonlyArray<{ status: string; label?: string; sectionKey?: string; stopped?: boolean; unconfirmed?: boolean }>): string {
+  const found = sections.find((section) => section.status === 'ng' && !section.stopped && section.unconfirmed);
+  if (!found) return '';
+  return found.label && found.label !== found.sectionKey ? found.label : reflectSectionLabel(found.sectionKey || '');
 }
 
 function getSectionLabel(key: string): string {
@@ -3526,7 +3553,7 @@ function renderRolloutLog(host: HTMLElement, log: readonly RolloutLogEntry[], dr
   const list = document.createElement('ul');
   list.className = 'kus-rl-rollout-list';
   for (const entry of log) {
-    const tone = entry.ng > 0 || (entry.stopped || 0) > 0 ? 'ng' : entry.pending > 0 ? 'pending' : 'ok';
+    const tone = entry.ng > 0 || (entry.stopped || 0) > 0 ? 'ng' : (entry.unconfirmed || 0) > 0 || entry.pending > 0 ? 'pending' : 'ok';
     const item = document.createElement('li');
     item.className = `kus-rl-rollout-item kus-rl-rollout-item--${tone}`;
     item.dataset.rolloutEntry = `${entry.guestId ? `${entry.guestId}:` : ''}${entry.appId}`;
@@ -3537,13 +3564,13 @@ function renderRolloutLog(host: HTMLElement, log: readonly RolloutLogEntry[], dr
     const icon = document.createElement('span');
     icon.setAttribute('aria-hidden', 'true');
     icon.textContent = tone === 'ok' ? '✓' : '⚠';
-    state.append(icon, document.createTextNode(entry.cancelled ? '中止' : tone === 'ok' ? '成功' : entry.ng > 0 ? '失敗あり' : tone === 'ng' ? '途中で停止あり' : '未実行あり'));
+    state.append(icon, document.createTextNode(entry.cancelled ? '中止' : tone === 'ok' ? '成功' : entry.ng > 0 ? '失敗あり' : tone === 'ng' ? '途中で停止あり' : (entry.unconfirmed || 0) > 0 ? '反映されたか不明あり' : '未実行あり'));
     const name = document.createElement('strong');
     name.textContent = `${formatRolloutTarget(entry)}${entry.name ? ` ${entry.name}` : ''}`;
     head.append(state, name);
     const meta = document.createElement('div');
     meta.className = 'kus-rl-quiet';
-    meta.textContent = `成功 ${entry.ok} / 失敗 ${entry.ng}${entry.stopped ? ` / 途中で停止 ${entry.stopped}` : ''} / 未実行 ${entry.pending}${entry.cancelled ? ' · 中止' : ''} · ${formatReflectDateTime(entry.at)}`;
+    meta.textContent = `成功 ${entry.ok} / 失敗 ${entry.ng}${entry.stopped ? ` / 途中で停止 ${entry.stopped}` : ''}${entry.unconfirmed ? ` / 反映されたか不明 ${entry.unconfirmed}` : ''} / 未実行 ${entry.pending}${entry.cancelled ? ' · 中止' : ''} · ${formatReflectDateTime(entry.at)}`;
     item.append(head, meta);
     list.appendChild(item);
   }

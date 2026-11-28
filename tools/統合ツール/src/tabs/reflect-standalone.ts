@@ -1,7 +1,8 @@
 'use strict';
 
 import { buildExportFilename, buildAppFilenameLabel, extractAppNameFromBundle, deepClone } from '../utils.js';
-import { apiGet, apiPost, apiPut, buildApiPrefix, decorateRevisionConflict, fetchAppDeployStatus, fetchBundle, pickRevision, isRevisionConflictError, uploadKintoneFile } from '../api.js';
+import { apiGet, buildApiPrefix, decorateRevisionConflict, fetchAppDeployStatus, fetchBundle, pickRevision, isRevisionConflictError, uploadKintoneFile } from '../api.js';
+import { isSettingsWriteUnconfirmed, writeSettingsWithRevision } from '../settingsWrite.js';
 import { captureReflectBaseline, assertReflectBaselineMatches, assertCompleteReflectBackup, isCompleteReflectSection, type ReflectBaseline } from '../reflect/standalonePreflight.js';
 import { BACKUP_FILE_BODY_NOTICE, embedCustomizeFileContents, hasEmbeddedFileBodies, resolveCustomizeFiles, type CustomizeFileDownloader, type CustomizeFileResolution } from '../reflect/customizeFiles.js';
 import { findLookupMapCandidates, hasLookupCandidates, type LookupMapCandidates } from '../reflect/lookupCandidates.js';
@@ -46,9 +47,11 @@ export interface PreviewReflectResult {
 /** 反映先のアプリの更新（deploy）の状況。processing のとき、kintone が処理を終えるまで反映先へ書き込めない。 */
 export interface ReflectTargetDeployStatus { state: 'processing' | 'idle' | 'unknown'; message: string }
 /** 反映の進捗通知。項目ごとに running → ok / ng / skip、中断で残った項目は pending。 */
-export interface ReflectSectionUpdate { sectionKey: string; label: string; status: 'running' | 'ok' | 'ng' | 'skip' | 'pending'; message?: string; /** 利用者の「中止」で途中で止まった項目（status は ng） */ stopped?: boolean }
+export interface ReflectSectionUpdate { sectionKey: string; label: string; status: 'running' | 'ok' | 'ng' | 'skip' | 'pending'; message?: string; /** 利用者の「中止」で途中で止まった項目（status は ng） */ stopped?: boolean; /** 応答が届かず、反映されたか分からない項目（status は ng） */ unconfirmed?: boolean }
 export interface ReflectAppIdentity { appId: string; name: string; code: string; guestId: string }
 export interface ReflectIdentities { source: ReflectAppIdentity; target: ReflectAppIdentity }
+/** 応答が届かず反映されたか分からない書き込みの、確かめ方（項目の結果の文に続ける）。 */
+const REFLECT_UNCONFIRMED_CHECK = '以降の項目は書き込んでいません。差分を取得し直して、この項目が反映先プレビューに反映されているか確認してください。';
 
 /**
  * 実行結果カードを現在の入力へ再利用できるか判定する。
@@ -430,7 +433,11 @@ export async function runApplyPreviewStandalone(
   }
   const write = async (operation: ReflectSectionPlan['operations'][number], body: Record<string, any>) => {
     try {
-      const response = await (operation.method === 'POST' ? apiPost : apiPut)(prefix, operation.endpoint, { ...body, app: opts.targetAppId, revision });
+      // 応答が届かなかった書き込みは、読み直して反映されていないと確かめたときだけ送り直す（settingsWrite.ts）。
+      const response = await writeSettingsWithRevision(operation.method, prefix, operation.endpoint, { ...body, app: opts.targetAppId, revision }, {
+        subject: operation.label,
+        howToCheck: REFLECT_UNCONFIRMED_CHECK
+      });
       const next = pickRevision(response);
       if (!/^\d+$/.test(next)) {
         const error = new Error(`${operation.label}の書き込みは完了しましたが、更新後のrevisionを確認できません。以降の反映を中止します。差分を取得し直して状態を確認してください。`) as Error & { stopReflection: boolean };
@@ -443,8 +450,8 @@ export async function runApplyPreviewStandalone(
   const sections: ApplySectionOutcome[] = [];
   let cancelled = false;
   // 画面の進捗表示が失敗しても、書き込みの処理には影響させない。
-  const notify = (plan: ReflectSectionPlan, status: ReflectSectionUpdate['status'], message?: string, stopped = false) => {
-    try { opts.onSectionUpdate?.({ sectionKey: plan.sectionKey, label: plan.label, status, ...(message ? { message } : {}), ...(stopped ? { stopped: true } : {}) }); } catch { /* 表示側の例外は無視する */ }
+  const notify = (plan: ReflectSectionPlan, status: ReflectSectionUpdate['status'], message?: string, stopped = false, unconfirmed = false) => {
+    try { opts.onSectionUpdate?.({ sectionKey: plan.sectionKey, label: plan.label, status, ...(message ? { message } : {}), ...(stopped ? { stopped: true } : {}), ...(unconfirmed ? { unconfirmed: true } : {}) }); } catch { /* 表示側の例外は無視する */ }
   };
   for (const [index, plan] of plans.entries()) {
     const outcome = { sectionKey: plan.sectionKey, label: plan.label };
@@ -478,7 +485,10 @@ export async function runApplyPreviewStandalone(
       }
       // 項目内の途中で止まった場合、先に完了した書き込みは反映先に残る。失敗の内容と一緒に必ず示す。
       const message = `${error.message || String(error)}${written.length ? `\n（この項目では ${written.join('・')} まで書き込み済みです。差分を取得し直して現在の状態を確認してください）` : ''}`;
-      sections.push({ ...outcome, status: 'ng', message, ...(written.length ? { partiallyWritten: true } : {}) }); notify(plan, 'ng', message); pushErrorLog(logs, `NG ${plan.label}: ${message}`, message);
+      // 応答が届かず反映されたか分からない書き込みは、失敗と言い切らない（status は ng のまま、unconfirmed で見分ける）。
+      const unconfirmed = isSettingsWriteUnconfirmed(error);
+      sections.push({ ...outcome, status: 'ng', message, ...(written.length ? { partiallyWritten: true } : {}), ...(unconfirmed ? { unconfirmed: true } : {}) }); notify(plan, 'ng', message, false, unconfirmed);
+      if (unconfirmed) logs.push(`不明 ${plan.label}: ${message}`); else pushErrorLog(logs, `NG ${plan.label}: ${message}`, message);
       if (opts.stopOnError !== false || error.stopReflection || isRevisionConflictError(error)) {
         for (const pending of plans.slice(index + 1)) { sections.push({ sectionKey: pending.sectionKey, label: pending.label, status: 'pending', message: '中断のため未実行' }); notify(pending, 'pending', '中断のため未実行'); }
         logs.push(`中断（未実行 ${plans.length - index - 1} 件）`); break;
@@ -487,11 +497,13 @@ export async function runApplyPreviewStandalone(
     onProgress(logs);
   }
   const count = (status: ApplySectionOutcome['status']) => sections.filter(section => section.status === status).length;
-  const stoppedCount = sections.filter(section => section.status === 'ng' && section.stopped).length, failedCount = count('ng') - stoppedCount;
-  logs.push(`=== 完了: OK ${count('ok')} / NG ${failedCount}${stoppedCount ? ` / 途中で停止 ${stoppedCount}` : ''} / 未実行 ${count('pending')} / 変更なし ${count('skip')} ===`);
+  const stoppedCount = sections.filter(section => section.status === 'ng' && section.stopped).length;
+  const unconfirmedCount = sections.filter(section => section.status === 'ng' && !section.stopped && section.unconfirmed).length;
+  const failedCount = count('ng') - stoppedCount - unconfirmedCount;
+  logs.push(`=== 完了: OK ${count('ok')} / NG ${failedCount}${stoppedCount ? ` / 途中で停止 ${stoppedCount}` : ''}${unconfirmedCount ? ` / 反映されたか不明 ${unconfirmedCount}` : ''} / 未実行 ${count('pending')} / 変更なし ${count('skip')} ===`);
   onProgress(logs);
   if (cancelled) setStatus(`反映を中止しました（反映済み ${count('ok')} / 途中で停止 ${stoppedCount} / 未実行 ${count('pending')}）。反映先プレビューは一部だけ更新されている可能性があります。`, true);
-  else setStatus(failedCount ? '反映完了（一部エラーあり）' : '反映完了');
+  else setStatus(unconfirmedCount ? '反映を止めました（反映されたか分からない項目があります）' : failedCount ? '反映完了（一部エラーあり）' : '反映完了');
   return { logs, sections, backup, finalRevision: revision, ...(cancelled ? { cancelled: true } : {}) };
 }
 

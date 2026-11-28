@@ -78,12 +78,13 @@ describe('field apply revision guard', () => {
       skipConfirm: true
     }, vi.fn());
 
+    // どちらも 1 回だけ送る（応答が届かなかったときに送り直すかは、読み直して決める。settingsWrite.ts）
     expect(apiPost).toHaveBeenCalledWith('/k/guest/7/v1/preview', '/app/form/fields.json', {
       app: '5', properties: { added: { type: 'SINGLE_LINE_TEXT', code: 'added' } }, revision: '10'
-    });
+    }, 1);
     expect(apiPut).toHaveBeenCalledWith('/k/guest/7/v1/preview', '/app/form/fields.json', {
       app: '5', properties: { existing: { type: 'NUMBER', label: '更新後', code: 'existing' } }, revision: '11'
-    });
+    }, 1);
     expect(logs.join('\n')).toContain('revision 12');
   });
 
@@ -118,12 +119,13 @@ describe('field apply revision guard', () => {
     });
     vi.mocked(apiPut).mockRejectedValue(new Error('boom'));
 
+    // kintone の応答が無い失敗は、読み直して反映されていないと確かめた旨を続ける（追加の反映済みの案内は付けない）
     await expect(runFieldApplyStandalone({
       targetAppId: '5',
       fieldJson: JSON.stringify({ properties: { existing: { type: 'NUMBER' } } }),
       overwrite: true,
       skipConfirm: true
-    }, vi.fn())).rejects.toThrow(/^boom$/);
+    }, vi.fn())).rejects.toThrow(/^boom\n反映先の設定の更新番号（revision）は 10 のままで、この書き込みは反映されていません。$/);
   });
 
   it('rejects non-numeric app and guest ids before any request', async () => {
@@ -162,7 +164,8 @@ describe('field apply revision guard', () => {
       revision: '10'
     });
     vi.mocked(apiPost).mockResolvedValue({ revision: '11' });
-    vi.mocked(apiPut).mockRejectedValue(new Error('PUT失敗: バリデーションエラー'));
+    // kintone が拒否した（エラーの応答がある）更新。読み直しも送り直しもしない
+    vi.mocked(apiPut).mockRejectedValue(Object.assign(new Error('PUT失敗: バリデーションエラー'), { code: 'CB_VA01', id: 'req-1' }));
 
     let caught: any = null;
     try {

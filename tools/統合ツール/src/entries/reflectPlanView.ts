@@ -336,7 +336,7 @@ export function renderApplySectionResults(host: HTMLElement, rawSections: unknow
   const list = document.createElement('ul');
   list.className = 'kus-rl-result-list';
   for (const section of sections) {
-    const display = describeApplySectionStatus(section.status, section.stopped);
+    const display = describeApplySectionStatus(section.status, section.stopped, section.unconfirmed);
     const item = document.createElement('li');
     item.className = `kus-rl-result-item kus-rl-result-item--${display.tone}`;
     const head = document.createElement('div');
@@ -357,7 +357,8 @@ export function renderApplySectionResults(host: HTMLElement, rawSections: unknow
       message.textContent = describeReflectFailure(section.message);
       item.appendChild(message);
     }
-    const hint = section.status === 'ng' && !section.stopped ? buildReflectErrorHint(section.message || '') : '';
+    // 反映されたか分からない項目は、確かめ方が本文にあるため、失敗向けのヒント（再実行の案内など）を出さない。
+    const hint = section.status === 'ng' && !section.stopped && !section.unconfirmed ? buildReflectErrorHint(section.message || '') : '';
     if (hint) {
       const hintNode = document.createElement('div');
       hintNode.className = 'kus-rl-result-item__hint';
@@ -375,7 +376,7 @@ export function renderApplySectionResults(host: HTMLElement, rawSections: unknow
 
 export interface ApplyProgressView {
   /** 反映エンジンの通知を反映して表示を更新する。 */
-  update(update: { sectionKey: string; status: ApplyProgressStatus; message?: string; stopped?: boolean }): void;
+  update(update: { sectionKey: string; status: ApplyProgressStatus; message?: string; stopped?: boolean; unconfirmed?: boolean }): void;
   rows(): ApplyProgressRow[];
 }
 
@@ -415,7 +416,7 @@ export function createApplyProgressView(host: HTMLElement, initial: readonly App
   const paint = (row: ApplyProgressRow) => {
     const node = nodes.get(row.sectionKey);
     if (!node) return;
-    const display = describeApplyProgressStatus(row.status, row.stopped);
+    const display = describeApplyProgressStatus(row.status, row.stopped, row.unconfirmed);
     node.item.className = `kus-rl-result-item kus-rl-result-item--${display.tone}`;
     node.state.className = `kus-rl-result-state kus-rl-result-state--${display.tone}`;
     node.icon.textContent = display.icon;

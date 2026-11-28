@@ -2017,8 +2017,9 @@ export async function liteRun<T>(
     const message = String(e?.message || e || '不明なエラー');
     const lines = message.split('\n').map((line) => line.trim()).filter(Boolean);
     const [first, ...rest] = lines.length ? lines : [message];
-    if (e?.partialSuccess === true) {
-      // 一部だけ成功した結果（ファイルは保存済みなど）: 要点を警告色で、内訳はログへ
+    if (e?.partialSuccess === true || e?.writeUnconfirmed === true) {
+      // 一部だけ成功した結果（ファイルは保存済みなど）と、書き込みの応答が届かず反映されたか分からない結果（settingsWrite.ts）:
+      // 失敗と言い切らず、要点を警告色で、内訳はログへ
       // 要点が括弧で終わるときは括弧を重ねない
       const logNote = rest.length ? (/[）)]$/.test(first) ? '。詳細は下のログを確認してください' : '（詳細は下のログ）') : '';
       panel.setStatus(`${first}${logNote}`, 'warn');

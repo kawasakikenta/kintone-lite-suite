@@ -10,6 +10,7 @@
 //   - フィールドの種類の変更、選択肢に無い初期値、存在しないフィールドを参照する一覧・レイアウト・計算式などは、kintone と同じようにエラー。
 //   - ルックアップ・関連レコード一覧・アクションの参照先アプリが存在しないとエラー。JS/CSS のファイルの取得・アップロード（fileKey は 1 回しか使えない）。
 //   - 本番・反映元への設定の書き込みと、プレビューの deploy.json の呼び出しは違反として記録する（プレビュー反映は呼ばない）。
+//   - 応答が届かない書き込み（loseWrites。kintone では反映したのに通信エラー・502 で応答が失われる、または反映する前に失われる）。
 //
 // 直した問題は通常の検査（失敗させるもの）にしてある。まだ直していない製品の不具合・使いにくさ・文言の問題だけを「既知の問題（findings）」として記録する。
 // 既知の問題は失敗させずに一覧で出し（severity が critical のものだけ失敗にする）、.iter-shots/reflect-explore/results.json に保存する。
@@ -80,6 +81,8 @@ function installSyntheticKintone(config) {
     failApps: new Set((config.failApps || []).map(String)), rejectDeploy: config.rejectDeploy || {},
     writableApps: new Set((config.writableApps || ['202']).map(String)), apps: {}, installedPlugins: config.installedPlugins || ['plugin-calendar', 'plugin-chart', 'plugin-extra'],
     failWrites: config.failWrites || {}, bumpAfterWrite: null,
+    // { [項目]: { commit: 反映してから応答を失うか, kind: 'network' | 'bad-gateway', times } }
+    loseWrites: config.loseWrites || {},
     failGets: config.failGets || {}, holdGets: false, getResolvers: []
   };
 
@@ -493,6 +496,11 @@ function installSyntheticKintone(config) {
       const fail = error => { record.rejected = true; record.error = `${error.code}: ${error.message}`; return error; };
       if (processing(app)) throw fail(kerr('GAIA_AD01', 'アプリの設定を反映中のため、設定を変更できません。'));
       if (S.failWrites[key] && (S.failWrites[key].times === undefined || S.failWrites[key].times > 0)) { if (S.failWrites[key].times !== undefined) S.failWrites[key].times -= 1; throw fail(kerr(S.failWrites[key].code, S.failWrites[key].message)); }
+      // 応答が届かない書き込み。kintone.api は kintone のエラー応答（id・code）の無い失敗として返す。
+      const lose = S.loseWrites[key] && (S.loseWrites[key].times === undefined || S.loseWrites[key].times > 0) ? S.loseWrites[key] : null;
+      if (lose && lose.times !== undefined) lose.times -= 1;
+      const lostError = () => (lose.kind === 'bad-gateway' ? Object.assign(new Error('Bad Gateway'), { status: 502 }) : Object.assign(new Error('Network Error'), { code: 'NETWORK' }));
+      if (lose && !lose.commit) { record.rejected = true; record.lost = 'before-commit'; record.error = 'lost before commit'; throw lostError(); }
       if (params.revision !== undefined && String(params.revision) !== '-1' && String(params.revision) !== String(app.previewRev)) throw fail(kerr('GAIA_CO02', '指定したrevisionは最新ではありません。他のユーザーによってアプリの設定が更新されています。'));
       const next = clone(app.preview);
       try { writers[key](next, method, params, app); } catch (error) { throw fail(error); }
@@ -500,6 +508,7 @@ function installSyntheticKintone(config) {
       app.previewRev += 1;
       record.revisionAfter = String(app.previewRev);
       if (S.bumpAfterWrite && S.bumpAfterWrite.after === S.writes.length) { const hook = S.bumpAfterWrite; S.bumpAfterWrite = null; S.bumpPreview(app.id, hook.mutate); }
+      if (lose) { record.lost = 'after-commit'; throw lostError(); }
       return { revision: record.revisionAfter };
     }
     throw violation(`想定外の書き込み: ${method} ${url}`);
@@ -1173,6 +1182,57 @@ function registerScenarios(scenario, ctx) {
     await idle();
     assert.match(await statusText(), /すべて反映元と一致しています/);
     ok('failure: 途中の失敗と再実行');
+  });
+
+  // 応答が届かなかった書き込み（kintone では反映済み）を同じ revision で送り直すと、進んだ revision と食い違って「revision 競合」と表示していた。
+  scenario('lost-response: 応答が届かなかった書き込み（反映済みなら不明として止める・未反映なら確かめて送り直す）', async () => {
+    await reset(reflectWorld({ engine: { loseWrites: { viewSettings: { commit: true, kind: 'network', times: 1 } } } }));
+    await setup({ scopes: ['fieldSettings', 'layoutSettings', 'viewSettings', 'reportSettings'] });
+    await setLookup('401 → 301');
+    await compare();
+    await run();
+    await shot('lost-response-unconfirmed');
+    let now = await assertOnlyAllowedWrites('応答が届かなかった書き込み');
+    const views = now.writes.filter(write => write.key === 'viewSettings');
+    assert.equal(views.length, 1, '応答が届かなかった一覧の書き込みを、同じ revision で送り直さない');
+    assert.equal(views[0].lost, 'after-commit');
+    assert.equal(now.writes.filter(write => write.error && /GAIA_CO02/.test(write.error)).length, 0, '自分の書き込みと競合させない');
+    assert.equal(now.writes.filter(write => write.key === 'reportSettings').length, 0, '反映されたか分からない項目の後は書き込まない');
+    const text = await resultText();
+    assert.match(text, /反映されたか不明/, '項目の結果は「反映されたか不明」');
+    assert.match(text, /反映されたか分かりません/);
+    assert.match(text, /差分を取得し直して/, '確かめ方を示す');
+    assert.doesNotMatch(text, /revision 競合|ほかの更新と重なった/, '競合と取り違えない');
+    assert.match(await statusText(), /反映されたか分からない項目が 1 項目あります.*差分を取得し直して/);
+    assert.equal(await statusTone(), 'warn');
+    // 差分を取り直すと、一覧は反映済み（差分なし）と分かり、残りのグラフだけを反映できる
+    await button('失敗・未実行だけ選択').click();
+    await compare();
+    const planned = await summaryRows();
+    assert.equal(planned.find(item => item.label === 'ビュー設定')?.status, '一致', '応答が届かなかった一覧は反映済み');
+    await run();
+    now = await assertOnlyAllowedWrites('応答が届かなかった後の再実行');
+    assert.ok(now.apps['202'].preview.reportSettings.reports['地域別'], '残りのグラフを反映できる');
+    assert.equal(now.writes.filter(write => write.key === 'viewSettings').length, 1, '反映済みの一覧は書き直さない');
+    await button('反映後の差分を再確認').click();
+    await idle();
+    assert.match(await statusText(), /すべて反映元と一致しています/);
+
+    // 反映する前に応答が失われた（502）書き込みは、読み直して revision が変わっていないと確かめてから送り直す
+    await reset(reflectWorld({ engine: { loseWrites: { layoutSettings: { commit: false, kind: 'bad-gateway', times: 1 } } } }));
+    await setup({ scopes: ['fieldSettings', 'layoutSettings', 'viewSettings'] });
+    await setLookup('401 → 301');
+    await compare();
+    await run();
+    now = await assertOnlyAllowedWrites('反映前に応答が失われた書き込み');
+    const layouts = now.writes.filter(write => write.key === 'layoutSettings');
+    assert.equal(layouts.length, 2, '反映されていないと確かめてから 1 回だけ送り直す');
+    assert.equal(layouts[0].body.revision, layouts[1].body.revision, '送り直しは同じ revision（二重には反映されない）');
+    assert.equal(revisionChain(now), true);
+    assert.match(await resultText(), /3 項目を反映しました/);
+    assert.doesNotMatch(await resultText(), /反映されたか不明|失敗 [1-9]/);
+    metrics['応答が届かない書き込み: 送り直し'] = writeLabels(now);
+    ok('lost-response: 反映済みは不明として止め、未反映は確かめて送り直す');
   });
 
   scenario('cancel: 反映の中止（途中で止まった項目と未実行を示す）', async () => {

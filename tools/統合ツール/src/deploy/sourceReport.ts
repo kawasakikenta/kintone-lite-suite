@@ -6,7 +6,7 @@
  */
 
 import type { ApplySectionOutcome } from '../reflect/applyOutcome.js';
-import { previewWriteState, summarizeApplyOutcome } from '../reflect/applyOutcome.js';
+import { applySectionStatusText, previewWriteState, summarizeApplyOutcome } from '../reflect/applyOutcome.js';
 import type { ReflectItemSummary } from '../reflect/changeSummary.js';
 import { escapeReflectMarkdown } from '../reflect/planReport.js';
 import type { ReflectTargetPending } from '../reflect/targetPending.js';
@@ -90,11 +90,7 @@ function appLine(app: SourceRecordApp, environment: string): string {
 }
 
 function outcomeLabel(section: ApplySectionOutcome | undefined): string {
-  if (!section) return '未実行';
-  if (section.status === 'ok') return '成功';
-  if (section.status === 'skip') return '変更なし';
-  if (section.status === 'pending') return '未実行';
-  return section.stopped ? '途中で停止' : '失敗';
+  return applySectionStatusText(section);
 }
 
 export function buildSourceDeployRecordMarkdown(input: SourceRecordInput): string {
@@ -117,7 +113,7 @@ export function buildSourceDeployRecordMarkdown(input: SourceRecordInput): strin
     lines.push(`- 反映先の未公開の変更: ${esc(input.targetPending.message)}${acknowledged}`);
   }
   lines.push(`- 結果: ${esc(message.text)}`);
-  lines.push(`- 件数（プレビューへの書き込み）: 成功 ${counts.ok}・失敗 ${counts.ng}・途中で停止 ${counts.stopped}・未実行 ${counts.pending}・変更なし ${counts.skip}`);
+  lines.push(`- 件数（プレビューへの書き込み）: 成功 ${counts.ok}・失敗 ${counts.ng}・途中で停止 ${counts.stopped}${counts.unconfirmed ? `・反映されたか不明 ${counts.unconfirmed}` : ''}・未実行 ${counts.pending}・変更なし ${counts.skip}`);
   if (result.apply.cancelled) lines.push('- 利用者の操作で中止しました。');
   if (result.apply.backup) lines.push(`- バックアップ（反映前のプレビュー）: ${esc(formatStamp(result.apply.backup.generatedAt))} に保存（項目: ${esc(result.apply.backup.scopes.join('、'))}）`);
   else lines.push('- バックアップ（反映前のプレビュー）: 保存していません');
