@@ -28,7 +28,7 @@ import { runExportDiffMarkdown } from '../tabs/diff-markdown-export-standalone.j
 import { buildDiffMarkdownBatchExport, type DiffMarkdownContext } from '../diff/markdown-export.js';
 import { decodeRow, type DecodedRow } from '../diff/path-decoder.js';
 import { collectFieldDefinitions, extractFieldPathInfo, getFieldRowPayload } from '../diff/enrich.js';
-import { copyTextToClipboard, downloadBlob, downloadText, esc, extractAppNameFromBundle, nowStamp, readTextFile, stableStringify, stripHtmlToText, withoutApiContextLines } from '../utils.js';
+import { copyTextToClipboard, downloadBlob, downloadText, esc, extractAppNameFromBundle, normalizeIdInputText, nowStamp, readTextFile, stableStringify, stripHtmlToText, withoutApiContextLines } from '../utils.js';
 import { runExportDiffHtmlStandalone } from '../tabs/diff-export-standalone.js';
 import {
   createLitePanel,
@@ -190,9 +190,10 @@ export function mergePastedTargetAppIds(
   selectionEnd: number | null | undefined,
   pasted: string
 ): { merged: string; splits: boolean } {
-  const tokens = String(pasted || '').split(/[,、，\s]+/).filter(Boolean);
+  // 全角数字・全角カンマ（１０１，１０２）も半角にしてから分ける
+  const tokens = normalizeIdInputText(pasted || '').split(/[,、，\s]+/).filter(Boolean);
   if (tokens.length <= 1) return { merged: current, splits: false };
-  const value = String(current || '');
+  const value = normalizeIdInputText(current || '');
   const start = Math.min(Math.max(0, selectionStart ?? value.length), value.length);
   const end = Math.min(Math.max(start, selectionEnd ?? start), value.length);
   const before = value.slice(0, start).replace(/[,、，\s]+$/, '').trim();
@@ -1753,11 +1754,11 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   panel.root.classList.add('kus-dl-workspace');
 
   // ---- 1. 比較対象 ----
-  const srcApp = makeInput({ placeholder: 'アプリID', width: 'id', ariaLabel: '比較元アプリID' });
-  const srcGuest = makeInput({ placeholder: 'ゲストID', width: 'guest', ariaLabel: '比較元ゲストスペースID' });
+  const srcApp = makeInput({ placeholder: 'アプリID', width: 'id', ariaLabel: '比較元アプリID', idInput: true });
+  const srcGuest = makeInput({ placeholder: 'ゲストID', width: 'guest', ariaLabel: '比較元ゲストスペースID', idInput: true });
   const srcPrev = makeCheck({ label: 'プレビューで取得' });
-  const tgtApp = makeInput({ placeholder: 'アプリID（カンマ区切り可）', width: 'medium', ariaLabel: '比較先1アプリID' });
-  const tgtGuest = makeInput({ placeholder: 'ゲストID', width: 'guest', ariaLabel: '比較先1ゲストスペースID' });
+  const tgtApp = makeInput({ placeholder: 'アプリID（カンマ区切り可）', width: 'medium', ariaLabel: '比較先1アプリID', idInput: true });
+  const tgtGuest = makeInput({ placeholder: 'ゲストID', width: 'guest', ariaLabel: '比較先1ゲストスペースID', idInput: true });
   const tgtPrev = makeCheck({ label: 'プレビューで取得' });
   srcPrev.checkbox.setAttribute('aria-label', '比較元をプレビュー環境から取得');
   tgtPrev.checkbox.setAttribute('aria-label', '比較先をプレビュー環境から取得');
@@ -1866,8 +1867,8 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   // container / refresh を指定すると、まとめて追加するとき行ごとの再描画（一覧の位置計算）を省ける。
   const addTargetRow = (appId = '', guestId = '', appName = '', container: ParentNode = targetList, refresh = true) => {
     const rowNumber = targetRows.length + 1;
-    const app = makeInput({ placeholder: 'アプリID（カンマ区切り可）', width: 'medium', ariaLabel: `比較先${rowNumber}アプリID` });
-    const guest = makeInput({ placeholder: 'ゲストID', width: 'guest', ariaLabel: `比較先${rowNumber}ゲストスペースID` });
+    const app = makeInput({ placeholder: 'アプリID（カンマ区切り可）', width: 'medium', ariaLabel: `比較先${rowNumber}アプリID`, idInput: true });
+    const guest = makeInput({ placeholder: 'ゲストID', width: 'guest', ariaLabel: `比較先${rowNumber}ゲストスペースID`, idInput: true });
     const name = makeTargetName();
     app.value = appId;
     guest.value = guestId;
@@ -2105,8 +2106,8 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   const pairRows: PairRowEntry[] = [];
 
   const makePairEndpoint = (side: 'source' | 'target', rowNumber: number): PairEndpointEntry => {
-    const app = makeInput({ placeholder: 'アプリID', width: 'medium', ariaLabel: `ペア${rowNumber}${side === 'source' ? '比較元' : '比較先'}アプリID` });
-    const guest = makeInput({ placeholder: 'ゲストID', width: 'guest', ariaLabel: `ペア${rowNumber}${side === 'source' ? '比較元' : '比較先'}ゲストスペースID` });
+    const app = makeInput({ placeholder: 'アプリID', width: 'medium', ariaLabel: `ペア${rowNumber}${side === 'source' ? '比較元' : '比較先'}アプリID`, idInput: true });
+    const guest = makeInput({ placeholder: 'ゲストID', width: 'guest', ariaLabel: `ペア${rowNumber}${side === 'source' ? '比較元' : '比較先'}ゲストスペースID`, idInput: true });
     app.inputMode = 'numeric';
     guest.inputMode = 'numeric';
     const preview = makeCheck({ label: 'プレビューで取得' });
@@ -2945,7 +2946,8 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     const invalidLines: number[] = [];
     pairBulkTextarea.value.split(/\r?\n/).forEach((rawLine, index) => {
       if (!rawLine.trim()) return;
-      const line = rawLine.replace(/\r$/, '');
+      // 全角数字・全角カンマ（１０１，２０２）も半角にしてから列に分ける
+      const line = normalizeIdInputText(rawLine.replace(/\r$/, ''));
       const columns = (line.includes('\t') ? line.split('\t') : line.split(/[,、，]/)).map((value) => value.trim());
       if (columns.length === 2) parsed.push({ source: { appId: columns[0] }, target: { appId: columns[1] } });
       else if (columns.length === 4) parsed.push({ source: { appId: columns[0], guestId: columns[1] }, target: { appId: columns[2], guestId: columns[3] } });

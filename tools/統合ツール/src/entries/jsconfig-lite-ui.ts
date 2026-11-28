@@ -41,8 +41,8 @@ export function mountJsconfigLitePanel() {
 
   // 取得
   const cardFetch = makeCard({ title: '取得', number: 1 });
-  const srcApp = makeInput({ placeholder: '取得元アプリID', value: DEFAULT_APP_ID || '', width: 'id' });
-  const srcGuest = makeInput({ placeholder: 'ゲストID', value: DEFAULT_GUEST_ID, width: 'guest' });
+  const srcApp = makeInput({ placeholder: '取得元アプリID', value: DEFAULT_APP_ID || '', width: 'id', idInput: true });
+  const srcGuest = makeInput({ placeholder: 'ゲストID', value: DEFAULT_GUEST_ID, width: 'guest', idInput: true });
   const srcPrev = makeCheck({ label: 'プレビュー環境から取得' });
   cardFetch.body.appendChild(makeRow([srcApp, srcGuest, srcPrev.label], { label: '取得元' }));
   const fetchAppSearch = createAppSearchControl(panel, {
@@ -118,8 +118,8 @@ export function mountJsconfigLitePanel() {
 
   // 反映
   const cardApply = makeCard({ title: '反映先プレビューへ反映', number: 3 });
-  const tgtApp = makeInput({ placeholder: '反映先アプリID', width: 'id' });
-  const tgtGuest = makeInput({ placeholder: 'ゲストID', width: 'guest' });
+  const tgtApp = makeInput({ placeholder: '反映先アプリID', width: 'id', idInput: true });
+  const tgtGuest = makeInput({ placeholder: 'ゲストID', width: 'guest', idInput: true });
   cardApply.body.appendChild(makeRow([tgtApp, tgtGuest], { label: '反映先' }));
   cardApply.body.appendChild(createAppSearchControl(panel, {
     guestEl: tgtGuest,
@@ -264,7 +264,7 @@ export function mountJsconfigLitePanel() {
   // 全アプリ JS/CSS ファイル 一括ダウンロード
   const batchDetails = makeCard({ title: '全アプリの JS/CSS ファイルを一括ダウンロード' });
   batchDetails.body.appendChild(makeNote('アクセスできるアプリを順に調べ、アップロード済み（FILE タイプ）の JS / CSS ファイルを1つの ZIP にまとめます。URL で指定した JS / CSS はファイルがないため含まれません。', 'help'));
-  const batchGuest = makeInput({ placeholder: 'ゲストID（任意 / 未指定で全体）', width: 'wide' });
+  const batchGuest = makeInput({ placeholder: 'ゲストID（任意 / 未指定で全体）', width: 'wide', idInput: true });
   batchDetails.body.appendChild(makeRow(batchGuest, { label: 'ゲストスペース' }));
   const batchBtn = makeButton('JS/CSS を ZIP で一括取得', 'primary', { icon: '↓' });
   batchBtn.style.width = '100%';

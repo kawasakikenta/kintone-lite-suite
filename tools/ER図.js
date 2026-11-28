@@ -551,36 +551,6 @@
     root = el;
   }
 
-  // src/handlers/diffFocus.ts
-  function extractAppIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    if (/^\d+$/.test(raw)) return raw;
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
-    if (queryMatch) return queryMatch[1];
-    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
-    if (guestPathMatch) return guestPathMatch[1];
-    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
-    if (pathMatch) return pathMatch[1];
-    return "";
-  }
-  function extractGuestIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
-    return guestPathMatch ? guestPathMatch[1] : "";
-  }
-
   // src/utils.ts
   function getToolWindowSafe() {
     try {
@@ -608,6 +578,9 @@
     const items = lines.filter(Boolean);
     if (items.length <= limit) return items.join("\n");
     return [...items.slice(0, limit), `…ほか ${items.length - limit} 件（合計 ${items.length} 件）`].join("\n");
+  }
+  function normalizeIdInputText(value) {
+    return String(value ?? "").replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 65248)).replace(/，/g, ",");
   }
   function compactForLog(value, max = 220) {
     try {
@@ -732,6 +705,36 @@
       }
     }
     return legacyCopy(text);
+  }
+
+  // src/handlers/diffFocus.ts
+  function extractAppIdFromInput(value) {
+    const raw = normalizeIdInputText(value).trim();
+    if (!raw) return "";
+    if (/^\d+$/.test(raw)) return raw;
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
+    if (queryMatch) return queryMatch[1];
+    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
+    if (guestPathMatch) return guestPathMatch[1];
+    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
+    if (pathMatch) return pathMatch[1];
+    return "";
+  }
+  function extractGuestIdFromInput(value) {
+    const raw = normalizeIdInputText(value).trim();
+    if (!raw) return "";
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
+    return guestPathMatch ? guestPathMatch[1] : "";
   }
 
   // src/diff/engine.ts
@@ -1992,6 +1995,29 @@
     }
     return wrap;
   }
+  function normalizeIdInputValue(el) {
+    const next = normalizeIdInputText(el.value);
+    if (next === el.value) return false;
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    el.value = next;
+    if (start !== null && el.ownerDocument?.activeElement === el) {
+      try {
+        el.setSelectionRange(start, end ?? start);
+      } catch {
+      }
+    }
+    return true;
+  }
+  function installIdInputNormalizer(el) {
+    el.addEventListener("input", (ev) => {
+      if (ev.isComposing) return;
+      normalizeIdInputValue(el);
+    });
+    el.addEventListener("compositionend", () => {
+      if (normalizeIdInputValue(el)) el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
   function makeInput(opts = {}) {
     const inp = document.createElement("input");
     inp.type = opts.type || "text";
@@ -1999,6 +2025,7 @@
     if (opts.value) inp.value = opts.value;
     if (opts.ariaLabel) inp.setAttribute("aria-label", opts.ariaLabel);
     if (opts.noSubmit) inp.setAttribute("data-lp-no-submit", "");
+    if (opts.idInput) installIdInputNormalizer(inp);
     inp.className = "kus-lp__input" + (opts.width ? ` kus-lp__input--${opts.width}` : "");
     return inp;
   }
@@ -10386,12 +10413,12 @@ ${ctx.mainScript}
 
   // src/tabs/er-standalone.ts
   async function applySpaceToErOptions(opts, options, setStatus) {
-    const spaceId = String(opts.spaceId || "").trim();
+    const spaceId = normalizeIdInputText(opts.spaceId).trim();
     if (!/^\d+$/.test(spaceId)) return;
     let apps = Array.isArray(opts.spaceApps) ? opts.spaceApps : null;
     if (!apps) {
       setStatus(`スペース ${spaceId} のアプリ一覧を取得中...`);
-      apps = await fetchAppsInSpace(spaceId, opts.guestId);
+      apps = await fetchAppsInSpace(spaceId, options.source?.guestId || "");
     }
     const spaceIds = apps.map((a) => String(a.appId));
     options.spaceId = spaceId;
@@ -10404,7 +10431,7 @@ ${ctx.mainScript}
     );
   }
   function splitErAppIds(value) {
-    return String(value || "").split(/[\s,、，]+/).map((v) => v.trim()).filter(Boolean);
+    return normalizeIdInputText(value || "").split(/[\s,、，]+/).map((v) => v.trim()).filter(Boolean);
   }
   function erAppIdValues(opts, key, fallback = "") {
     const value = opts?.[key];
@@ -10418,16 +10445,16 @@ ${ctx.mainScript}
     return /^\d+$/.test(value) && Number.isSafeInteger(Number(value)) && Number(value) > 0;
   }
   function validateErOptions(opts) {
-    const appId = String(opts?.appId || "").trim();
+    const appId = normalizeIdInputText(opts?.appId || "").trim();
     const primaryIds = erAppIdValues(opts, "appIds", appId);
     const extraIds = erAppIdValues(opts, "extraAppIds");
     const invalidAppId = [...primaryIds, ...extraIds].find((v) => !/^\d+$/.test(v));
     if (invalidAppId) return `アプリIDは数値で入力してください: ${invalidAppId}`;
     const unusableAppId = [...primaryIds, ...extraIds].find((v) => !isUsableErAppId(v));
     if (unusableAppId) return `アプリIDは1以上${Number.MAX_SAFE_INTEGER}以下の整数で入力してください: ${unusableAppId}`;
-    const guestId = String(opts?.guestId || "").trim();
+    const guestId = normalizeIdInputText(opts?.guestId || "").trim();
     if (guestId && !/^\d+$/.test(guestId)) return `ゲストスペースIDは半角数字で入力してください: ${guestId}`;
-    const spaceId = String(opts?.spaceId || "").trim();
+    const spaceId = normalizeIdInputText(opts?.spaceId || "").trim();
     if (spaceId && !/^\d+$/.test(spaceId)) return `スペースIDは数値で入力してください: ${spaceId}`;
     const depthText = String(opts?.maxDepth ?? "").trim();
     if (depthText) {
@@ -10441,7 +10468,7 @@ ${ctx.mainScript}
     return "";
   }
   function buildErCrawlOptions(opts) {
-    const appId = String(opts?.appId || "").trim();
+    const appId = normalizeIdInputText(opts?.appId || "").trim();
     const primaryAppIds = erAppIdValues(opts, "appIds", appId);
     const startAppIds = [...primaryAppIds, ...erAppIdValues(opts, "extraAppIds")].map((v) => String(v || "").trim()).filter(isUsableErAppId).map((v) => String(Number(v))).filter((v, i, a) => a.indexOf(v) === i);
     const maxDepthRaw = Number(opts?.maxDepth);
@@ -10455,18 +10482,22 @@ ${ctx.mainScript}
       includeReverseLookup: !!opts?.includeReverseLookup,
       maxFields: ER_DEFAULTS.maxFields,
       sleepMs: ER_DEFAULTS.sleepMs,
-      source: { guestId: opts?.guestId || "", preview: !!opts?.preview }
+      source: { guestId: normalizeIdInputText(opts?.guestId || "").trim(), preview: !!opts?.preview }
     };
   }
   async function resolveErOptions(opts, setStatus) {
     const validationError = validateErOptions(opts);
     if (validationError) throw new Error(validationError);
-    const appId = String(opts.appId || "").trim();
-    const spaceId = String(opts.spaceId || "").trim();
+    const appId = normalizeIdInputText(opts.appId || "").trim();
+    const spaceId = normalizeIdInputText(opts.spaceId || "").trim();
     const options = buildErCrawlOptions(opts);
     await applySpaceToErOptions(opts, options, setStatus);
     if (!options.startAppIds.length) throw new Error("対象アプリが見つかりませんでした");
     return options;
+  }
+  function erFilenameSuffix(opts, options) {
+    const guestId = options?.source?.guestId || "";
+    return `${guestId ? `guest${guestId}_` : ""}${opts?.preview ? "プレビュー" : "本番"}`;
   }
   var isFailedErApp = (app) => app?.status === "failed" || app?.ok === false;
   function summarizeCrawl(apps, options) {
@@ -10524,8 +10555,8 @@ ${ctx.mainScript}
     }
   }
   async function runExportERDiagramHtmlStandalone(opts, setStatus) {
-    const appId = String(opts.appId || "").trim();
-    const spaceId = String(opts.spaceId || "").trim();
+    const appId = normalizeIdInputText(opts.appId || "").trim();
+    const spaceId = normalizeIdInputText(opts.spaceId || "").trim();
     const options = await resolveErOptions(opts, setStatus);
     setStatus(`ER図HTMLを生成中... 起点 ${summarizeErStartIds(options.startAppIds)}`);
     progressUi.init();
@@ -10536,7 +10567,7 @@ ${ctx.mainScript}
       progressUi.update(94, "HTML保存データ生成中...");
       const html = buildHTML(apps, options);
       const baseName = options.startAppIds[0] || appId || `space${spaceId}`;
-      const suffix = `${opts.guestId ? `guest${opts.guestId}_` : ""}${opts.preview ? "プレビュー" : "本番"}`;
+      const suffix = erFilenameSuffix(opts, options);
       if (opts?.download !== false) downloadText(
         buildExportFilename("ER図", "html", { appLabel: buildAppFilenameLabel(baseName, ""), suffix }),
         html,
@@ -10584,8 +10615,8 @@ ${ctx.mainScript}
   }
   async function runExportERMarkdownStandalone(opts, setStatus = () => {
   }) {
-    const appId = String(opts?.appId || "").trim();
-    const spaceId = String(opts?.spaceId || "").trim();
+    const appId = normalizeIdInputText(opts?.appId || "").trim();
+    const spaceId = normalizeIdInputText(opts?.spaceId || "").trim();
     let usedProgress = false;
     try {
       const { apps, options, fromBundles } = await resolveErAppsForExport(opts, setStatus, "ER図仕様書");
@@ -10594,7 +10625,7 @@ ${ctx.mainScript}
       const analysis = analyzeErDependencies(apps);
       const markdown = buildErMarkdownSpec(apps, analysis, { generatedAt: opts?.generatedAt });
       const baseName = options.startAppIds[0] || appId || (spaceId ? `space${spaceId}` : String(apps[0]?.id || "er"));
-      const suffix = `${opts?.guestId ? `guest${opts.guestId}_` : ""}${opts?.preview ? "プレビュー" : "本番"}`;
+      const suffix = erFilenameSuffix(opts, options);
       if (opts?.download !== false) downloadText(
         buildExportFilename("ER図仕様書", "md", { appLabel: buildAppFilenameLabel(baseName, ""), suffix }),
         markdown,
@@ -10614,8 +10645,8 @@ ${ctx.mainScript}
   }
   async function runExportERMermaidStandalone(opts, setStatus = () => {
   }) {
-    const appId = String(opts?.appId || "").trim();
-    const spaceId = String(opts?.spaceId || "").trim();
+    const appId = normalizeIdInputText(opts?.appId || "").trim();
+    const spaceId = normalizeIdInputText(opts?.spaceId || "").trim();
     let usedProgress = false;
     try {
       const { apps, options, fromBundles } = await resolveErAppsForExport(opts, setStatus, "ER図Mermaid");
@@ -10623,7 +10654,7 @@ ${ctx.mainScript}
       if (usedProgress) progressUi.update(94, "Mermaidデータ生成中...");
       const mermaid = buildErMermaidSource(apps, { showAllFields: opts?.showAllFields });
       const baseName = options.startAppIds[0] || appId || (spaceId ? `space${spaceId}` : String(apps[0]?.id || "er"));
-      const suffix = `${opts?.guestId ? `guest${opts.guestId}_` : ""}${opts?.preview ? "プレビュー" : "本番"}`;
+      const suffix = erFilenameSuffix(opts, options);
       if (opts?.download !== false) downloadText(
         buildExportFilename("ER図", "mmd", { appLabel: buildAppFilenameLabel(baseName, ""), suffix }),
         mermaid,
@@ -10643,8 +10674,8 @@ ${ctx.mainScript}
   }
   async function runExportERRelationsCsvStandalone(opts, setStatus = () => {
   }) {
-    const appId = String(opts?.appId || "").trim();
-    const spaceId = String(opts?.spaceId || "").trim();
+    const appId = normalizeIdInputText(opts?.appId || "").trim();
+    const spaceId = normalizeIdInputText(opts?.spaceId || "").trim();
     let usedProgress = false;
     try {
       const { apps, options, fromBundles } = await resolveErAppsForExport(opts, setStatus, "ER図リレーション一覧CSV");
@@ -10652,7 +10683,7 @@ ${ctx.mainScript}
       if (usedProgress) progressUi.update(94, "CSVデータ生成中...");
       const csv = buildErRelationsCsv(apps);
       const baseName = options.startAppIds[0] || appId || (spaceId ? `space${spaceId}` : String(apps[0]?.id || "er"));
-      const suffix = `${opts?.guestId ? `guest${opts.guestId}_` : ""}${opts?.preview ? "プレビュー" : "本番"}`;
+      const suffix = erFilenameSuffix(opts, options);
       if (opts?.download !== false) downloadText(
         buildExportFilename("ER図_リレーション一覧", "csv", { appLabel: buildAppFilenameLabel(baseName, ""), suffix }),
         csv,
@@ -10724,14 +10755,14 @@ ${ctx.mainScript}
     ensureStyles2();
     const { details, body } = makeDetails(opts.title || "アプリを検索（名前・コード・ID）", { open: !!opts.open });
     const keyword = makeInput({ placeholder: "アプリ名 / アプリID / URL", width: "wide", noSubmit: true });
-    const guest = makeInput({ placeholder: "ゲストID（任意）", width: "guest", noSubmit: true });
+    const guest = makeInput({ placeholder: "ゲストID（任意）", width: "guest", noSubmit: true, idInput: true });
     if (opts.guestEl?.value.trim()) guest.value = opts.guestEl.value.trim();
     const searchBtn = makeButton("検索", "sub", { icon: "🔍" });
     const allBtn = makeButton("環境内の全アプリ", "sub");
     allBtn.title = "接続先で閲覧できるアプリをすべて候補に表示します（検索語とスペースIDは使いません）";
     const searchMode = makeSelect([["name", "名前 / ID / URL"], ["code", "アプリコード（完全一致）"]]);
     searchMode.setAttribute("aria-label", "検索方法");
-    const space = makeInput({ placeholder: "スペースID（任意）", width: "guest", noSubmit: true, ariaLabel: "検索対象スペースID" });
+    const space = makeInput({ placeholder: "スペースID（任意）", width: "guest", noSubmit: true, ariaLabel: "検索対象スペースID", idInput: true });
     body.appendChild(makeRow([searchMode, space], { label: "検索方法" }));
     body.appendChild(makeRow([keyword, guest, searchBtn], { label: "検索語" }));
     body.appendChild(makeRow([allBtn], { label: "全アプリ" }));
@@ -11008,7 +11039,7 @@ ${ctx.mainScript}
 
   // src/tabs/record-standalone.ts
   function parseRecordAppIds(value) {
-    const tokens = String(value ?? "").split(/[\s,\u3001\uFF0C]+/).filter(Boolean);
+    const tokens = normalizeIdInputText(value).split(/[\s,\u3001\uFF0C]+/).filter(Boolean);
     const invalid = tokens.filter((id) => !/^\d+$/.test(id) || Number(id) <= 0);
     if (invalid.length) throw new Error(`アプリIDは正の数値で入力してください: ${invalid.join(", ")}`);
     return [...new Set(tokens)];
@@ -11043,8 +11074,8 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
       hint: "つながりのあるアプリを、画面で開くか共有用の HTML として保存できます。kintone のアプリや設定は変更しません。"
     });
     const cardMain = makeCard({ title: "起点アプリ", number: 1 });
-    const appInp = makeInput({ placeholder: "アプリID（複数はカンマ区切り）", value: DEFAULT_APP_ID || "", width: "wide" });
-    const guestInp = makeInput({ placeholder: "ゲストID（任意）", value: DEFAULT_GUEST_ID, width: "guest" });
+    const appInp = makeInput({ placeholder: "アプリID（複数はカンマ区切り）", value: DEFAULT_APP_ID || "", width: "wide", idInput: true });
+    const guestInp = makeInput({ placeholder: "ゲストID（任意）", value: DEFAULT_GUEST_ID, width: "guest", idInput: true });
     cardMain.body.appendChild(makeRow([appInp, guestInp], { label: "起点ID" }));
     cardMain.body.appendChild(createAppSearchControl(panel, {
       guestEl: guestInp,
@@ -11113,8 +11144,8 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
     presetCard.body.appendChild(makeNote("押すと、探索の深さ・密度・レイアウト・逆引きをまとめて設定します。内容は「詳細設定…」の詳細オプションで変更できます。", "help"));
     panel.body.insertBefore(presetCard.card, panel.status);
     const details = makeCard({ title: "詳細オプション" });
-    const extra = makeInput({ placeholder: "カンマ区切り (例: 100, 120)", width: "wide" });
-    const spaceInp = makeInput({ placeholder: "スペースID", width: "narrow" });
+    const extra = makeInput({ placeholder: "カンマ区切り (例: 100, 120)", width: "wide", idInput: true });
+    const spaceInp = makeInput({ placeholder: "スペースID", width: "narrow", idInput: true });
     const layoutSel = makeSelect([
       ["dagre", "Dagre（推奨）"],
       ["breadthfirst", "ツリー"],
@@ -11142,7 +11173,7 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
       footer: (selected, total) => `スペース #${pickerSpaceId} のアプリ ${total}件中 ${selected}件を起点にします。${selected ? "" : "1件以上選ぶか、起点IDを入力してください。"}`
     });
     let spaceAppsCache = null;
-    const spaceCacheKey = () => `${spaceInp.value.trim()}|${guestInp.value.trim()}`;
+    const spaceCacheKey = () => `${normalizeIdInputText(spaceInp.value).trim()}|${normalizeIdInputText(guestInp.value).trim()}`;
     function renderSpacePicker(spaceId, apps) {
       pickerSpaceId = spaceId;
       spacePicker.setItems(apps.map((a) => ({ value: String(a.appId), label: a.name || `アプリ ${a.appId}`, sub: `#${a.appId}`, checked: true })));
@@ -11153,14 +11184,14 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
       });
     }
     async function loadSpaceApps() {
-      const spaceId = spaceInp.value.trim();
+      const spaceId = normalizeIdInputText(spaceInp.value).trim();
       if (!/^\d+$/.test(spaceId)) throw new Error("スペースIDを数値で入力してください");
       const key = spaceCacheKey();
       let apps;
       if (spaceAppsCache && spaceAppsCache.key === key) {
         apps = spaceAppsCache.apps;
       } else {
-        apps = await fetchAppsInSpace(spaceId, guestInp.value.trim());
+        apps = await fetchAppsInSpace(spaceId, normalizeIdInputText(guestInp.value).trim());
         spaceAppsCache = { key, apps };
       }
       renderSpacePicker(spaceId, apps);
@@ -11176,18 +11207,18 @@ ${summarizeList(ids.map((id) => connectionSummary(id, guest, environment)))}`];
     details.body.appendChild(makeRow([subtableCb.label, reverseCb.label]));
     details.body.appendChild(makeNote("起点IDはカンマ区切りで複数指定でき、追加起点も同じ図にまとめて描画します。スペースIDを入れて「スペース内アプリを読込」を押すと、起点にするアプリを選べます。", "help"));
     function parseAppIds(value) {
-      return String(value || "").split(/[\s,，]+/).map((v) => v.trim()).filter(Boolean);
+      return normalizeIdInputText(value || "").split(/[\s,，]+/).map((v) => v.trim()).filter(Boolean);
     }
     panel.body.insertBefore(details.card, panel.status);
     function source() {
-      const spaceId = spaceInp.value.trim();
+      const spaceId = normalizeIdInputText(spaceInp.value).trim();
       const cacheHit = !!(spaceAppsCache && spaceAppsCache.key === spaceCacheKey());
       const pickerMatches = cacheHit && pickerSpaceId === spaceId && !spacePicker.element.hidden;
       const selectedIds = pickerMatches ? spacePicker.selected() : null;
       return {
-        appId: appInp.value.trim(),
+        appId: normalizeIdInputText(appInp.value).trim(),
         appIds: parseAppIds(appInp.value),
-        guestId: guestInp.value.trim(),
+        guestId: normalizeIdInputText(guestInp.value).trim(),
         preview: prevCb.checkbox.checked,
         layoutName: layoutSel.value,
         fieldDensity: densitySel.value,

@@ -730,13 +730,13 @@ export function mountReflectLitePanel() {
   let restoreMode: RestoreMode | null = null;
 
   // ---- アプリ ----
-  const srcApp = makeInput({ placeholder: '反映元アプリID', value: memoryState.sourceAppId || '', width: 'id' });
-  const srcGuest = makeInput({ placeholder: 'ゲストID', value: memoryState.sourceGuestId || '', width: 'guest' });
+  const srcApp = makeInput({ placeholder: '反映元アプリID', value: memoryState.sourceAppId || '', width: 'id', idInput: true });
+  const srcGuest = makeInput({ placeholder: 'ゲストID', value: memoryState.sourceGuestId || '', width: 'guest', idInput: true });
   // 開いているアプリがゲストスペースにある場合、アプリIDだけを入れると別の（通常）スペースを指してしまう。
   const pageGuestId = () => guestIdFromPagePath(window.location?.pathname || '');
   const defaultsToCurrentApp = !memoryState.targetAppId && !!DEFAULT_APP_ID;
-  const tgtApp = makeInput({ placeholder: '反映先アプリID', value: memoryState.targetAppId || DEFAULT_APP_ID || '', width: 'id' });
-  const tgtGuest = makeInput({ placeholder: 'ゲストID', value: defaultsToCurrentApp ? pageGuestId() : (memoryState.targetGuestId || ''), width: 'guest' });
+  const tgtApp = makeInput({ placeholder: '反映先アプリID', value: memoryState.targetAppId || DEFAULT_APP_ID || '', width: 'id', idInput: true });
+  const tgtGuest = makeInput({ placeholder: 'ゲストID', value: defaultsToCurrentApp ? pageGuestId() : (memoryState.targetGuestId || ''), width: 'guest', idInput: true });
   // ---- 入力中のアプリ名確認（進行はブロックしない。厳密な確認は差分取得時の resolveReflectAppsStandalone） ----
   const appLookupCache = createReflectAppLookupCache();
   const APP_LOOKUP_DELAY_MS = 350;
@@ -2507,7 +2507,7 @@ export function mountReflectLitePanel() {
   const confirmBody = document.createElement('div'); confirmCard.body.appendChild(confirmBody);
   const acknowledged = makeCheck({ label: '反映先と変更・削除の内容を確認しました', checked: false });
   acknowledged.checkbox.setAttribute('aria-label', '反映内容の確認');
-  const targetCheck = makeInput({ placeholder: '反映先アプリIDを入力', width: 'wide' });
+  const targetCheck = makeInput({ placeholder: '反映先アプリIDを入力', width: 'wide', idInput: true });
   targetCheck.setAttribute('aria-label', '確認用の反映先アプリID'); targetCheck.setAttribute('data-lp-no-submit', '');
   targetCheck.inputMode = 'numeric'; targetCheck.autocomplete = 'off';
   const targetCheckRow = makeRow([targetCheck], { label: '反映先アプリIDの再確認' });

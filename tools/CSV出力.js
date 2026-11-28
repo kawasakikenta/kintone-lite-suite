@@ -548,36 +548,6 @@
     root = el;
   }
 
-  // src/handlers/diffFocus.ts
-  function extractAppIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    if (/^\d+$/.test(raw)) return raw;
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
-    if (queryMatch) return queryMatch[1];
-    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
-    if (guestPathMatch) return guestPathMatch[1];
-    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
-    if (pathMatch) return pathMatch[1];
-    return "";
-  }
-  function extractGuestIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
-    return guestPathMatch ? guestPathMatch[1] : "";
-  }
-
   // src/utils.ts
   function getToolWindowSafe() {
     try {
@@ -602,6 +572,9 @@
     const items = lines.filter(Boolean);
     if (items.length <= limit) return items.join("\n");
     return [...items.slice(0, limit), `…ほか ${items.length - limit} 件（合計 ${items.length} 件）`].join("\n");
+  }
+  function normalizeIdInputText(value) {
+    return String(value ?? "").replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 65248)).replace(/，/g, ",");
   }
   function compactForLog(value, max = 220) {
     try {
@@ -726,6 +699,36 @@
       }
     }
     return legacyCopy(text);
+  }
+
+  // src/handlers/diffFocus.ts
+  function extractAppIdFromInput(value) {
+    const raw = normalizeIdInputText(value).trim();
+    if (!raw) return "";
+    if (/^\d+$/.test(raw)) return raw;
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
+    if (queryMatch) return queryMatch[1];
+    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
+    if (guestPathMatch) return guestPathMatch[1];
+    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
+    if (pathMatch) return pathMatch[1];
+    return "";
+  }
+  function extractGuestIdFromInput(value) {
+    const raw = normalizeIdInputText(value).trim();
+    if (!raw) return "";
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
+    return guestPathMatch ? guestPathMatch[1] : "";
   }
 
   // src/diff/engine.ts
@@ -2171,6 +2174,29 @@
     }
     return wrap;
   }
+  function normalizeIdInputValue(el) {
+    const next = normalizeIdInputText(el.value);
+    if (next === el.value) return false;
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    el.value = next;
+    if (start !== null && el.ownerDocument?.activeElement === el) {
+      try {
+        el.setSelectionRange(start, end ?? start);
+      } catch {
+      }
+    }
+    return true;
+  }
+  function installIdInputNormalizer(el) {
+    el.addEventListener("input", (ev) => {
+      if (ev.isComposing) return;
+      normalizeIdInputValue(el);
+    });
+    el.addEventListener("compositionend", () => {
+      if (normalizeIdInputValue(el)) el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
   function makeInput(opts = {}) {
     const inp = document.createElement("input");
     inp.type = opts.type || "text";
@@ -2178,6 +2204,7 @@
     if (opts.value) inp.value = opts.value;
     if (opts.ariaLabel) inp.setAttribute("aria-label", opts.ariaLabel);
     if (opts.noSubmit) inp.setAttribute("data-lp-no-submit", "");
+    if (opts.idInput) installIdInputNormalizer(inp);
     inp.className = "kus-lp__input" + (opts.width ? ` kus-lp__input--${opts.width}` : "");
     return inp;
   }
@@ -2445,9 +2472,9 @@
       const seen = /* @__PURE__ */ new Set();
       const out = [];
       for (const r of rows) {
-        const appId = r.app.value.trim();
+        const appId = normalizeIdInputText(r.app.value).trim();
         if (!appId) continue;
-        const guestId = r.guest.value.trim();
+        const guestId = normalizeIdInputText(r.guest.value).trim();
         const key = `${appId}::${guestId}`;
         if (seen.has(key)) continue;
         seen.add(key);
@@ -2459,7 +2486,7 @@
     }
     function getAllRows() {
       return rows.map((r) => {
-        const row = { appId: r.app.value.trim(), guestId: r.guest.value.trim() };
+        const row = { appId: normalizeIdInputText(r.app.value).trim(), guestId: normalizeIdInputText(r.guest.value).trim() };
         if (r.appName) row.appName = r.appName;
         return row;
       });
@@ -2489,7 +2516,7 @@
       opts.onChange?.(getApps());
     }
     function parseAppToken(token, fallbackGuest) {
-      const trimmed = token.trim();
+      const trimmed = normalizeIdInputText(token).trim();
       if (!trimmed || /^\d+$/.test(trimmed)) return { appId: trimmed, guestId: fallbackGuest };
       const extractedApp = extractAppIdFromInput(trimmed);
       if (!extractedApp) return { appId: trimmed, guestId: fallbackGuest };
@@ -2498,11 +2525,12 @@
       return { appId: extractedApp, guestId };
     }
     function distributeAppTokens(entry) {
-      const raw = entry.app.value;
+      normalizeIdInputValue(entry.guest);
+      const raw = normalizeIdInputText(entry.app.value);
       const guestVal = entry.guest.value.trim();
       if (!/[,、，\s]/.test(raw)) {
         const parsed = parseAppToken(raw, guestVal);
-        if (parsed.appId !== raw || parsed.guestId !== guestVal) {
+        if (parsed.appId !== entry.app.value || parsed.guestId !== guestVal) {
           entry.app.value = parsed.appId;
           entry.guest.value = parsed.guestId;
           setAppName(entry, "");
@@ -2558,8 +2586,8 @@
       const tdGuest = document.createElement("td");
       const tdAct = document.createElement("td");
       tdAct.className = "kus-lp__apptable-acts";
-      const app = makeInput({ placeholder: opts.appPlaceholder || "アプリID（カンマ区切りで複数可）", ariaLabel: "アプリID" });
-      const guest = makeInput({ placeholder: opts.guestPlaceholder || "空欄=通常スペース", ariaLabel: "ゲストスペースID" });
+      const app = makeInput({ placeholder: opts.appPlaceholder || "アプリID（カンマ区切りで複数可）", ariaLabel: "アプリID", idInput: true });
+      const guest = makeInput({ placeholder: opts.guestPlaceholder || "空欄=通常スペース", ariaLabel: "ゲストスペースID", idInput: true });
       app.value = appId;
       guest.value = guestId;
       const name = document.createElement("div");
@@ -2717,7 +2745,7 @@
       first: () => {
         const r = rows[0];
         if (!r) return { appId: "", guestId: "" };
-        const row = { appId: r.app.value.trim(), guestId: r.guest.value.trim() };
+        const row = { appId: normalizeIdInputText(r.app.value).trim(), guestId: normalizeIdInputText(r.guest.value).trim() };
         if (r.appName) row.appName = r.appName;
         return row;
       },
@@ -3783,7 +3811,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
 
   // src/tabs/record-standalone.ts
   function parseRecordAppIds(value) {
-    const tokens = String(value ?? "").split(/[\s,\u3001\uFF0C]+/).filter(Boolean);
+    const tokens = normalizeIdInputText(value).split(/[\s,\u3001\uFF0C]+/).filter(Boolean);
     const invalid = tokens.filter((id) => !/^\d+$/.test(id) || Number(id) <= 0);
     if (invalid.length) throw new Error(`アプリIDは正の数値で入力してください: ${invalid.join(", ")}`);
     return [...new Set(tokens)];
@@ -4118,14 +4146,14 @@ ${failures.join("\n")}`);
     ensureStyles2();
     const { details, body } = makeDetails(opts.title || "アプリを検索（名前・コード・ID）", { open: !!opts.open });
     const keyword = makeInput({ placeholder: "アプリ名 / アプリID / URL", width: "wide", noSubmit: true });
-    const guest = makeInput({ placeholder: "ゲストID（任意）", width: "guest", noSubmit: true });
+    const guest = makeInput({ placeholder: "ゲストID（任意）", width: "guest", noSubmit: true, idInput: true });
     if (opts.guestEl?.value.trim()) guest.value = opts.guestEl.value.trim();
     const searchBtn = makeButton("検索", "sub", { icon: "🔍" });
     const allBtn = makeButton("環境内の全アプリ", "sub");
     allBtn.title = "接続先で閲覧できるアプリをすべて候補に表示します（検索語とスペースIDは使いません）";
     const searchMode = makeSelect([["name", "名前 / ID / URL"], ["code", "アプリコード（完全一致）"]]);
     searchMode.setAttribute("aria-label", "検索方法");
-    const space = makeInput({ placeholder: "スペースID（任意）", width: "guest", noSubmit: true, ariaLabel: "検索対象スペースID" });
+    const space = makeInput({ placeholder: "スペースID（任意）", width: "guest", noSubmit: true, ariaLabel: "検索対象スペースID", idInput: true });
     body.appendChild(makeRow([searchMode, space], { label: "検索方法" }));
     body.appendChild(makeRow([keyword, guest, searchBtn], { label: "検索語" }));
     body.appendChild(makeRow([allBtn], { label: "全アプリ" }));
@@ -4418,8 +4446,8 @@ ${failures.join("\n")}`);
     panel.body.insertBefore(cardApps.card, panel.status);
     const cardCond = makeCard({ title: "出力条件", number: 2, soft: true });
     const query = makeInput({ placeholder: '例: 更新日時 >= "2026-01-01T00:00:00Z"（空欄で全件）', width: "wide" });
-    const viewApp = makeInput({ placeholder: "一覧取得元アプリID", value: DEFAULT_APP_ID || "", width: "id" });
-    const viewGuest = makeInput({ placeholder: "ゲストID（任意）", value: DEFAULT_GUEST_ID, width: "guest" });
+    const viewApp = makeInput({ placeholder: "一覧取得元アプリID", value: DEFAULT_APP_ID || "", width: "id", idInput: true });
+    const viewGuest = makeInput({ placeholder: "ゲストID（任意）", value: DEFAULT_GUEST_ID, width: "guest", idInput: true });
     const viewSelect = makeSelect([["", "一覧を選択（任意）"]]);
     const loadViews = makeButton("一覧読込", "sub");
     const useView = makeButton("▼ 条件へ反映", "sub");

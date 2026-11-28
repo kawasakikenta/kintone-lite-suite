@@ -26,6 +26,7 @@ import {
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
 import { joinAppIds, recordTargetSummary } from './recordTargetApps.js';
+import { normalizeIdInputText } from '../utils.js';
 
 export function mountErLitePanel() {
   const panel = createLitePanel({
@@ -39,8 +40,8 @@ export function mountErLitePanel() {
 
   // ---- 起点 ----
   const cardMain = makeCard({ title: '起点アプリ', number: 1 });
-  const appInp = makeInput({ placeholder: 'アプリID（複数はカンマ区切り）', value: DEFAULT_APP_ID || '', width: 'wide' });
-  const guestInp = makeInput({ placeholder: 'ゲストID（任意）', value: DEFAULT_GUEST_ID, width: 'guest' });
+  const appInp = makeInput({ placeholder: 'アプリID（複数はカンマ区切り）', value: DEFAULT_APP_ID || '', width: 'wide', idInput: true });
+  const guestInp = makeInput({ placeholder: 'ゲストID（任意）', value: DEFAULT_GUEST_ID, width: 'guest', idInput: true });
   cardMain.body.appendChild(makeRow([appInp, guestInp], { label: '起点ID' }));
   cardMain.body.appendChild(createAppSearchControl(panel, {
     guestEl: guestInp,
@@ -112,8 +113,8 @@ export function mountErLitePanel() {
 
   // ---- 詳細 ----
   const details = makeCard({ title: '詳細オプション' });
-  const extra = makeInput({ placeholder: 'カンマ区切り (例: 100, 120)', width: 'wide' });
-  const spaceInp = makeInput({ placeholder: 'スペースID', width: 'narrow' });
+  const extra = makeInput({ placeholder: 'カンマ区切り (例: 100, 120)', width: 'wide', idInput: true });
+  const spaceInp = makeInput({ placeholder: 'スペースID', width: 'narrow', idInput: true });
   const layoutSel = makeSelect([
     ['dagre', 'Dagre（推奨）'],
     ['breadthfirst', 'ツリー'],
@@ -143,7 +144,7 @@ export function mountErLitePanel() {
     footer: (selected, total) => `スペース #${pickerSpaceId} のアプリ ${total}件中 ${selected}件を起点にします。${selected ? '' : '1件以上選ぶか、起点IDを入力してください。'}`
   });
   let spaceAppsCache: { key: string; apps: Array<{ appId: string; name: string }> } | null = null;
-  const spaceCacheKey = () => `${spaceInp.value.trim()}|${guestInp.value.trim()}`;
+  const spaceCacheKey = () => `${normalizeIdInputText(spaceInp.value).trim()}|${normalizeIdInputText(guestInp.value).trim()}`;
 
   function renderSpacePicker(spaceId: string, apps: Array<{ appId: string; name: string }>) {
     pickerSpaceId = spaceId;
@@ -157,14 +158,14 @@ export function mountErLitePanel() {
   }
 
   async function loadSpaceApps() {
-    const spaceId = spaceInp.value.trim();
+    const spaceId = normalizeIdInputText(spaceInp.value).trim();
     if (!/^\d+$/.test(spaceId)) throw new Error('スペースIDを数値で入力してください');
     const key = spaceCacheKey();
     let apps: Array<{ appId: string; name: string }>;
     if (spaceAppsCache && spaceAppsCache.key === key) {
       apps = spaceAppsCache.apps;
     } else {
-      apps = await fetchAppsInSpace(spaceId, guestInp.value.trim());
+      apps = await fetchAppsInSpace(spaceId, normalizeIdInputText(guestInp.value).trim());
       spaceAppsCache = { key, apps };
     }
     renderSpacePicker(spaceId, apps);
@@ -182,20 +183,20 @@ export function mountErLitePanel() {
   details.body.appendChild(makeNote('起点IDはカンマ区切りで複数指定でき、追加起点も同じ図にまとめて描画します。スペースIDを入れて「スペース内アプリを読込」を押すと、起点にするアプリを選べます。', 'help'));
 
   function parseAppIds(value: string): string[] {
-    return String(value || '').split(/[\s,，]+/).map((v) => v.trim()).filter(Boolean);
+    return normalizeIdInputText(value || '').split(/[\s,，]+/).map((v) => v.trim()).filter(Boolean);
   }
   panel.body.insertBefore(details.card, panel.status);
 
   function source() {
     // ピッカーで読み込み済みの一覧・選択状態を引き渡す（生成時の再取得を防ぐ）
-    const spaceId = spaceInp.value.trim();
+    const spaceId = normalizeIdInputText(spaceInp.value).trim();
     const cacheHit = !!(spaceAppsCache && spaceAppsCache.key === spaceCacheKey());
     const pickerMatches = cacheHit && pickerSpaceId === spaceId && !spacePicker.element.hidden;
     const selectedIds = pickerMatches ? spacePicker.selected() : null;
     return {
-      appId: appInp.value.trim(),
+      appId: normalizeIdInputText(appInp.value).trim(),
       appIds: parseAppIds(appInp.value),
-      guestId: guestInp.value.trim(),
+      guestId: normalizeIdInputText(guestInp.value).trim(),
       preview: prevCb.checkbox.checked,
       layoutName: layoutSel.value,
       fieldDensity: densitySel.value,

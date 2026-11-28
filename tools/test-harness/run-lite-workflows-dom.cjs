@@ -8,6 +8,7 @@ const ROOT = path.resolve(__dirname, '../..');
 const TOOL = path.join(ROOT, 'tools/統合ツール');
 const OUT = path.join(ROOT, '.iter-shots/lite-workflows');
 const esbuild = require(path.join(TOOL, 'node_modules/esbuild'));
+const { checkIdInputsNormalize } = require('./id-input-check.cjs');
 
 const MODULES = {
   design: ['runDesignCopyAiMdStandalone', 'runDesignCopyMdStandalone', 'runDesignDiffMdStandalone', 'runDesignExportStandalone', 'runDesignExportXlsxStandalone', 'runBatchDesignExportXlsxZipStandalone', 'runBatchDesignExportMdZipStandalone'],
@@ -28,6 +29,16 @@ const CASES = [
   ['jsconfig', 'mountJsconfigLitePanel', 'JS/CSS設定', 'JS/CSS設定を取得'],
   ['record', 'mountRecordLitePanel', 'レコード管理', 'CSVを出力']
 ];
+// アプリID・ゲストスペースID・スペースIDの欄の全角数字（12 ツールすべて）。上の 8 つに、差分比較・プレビュー反映・本番反映・データ品質チェックを加える。
+// 数は画面にある ID 欄の最小数（欄を足したら増やしてよい。減ったら欄の付け忘れを疑う）。
+const ID_INPUT_CASES = [
+  ...CASES.map(([id, mount, title]) => [id, mount, title]),
+  ['diff', 'mountDiffLitePanel', '差分比較'],
+  ['reflect', 'mountReflectLitePanel', 'プレビュー反映'],
+  ['deploy', 'mountDeployLitePanel', '本番反映'],
+  ['record-quality', 'mountRecordQualityLitePanel', 'データ品質チェック']
+];
+const ID_INPUT_MIN = { design: 2, 'settings-export': 4, er: 4, process: 2, 'csv-export': 2, field: 4, jsconfig: 5, record: 4, diff: 4, reflect: 5, deploy: 3, 'record-quality': 2 };
 
 function fixtures() {
   const config = { desktop: { js: [{ type: 'URL', url: 'https://example.invalid/app.js' }], css: [] }, mobile: { js: [], css: [] }, scope: 'ALL' };
@@ -177,7 +188,12 @@ async function main() {
           assert.equal(await depth.isVisible(), false, 'ER図: 詳細オプションは表面に出さない');
           await appId.fill('bad');
           assert.equal(await button('内容を確認する').isDisabled(), true, 'ER図: 不正なアプリIDを確認前に止める');
-          await appId.fill('202');
+          // 日本語入力のまま入れた全角数字は半角にして受け付ける
+          await appId.fill('');
+          await appId.focus();
+          await page.keyboard.insertText('２０２');
+          assert.equal(await appId.inputValue(), '202', 'ER図: 全角数字の起点アプリIDを半角にする');
+          assert.equal(await button('内容を確認する').isDisabled(), false, 'ER図: 全角数字で入れた起点アプリIDを受け付ける');
           await guestId.fill('bad');
           assert.equal(await button('内容を確認する').isDisabled(), true, 'ER図: 不正なゲストIDを確認前に止める');
           await guestId.fill('');
@@ -592,7 +608,26 @@ async function main() {
         throw error;
       } finally { await page.close(); }
     }
-    fs.writeFileSync(path.join(OUT,'results.json'),JSON.stringify({passed:true,viewports:[1440,390,320,720],tools:results},null,2));
+    // 12 ツールのアプリID・ゲストスペースID・スペースIDの欄が、全角数字・全角カンマを半角に直すこと（ツールごとに新しい画面で調べる）
+    const idInputs = [];
+    for (const [id, mount, title] of ID_INPUT_CASES) {
+      const script = await makeBundle(id);
+      const demo = '<!doctype html><html lang="ja"><meta charset="utf-8"><title>' + title + '</title><body><script>(' + fixtures.toString() + ')();\n' + script.replace(/<\/script/gi, '<\\/script') + `\nToolHarness.${mount}();</script></body></html>`;
+      const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+      await page.route('**/*', route => route.abort());
+      const errors = [];
+      page.on('pageerror', error => errors.push(error.message));
+      try {
+        await page.setContent(demo);
+        const { checked, failed } = await checkIdInputsNormalize(page);
+        assert.deepEqual(failed, [], title + ': 全角数字・全角カンマを半角に直さないID欄がある');
+        assert.ok(checked.length >= ID_INPUT_MIN[id], `${title}: ID欄が ${ID_INPUT_MIN[id]} 個以上ある（${checked.length} 個: ${checked.join(' / ')}）`);
+        assert.deepEqual(errors, [], title + ': ID欄の確認で例外を出さない');
+        idInputs.push({ id, title, checked });
+      } finally { await page.close(); }
+    }
+    console.log('PASS full-width ID inputs in ' + idInputs.length + ' tools (' + idInputs.reduce((sum, tool) => sum + tool.checked.length, 0) + ' inputs)');
+    fs.writeFileSync(path.join(OUT,'results.json'),JSON.stringify({passed:true,viewports:[1440,390,320,720],tools:results,idInputs},null,2));
     console.log('PASS all 8 workflows; read-only review, duplicate guard, validation, JSON, record modes, failure recovery, responsive layout');
   } finally { await browser.close(); }
 }

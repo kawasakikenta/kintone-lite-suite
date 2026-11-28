@@ -13,7 +13,7 @@ import { extractAppIdFromInput, extractGuestIdFromInput } from '../handlers/diff
 import { setComponentUi } from '../ui/components.js';
 import { setRootElement } from '../ui/dialog.js';
 import { activeRun, beginRun, endRun, isRunCancelledError, requestCancel as requestRunCancel, type RunToken } from '../runControl.js';
-import { copyTextToClipboard, downloadText, nowStamp, sanitizeFilenamePart } from '../utils.js';
+import { copyTextToClipboard, downloadText, normalizeIdInputText, nowStamp, sanitizeFilenamePart } from '../utils.js';
 
 export { copyTextToClipboard };
 
@@ -1032,6 +1032,36 @@ export interface InputOptions {
   ariaLabel?: string;
   /** Enter で主アクションを実行させたくない入力（検索・フィルタ等）に true */
   noSubmit?: boolean;
+  /** アプリID・ゲストスペースID・スペースIDの入力欄に true。全角数字と全角カンマを半角にそろえる（installIdInputNormalizer） */
+  idInput?: boolean;
+}
+
+/** 入力欄の全角数字・全角カンマを半角にする。変えたら true。1 文字を 1 文字に置き換えるので、カーソル位置はそのまま保つ。 */
+export function normalizeIdInputValue(el: HTMLInputElement | HTMLTextAreaElement): boolean {
+  const next = normalizeIdInputText(el.value);
+  if (next === el.value) return false;
+  const start = el.selectionStart;
+  const end = el.selectionEnd;
+  el.value = next;
+  if (start !== null && el.ownerDocument?.activeElement === el) {
+    try { el.setSelectionRange(start, end ?? start); } catch { /* 選択範囲を持たない種類の入力欄 */ }
+  }
+  return true;
+}
+
+/**
+ * アプリIDなどの入力欄で、全角数字（１０１）・全角カンマ（，）を入れた・貼り付けたときに半角へ直す。
+ * 日本語入力の変換中は触らず、確定（compositionend）してから直す。ほかの input の処理より先に登録し、
+ * 後の処理が直した値を読むようにする（確定のときは直した後に input を送り直す）。
+ */
+export function installIdInputNormalizer(el: HTMLInputElement | HTMLTextAreaElement): void {
+  el.addEventListener('input', (ev) => {
+    if ((ev as InputEvent).isComposing) return;
+    normalizeIdInputValue(el);
+  });
+  el.addEventListener('compositionend', () => {
+    if (normalizeIdInputValue(el)) el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
 }
 
 export function makeInput(opts: InputOptions = {}): HTMLInputElement {
@@ -1041,6 +1071,7 @@ export function makeInput(opts: InputOptions = {}): HTMLInputElement {
   if (opts.value) inp.value = opts.value;
   if (opts.ariaLabel) inp.setAttribute('aria-label', opts.ariaLabel);
   if (opts.noSubmit) inp.setAttribute('data-lp-no-submit', '');
+  if (opts.idInput) installIdInputNormalizer(inp);
   inp.className = 'kus-lp__input' + (opts.width ? ` kus-lp__input--${opts.width}` : '');
   return inp;
 }
@@ -1580,9 +1611,9 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     const seen = new Set<string>();
     const out: AppTableRow[] = [];
     for (const r of rows) {
-      const appId = r.app.value.trim();
+      const appId = normalizeIdInputText(r.app.value).trim();
       if (!appId) continue;
-      const guestId = r.guest.value.trim();
+      const guestId = normalizeIdInputText(r.guest.value).trim();
       const key = `${appId}::${guestId}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -1594,7 +1625,7 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
   }
   function getAllRows(): AppTableRow[] {
     return rows.map((r) => {
-      const row: AppTableRow = { appId: r.app.value.trim(), guestId: r.guest.value.trim() };
+      const row: AppTableRow = { appId: normalizeIdInputText(r.app.value).trim(), guestId: normalizeIdInputText(r.guest.value).trim() };
       if (r.appName) row.appName = r.appName;
       return row;
     });
@@ -1624,7 +1655,7 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     opts.onChange?.(getApps());
   }
   function parseAppToken(token: string, fallbackGuest: string): { appId: string; guestId: string } {
-    const trimmed = token.trim();
+    const trimmed = normalizeIdInputText(token).trim();
     if (!trimmed || /^\d+$/.test(trimmed)) return { appId: trimmed, guestId: fallbackGuest };
     const extractedApp = extractAppIdFromInput(trimmed);
     if (!extractedApp) return { appId: trimmed, guestId: fallbackGuest };
@@ -1638,11 +1669,13 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
    * @returns 分割またはURL抽出が発生したら true
    */
   function distributeAppTokens(entry: AppTableRowEntry): boolean {
-    const raw = entry.app.value;
+    // 全角数字・全角カンマ（１０１，１０２）は半角にしてから分ける（貼り付けは input を通らないため、ここでも直す）
+    normalizeIdInputValue(entry.guest);
+    const raw = normalizeIdInputText(entry.app.value);
     const guestVal = entry.guest.value.trim();
     if (!/[,、，\s]/.test(raw)) {
       const parsed = parseAppToken(raw, guestVal);
-      if (parsed.appId !== raw || parsed.guestId !== guestVal) {
+      if (parsed.appId !== entry.app.value || parsed.guestId !== guestVal) {
         entry.app.value = parsed.appId;
         entry.guest.value = parsed.guestId;
         setAppName(entry, '');
@@ -1697,8 +1730,8 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     const tdAct = document.createElement('td');
     tdAct.className = 'kus-lp__apptable-acts';
 
-    const app = makeInput({ placeholder: opts.appPlaceholder || 'アプリID（カンマ区切りで複数可）', ariaLabel: 'アプリID' });
-    const guest = makeInput({ placeholder: opts.guestPlaceholder || '空欄=通常スペース', ariaLabel: 'ゲストスペースID' });
+    const app = makeInput({ placeholder: opts.appPlaceholder || 'アプリID（カンマ区切りで複数可）', ariaLabel: 'アプリID', idInput: true });
+    const guest = makeInput({ placeholder: opts.guestPlaceholder || '空欄=通常スペース', ariaLabel: 'ゲストスペースID', idInput: true });
     app.value = appId;
     guest.value = guestId;
     const name = document.createElement('div');
@@ -1861,7 +1894,7 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     first: () => {
       const r = rows[0];
       if (!r) return { appId: '', guestId: '' };
-      const row: AppTableRow = { appId: r.app.value.trim(), guestId: r.guest.value.trim() };
+      const row: AppTableRow = { appId: normalizeIdInputText(r.app.value).trim(), guestId: normalizeIdInputText(r.guest.value).trim() };
       if (r.appName) row.appName = r.appName;
       return row;
     },

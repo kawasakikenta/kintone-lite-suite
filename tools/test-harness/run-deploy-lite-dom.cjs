@@ -542,6 +542,12 @@ async function main() {
     assert.equal(await confirmBox().getAttribute('aria-label'), '確認用の対象アプリID');
     await ackBox().check(); await confirmBox().fill('3');
     assert.equal(await runButton().isDisabled(), true);
+    // 日本語入力のまま入れた全角数字は半角に直す。違う番号は全角でも進めない（一致の判定は変えない）
+    await confirmBox().fill('１０２');
+    assert.equal(await confirmBox().inputValue(), '102', '確認用のアプリIDの全角数字を半角にする');
+    assert.equal(await runButton().isDisabled(), true, '全角で入れた違うアプリIDでは進めない');
+    await confirmBox().fill('１０１');
+    assert.equal(await runButton().isEnabled(), true, '全角で入れた同じアプリIDは受け付ける');
     await confirmBox().fill('101');
     assert.equal(await runButton().isEnabled(), true);
     ok('confirm app id');
