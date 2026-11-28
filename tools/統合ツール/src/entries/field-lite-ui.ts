@@ -395,6 +395,12 @@ export function mountFieldLitePanel() {
       (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
     );
     if (!out) return;
+    const prefixText = renamePrefix.value.trim();
+    // 書き換えるフィールドが無いときは、入力済みの JSON を空の結果で置き換えない
+    if (!out.modifiedCount) {
+      panel.setStatus(`書き換えるフィールドがありません（${removeMode.checkbox.checked ? `「${prefixText}」で始まるフィールドコードがありません` : `すべてのフィールドコードが「${prefixText}」で始まっています`}）。フィールド定義 JSON は変更していません`, 'warn');
+      return;
+    }
     if (renameMode === 'put-rename') {
       ow.checkbox.checked = true;
     }
@@ -402,7 +408,10 @@ export function mountFieldLitePanel() {
     fieldJson.dispatchEvent(new Event('input', { bubbles: true }));
     const list = out.renamePairs.slice(0, 50).map((p) => `${p.from}  →  ${p.to}`).join('\n');
     panel.setResult(list + (out.renamePairs.length > 50 ? `\n... 他 ${out.renamePairs.length - 50} 件` : ''));
-  }, 'リネーム結果を JSON にセットしました。コードを変更するには「既存フィールドを上書き更新」をオンにして「反映先プレビューへ反映」を実行してください'));
+    panel.setStatus(renameMode === 'put-rename'
+      ? `${out.modifiedCount}件のフィールドのコードを書き換えた JSON をセットしました。「既存フィールドを上書き更新」をオンにしました。「反映先プレビューへ反映」でコードを変更します`
+      : `${out.modifiedCount}件のフィールドを、新しいコードのフィールドとして追加する JSON をセットしました。「反映先プレビューへ反映」で追加します（既存のフィールドのコードは変えません）`, 'ok');
+  }));
 
   srcApp.setAttribute('aria-label', '反映元アプリID'); srcGuest.setAttribute('aria-label', '反映元ゲストスペースID');
   tgtApp.setAttribute('aria-label', '反映先アプリID'); tgtGuest.setAttribute('aria-label', '反映先ゲストスペースID');

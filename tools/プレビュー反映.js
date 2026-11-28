@@ -5042,8 +5042,8 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
   color:var(--c-text);
   animation:kus-lp-fade-in .18s ease-out;
 }
-/* ドラッグ移動中は文字選択とアニメーションを止める */
-.kus-lp--dragging{user-select:none;animation:none;transition:none}
+/* ドラッグ移動中は文字選択と遷移を止める。animation は触らない（none から戻すと、開いたときのフェードインがドラッグのたびにやり直される） */
+.kus-lp--dragging{user-select:none;transition:none}
 .kus-lp--dragging .kus-lp__hero{cursor:grabbing}
 /* 最小化: ヒーローだけ残して本文を畳む（kintone 画面を確認しやすくする） */
 .kus-lp--collapsed .kus-lp__body{display:none!important}
@@ -5087,7 +5087,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 .kus-lp__badge-row{margin-top:8px;display:flex;flex-wrap:wrap;gap:5px}
 .kus-lp__badge{
   display:inline-flex;align-items:center;gap:4px;
-  font-size:12px;font-weight:700;letter-spacing:.02em;
+  font-size:12.5px;font-weight:700;letter-spacing:.02em;
   background:rgba(255,255,255,.22);padding:3px 9px;border-radius:999px;color:#fff;
 }
 /* 影響範囲のバッジ: 読み取り専用（緑）/ プレビューへ書き込み（橙）/ 本番データを変更（赤） */
@@ -5374,7 +5374,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 .kus-lp__apptable td{padding:5px 8px;border-bottom:1px solid var(--c-border);vertical-align:middle}
 .kus-lp__apptable tbody tr:last-child td{border-bottom:none}
 .kus-lp__apptable .kus-lp__input{width:100%;box-sizing:border-box}
-.kus-lp__apptable-name{min-height:1.35em;margin-top:3px;color:var(--c-muted);font-size:12px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kus-lp__apptable-name{min-height:1.35em;margin-top:3px;color:var(--c-muted);font-size:12.5px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kus-lp__apptable-name:not(.kus-lp__apptable-name--empty)::before{content:'アプリ名: ';color:var(--c-text-2);font-weight:600}
 .kus-lp__apptable-no{width:36px;padding-left:4px;padding-right:4px;text-align:center;color:var(--c-muted);font-size:12.5px;font-variant-numeric:tabular-nums}
 .kus-lp__apptable-acts-h{width:136px}
@@ -6181,7 +6181,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 .kus-as__table tr:last-child td{border-bottom:none}
 .kus-as__id{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--c-text-2);white-space:nowrap}
 .kus-as__name{color:var(--c-text);word-break:break-all}
-.kus-as__meta{margin-top:3px;color:var(--c-text-2);font-size:12px;line-height:1.5}
+.kus-as__meta{margin-top:3px;color:var(--c-text-2);font-size:12.5px;line-height:1.5}
 .kus-as__assign{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
 .kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:12px}
 .kus-as__assign .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
@@ -7779,7 +7779,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 #kus-reflect-lite .kus-rl-route{display:grid;grid-template-columns:minmax(0,1fr) 48px minmax(0,1fr);align-items:stretch;gap:10px}
 #kus-reflect-lite .kus-rl-endpoint{padding:13px;border:1px solid #e2e8f0;border-radius:13px;background:#f8fafc}
 #kus-reflect-lite .kus-rl-endpoint--target{background:#fff7ed;border-color:#fed7aa}
-#kus-reflect-lite .kus-rl-endpoint__eyebrow{margin-bottom:8px;font-size:12px;font-weight:800;letter-spacing:.08em;color:#64748b;text-transform:uppercase}
+#kus-reflect-lite .kus-rl-endpoint__eyebrow{margin-bottom:8px;font-size:12.5px;font-weight:800;letter-spacing:.08em;color:#64748b;text-transform:uppercase}
 #kus-reflect-lite .kus-rl-endpoint--target .kus-rl-endpoint__eyebrow{color:#c2410c}
 #kus-reflect-lite .kus-rl-endpoint .kus-lp__row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,.8fr);gap:7px;margin:0}
 #kus-reflect-lite .kus-rl-endpoint .kus-lp__input{width:100%;min-width:0;box-sizing:border-box}
@@ -7852,7 +7852,7 @@ ${lost.map((item) => `「${item.name}」: ${item.reason}`).join("\n")}
 #kus-reflect-lite .kus-rl-nav__btn[aria-selected="true"]{background:#fff7ed;color:#9a3412;border-color:#fed7aa}
 #kus-reflect-lite .kus-rl-nav__num{display:inline-flex;width:19px;height:19px;align-items:center;justify-content:center;border-radius:50%;background:#e2e8f0;color:#475569;font-size:11.5px}
 #kus-reflect-lite .kus-rl-nav__btn[aria-selected="true"] .kus-rl-nav__num{background:#fee2e2;color:#b91c1c}
-#kus-reflect-lite .kus-rl-nav__copy{display:block;font-size:11px;font-weight:500;color:#94a3b8;margin-top:2px}
+#kus-reflect-lite .kus-rl-nav__copy{display:block;font-size:12.5px;font-weight:500;color:#94a3b8;margin-top:2px}
 #kus-reflect-lite .kus-rl-nav__btn[aria-selected="true"] .kus-rl-nav__copy{color:#64748b}
 #kus-reflect-lite .kus-rl-stage[hidden]{display:none}
 #kus-reflect-lite .kus-rl-stage-head{margin:0 2px 16px}

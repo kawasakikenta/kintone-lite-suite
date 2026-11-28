@@ -406,6 +406,10 @@ module.exports = {
     assert.equal(await page.getByRole('radio', { name: '本番まで反映', exact: true }).isChecked(), true, '既定の目標は本番まで反映');
     assert.equal(await page.getByRole('radio', { name: 'プレビューまで（本番へは反映しない）', exact: true }).isChecked(), false);
     assert.match(await page.locator('.kus-dp-dock-copy strong').innerText(), /^反映元 #10 → 反映先 #20 · 本番まで反映$/);
+    // 補足の文字も 12.5px 以上（反映元・反映先の見出し、段階の説明、操作の説明）
+    const smallLabels = await page.evaluate(() => [...document.querySelectorAll('.kus-ds-endpoint__eyebrow, .kus-dp-nav__copy, .kus-lp__badge')].filter(el => el.getClientRects().length)
+      .map(el => ({ text: el.textContent.trim(), size: parseFloat(getComputedStyle(el).fontSize) })).filter(item => item.size < 12.5));
+    assert.deepEqual(smallLabels, [], '反映元・反映先の見出しと段階の説明の文字は 12.5px 以上');
     // 項目を全部外す
     for (const label of checked) await chip(label).uncheck();
     assert.match(await dockText(), /次に進むには：反映する項目を選んでください。/);
