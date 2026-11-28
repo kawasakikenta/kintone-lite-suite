@@ -8092,7 +8092,8 @@ function tableHeadHtml(columns,state,tableName){\r
   }).join('')+'</tr></thead>';\r
 }\r
 function sortTable(tableName,key){\r
-  const state=tableState[tableName];\r
+  // 表の名前（apps・relations）だけを受ける。data-table の値で Object のプロトタイプを書き換えない\r
+  const state=Object.prototype.hasOwnProperty.call(tableState,tableName)?tableState[tableName]:null;\r
   if(!state) return;\r
   if(state.sort===key) state.dir=-state.dir;\r
   else { state.sort=key; state.dir=1; }\r
