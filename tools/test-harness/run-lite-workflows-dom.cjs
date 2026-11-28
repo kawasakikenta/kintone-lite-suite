@@ -307,6 +307,19 @@ async function main() {
           // 対象アプリ表（設計書・設定取得など）は「×」を含めて横にはみ出さない
           const tableOverflow = await page.evaluate(() => Array.from(document.querySelectorAll('.kus-lp__apptable-scroll')).filter(el => el.getClientRects().length).map(el => ({scrollWidth:el.scrollWidth,clientWidth:el.clientWidth})));
           for (const measured of tableOverflow) assert.ok(measured.scrollWidth <= measured.clientWidth, id + ': 対象アプリ表の横はみ出し ' + width + ' ' + JSON.stringify(measured));
+          // 文字は補足でも 12.5px 以上（機能説明「文字は本文 14px・補足 12.5〜13px を下限」）。操作の説明・バッジ・見出しのボタンを含む
+          const smallText = await page.evaluate(() => {
+            const out = [];
+            const walker = document.createTreeWalker(document.querySelector('.kus-lp'), NodeFilter.SHOW_TEXT);
+            while (walker.nextNode()) {
+              const node = walker.currentNode; const parent = node.parentElement;
+              if (!node.textContent.trim() || !parent || !parent.getClientRects().length || parent.closest('[hidden],dialog:not([open])')) continue;
+              const size = parseFloat(getComputedStyle(parent).fontSize);
+              if (size > 0 && size < 12.5) out.push(`${size}px ${parent.className || parent.tagName}: ${node.textContent.trim().slice(0, 20)}`);
+            }
+            return [...new Set(out)].slice(0, 5);
+          });
+          assert.deepEqual(smallText, [], id + ': 12.5px 未満の文字 ' + width);
         }
         await page.setViewportSize({width:1440,height:1000});
         await button('内容を確認する').click();

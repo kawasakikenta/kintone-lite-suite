@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { Script, createContext, runInContext } from 'node:vm';
-import { readFileSync } from 'node:fs';
+import { Script, createContext, runInContext, runInNewContext } from 'node:vm';
+import { createHash } from 'node:crypto';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildHTML } from '../src/tabs/er.js';
 import { ER_BUNDLED_LIBRARIES, escapeInlineScriptSource } from '../src/tabs/er-libraries.js';
+import viewerActions from '../src/tabs/er-viewer/viewer-actions.js?raw';
 
 function extractViewerScript(html: string): string {
   const match = html.match(/<script id="er-main" type="text\/plain">([\s\S]*?)<\/script>/);
@@ -254,7 +256,7 @@ describe('ER diagram HTML', () => {
       expect(html).not.toMatch(/<link\b[^>]*\shref=["']?https?:/i);
       expect(html).not.toMatch(/cdnjs\.cloudflare\.com|cdn\.jsdelivr\.net|unpkg\.com/);
       const csp = html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]*)">/)?.[1] ?? '';
-      expect(csp).toContain("script-src 'unsafe-inline';");
+      expect(csp).toMatch(/script-src 'sha256-[^;]+;/);
       expect(csp).toContain("connect-src 'none'");
       expect(csp).not.toMatch(/https?:/);
       expect(csp).toContain("default-src 'none'");
@@ -273,6 +275,37 @@ describe('ER diagram HTML', () => {
       expect(html).toContain('Copyright OpenJS Foundation and other contributors');
       expect(html).toContain('Copyright (c) 2016-2018, 2020, 2022, The Cytoscape Consortium.');
       expect(html).toContain('Permission is hereby granted, free of charge');
+    });
+
+    it('carries the full LICENSE of every package that cytoscape.min.js bundles', () => {
+      const root = join(__dirname, '..');
+      // cytoscape.min.js は src から node_modules のパッケージを取り込んで作られる。取り込み先が増えたらここで気付けるようにする
+      const srcDir = join(root, 'node_modules', 'cytoscape', 'src');
+      const bundled = new Set<string>();
+      for (const file of readdirSync(srcDir, { recursive: true }).map(String).filter((name) => name.endsWith('.js'))) {
+        // import 文と、export { default } from 'heap' のような再エクスポート
+        for (const match of readFileSync(join(srcDir, file), 'utf8').matchAll(/\bfrom\s*['"]([^./'"][^'"]*)['"]/g)) {
+          bundled.add(match[1].split('/')[0]);
+        }
+      }
+      expect([...bundled].sort()).toEqual(['heap', 'lodash']);
+
+      const cytoscapeScript = html.match(/<script id="er-lib-cytoscape">([\s\S]*?)<\/script>/)![1].replace(/\r\n?/g, '\n');
+      for (const name of bundled) {
+        const license = readFileSync(join(root, 'node_modules', name, 'LICENSE'), 'utf8').replace(/\r\n?/g, '\n').trim();
+        expect(cytoscapeScript, name).toContain(`--- ${name} ---\n${license.replace(/\*\//g, '* /')}`);
+      }
+      // cytoscape 自身の著作権表記は、配布ファイルの先頭コメントとして残る
+      expect(cytoscapeScript).toContain('Copyright (c) 2016-2023, The Cytoscape Consortium.');
+    });
+
+    it('carries the full LICENSE of dagre and of graphlib and lodash that dagre.min.js bundles, and of cytoscape-dagre', () => {
+      const root = join(__dirname, '..');
+      const licenseOf = (name: string) => readFileSync(join(root, 'node_modules', name, 'LICENSE'), 'utf8').replace(/\r\n?/g, '\n').trim().replace(/\*\//g, '* /');
+      const scriptOf = (id: string) => html.match(new RegExp(`<script id="${id}">([\\s\\S]*?)</script>`))![1].replace(/\r\n?/g, '\n');
+      const dagreScript = scriptOf('er-lib-dagre');
+      for (const name of ['dagre', 'graphlib', 'lodash']) expect(dagreScript, name).toContain(`--- ${name} ---\n${licenseOf(name)}`);
+      expect(scriptOf('er-lib-cytoscape-dagre')).toContain(licenseOf('cytoscape-dagre'));
     });
 
     it('registers cytoscape, dagre and the dagre layout when the inline scripts run without a network', () => {
@@ -339,6 +372,86 @@ describe('ER diagram HTML', () => {
       expect(viewer).not.toContain('data-er-fallback-lib');
       expect(viewer).toContain('const clone=document.documentElement.cloneNode(true);');
       expect(viewer).toContain('clone.querySelector("#er-runtime")');
+      // 編集の状態は実行しない JSON として置き、開き直したときに JSON として読む（CSP で許可するスクリプトは保存しても変わらない）
+      expect(viewer).toContain('stateScript.setAttribute("type","application/json");');
+      expect(viewer).toContain('stateScript.textContent=stateJson;');
+      expect(viewer).toContain('const ER_EDIT_STATE = readEmbeddedEditState();');
+      expect(viewer).not.toContain('window.__ER_EDIT_STATE__');
+    });
+  });
+
+  describe('content security policy (scripts are allowed only by their hashes)', () => {
+    const html = buildHTML(baseApps, {
+      startAppId: '1', startAppIds: ['1'], layoutName: 'dagre', fieldDensity: 'standard', source: {}
+    });
+    const csp = html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]*)">/)?.[1] ?? '';
+    const directive = (name: string) => csp.split(';').map((part) => part.trim()).find((part) => part.split(/\s+/)[0] === name) ?? '';
+    // Node の crypto で計算する（生成側の sha256Base64 とは別の実装で照合する）
+    const hashSource = (text: string) => `'sha256-${createHash('sha256').update(text, 'utf8').digest('base64')}'`;
+    const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)].map((m) => ({ attrs: m[1].trim(), text: m[2] }));
+    const markup = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '<script></script>');
+
+    it('allows exactly the embedded scripts by SHA-256, without unsafe-inline, unsafe-eval or event handler attributes', () => {
+      const scriptSrc = directive('script-src').split(/\s+/).slice(1);
+      expect(scriptSrc.every((token) => /^'sha256-[A-Za-z0-9+/]+=*'$/.test(token)), directive('script-src')).toBe(true);
+      expect(directive('script-src')).not.toMatch(/'unsafe-|'strict-dynamic'|\*|https?:|data:|blob:/);
+      expect(directive('script-src-attr')).toBe("script-src-attr 'none'");
+      // 実行する script 要素は、ライブラリ 3 つ（lite は dagre 0.8.5 を cytoscape-dagre 2.5.0 と別に同梱する）と起動スクリプト。
+      // 図の本体は text/plain で置き、起動スクリプトが同じ中身の script 要素を作る
+      const executable = scripts.filter((s) => !/\btype=/.test(s.attrs));
+      expect(executable.map((s) => s.attrs)).toEqual(['id="er-lib-cytoscape"', 'id="er-lib-dagre"', 'id="er-lib-cytoscape-dagre"', '']);
+      const main = scripts.find((s) => s.attrs.startsWith('id="er-main"'));
+      expect(main?.attrs).toBe('id="er-main" type="text/plain"');
+      expect(scriptSrc).toEqual([...executable.map((s) => s.text), main!.text].map(hashSource));
+      // ブラウザは HTML を読み込むときに CR を LF にし、NUL を置き換えてからハッシュを照合する。中身にあると一致しない
+      expect(scripts.filter((s) => /\r|\x00/.test(s.text)).map((s) => s.attrs)).toEqual([]);
+      expect(directive('style-src')).toBe("style-src 'self' 'unsafe-inline'");
+      for (const name of ['object-src', 'base-uri', 'form-action', 'frame-src', 'connect-src']) expect(directive(name)).toBe(`${name} 'none'`);
+    });
+
+    it('recomputes the hash of the diagram script for every diagram', () => {
+      const other = buildHTML([{ ...baseApps[0], name: '別のアプリ' }, baseApps[1]], {
+        startAppId: '1', startAppIds: ['1'], layoutName: 'dagre', fieldDensity: 'standard', source: {}
+      });
+      const otherCsp = other.match(/<meta http-equiv="Content-Security-Policy" content="([^"]*)">/)?.[1] ?? '';
+      const tokens = (value: string) => value.split(';').map((part) => part.trim()).find((part) => part.startsWith('script-src '))!.split(/\s+/).slice(1);
+      // ライブラリの 3 つは同じ。起動スクリプト（取得済みアプリの表を持つ）と図の本体は図ごとに違う
+      expect(tokens(csp)).toHaveLength(5);
+      expect(tokens(otherCsp).slice(0, 3)).toEqual(tokens(csp).slice(0, 3));
+      expect(tokens(otherCsp)[3]).not.toBe(tokens(csp)[3]);
+      expect(tokens(otherCsp)[4]).not.toBe(tokens(csp)[4]);
+    });
+
+    it('has no inline event handler attributes or javascript URLs in the page or in the HTML the viewer builds', () => {
+      expect(markup).not.toMatch(/<[^>]+\son[a-z]+\s*=/i);
+      expect(markup).not.toMatch(/javascript:/i);
+      const viewer = extractViewerScript(html);
+      // 画面の部品の HTML を文字列で作るところ（'<button … data-action="…">' の形）にも、イベント属性・javascript の URL を使わない
+      expect(viewer).not.toMatch(/\son[a-z]+\s*=\s*\\?["']/i);
+      expect(viewer).not.toMatch(/javascript:/i);
+      expect(viewer).not.toMatch(/setAttribute\(\s*["']on/i);
+    });
+
+    it('routes every data-action, data-change, data-input and data-keydown name to a listed operation that exists', () => {
+      const listeners: string[] = [];
+      const context: any = { document: { addEventListener: (type: string, _fn: unknown, capture: boolean) => listeners.push(`${type}:${capture}`) } };
+      runInNewContext(`${viewerActions}\nglobalThis.tables={click:ER_CLICK_ACTIONS,change:ER_CHANGE_ACTIONS,input:ER_INPUT_ACTIONS,keydown:ER_KEYDOWN_ACTIONS};`, context);
+      // 捕捉の段階で受ける（イベント属性と同じく、要素や上の要素の処理より先に動く）
+      expect(listeners).toEqual(['click:true', 'change:true', 'input:true', 'keydown:true']);
+      const pairs = [['data-action', 'click'], ['data-change', 'change'], ['data-input', 'input'], ['data-keydown', 'keydown']] as const;
+      for (const [attribute, table] of pairs) {
+        // 静的な画面と、ビューアーが文字列で作る HTML（er-main の中）の両方
+        const used = [...new Set([...html.matchAll(new RegExp(`${attribute}="([a-z-]+)"`, 'g'))].map((m) => m[1]))];
+        const known = Object.keys(context.tables[table]);
+        expect(used.filter((name) => !known.includes(name)), `${attribute}: 表に無い操作`).toEqual([]);
+        expect(known.filter((name) => !used.includes(name)), `${attribute}: 使っていない操作`).toEqual([]);
+      }
+      // 表の操作が呼ぶ関数は、ビューアーで定義されている（名前の打ち間違いで押しても何も起きない、を防ぐ）
+      const viewer = extractViewerScript(html);
+      const builtins = new Set(['function', 'if', 'Number', 'Set', 'erActionListener', 'closeErDialog', 'call', 'getAttribute', 'closest', 'has', 'stopPropagation', 'preventDefault', 'addEventListener']);
+      const called = [...new Set([...viewerActions.matchAll(/\b([A-Za-z_$][\w$]*)\(/g)].map((m) => m[1]))].filter((name) => !builtins.has(name));
+      expect(called.length).toBeGreaterThan(80);
+      expect(called.filter((name) => !new RegExp(`function ${name.replace(/\$/g, '\\$')}\\(`).test(viewer))).toEqual([]);
     });
   });
 
@@ -433,7 +546,7 @@ describe('ER diagram HTML', () => {
     expect(html).toContain('.table-view{z-index:5;}');
     expect(script).toContain('if(diagram){ diagram.inert=next!=="diagram"; diagram.setAttribute("aria-hidden",String(next!=="diagram")); }');
     // 引き出しは閉じると操作の対象から外し、開いた操作の位置へフォーカスを戻す
-    expect(html).toContain('id="sidebar-close" onclick="closeSidebar()"');
+    expect(html).toContain('id="sidebar-close" data-action="sidebar-close"');
     expect(html).toContain('aria-controls="sidebar" aria-expanded="true"');
     expect(script).toContain('function closeSidebar(){toggleSidebar(false);}');
     expect(script).toContain('sidebar.inert=!open;');

@@ -188,17 +188,20 @@ function exportEditedHtml(){
     const liveRuntime=clone.querySelector("#er-runtime");
     if(liveRuntime && liveRuntime.parentNode) liveRuntime.parentNode.removeChild(liveRuntime);
     // 描画ライブラリは head のインライン script として複製に含まれるため、保存した HTML も単体で動く。
+    // CSP はライブラリ・起動・図の本体の中身のハッシュで許可している。保存してもこれらの中身は変わらないので、CSP はそのまま使える。
+    // 編集の状態は実行しない JSON（type="application/json"）として置く（スクリプトとしては動かず、CSP のハッシュも要らない）。
     const main=clone.querySelector("#er-main");
     if(!main){toast("保存に失敗: 本体スクリプトが見つかりません");return;}
     const stateScript=document.createElement("script");
     stateScript.id="er-edit-state";
+    stateScript.setAttribute("type","application/json");
     const stateJson=JSON.stringify(payload)
       .replace(/</g,"\\u003c")
       .replace(/>/g,"\\u003e")
       .replace(/&/g,"\\u0026")
       .replace(/\u2028/g,"\\u2028")
       .replace(/\u2029/g,"\\u2029");
-    stateScript.textContent="window.__ER_EDIT_STATE__="+stateJson+";";
+    stateScript.textContent=stateJson;
     main.parentNode.insertBefore(stateScript,main);
     const html="<!DOCTYPE html>\n"+clone.outerHTML;
     const blob=new Blob([html],{type:"text/html"});

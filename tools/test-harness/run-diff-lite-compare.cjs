@@ -1362,6 +1362,17 @@ async function captureReport(context, variant, reportFile, outDir) {
     const focusedKeyAfter = await page.locator('#main [data-diff-row-key][aria-current="true"],#main .drow--focus').first().getAttribute('data-diff-row-key');
     assert.notEqual(focusedKeyAfter, focusedKeyBefore, 'after: 「確認して次へ」で次の行へ移動しません');
     assert.ok((Number(await progressbar.getAttribute('aria-valuenow')) || 0) >= progressBeforeConfirm, 'after: 確認後にレビュー進捗が後退しました');
+    // 大文字の J / K（Shift・Caps Lock）でも移動する（パネルの結果明細と同じ。説明は「J / K」と書いている）
+    const currentRowKey = () => page.evaluate(() => document.querySelector('#main [data-diff-row-key][aria-current="true"]')?.getAttribute('data-diff-row-key') || '');
+    const keyBeforeUpper = await currentRowKey();
+    await page.keyboard.press('Shift+J');
+    await page.waitForFunction((key) => (document.querySelector('#main [data-diff-row-key][aria-current="true"]')?.getAttribute('data-diff-row-key') || '') !== key, keyBeforeUpper, { timeout: 5000 })
+      .catch(() => {});
+    assert.notEqual(await currentRowKey(), keyBeforeUpper, 'after: 大文字の J で次の差分へ移動しません');
+    await page.keyboard.press('Shift+K');
+    await page.waitForFunction((key) => (document.querySelector('#main [data-diff-row-key][aria-current="true"]')?.getAttribute('data-diff-row-key') || '') === key, keyBeforeUpper, { timeout: 5000 })
+      .catch(() => {});
+    assert.equal(await currentRowKey(), keyBeforeUpper, 'after: 大文字の K で前の差分へ戻りません');
 
     // 確認状態をJSONへ保存し、解除後に読み戻せること。別レポート用JSONは原子的に拒否すること。
     const reviewStateTools = page.locator('details.review-state-tools');

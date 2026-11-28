@@ -14,7 +14,7 @@
 
 ER 図の生成 HTML が実行時 CDN 応答へ依存しないよう、Cytoscape・Dagre・cytoscape-dagre を固定版で同梱した。これで、ER 図以外（下の「T2 のうち ER 図以外の外部依存」）と合わせて T2 全体が対応済みになった。実行時に CDN から読み込むのは、プロセス図の Mermaid（SRI 検証つき）だけである。
 
-- `package.json` で固定している版の配布ファイルを、ビルド時に `ER図.js` へ取り込み（`src/tabs/er-libraries.ts`・`rawTextPlugin.js`）、生成する HTML の head へインラインで埋め込む。`<script src>`・SRI・代替 CDN の後読みは無くなり、CSP の `script-src` も `'unsafe-inline'` だけになった。各ライブラリの著作権・ライセンス表記は残している。
+- `package.json` で固定している版の配布ファイルを、ビルド時に `ER図.js` へ取り込み（`src/tabs/er-libraries.ts`・`rawTextPlugin.js`）、生成する HTML の head へインラインで埋め込む。`<script src>`・SRI・代替 CDN の後読みは無くなり、CSP の `script-src` も `'unsafe-inline'` だけになった（2026-11-28 からは、埋め込んだスクリプトの SHA-256 のハッシュだけを許可し、イベント属性を使わない。`docs/technology-and-architecture.md` の ER図の表）。各ライブラリの著作権・ライセンス表記は残している。
 - 「ER図を開く」の画面、「ER図をHTMLで保存」のファイル、図の画面の「出力 → 編集済みHTMLを保存」で保存して開き直したファイルのすべてが、ネットワークを遮断した状態で描画できる（`npm run test:er-compare` が検査）。
 - サイズ: `ER図.js` 約 0.47 MB → 約 1.1 MB、生成 HTML は 約 0.67 MB 増える（2 アプリの図で 約 0.25 MB → 約 0.91 MB）。他の 11 本の bundle にライブラリは入らない。
 - 描画ライブラリを初期化できなかった場合の表（取得済みアプリの一覧）は残した。文言は CDN を前提にしない。操作バーなどの画面部品が表に重なって見出しが読めなかった問題も直した。

@@ -189,6 +189,22 @@ describe('design/bundleToMarkdown (REST API レスポンス準拠の日本語化
     expect(md).toContain('| 取得できなかったセクション | フィールド設定 |');
   });
 
+  it('取得失敗の理由は kintone の応答の文だけを本文に出し、内部の通信情報（[API] GET …）は生データにだけ残す', () => {
+    const fetchError = '権限がありません。一覧の設定を取得できません。\n[API] GET /k/v1/app/views.json app=601 payload={"app":"601"}';
+    const md = bundleToMarkdown(makeBundle({
+      appSettings: { name: '営業案件' },
+      viewSettings: { _fetchError: fetchError },
+      customizeSettings: { desktop: { js: [], css: [] }, mobile: { js: [], css: [] }, _fetchError: 'JS/CSSファイル本文の取得に失敗しました\n[API] GET /k/v1/file.json app=601' }
+    }));
+    const visible = visibleMarkdown(md);
+    expect(visible).toContain('> ⚠ 取得できませんでした: 権限がありません。一覧の設定を取得できません。');
+    expect(visible).toMatch(/\| ビュー設定 \| viewSettings \| fetch-error \| 不明 \| 取得失敗: 権限がありません。一覧の設定を取得できません。 \|/);
+    expect(visible).not.toContain('[API]');
+    expect(visible).toContain('> ⚠ 取得できませんでした: JS/CSSファイル本文の取得に失敗しました');
+    // 生データ（折りたたみ）には記録のまま残す
+    expect(md).toContain('[API] GET /k/v1/file.json');
+  });
+
   it('表のセルでは | ・改行・* ・< を壊さず、HTMLとして実行されないようにする', () => {
     const md = visibleMarkdown(bundleToMarkdown(makeBundle({
       fieldSettings: {

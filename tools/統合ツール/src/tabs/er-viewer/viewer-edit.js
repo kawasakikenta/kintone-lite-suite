@@ -215,7 +215,7 @@ function swatchesHtml(colors,selected){
   return '<div class="ed-swatches">'+colors.map(c=>{
     const col=c[0];
     const cls="ed-swatch"+(col?"":" ed-swatch--none")+(String(selected||"")===String(col)?" selected":"");
-    return '<button type="button" class="'+cls+'" data-color="'+escapeHtml(col)+'" title="'+escapeHtml(c[1])+'"'+(col?' style="background:'+escapeHtml(col)+'"':'')+' onclick="selectSwatch(this)"></button>';
+    return '<button type="button" class="'+cls+'" data-color="'+escapeHtml(col)+'" title="'+escapeHtml(c[1])+'"'+(col?' style="background:'+escapeHtml(col)+'"':'')+' data-action="swatch"></button>';
   }).join("")+'</div>';
 }
 function selectSwatch(btn){

@@ -355,7 +355,7 @@ function sectionHtml(def: { key: string; label: string }, sec: any, sections: an
   parts.push(`<section class="doc-section" id="sec-${def.key}" aria-labelledby="h-${def.key}">`);
   parts.push(`<div class="sec-head"><h2 id="h-${def.key}">${esc(def.label)}</h2>${countBadge(row)}<span class="sec-key">${esc(def.key)}</span></div>`);
   if (plan.fetchError !== null) {
-    // 内部の通信情報の行（[API] GET …）は出さない（ER図と同じ。取得状態の表の詳細には残る）
+    // 内部の通信情報の行（[API] GET …）は出さない（ER図と同じ。生データ（原文）にだけ残る）
     parts.push(`<div class="notice notice--err" role="note">⚠ 取得できませんでした: ${esc(oneLine(withoutApiContextLines(plan.fetchError)))}</div>`);
     if (plan.mode === 'none') {
       parts.push('</section>');

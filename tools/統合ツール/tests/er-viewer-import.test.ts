@@ -20,11 +20,17 @@ const lookup = (from: string, toApp: number) => ({ kind: 'LOOKUP', from, fromPat
 const ref = (control: string, toApp: number) => ({ kind: 'REF', from: 'k', fromPath: 'k', fromLabel: 'K', controlField: control, controlFieldPath: control, toApp, toField: 'k' });
 const action = (name: string, toApp: number, index: number) => ({ kind: 'ACTION', from: `__ACTION__${index}`, fromLabel: name, toApp, toField: '' });
 
-/** 編集済みHTMLと同じ形（図の本体の前に編集の状態）にする。harness の withEditState と同じ。 */
+const MAIN_MARKER = '<script id="er-main" type="text/plain">';
+const escapeStateJson = (state: unknown) => JSON.stringify(state).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026');
+
+/** 今の版の編集済みHTMLと同じ形（図の本体の前に、実行しない JSON の編集の状態）にする。harness の withEditState と同じ。 */
 function withState(html: string, state: unknown): string {
-  const json = JSON.stringify(state).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026');
-  const marker = '<script id="er-main" type="text/plain">';
-  return html.replace(marker, () => `<script id="er-edit-state">window.__ER_EDIT_STATE__=${json};</script>${marker}`);
+  return html.replace(MAIN_MARKER, () => `<script id="er-edit-state" type="application/json">${escapeStateJson(state)}</script>${MAIN_MARKER}`);
+}
+
+/** 以前の版の編集済みHTMLの形（編集の状態を window の変数へ代入するスクリプト）にする。 */
+function withLegacyState(html: string, state: unknown): string {
+  return html.replace(MAIN_MARKER, () => `<script id="er-edit-state">window.__ER_EDIT_STATE__=${escapeStateJson(state)};</script>${MAIN_MARKER}`);
 }
 
 describe('ER viewer: 編集済みHTMLからの取り込み（読み取りと確かめ）', () => {
@@ -39,12 +45,30 @@ describe('ER viewer: 編集済みHTMLからの取り込み（読み取りと確�
     expect(read.apps.map((a: any) => [a.id, a.name, a.relations.length])).toEqual([[1, '顧客', 0], [2, '案件', 1]]);
   });
 
-  it('以前の版の編集済みHTML（同じ置き方で stateVersion なし）も読む', () => {
+  it('以前の版の編集済みHTML（状態を代入するスクリプト。stateVersion なしと 2）も読む', () => {
     const old = `<!DOCTYPE html>\n<html><head></head><body><script id="er-edit-state">window.__ER_EDIT_STATE__=${JSON.stringify(legacyState)};</script><script id="er-main" type="text/plain">\nconst APPS = ${JSON.stringify(apps)};\nconst ER_OPTIONS = {};\n</script></body></html>`;
     const read = ctx.readEditedHtmlText(old);
     expect(read.state.savedAt).toBe(legacyState.savedAt);
     expect(read.apps).toHaveLength(2);
     expect(ctx.sanitizeImportedEditState(read.state).version).toBe(1);
+    // 表示範囲を持つ版（stateVersion 2）も、CSP をハッシュにする前は同じ代入の形で保存していた
+    const v2 = ctx.readEditedHtmlText(withLegacyState(html, { stateVersion: 2, notes: [{ text: 'メモ', x: 1, y: 2 }], view: { scope: { mode: 'all', roots: [], depth: 1 } } }));
+    expect(v2.error).toBeUndefined();
+    expect(v2.state.notes[0].text).toBe('メモ');
+    expect(v2.apps).toHaveLength(2);
+    expect(ctx.sanitizeImportedEditState(v2.state).version).toBe(2);
+  });
+
+  it('今の版の編集の状態は JSON として読み、図の本体の後ろや JSON でない中身は使わない', () => {
+    const json = ctx.readEditedHtmlText(withState(html, { stateVersion: 2, notes: [{ text: 'a&b<c>', x: 0, y: 0 }] }));
+    expect(json.error).toBeUndefined();
+    expect(json.state.notes[0].text).toBe('a&b<c>');
+    expect(ctx.readEditedHtmlText(html.replace(MAIN_MARKER, `<script id="er-edit-state" type="application/json">{"notes":</script>${MAIN_MARKER}`)).error).toMatch(/壊れている/);
+    // 代入のスクリプトを JSON の置き方に入れたものは JSON として読めない（実行もしない）
+    expect(ctx.readEditedHtmlText(html.replace(MAIN_MARKER, `<script id="er-edit-state" type="application/json">window.__ER_EDIT_STATE__={};</script>${MAIN_MARKER}`)).error).toMatch(/壊れている/);
+    expect(ctx.readEditedHtmlText(withState(html, 'text')).error).toMatch(/ファイルの形が違います/);
+    const late = html.replace('</body>', '<script id="er-edit-state" type="application/json">{"notes":[]}</script></body>');
+    expect(ctx.readEditedHtmlText(late).error).toMatch(/編集済みHTMLではありません/);
   });
 
   it('編集済みでない HTML・壊れた内容・スクリプトの形をした内容は読まない', () => {
@@ -54,7 +78,7 @@ describe('ER viewer: 編集済みHTMLからの取り込み（読み取りと確�
     // 代入の前に式があるものは JSON として読まない（実行もしない）
     const hostile = html.replace('<script id="er-main" type="text/plain">', '<script id="er-edit-state">alert(1);window.__ER_EDIT_STATE__={};</script><script id="er-main" type="text/plain">');
     expect(ctx.readEditedHtmlText(hostile).error).toMatch(/ファイルの形が違います/);
-    expect(ctx.readEditedHtmlText(withState(html, [1, 2])).error).toMatch(/ファイルの形が違います/);
+    expect(ctx.readEditedHtmlText(withLegacyState(html, [1, 2])).error).toMatch(/ファイルの形が違います/);
     // 図の本体の後ろ（本体の文字列の中）にある同じ並びは使わない
     const late = html.replace('</body>', '<script id="er-edit-state">window.__ER_EDIT_STATE__={"notes":[]};</script></body>');
     expect(ctx.readEditedHtmlText(late).error).toMatch(/編集済みHTMLではありません/);

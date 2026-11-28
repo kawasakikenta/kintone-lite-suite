@@ -527,6 +527,12 @@ async function main() {
     await page.getByRole('radio', { name: '操作D' }).check();
     assert.equal(await page.locator('#popup-test-more-actions').evaluate(dialog => dialog.open), false, '選ぶと閉じる');
     assert.equal(await page.getByRole('button', { name: /操作D/ }).getAttribute('aria-pressed'), 'true', '選んだ操作を表面に示す');
+    // 選んである操作をもう一度選んだとき（change が起きない）も、ポップアップを閉じて表面へ戻る
+    await page.getByRole('button', { name: /操作D/ }).click();
+    assert.equal(await page.locator('#popup-test-more-actions').evaluate(dialog => dialog.open), true);
+    await page.getByRole('radio', { name: '操作D' }).click();
+    assert.equal(await page.locator('#popup-test-more-actions').evaluate(dialog => dialog.open), false, '選んである操作をもう一度選んでも閉じる');
+    assert.equal(await page.locator('#popup-test-more-actions input[aria-label="操作D"]').isChecked(), true, '選択は変わらない');
     await page.getByRole('button', { name: '詳細設定…' }).click();
     const advancedDialog = page.locator('#popup-test-advanced');
     assert.equal(await advancedDialog.evaluate(dialog => dialog.open), true, '詳細設定のポップアップが開く');
@@ -612,12 +618,16 @@ async function main() {
       const input = Shared.makeInput({ ariaLabel: '一つ目の入力' });
       window.firstPanel.body.append(input);
     });
+    // 開いた直後の「最初の入力欄へ移す」は次の描画で行う。描画の遅い環境でも、それが済んでから操作する
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     await page.getByRole('textbox', { name: '一つ目の入力', exact: true }).focus();
     await page.evaluate(() => {
       window.secondPanel = Shared.createLitePanel({ id: 'escape-second', title: '二つ目', accent: 'settings' });
       const input = Shared.makeInput({ ariaLabel: '二つ目の入力' });
       window.secondPanel.body.append(input);
     });
+    // 開いた直後の「最初の入力欄へ移す」は次の描画で行う。描画の遅い環境でも、それが済んでから操作する
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const secondInput = page.getByRole('textbox', { name: '二つ目の入力', exact: true });
     await secondInput.focus();
     await page.locator('#launcher').focus();

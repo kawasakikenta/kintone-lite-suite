@@ -1108,6 +1108,127 @@
     3204031479,
     3329325298
   ]);
+  function sha256Hex(text) {
+    const block = new Uint8Array(64);
+    const words = new Int32Array(64);
+    let blockLength = 0;
+    let byteLength = 0;
+    let h0 = 1779033703 | 0;
+    let h1 = 3144134277 | 0;
+    let h2 = 1013904242 | 0;
+    let h3 = 2773480762 | 0;
+    let h4 = 1359893119 | 0;
+    let h5 = 2600822924 | 0;
+    let h6 = 528734635 | 0;
+    let h7 = 1541459225 | 0;
+    const compress = () => {
+      for (let i = 0; i < 16; i += 1) {
+        const at = i * 4;
+        words[i] = block[at] << 24 | block[at + 1] << 16 | block[at + 2] << 8 | block[at + 3];
+      }
+      for (let i = 16; i < 64; i += 1) {
+        const x = words[i - 15];
+        const y = words[i - 2];
+        const s0 = (x >>> 7 | x << 25) ^ (x >>> 18 | x << 14) ^ x >>> 3;
+        const s1 = (y >>> 17 | y << 15) ^ (y >>> 19 | y << 13) ^ y >>> 10;
+        words[i] = words[i - 16] + s0 + words[i - 7] + s1 | 0;
+      }
+      let a = h0;
+      let b = h1;
+      let c = h2;
+      let d = h3;
+      let e = h4;
+      let f = h5;
+      let g = h6;
+      let h = h7;
+      for (let i = 0; i < 64; i += 1) {
+        const sum1 = (e >>> 6 | e << 26) ^ (e >>> 11 | e << 21) ^ (e >>> 25 | e << 7);
+        const choice = e & f ^ ~e & g;
+        const temp1 = h + sum1 + choice + SHA256_ROUND_CONSTANTS[i] + words[i] | 0;
+        const sum0 = (a >>> 2 | a << 30) ^ (a >>> 13 | a << 19) ^ (a >>> 22 | a << 10);
+        const majority = a & b ^ a & c ^ b & c;
+        const temp2 = sum0 + majority | 0;
+        h = g;
+        g = f;
+        f = e;
+        e = d + temp1 | 0;
+        d = c;
+        c = b;
+        b = a;
+        a = temp1 + temp2 | 0;
+      }
+      h0 = h0 + a | 0;
+      h1 = h1 + b | 0;
+      h2 = h2 + c | 0;
+      h3 = h3 + d | 0;
+      h4 = h4 + e | 0;
+      h5 = h5 + f | 0;
+      h6 = h6 + g | 0;
+      h7 = h7 + h | 0;
+    };
+    const push = (byte) => {
+      block[blockLength] = byte;
+      blockLength += 1;
+      if (blockLength === 64) {
+        compress();
+        blockLength = 0;
+      }
+    };
+    for (let i = 0; i < text.length; i += 1) {
+      let code = text.charCodeAt(i);
+      if (code < 128) {
+        push(code);
+        byteLength += 1;
+        continue;
+      }
+      if (code < 2048) {
+        push(192 | code >> 6);
+        push(128 | code & 63);
+        byteLength += 2;
+        continue;
+      }
+      if (code >= 55296 && code <= 56319 && i + 1 < text.length) {
+        const next = text.charCodeAt(i + 1);
+        if (next >= 56320 && next <= 57343) {
+          const point = 65536 + (code - 55296 << 10) + (next - 56320);
+          push(240 | point >> 18);
+          push(128 | point >> 12 & 63);
+          push(128 | point >> 6 & 63);
+          push(128 | point & 63);
+          byteLength += 4;
+          i += 1;
+          continue;
+        }
+      }
+      if (code >= 55296 && code <= 57343) code = 65533;
+      push(224 | code >> 12);
+      push(128 | code >> 6 & 63);
+      push(128 | code & 63);
+      byteLength += 3;
+    }
+    const bitLength = byteLength * 8;
+    push(128);
+    while (blockLength !== 56) push(0);
+    const high = Math.floor(bitLength / 4294967296);
+    const low = bitLength >>> 0;
+    [high >>> 24, high >>> 16 & 255, high >>> 8 & 255, high & 255, low >>> 24, low >>> 16 & 255, low >>> 8 & 255, low & 255].forEach(push);
+    return [h0, h1, h2, h3, h4, h5, h6, h7].map((value) => (value >>> 0).toString(16).padStart(8, "0")).join("");
+  }
+  var BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  function sha256Base64(text) {
+    const hex = sha256Hex(text);
+    const bytes = [];
+    for (let i = 0; i < hex.length; i += 2) bytes.push(parseInt(hex.slice(i, i + 2), 16));
+    let out = "";
+    for (let i = 0; i < bytes.length; i += 3) {
+      const [a, b = 0, c = 0] = bytes.slice(i, i + 3);
+      const triple = a << 16 | b << 8 | c;
+      out += BASE64_ALPHABET[triple >> 18 & 63] + BASE64_ALPHABET[triple >> 12 & 63];
+      out += i + 1 < bytes.length ? BASE64_ALPHABET[triple >> 6 & 63] : "=";
+      out += i + 2 < bytes.length ? BASE64_ALPHABET[triple & 63] : "=";
+    }
+    return out;
+  }
 
   // src/diff/export.ts
   var DIFF_HTML_REVIEW_STATE_MAX_BYTES = 2 * 1024 * 1024;
@@ -1225,7 +1346,7 @@
 .kus-lp__hero-main{min-width:0;flex:1}
 .kus-lp__hero-actions{display:flex;align-items:center;gap:6px;flex-shrink:0;cursor:auto}
 /* 狭い画面では経過時間の文字を隠し（スピナーは残す）ボタンを詰めて、タイトルが 1 文字ずつ折り返すのを防ぐ */
-@media(max-width:560px){.kus-lp__elapsed{font-size:0;gap:0}.kus-lp__hero-actions{gap:4px}.kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{padding:6px 8px;font-size:12px}.kus-lp__toggle{min-width:30px}}
+@media(max-width:560px){.kus-lp__elapsed{font-size:0;gap:0}.kus-lp__hero-actions{gap:4px}.kus-lp__close,.kus-lp__toggle,.kus-lp__cancel{padding:6px 8px;font-size:12.5px}.kus-lp__toggle{min-width:30px}}
 .kus-lp__elapsed{
   font-size:12.5px;font-weight:600;color:rgba(255,255,255,.9);white-space:nowrap;
   font-variant-numeric:tabular-nums;display:inline-flex;align-items:center;gap:5px;
@@ -2654,6 +2775,9 @@
           refreshMore();
           moreDialog?.close();
         });
+        radio.addEventListener("click", () => {
+          if (radio.checked) moreDialog?.close();
+        });
       } else {
         choices.appendChild(label);
         if (hasMore) radio.addEventListener("change", refreshMore);
@@ -3468,8 +3592,11 @@ module.exports = __WEBPACK_EXTERNAL_MODULE__4__;
   // raw-text:node_modules/lodash/LICENSE
   var LICENSE_default3 = 'Copyright OpenJS Foundation and other contributors <https://openjsf.org/>\n\nBased on Underscore.js, copyright Jeremy Ashkenas,\nDocumentCloud and Investigative Reporters & Editors <http://underscorejs.org/>\n\nThis software consists of voluntary contributions made by many\nindividuals. For exact contribution history, see the revision history\navailable at https://github.com/lodash/lodash\n\nThe following license applies to all parts of this software except as\ndocumented below:\n\n====\n\nPermission is hereby granted, free of charge, to any person obtaining\na copy of this software and associated documentation files (the\n"Software"), to deal in the Software without restriction, including\nwithout limitation the rights to use, copy, modify, merge, publish,\ndistribute, sublicense, and/or sell copies of the Software, and to\npermit persons to whom the Software is furnished to do so, subject to\nthe following conditions:\n\nThe above copyright notice and this permission notice shall be\nincluded in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,\nEXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF\nMERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND\nNONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE\nLIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION\nOF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION\nWITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n\n====\n\nCopyright and related rights for sample code are waived via CC0. Sample\ncode is defined as all source code displayed within the prose of the\ndocumentation.\n\nCC0: http://creativecommons.org/publicdomain/zero/1.0/\n\n====\n\nFiles located in the node_modules and vendor directories are externally\nmaintained libraries used by this software which have their own\nlicenses; we recommend you read them, as their terms may differ from the\nterms above.\n';
 
+  // raw-text:node_modules/heap/LICENSE
+  var LICENSE_default4 = 'The MIT License\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the "Software"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\nTHE SOFTWARE.\n';
+
   // raw-text:node_modules/cytoscape-dagre/LICENSE
-  var LICENSE_default4 = "\n\nCopyright (c) 2016-2018, 2020, 2022, The Cytoscape Consortium.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of\nthis software and associated documentation files (the “Software”), to deal in\nthe Software without restriction, including without limitation the rights to\nuse, copy, modify, merge, publish, distribute, sublicense, and/or sell copies\nof the Software, and to permit persons to whom the Software is furnished to do\nso, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.";
+  var LICENSE_default5 = "\n\nCopyright (c) 2016-2018, 2020, 2022, The Cytoscape Consortium.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of\nthis software and associated documentation files (the “Software”), to deal in\nthe Software without restriction, including without limitation the rights to\nuse, copy, modify, merge, publish, distribute, sublicense, and/or sell copies\nof the Software, and to permit persons to whom the Software is furnished to do\nso, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.";
 
   // src/tabs/er-libraries.ts
   function toBlockComment(text) {
@@ -3478,6 +3605,15 @@ ${String(text).trim().replace(/\*\//g, "* /")}
 */
 `;
   }
+  var cytoscapeNotice = toBlockComment([
+    "cytoscape 3.28.1 - https://github.com/cytoscape/cytoscape.js (its MIT License follows this comment)",
+    "This bundle includes heap and parts of lodash (debounce, get, set, toPath), which are distributed under the MIT License.",
+    "",
+    "--- heap ---",
+    LICENSE_default4,
+    "--- lodash ---",
+    LICENSE_default3
+  ].join("\n"));
   var dagreNotice = toBlockComment([
     "dagre 0.8.5 (dagre.min.js) - https://github.com/dagrejs/dagre",
     "This file also bundles graphlib and lodash, which are distributed under the MIT License.",
@@ -3492,20 +3628,28 @@ ${String(text).trim().replace(/\*\//g, "* /")}
   var cytoscapeDagreNotice = toBlockComment([
     "cytoscape-dagre 2.5.0 - https://github.com/cytoscape/cytoscape.js-dagre",
     "",
-    LICENSE_default4
+    LICENSE_default5
   ].join("\n"));
   var ER_BUNDLED_LIBRARIES = Object.freeze([
-    // cytoscape.min.js は先頭に MIT の著作権コメントを持つため、そのまま使う。
-    { id: "er-lib-cytoscape", name: "cytoscape", version: "3.28.1", globalName: "cytoscape", source: cytoscape_min_default, license: "MIT" },
+    // cytoscape.min.js の先頭には cytoscape 自身の MIT の著作権コメントがある。同梱している heap・lodash の notice を前置する。
+    { id: "er-lib-cytoscape", name: "cytoscape", version: "3.28.1", globalName: "cytoscape", source: cytoscapeNotice + cytoscape_min_default, license: "MIT" },
     { id: "er-lib-dagre", name: "dagre", version: "0.8.5", globalName: "dagre", source: dagreNotice + dagre_min_default, license: "MIT" },
     { id: "er-lib-cytoscape-dagre", name: "cytoscape-dagre", version: "2.5.0", globalName: "cytoscapeDagre", source: cytoscapeDagreNotice + cytoscape_dagre_default, license: "MIT" }
   ]);
   function escapeInlineScriptSource(source) {
     return String(source).replace(/<\/(script)/gi, "<\\/$1");
   }
-  function buildErLibraryScripts() {
-    return ER_BUNDLED_LIBRARIES.map((lib) => `<script id="${lib.id}">${escapeInlineScriptSource(lib.source)}
-<\/script>`).join("\n");
+  var inlineLibraryScripts = null;
+  function erLibraryInlineScripts() {
+    if (!inlineLibraryScripts) {
+      inlineLibraryScripts = Object.freeze(ER_BUNDLED_LIBRARIES.map((lib) => Object.freeze({
+        id: lib.id,
+        // HTML の読み込みでは CR LF・CR が LF になる。ハッシュが合うよう、埋め込む前にそろえる
+        text: `${escapeInlineScriptSource(lib.source)}
+`.replace(/\r\n?/g, "\n")
+      })));
+    }
+    return inlineLibraryScripts;
   }
 
   // src/tabs/er-model.ts
@@ -4842,8 +4986,20 @@ function normalizeDensityName(name){\r
   const normalized=String(name||"").trim();\r
   return ER_DENSITY_NAMES.has(normalized)?normalized:"standard";\r
 }\r
-// 「編集済みHTMLを保存」で埋め込まれた編集状態（手動追加・配置・表示設定）。以前の版で保存した形式もそのまま読む\r
-const ER_EDIT_STATE = window.__ER_EDIT_STATE__ || null;\r
+// 「編集済みHTMLを保存」で埋め込まれた編集状態（手動追加・配置・表示設定）。以前の版で保存した形式（stateVersion なし）の中身もそのまま読む。\r
+// 状態は実行しない JSON の script 要素（type="application/json"）に置く。CSP で許可するスクリプトは保存しても変わらない\r
+const ER_EDIT_STATE = readEmbeddedEditState();\r
+function readEmbeddedEditState(){\r
+  const el=document.getElementById("er-edit-state");\r
+  if(!el||String(el.getAttribute("type")||"").toLowerCase()!=="application/json") return null;\r
+  try{\r
+    const state=JSON.parse(el.textContent||"");\r
+    return state&&typeof state==="object"&&!Array.isArray(state)?state:null;\r
+  }catch(err){\r
+    console.error("[ER] 保存した編集状態を読み取れません",err);\r
+    return null;\r
+  }\r
+}\r
 if(ER_EDIT_STATE && ER_EDIT_STATE.options){\r
   if(ER_EDIT_STATE.options.layoutName) ER_OPTIONS.layoutName = normalizeLayoutName(ER_EDIT_STATE.options.layoutName);\r
   if(ER_EDIT_STATE.options.fieldDensity) ER_OPTIONS.fieldDensity = normalizeDensityName(ER_EDIT_STATE.options.fieldDensity);\r
@@ -6801,7 +6957,7 @@ function swatchesHtml(colors,selected){\r
   return '<div class="ed-swatches">'+colors.map(c=>{\r
     const col=c[0];\r
     const cls="ed-swatch"+(col?"":" ed-swatch--none")+(String(selected||"")===String(col)?" selected":"");\r
-    return '<button type="button" class="'+cls+'" data-color="'+escapeHtml(col)+'" title="'+escapeHtml(c[1])+'"'+(col?' style="background:'+escapeHtml(col)+'"':'')+' onclick="selectSwatch(this)"></button>';\r
+    return '<button type="button" class="'+cls+'" data-color="'+escapeHtml(col)+'" title="'+escapeHtml(c[1])+'"'+(col?' style="background:'+escapeHtml(col)+'"':'')+' data-action="swatch"></button>';\r
   }).join("")+'</div>';\r
 }\r
 function selectSwatch(btn){\r
@@ -7311,9 +7467,9 @@ function renderAppDetail(app){\r
   document.getElementById("detail-meta").innerHTML = detailBadgesHtml(app)\r
     + '<div class="app-meta">' + facts.join(" ・ ") + '</div>'\r
     + '<div class="detail-actions">'\r
-    + (node.length && !node.hasClass("app-manual-hidden") ? '<button type="button" class="tb tb-primary" data-app="' + escapeHtml(String(app.id)) + '" onclick="showAroundApp(this.dataset.app)">このアプリのまわりを表示</button>' : '')\r
-    + '<button type="button" class="tb" title="図での名前と枠の色を変えます（kintone のアプリ名は変わりません）" data-app="' + escapeHtml(String(app.id)) + '" onclick="openEditApp(this.dataset.app)">名前・色を編集</button>'\r
-    + (hiddenCnt ? '<button type="button" class="tb" title="このアプリで隠した項目をすべて戻します" data-app="' + escapeHtml(String(app.id)) + '" onclick="restoreHiddenFields(this.dataset.app)">隠した項目 ' + hiddenCnt + ' 件を戻す</button>' : '')\r
+    + (node.length && !node.hasClass("app-manual-hidden") ? '<button type="button" class="tb tb-primary" data-app="' + escapeHtml(String(app.id)) + '" data-action="show-around">このアプリのまわりを表示</button>' : '')\r
+    + '<button type="button" class="tb" title="図での名前と枠の色を変えます（kintone のアプリ名は変わりません）" data-app="' + escapeHtml(String(app.id)) + '" data-action="edit-app">名前・色を編集</button>'\r
+    + (hiddenCnt ? '<button type="button" class="tb" title="このアプリで隠した項目をすべて戻します" data-app="' + escapeHtml(String(app.id)) + '" data-action="restore-fields">隠した項目 ' + hiddenCnt + ' 件を戻す</button>' : '')\r
     + '</div>'\r
     + '<div class="detail-chip-row">'\r
     + '<span class="meta-pill" title="表示中 / 総数（表示数はカードの項目の設定によります）">' + fieldPillText + '</span>'\r
@@ -7342,15 +7498,15 @@ function renderAppDetail(app){\r
       const edgeId = "e_" + app.id + "_" + item.ri;\r
       const edge = cy.getElementById(edgeId);\r
       const edgeHidden = edge.length && edge.hasClass("rel-manual-hidden");\r
-      const relEditBtn = '<button type="button" class="row-edit" title="この関連線を編集（名前・種類）" aria-label="この関連線を編集" data-edge="' + escapeHtml(edgeId) + '" data-app="' + escapeHtml(String(app.id)) + '" onclick="openEditRelationRow(this);event.stopPropagation();">✎</button>';\r
+      const relEditBtn = '<button type="button" class="row-edit" title="この関連線を編集（名前・種類）" aria-label="この関連線を編集" data-edge="' + escapeHtml(edgeId) + '" data-app="' + escapeHtml(String(app.id)) + '" data-action="edit-relation-row">✎</button>';\r
       const edgeBtn = edge.length\r
-        ? relEditBtn + '<button type="button" class="row-del' + (edgeHidden ? ' row-del--restore' : '') + '" title="' + (edgeHidden ? 'この関連線を戻す' : 'この関連線を図から削除') + '" aria-label="' + (edgeHidden ? 'この関連線を戻す' : 'この関連線を図から削除') + '" data-edge="' + escapeHtml(edgeId) + '" data-app="' + escapeHtml(String(app.id)) + '" onclick="toggleRelationEdgeFromRow(this);event.stopPropagation();">' + (edgeHidden ? '↺' : '✕') + '</button>'\r
+        ? relEditBtn + '<button type="button" class="row-del' + (edgeHidden ? ' row-del--restore' : '') + '" title="' + (edgeHidden ? 'この関連線を戻す' : 'この関連線を図から削除') + '" aria-label="' + (edgeHidden ? 'この関連線を戻す' : 'この関連線を図から削除') + '" data-edge="' + escapeHtml(edgeId) + '" data-app="' + escapeHtml(String(app.id)) + '" data-action="toggle-relation-row">' + (edgeHidden ? '↺' : '✕') + '</button>'\r
         : '';\r
       relHtml += '<div class="field-row' + (edgeHidden ? ' field-row--hidden' : '') + '">'\r
         + '<span class="field-icon kind-' + escapeHtml(rel.kind) + '" aria-hidden="true">→</span>'\r
         + '<div class="field-main">'\r
         + '<div class="field-name"><span class="kind-badge kind-' + escapeHtml(rel.kind) + '"><i></i>' + escapeHtml(relationKindJp(rel.kind)) + '</span> ' + escapeHtml(relationLabel) + '</div>'\r
-        + '<div class="field-sub wrap">参照先: <button type="button" class="link-btn" data-app="' + escapeHtml(String(rel.toApp)) + '" onclick="focusApp(this.dataset.app)">' + escapeHtml(targetLabel) + '</button>' + (relationMeta.length ? ' / ' + escapeHtml(relationMeta.join(' / ')) : '') + '</div>'\r
+        + '<div class="field-sub wrap">参照先: <button type="button" class="link-btn" data-app="' + escapeHtml(String(rel.toApp)) + '" data-action="focus-app">' + escapeHtml(targetLabel) + '</button>' + (relationMeta.length ? ' / ' + escapeHtml(relationMeta.join(' / ')) : '') + '</div>'\r
         + relationDetailHtml(rel)\r
         + '</div>'\r
         + edgeBtn\r
@@ -7373,7 +7529,7 @@ function renderAppDetail(app){\r
       const relationName=rel.kind==="REF"?(rel.controlFieldLabel||rel.fromDisplay||rel.fromLabel||"関連レコード一覧"):(rel.fromDisplay || rel.fromLabel || rel.from || relationKindJp(rel.kind));\r
       const meta=[];\r
       if(rel.toField) meta.push((rel.kind==="REF"?"結合先: ":"参照先の項目: ") + labelWithCode(fieldLabelByCode(app,rel.toField),rel.toField));\r
-      relHtml += '<button type="button" class="field-row detail-relation-button" data-app="' + escapeHtml(String(item.sourceApp.id)) + '" onclick="focusApp(this.dataset.app)">'\r
+      relHtml += '<button type="button" class="field-row detail-relation-button" data-app="' + escapeHtml(String(item.sourceApp.id)) + '" data-action="focus-app">'\r
         + '<span class="field-icon kind-' + escapeHtml(rel.kind) + '" aria-hidden="true">←</span>'\r
         + '<div class="field-main"><div class="field-name">' + escapeHtml(sourceLabel) + '</div><div class="field-sub">' + escapeHtml(relationKindJp(rel.kind) + ": " + relationName + (meta.length ? " / " + meta.join(" / ") : "")) + '</div>' + relationDetailHtml(rel) + '</div>'\r
         + '<span class="field-type">被参照</span></button>';\r
@@ -7401,8 +7557,8 @@ function renderAppDetail(app){\r
         + '<div class="field-sub">' + escapeHtml(meta.join(' / ')) + '</div>'\r
         + '</div>'\r
         + '<span class="field-type">' + escapeHtml(fieldTypeJpLabel(field.type)) + '</span>'\r
-        + '<button type="button" class="row-edit" title="この項目を編集（名前・種類・区分）" aria-label="この項目を編集" data-app="' + escapeHtml(String(app.id)) + '" data-key="' + escapeHtml(encodeURIComponent(fieldHideKey(app, field))) + '" onclick="openEditFieldRow(this);event.stopPropagation();">✎</button>'\r
-        + '<button type="button" class="row-del" title="この項目を図から隠す" aria-label="この項目を図から隠す" data-app="' + escapeHtml(String(app.id)) + '" data-key="' + escapeHtml(encodeURIComponent(fieldHideKey(app, field))) + '" onclick="hideFieldFromRow(this);event.stopPropagation();">✕</button>'\r
+        + '<button type="button" class="row-edit" title="この項目を編集（名前・種類・区分）" aria-label="この項目を編集" data-app="' + escapeHtml(String(app.id)) + '" data-key="' + escapeHtml(encodeURIComponent(fieldHideKey(app, field))) + '" data-action="edit-field-row">✎</button>'\r
+        + '<button type="button" class="row-del" title="この項目を図から隠す" aria-label="この項目を図から隠す" data-app="' + escapeHtml(String(app.id)) + '" data-key="' + escapeHtml(encodeURIComponent(fieldHideKey(app, field))) + '" data-action="hide-field-row">✕</button>'\r
         + '</div>';\r
     });\r
   };\r
@@ -7413,7 +7569,7 @@ function renderAppDetail(app){\r
   renderGroup("サブテーブル", fieldGroups.subtable, "tag-sub", "表");\r
   renderGroup("そのほかの項目", fieldGroups.normal, "", "");\r
   const fieldFilterHtml = visibleFields.length > 8\r
-    ? '<input class="detail-filter" type="search" placeholder="このアプリの項目を絞り込む" aria-label="このアプリの項目を絞り込む" oninput="filterDetailFields(this.value)">'\r
+    ? '<input class="detail-filter" type="search" placeholder="このアプリの項目を絞り込む" aria-label="このアプリの項目を絞り込む" data-input="detail-filter">'\r
     : '';\r
   document.getElementById("detail-fields").innerHTML = '<div class="detail-section">' + fieldFilterHtml + (fieldHtml || '<div class="field-group-title">項目</div><div class="field-sub">表示できる項目はありません（カードの項目の設定を「詳細」にすると増えます）。</div>') + '</div>';\r
 \r
@@ -7435,7 +7591,7 @@ function renderGhostDetail(node){\r
     +'<div class="analysis-note is-warn" role="status"><strong>図の外にある参照先です</strong><br>探索の深さ・閲覧権限・削除済みなどのため、このアプリの設定は取得していません。下は、取得したアプリ側に残っている参照の情報です。</div>';\r
   let relationHtml='<div class="field-group-title">この参照先へ向かう関連 ('+inbound.length+')</div>';\r
   inbound.forEach((item)=>{\r
-    relationHtml+='<button type="button" class="field-row detail-relation-button" data-app="'+escapeHtml(String(item.sourceApp.id))+'" onclick="focusApp(this.dataset.app)">'\r
+    relationHtml+='<button type="button" class="field-row detail-relation-button" data-app="'+escapeHtml(String(item.sourceApp.id))+'" data-action="focus-app">'\r
       +'<span class="field-icon" aria-hidden="true">←</span><div class="field-main"><div class="field-name">'+escapeHtml(item.sourceApp.name+' (App '+item.sourceApp.id+')')+'</div>'\r
       +'<div class="field-sub">'+escapeHtml(relationKindJp(item.rel.kind)+": "+exportRelationLabel(item.rel))+'</div>'+relationDetailHtml(item.rel)+'</div><span class="field-type">参照元</span></button>';\r
   });\r
@@ -7457,8 +7613,8 @@ function renderEdgeDetail(edge){\r
   document.getElementById("detail-meta").innerHTML='<div class="detail-badges"><span class="kind-badge kind-'+escapeHtml(edge.data("kind"))+'"><i></i>'+escapeHtml(relationKindJp(edge.data("kind")))+'</span></div>'\r
     +'<div class="app-meta">'+(members.length>1?members.length+" 本の関連線を 1 本にまとめて表示しています":"関連線 1 本")+'</div>'\r
     +'<div class="detail-actions">'\r
-    +(source?'<button type="button" class="tb" data-app="'+escapeHtml(String(source.id))+'" onclick="focusApp(this.dataset.app)">参照元を見る</button>':'')\r
-    +'<button type="button" class="tb" data-app="'+escapeHtml(String(target?target.id:edge.target().data("targetAppId")))+'" onclick="focusApp(this.dataset.app)">参照先を見る</button>'\r
+    +(source?'<button type="button" class="tb" data-app="'+escapeHtml(String(source.id))+'" data-action="focus-app">参照元を見る</button>':'')\r
+    +'<button type="button" class="tb" data-app="'+escapeHtml(String(target?target.id:edge.target().data("targetAppId")))+'" data-action="focus-app">参照先を見る</button>'\r
     +'</div>';\r
   let html='<div class="field-group-title">関連線 ('+members.length+')</div>';\r
   members.forEach(e=>{\r
@@ -7471,8 +7627,8 @@ function renderEdgeDetail(edge){\r
       +'<div class="field-main"><div class="field-name">'+escapeHtml(relSourceFieldText(rel))+(rel.isCustom?'<span class="tag tag-sub">手動</span>':'')+'</div>'\r
       +'<div class="field-sub">'+escapeHtml(relTargetFieldText(rel,target)?"参照先の項目: "+relTargetFieldText(rel,target):relationKindJp(rel.kind))+'</div>'\r
       +relationDetailHtml(rel)+'</div>'\r
-      +'<button type="button" class="row-edit" title="この関連線を編集（名前・種類）" aria-label="この関連線を編集" data-edge="'+escapeHtml(e.id())+'" data-app="'+escapeHtml(String(found.app.id))+'" onclick="openEditRelationRow(this);event.stopPropagation();">✎</button>'\r
-      +'<button type="button" class="row-del'+(hidden?' row-del--restore':'')+'" title="'+(hidden?'この関連線を戻す':'この関連線を図から削除')+'" aria-label="'+(hidden?'この関連線を戻す':'この関連線を図から削除')+'" data-edge="'+escapeHtml(e.id())+'" data-app="'+escapeHtml(String(found.app.id))+'" onclick="toggleRelationEdgeFromRow(this);event.stopPropagation();">'+(hidden?'↺':'✕')+'</button>'\r
+      +'<button type="button" class="row-edit" title="この関連線を編集（名前・種類）" aria-label="この関連線を編集" data-edge="'+escapeHtml(e.id())+'" data-app="'+escapeHtml(String(found.app.id))+'" data-action="edit-relation-row">✎</button>'\r
+      +'<button type="button" class="row-del'+(hidden?' row-del--restore':'')+'" title="'+(hidden?'この関連線を戻す':'この関連線を図から削除')+'" aria-label="'+(hidden?'この関連線を戻す':'この関連線を図から削除')+'" data-edge="'+escapeHtml(e.id())+'" data-app="'+escapeHtml(String(found.app.id))+'" data-action="toggle-relation-row">'+(hidden?'↺':'✕')+'</button>'\r
       +'</div>';\r
   });\r
   document.getElementById("detail-relations").innerHTML=html;\r
@@ -7597,7 +7753,7 @@ function goToRelationEdge(edgeId){\r
 // ─── 構造チェック ───\r
 function analysisItem(title, meta, ids, tone){\r
   const safeIds=(ids||[]).map(id=>String(id).replace(/[^0-9-]/g,"")).filter(Boolean).join(",");\r
-  return '<button type="button" class="analysis-item'+(tone?' analysis-item--'+tone:'')+'" data-analysis-ids="'+safeIds+'" onclick="focusAnalysisApps(this.dataset.analysisIds)"><strong>'+escapeHtml(title)+'</strong><span>'+escapeHtml(meta)+'</span></button>';\r
+  return '<button type="button" class="analysis-item'+(tone?' analysis-item--'+tone:'')+'" data-analysis-ids="'+safeIds+'" data-action="analysis-focus"><strong>'+escapeHtml(title)+'</strong><span>'+escapeHtml(meta)+'</span></button>';\r
 }\r
 function renderAnalysisPanel(){\r
   const host=document.getElementById("analysis-content");\r
@@ -7808,7 +7964,7 @@ function refreshAppList(){\r
     if(row.removed) sub.push('<span>図から削除済み</span>');\r
     else if(!row.inScope) sub.push('<span>図の外</span>');\r
     const label=a.name+'、'+(a.isCustom?'手動追加':'App '+a.id)+'、参照 '+row.out+'、被参照 '+row.inc+(row.inScope?'':'、図の外');\r
-    return '<button type="button" role="listitem" class="'+classes.join(' ')+'" data-app="'+escapeHtml(String(a.id))+'" onclick="focusApp(this.dataset.app)" aria-label="'+escapeHtml(label)+'"><span class="ali-top"><span class="ali-name">'+escapeHtml(a.name)+'</span>'+badges.join('')+'</span><span class="ali-sub">'+sub.join('')+'</span></button>';\r
+    return '<button type="button" role="listitem" class="'+classes.join(' ')+'" data-app="'+escapeHtml(String(a.id))+'" data-action="focus-app" aria-label="'+escapeHtml(label)+'"><span class="ali-top"><span class="ali-name">'+escapeHtml(a.name)+'</span>'+badges.join('')+'</span><span class="ali-sub">'+sub.join('')+'</span></button>';\r
   };\r
   let html="";\r
   if(!rows.length) html='<div class="analysis-empty">条件に合うアプリはありません。</div>';\r
@@ -7850,17 +8006,17 @@ function refreshScopeBar(){\r
   let html="";\r
   if(viewScope.mode==="all"){\r
     html+='<span class="scope-label">全体を表示<small class="scope-count">'+total+' アプリ</small></span>';\r
-    if(canShowStartScope()) html+='<button type="button" class="tb" id="scope-start-btn" onclick="showStartScope()">起点まわりだけ表示</button>';\r
+    if(canShowStartScope()) html+='<button type="button" class="tb" id="scope-start-btn" data-action="scope-start">起点まわりだけ表示</button>';\r
   }else{\r
     const start=isStartScope(viewScope);\r
     const rootNames=viewScope.roots.map(id=>{const a=findApp(id);return a?a.name:("App "+id);});\r
     const title=start?"起点まわり":("「"+rootNames[0]+"」"+(rootNames.length>1?" ほか "+(rootNames.length-1)+" 件":"")+" のまわり");\r
     html+='<span class="scope-label" title="'+escapeHtml(rootNames.join("、"))+'">'+escapeHtml(title)+'<small class="scope-count">'+shown+' / '+total+' アプリ</small></span>';\r
     html+='<span class="scope-depth" role="group" aria-label="関連をたどる段数"><span>深さ</span>'\r
-      +[1,2].map(d=>'<button type="button" id="scope-depth-'+d+'" aria-pressed="'+(viewScope.depth===d)+'" onclick="setScopeDepth('+d+')" title="'+(d===1?'直接の関連先まで':'関連先の関連先まで')+'">'+d+'</button>').join("")\r
+      +[1,2].map(d=>'<button type="button" id="scope-depth-'+d+'" aria-pressed="'+(viewScope.depth===d)+'" data-action="scope-depth" data-depth="'+d+'" title="'+(d===1?'直接の関連先まで':'関連先の関連先まで')+'">'+d+'</button>').join("")\r
       +'</span>';\r
-    html+='<button type="button" class="tb tb-primary" id="scope-all-btn" onclick="showAllScope()">全体を表示</button>';\r
-    if(!start&&canShowStartScope()) html+='<button type="button" class="tb" id="scope-start-btn" onclick="showStartScope()">起点まわり</button>';\r
+    html+='<button type="button" class="tb tb-primary" id="scope-all-btn" data-action="scope-all">全体を表示</button>';\r
+    if(!start&&canShowStartScope()) html+='<button type="button" class="tb" id="scope-start-btn" data-action="scope-start">起点まわり</button>';\r
   }\r
   if(ER_OPTIONS.reverseScanNote) html+='<span class="meta-pill meta-pill--warn" title="'+escapeHtml(ER_OPTIONS.reverseScanNote)+'">⚠ 逆引き走査が不完全</span>';\r
   bar.innerHTML=html;\r
@@ -7932,7 +8088,7 @@ function tableHeadHtml(columns,state,tableName){\r
     if(col.sortable===false) return '<th scope="col" class="plain'+(col.num?' num':'')+'">'+(col.label?escapeHtml(col.label):'<span class="sr-only">'+escapeHtml(col.srLabel||"")+'</span>')+'</th>';\r
     const sorted=state.sort===col.key;\r
     const aria=sorted?(state.dir>0?"ascending":"descending"):"none";\r
-    return '<th scope="col"'+(col.num?' class="num"':'')+' aria-sort="'+aria+'"><button type="button" class="sort-btn" onclick="sortTable(\\''+tableName+'\\',\\''+col.key+'\\')">'+escapeHtml(col.label)+'</button></th>';\r
+    return '<th scope="col"'+(col.num?' class="num"':'')+' aria-sort="'+aria+'"><button type="button" class="sort-btn" data-action="sort" data-table="'+escapeHtml(tableName)+'" data-sort="'+escapeHtml(col.key)+'">'+escapeHtml(col.label)+'</button></th>';\r
   }).join('')+'</tr></thead>';\r
 }\r
 function sortTable(tableName,key){\r
@@ -8014,8 +8170,8 @@ function renderAppsTable(){\r
   const chips=document.getElementById("apps-checks");\r
   if(chips) chips.innerHTML=APP_CHECKS.map(c=>{\r
     const n=all.filter(c.test).length;\r
-    return '<button type="button" class="check-chip'+(n?' has-items':'')+'" aria-pressed="'+(state.check===c.key)+'" onclick="setAppsCheck(\\''+c.key+'\\')">'+escapeHtml(c.label)+' <b>'+n+'</b></button>';\r
-  }).join('')+'<button type="button" class="check-chip" onclick="toggleAnalysisPanel(true);showDiagramView()">構造チェックの詳細</button>';\r
+    return '<button type="button" class="check-chip'+(n?' has-items':'')+'" aria-pressed="'+(state.check===c.key)+'" data-action="apps-check" data-check="'+escapeHtml(c.key)+'">'+escapeHtml(c.label)+' <b>'+n+'</b></button>';\r
+  }).join('')+'<button type="button" class="check-chip" data-action="analysis-open">構造チェックの詳細</button>';\r
   const count=document.getElementById("apps-count");\r
   if(count) count.textContent=all.length+" 件中 "+rows.length+" 件";\r
   const status=document.getElementById("apps-status");\r
@@ -8034,13 +8190,13 @@ function renderAppsTable(){\r
     if(r.unresolved) flags.push("未取得の参照先あり");\r
     return '<tr'+(Number(activeAppId)===Number(r.id)?' class="is-selected"':'')+'>'\r
       +'<td class="num" data-label="App ID">'+(r.app.isCustom?'-':escapeHtml(r.id))+'</td>'\r
-      +'<td data-label="アプリ名"><button type="button" class="row-link" data-app="'+escapeHtml(String(r.id))+'" onclick="focusApp(this.dataset.app)">'+escapeHtml(r.name)+'</button> '+badges.join(' ')+(r.app.isCustom?'':'<div class="cell-sub">探索の深さ '+(r.app.depth||0)+'</div>')+'</td>'\r
+      +'<td data-label="アプリ名"><button type="button" class="row-link" data-app="'+escapeHtml(String(r.id))+'" data-action="focus-app">'+escapeHtml(r.name)+'</button> '+badges.join(' ')+(r.app.isCustom?'':'<div class="cell-sub">探索の深さ '+(r.app.depth||0)+'</div>')+'</td>'\r
       +'<td data-label="スペース">'+(r.space?'#'+escapeHtml(r.space):'<span class="cell-sub">-</span>')+'</td>'\r
       +'<td class="num" data-label="項目数">'+r.fields+'</td>'\r
       +'<td class="num" data-label="参照する">'+r.out+'</td>'\r
       +'<td class="num" data-label="参照される">'+r.inc+'</td>'\r
       +'<td data-label="状態">'+statusBadge+(r.issues.length?'<div class="cell-note">'+r.issues.map(escapeHtml).join('<br>')+'</div>':'')+(flags.length?'<div class="cell-sub">'+escapeHtml(flags.join(' ・ '))+'</div>':'')+'</td>'\r
-      +'<td class="cell-action" data-label=""><button type="button" class="tb row-go" data-app="'+escapeHtml(String(r.id))+'" onclick="focusApp(this.dataset.app)" aria-label="'+escapeHtml(r.name)+' を図で見る">図で見る</button></td>'\r
+      +'<td class="cell-action" data-label=""><button type="button" class="tb row-go" data-app="'+escapeHtml(String(r.id))+'" data-action="focus-app" aria-label="'+escapeHtml(r.name)+' を図で見る">図で見る</button></td>'\r
       +'</tr>';\r
   }).join('');\r
   host.innerHTML='<table class="data-table"><caption class="sr-only">アプリ一覧（'+rows.length+' 件）</caption>'+tableHeadHtml(APP_TABLE_COLUMNS,state,"apps")+'<tbody>'+body+'</tbody></table>';\r
@@ -8107,7 +8263,7 @@ function renderRelationsTable(){\r
   const kinds=document.getElementById("relations-kinds");\r
   if(kinds) kinds.innerHTML=["LOOKUP","REF","ACTION"].map(kind=>{\r
     const n=all.filter(r=>r.kind===kind).length;\r
-    return '<button type="button" class="check-chip" aria-pressed="'+(!!state.kinds[kind])+'" onclick="toggleRelationTableKind(\\''+kind+'\\')"><span class="kind-badge kind-'+kind+'"><i></i>'+escapeHtml(relationKindJp(kind))+'</span> <b>'+n+'</b></button>';\r
+    return '<button type="button" class="check-chip" aria-pressed="'+(!!state.kinds[kind])+'" data-action="relation-table-kind" data-kind="'+escapeHtml(kind)+'"><span class="kind-badge kind-'+kind+'"><i></i>'+escapeHtml(relationKindJp(kind))+'</span> <b>'+n+'</b></button>';\r
   }).join('');\r
   const select=document.getElementById("relations-state");\r
   if(select&&select.value!==state.state) select.value=state.state;\r
@@ -8115,7 +8271,7 @@ function renderRelationsTable(){\r
   if(count) count.textContent=all.length+" 件中 "+rows.length+" 件";\r
   if(!rows.length){ host.innerHTML='<div class="table-empty">条件に合う関連はありません。検索や絞り込みを変えてください。</div>'; return; }\r
   const appCell=(app,id,label)=>app\r
-    ?'<button type="button" class="row-link" data-app="'+escapeHtml(String(app.id))+'" onclick="focusApp(this.dataset.app)">'+escapeHtml(app.name)+'</button><div class="cell-sub">'+(app.isCustom?'手動追加':'App '+escapeHtml(app.id))+'</div>'\r
+    ?'<button type="button" class="row-link" data-app="'+escapeHtml(String(app.id))+'" data-action="focus-app">'+escapeHtml(app.name)+'</button><div class="cell-sub">'+(app.isCustom?'手動追加':'App '+escapeHtml(app.id))+'</div>'\r
     :'<span class="badge badge-ghost">？ 未取得</span><div class="cell-sub">App '+escapeHtml(id)+'</div>';\r
   const body=rows.map(r=>{\r
     const notes=[];\r
@@ -8131,7 +8287,7 @@ function renderRelationsTable(){\r
       +'<td data-label="参照先の項目"><span class="cell-note">'+escapeHtml(r.targetField||"-")+'</span></td>'\r
       +'<td data-label="コピー・表示する項目"><span class="cell-note">'+escapeHtml(r.fieldsText||"-")+'</span></td>'\r
       +'<td data-label="絞り込み条件"><span class="cell-note">'+escapeHtml(r.filter||"-")+'</span></td>'\r
-      +'<td class="cell-action" data-label=""><button type="button" class="tb row-go" data-edge="'+escapeHtml(r.edgeId)+'" onclick="goToRelationEdge(this.dataset.edge)" aria-label="'+escapeHtml(r.sourceName+' → '+r.targetName)+' の線を図で見る">図で見る</button></td>'\r
+      +'<td class="cell-action" data-label=""><button type="button" class="tb row-go" data-edge="'+escapeHtml(r.edgeId)+'" data-action="go-edge" aria-label="'+escapeHtml(r.sourceName+' → '+r.targetName)+' の線を図で見る">図で見る</button></td>'\r
       +'</tr>';\r
   }).join('');\r
   host.innerHTML='<table class="data-table"><caption class="sr-only">関連一覧（'+rows.length+' 件）</caption>'+tableHeadHtml(RELATION_TABLE_COLUMNS,state,"relations")+'<tbody>'+body+'</tbody></table>';\r
@@ -8948,17 +9104,20 @@ function exportEditedHtml(){\r
     const liveRuntime=clone.querySelector("#er-runtime");\r
     if(liveRuntime && liveRuntime.parentNode) liveRuntime.parentNode.removeChild(liveRuntime);\r
     // 描画ライブラリは head のインライン script として複製に含まれるため、保存した HTML も単体で動く。\r
+    // CSP はライブラリ・起動・図の本体の中身のハッシュで許可している。保存してもこれらの中身は変わらないので、CSP はそのまま使える。\r
+    // 編集の状態は実行しない JSON（type="application/json"）として置く（スクリプトとしては動かず、CSP のハッシュも要らない）。\r
     const main=clone.querySelector("#er-main");\r
     if(!main){toast("保存に失敗: 本体スクリプトが見つかりません");return;}\r
     const stateScript=document.createElement("script");\r
     stateScript.id="er-edit-state";\r
+    stateScript.setAttribute("type","application/json");\r
     const stateJson=JSON.stringify(payload)\r
       .replace(/</g,"\\\\u003c")\r
       .replace(/>/g,"\\\\u003e")\r
       .replace(/&/g,"\\\\u0026")\r
       .replace(/\\u2028/g,"\\\\u2028")\r
       .replace(/\\u2029/g,"\\\\u2029");\r
-    stateScript.textContent="window.__ER_EDIT_STATE__="+stateJson+";";\r
+    stateScript.textContent=stateJson;\r
     main.parentNode.insertBefore(stateScript,main);\r
     const html="<!DOCTYPE html>\\n"+clone.outerHTML;\r
     const blob=new Blob([html],{type:"text/html"});\r
@@ -9600,15 +9759,200 @@ function copyShareUrl(){\r
 `;
 
   // raw-text:src/tabs/er-viewer/viewer-import.js
-  var viewer_import_default = '// ER図ビューアー: 以前に保存した編集済みHTML（以前の版・今の版）から、編集を今の図へ取り込む（「編集 → 編集済みHTMLから取り込む」）。\r\n// 取り込む編集: 手動で追加したアプリ・項目・関連線、アプリの名前と枠の色、項目と関連線の編集、メモ、位置（今の版は表示範囲も）、\r\n// 図からの削除、固定、隠した項目。表示設定（配置・カードの項目・線の種類の表示・線のまとめなど）は今の図のままにする。\r\n// 読み込んだファイルのスクリプトは実行しない。編集の状態の script 要素（id が er-edit-state）の中の文字列から JSON だけを取り出し、\r\n// 形と値を確かめて、知っている項目だけを使う。今の図に無いアプリ・項目・線の編集は「対象外」として件数を示す。\r\n// 関連線は「アプリID と、そのアプリの関連の順番」で名前が付いているため、ファイルに入っている元の図のデータ（const APPS）と\r\n// 今の図の元のデータを、関連の種類・項目・参照先で突き合わせて対応させる（設定の変更で関連の順番が変わっても対応できる）。\r\n\r\nconst ER_IMPORT_MAX_BYTES=64*1024*1024;\r\n// 1 種類あたりに読む件数の上限（壊れたファイル・巨大なファイルで固まらないようにする）\r\nconst ER_IMPORT_LIMIT=20000;\r\nconst ER_IMPORT_TEXT_MAX=2000;\r\nconst ER_IMPORT_NAME_MAX=200;\r\nconst ER_IMPORT_KINDS=["LOOKUP","REF","ACTION"];\r\n// この画面のスクリプト自身の文字列と取り違えないよう、目印は分けて書いてつなぐ\r\nconst ER_IMPORT_STATE_TAG="<script id=\\"er-"+"edit-state\\">";\r\nconst ER_IMPORT_STATE_PREFIX="window.__ER_EDIT_"+"STATE__=";\r\nconst ER_IMPORT_MAIN_TAG="<script id=\\"er-"+"main\\" type=\\"text/plain\\">";\r\nconst ER_IMPORT_APPS_PREFIX="const APPS = ";\r\nconst ER_IMPORT_SCRIPT_END="</"+"script>";\r\n\r\n// ─── ファイルの読み取り（文字列だけを扱う。DOM にもスクリプトにもしない） ───\r\nfunction readEditedHtmlText(text){\r\n  const source=String(text==null?"":text);\r\n  const at=source.indexOf(ER_IMPORT_STATE_TAG);\r\n  // 編集の状態は図の本体（er-main）の前に置かれる。本体の中の文字列に同じ並びがあっても、それは使わない\r\n  const mainAt=source.indexOf(ER_IMPORT_MAIN_TAG);\r\n  if(at<0||(mainAt>=0&&at>mainAt)) return {error:"編集済みHTMLではありません（編集の内容が見つかりません）。図の画面の「出力 → 編集済みHTMLを保存」で保存したファイルを選んでください"};\r\n  const end=source.indexOf(ER_IMPORT_SCRIPT_END,at);\r\n  let body=source.slice(at+ER_IMPORT_STATE_TAG.length,end<0?source.length:end).trim();\r\n  if(body.indexOf(ER_IMPORT_STATE_PREFIX)!==0) return {error:"編集の内容を読み取れません（ファイルの形が違います）"};\r\n  body=body.slice(ER_IMPORT_STATE_PREFIX.length).trim();\r\n  if(body.charAt(body.length-1)===";") body=body.slice(0,-1);\r\n  let state;\r\n  try{ state=JSON.parse(body); }catch(_){ return {error:"編集の内容を読み取れません（ファイルが壊れている可能性があります）"}; }\r\n  if(!state||typeof state!=="object"||Array.isArray(state)) return {error:"編集の内容を読み取れません（ファイルの形が違います）"};\r\n  return {state,apps:readEditedHtmlApps(source)};\r\n}\r\n// 編集済みHTMLに入っている、元の図のアプリのデータ（関連線の対応付けに使う）。読めなければ null\r\nfunction readEditedHtmlApps(source){\r\n  const at=source.indexOf(ER_IMPORT_MAIN_TAG);\r\n  if(at<0) return null;\r\n  let start=at+ER_IMPORT_MAIN_TAG.length;\r\n  while(source.charAt(start)==="\\n"||source.charAt(start)==="\\r") start+=1;\r\n  if(source.indexOf(ER_IMPORT_APPS_PREFIX,start)!==start) return null;\r\n  const lineEnd=source.indexOf("\\n",start);\r\n  let json=source.slice(start+ER_IMPORT_APPS_PREFIX.length,lineEnd<0?source.length:lineEnd).trim();\r\n  if(json.charAt(json.length-1)===";") json=json.slice(0,-1);\r\n  try{ const apps=JSON.parse(json); return Array.isArray(apps)?apps:null; }catch(_){ return null; }\r\n}\r\n\r\n// ─── 値の確かめ（知っている項目だけを、決まった形にして取り出す） ───\r\nfunction importText(value,max){\r\n  if(typeof value!=="string") return "";\r\n  return value.replace(/[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]/g,"").slice(0,max||ER_IMPORT_TEXT_MAX);\r\n}\r\nfunction importColor(value){\r\n  return typeof value==="string"&&/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(value)?value:"";\r\n}\r\n// アプリID（kintone のアプリは正、手動で追加したアプリは負）\r\nfunction importAppId(value){\r\n  if(typeof value!=="number"&&typeof value!=="string") return null;\r\n  const s=String(value).trim();\r\n  if(!/^-?\\d{1,16}$/.test(s)) return null;\r\n  const n=Number(s);\r\n  return Number.isSafeInteger(n)&&n!==0?n:null;\r\n}\r\nfunction importPoint(value){\r\n  if(!value||typeof value!=="object") return null;\r\n  const x=value.x, y=value.y;\r\n  return typeof x==="number"&&typeof y==="number"&&Number.isFinite(x)&&Number.isFinite(y)&&Math.abs(x)<1e7&&Math.abs(y)<1e7?{x,y}:null;\r\n}\r\nfunction importList(value){ return Array.isArray(value)?value.slice(0,ER_IMPORT_LIMIT):[]; }\r\nfunction importKeys(value){ return value&&typeof value==="object"&&!Array.isArray(value)?Object.keys(value).slice(0,ER_IMPORT_LIMIT):[]; }\r\nfunction importOwn(record,key){ return Object.prototype.hasOwnProperty.call(record,key)?record[key]:undefined; }\r\n// 図のノードID: アプリは「a + アプリID」、未取得の参照先は「g + 参照先」\r\nfunction importNodeId(value){\r\n  const s=String(value==null?"":value);\r\n  const m=/^a(-?\\d{1,16})$/.exec(s);\r\n  if(m){ const appId=importAppId(m[1]); return appId===null?null:{kind:"app",appId}; }\r\n  if(/^g[0-9A-Za-z_-]{1,40}$/.test(s)) return {kind:"ghost",id:s};\r\n  return null;\r\n}\r\n// 関連線のID: 「e_アプリID_関連の順番」\r\nfunction importEdgeRef(value){\r\n  const m=/^e_(-?\\d{1,16})_(\\d{1,6})$/.exec(String(value==null?"":value));\r\n  if(!m) return null;\r\n  const appId=importAppId(m[1]);\r\n  return appId===null?null:{appId,ri:Number(m[2])};\r\n}\r\n// 項目のキー: 「アプリID::項目のパス（またはコード）」\r\nfunction importFieldRef(value){\r\n  const s=String(value==null?"":value);\r\n  const i=s.indexOf("::");\r\n  if(i<=0) return null;\r\n  const appId=importAppId(s.slice(0,i));\r\n  const path=s.slice(i+2);\r\n  if(appId===null||!path||path.length>ER_IMPORT_TEXT_MAX) return null;\r\n  return {appId,path};\r\n}\r\nfunction importFieldType(value){ return typeof value==="string"&&/^[A-Z_]{1,40}$/.test(value)?value:""; }\r\nfunction importField(raw){\r\n  if(!raw||typeof raw!=="object") return null;\r\n  const code=importText(raw.code,ER_IMPORT_NAME_MAX).trim();\r\n  if(!code) return null;\r\n  return {code,label:importText(raw.label,ER_IMPORT_NAME_MAX).trim()||code,type:importFieldType(raw.type)||"SINGLE_LINE_TEXT",\r\n    required:raw.required===true,isPK:raw.isPK===true,unique:raw.unique===true,isLookup:raw.isLookup===true,isRef:raw.isRef===true,isCustom:true};\r\n}\r\nfunction importFieldPatch(raw){\r\n  const patch={};\r\n  if(!raw||typeof raw!=="object") return patch;\r\n  const label=importText(raw.label,ER_IMPORT_NAME_MAX).trim();\r\n  if(label) patch.label=label;\r\n  const type=importFieldType(raw.type);\r\n  if(type) patch.type=type;\r\n  ["isPK","unique","required","isLookup","isRef"].forEach(key=>{ if(typeof raw[key]==="boolean") patch[key]=raw[key]; });\r\n  return patch;\r\n}\r\nfunction importRelationPatch(raw){\r\n  const patch={};\r\n  if(!raw||typeof raw!=="object") return patch;\r\n  const fromLabel=importText(raw.fromLabel,ER_IMPORT_NAME_MAX).trim();\r\n  const fromDisplay=importText(raw.fromDisplay,ER_IMPORT_NAME_MAX).trim();\r\n  if(fromLabel) patch.fromLabel=fromLabel;\r\n  if(fromDisplay) patch.fromDisplay=fromDisplay;\r\n  if(ER_IMPORT_KINDS.indexOf(raw.kind)>=0) patch.kind=raw.kind;\r\n  return patch;\r\n}\r\nfunction importScopeKey(key){\r\n  if(key==="all") return {mode:"all",roots:[],depth:1};\r\n  const m=/^around:([-0-9,]{1,20000}):([12])$/.exec(String(key));\r\n  if(!m) return null;\r\n  const roots=m[1].split(",").map(importAppId);\r\n  if(!roots.length||roots.some(id=>id===null)) return null;\r\n  return {mode:"around",roots,depth:Number(m[2])};\r\n}\r\nfunction importPositionMap(raw){\r\n  const out=[];\r\n  importKeys(raw).forEach(key=>{\r\n    const node=importNodeId(key);\r\n    const pos=node&&importPoint(importOwn(raw,key));\r\n    if(pos) out.push({node,pos});\r\n  });\r\n  return out;\r\n}\r\n\r\n/**\r\n * 読み込んだ編集の状態（以前の版: stateVersion なし / 今の版: 2）を確かめ、決まった形にする。\r\n * 形の正しくない値は使わず、件数（invalid）だけを数える。\r\n */\r\nfunction sanitizeImportedEditState(raw){\r\n  const state=raw&&typeof raw==="object"&&!Array.isArray(raw)?raw:{};\r\n  const view=state.view&&typeof state.view==="object"&&!Array.isArray(state.view)?state.view:{};\r\n  const out={\r\n    version:Number(state.stateVersion)>=2?2:1,\r\n    savedAt:typeof state.savedAt==="string"&&!Number.isNaN(Date.parse(state.savedAt))?state.savedAt:"",\r\n    customApps:[],customFields:[],customRelations:[],\r\n    appOverrides:[],fieldOverrides:[],relationOverrides:[],notes:[],\r\n    positions:[],scope:null,scopePositions:[],\r\n    removedNodes:[],removedEdges:[],pinnedNodes:[],hiddenFields:[],\r\n    invalid:0\r\n  };\r\n  importList(state.customApps).forEach(app=>{\r\n    const id=importAppId(app&&app.id);\r\n    const name=importText(app&&app.name,ER_IMPORT_NAME_MAX).trim();\r\n    if(id===null||id>=0||!name){ out.invalid+=1; return; }\r\n    out.customApps.push({id,name,fields:importList(app.fields).slice(0,500).map(importField).filter(Boolean)});\r\n  });\r\n  importList(state.customFields).forEach(item=>{\r\n    const appId=importAppId(item&&item.appId);\r\n    const field=importField(item&&item.field);\r\n    if(appId===null||!field){ out.invalid+=1; return; }\r\n    out.customFields.push({appId,field});\r\n  });\r\n  importList(state.customRelations).forEach(item=>{\r\n    const rel=item&&item.rel;\r\n    const fromAppId=importAppId(item&&item.fromAppId);\r\n    const toApp=importAppId(rel&&rel.toApp);\r\n    const kind=rel&&ER_IMPORT_KINDS.indexOf(rel.kind)>=0?rel.kind:"";\r\n    if(fromAppId===null||toApp===null||!kind){ out.invalid+=1; return; }\r\n    const label=importText(rel.fromLabel,ER_IMPORT_NAME_MAX).trim()||importText(rel.fromDisplay,ER_IMPORT_NAME_MAX).trim()\r\n      ||(kind==="LOOKUP"?"ルックアップ":(kind==="REF"?"関連":"アクション"))+"(手動)";\r\n    out.customRelations.push({fromAppId,toApp,kind,label});\r\n  });\r\n  importKeys(state.appOverrides).forEach(key=>{\r\n    const id=importAppId(key);\r\n    const o=importOwn(state.appOverrides,key);\r\n    if(id===null||!o||typeof o!=="object"){ out.invalid+=1; return; }\r\n    const entry={id};\r\n    const name=importText(o.name,ER_IMPORT_NAME_MAX).trim();\r\n    if(name) entry.name=name;\r\n    if(typeof o.color==="string"){\r\n      const color=importColor(o.color);\r\n      if(color||o.color==="") entry.color=color;\r\n      else out.invalid+=1;\r\n    }\r\n    if(entry.name!==undefined||entry.color!==undefined) out.appOverrides.push(entry);\r\n  });\r\n  importKeys(state.fieldOverrides).forEach(key=>{\r\n    const ref=importFieldRef(key);\r\n    const patch=importFieldPatch(importOwn(state.fieldOverrides,key));\r\n    if(!ref||!Object.keys(patch).length){ out.invalid+=1; return; }\r\n    out.fieldOverrides.push({appId:ref.appId,path:ref.path,patch});\r\n  });\r\n  importKeys(state.relationOverrides).forEach(key=>{\r\n    const ref=importEdgeRef(key);\r\n    const patch=importRelationPatch(importOwn(state.relationOverrides,key));\r\n    if(!ref||!Object.keys(patch).length){ out.invalid+=1; return; }\r\n    out.relationOverrides.push({appId:ref.appId,ri:ref.ri,patch});\r\n  });\r\n  importList(state.notes).forEach(note=>{\r\n    const text=importText(note&&note.text,ER_IMPORT_TEXT_MAX).trim();\r\n    const pos=importPoint(note);\r\n    if(!text||!pos){ out.invalid+=1; return; }\r\n    out.notes.push({text,color:importColor(note.color)||"#fef08a",x:pos.x,y:pos.y});\r\n  });\r\n  out.positions=importPositionMap(view.positions);\r\n  const nodeList=(value)=>importList(value).map(importNodeId).filter(Boolean);\r\n  out.removedNodes=nodeList(view.removedNodeIds);\r\n  out.pinnedNodes=nodeList(view.pinnedNodeIds);\r\n  // アプリを削除したときに一緒に隠した線（nodeHiddenEdgeIds）は、削除したアプリから作り直すので読まない\r\n  out.removedEdges=importList(view.removedEdgeIds).map(importEdgeRef).filter(Boolean);\r\n  out.hiddenFields=importList(view.hiddenFieldKeys).map(importFieldRef).filter(Boolean);\r\n  if(out.version>=2){\r\n    // 今の版は表示範囲と、表示範囲ごとの位置を持つ（以前の版は全体の図だけ）\r\n    const scope=view.scope&&typeof view.scope==="object"?view.scope:null;\r\n    if(scope&&scope.mode==="around"){\r\n      const roots=importList(scope.roots).map(importAppId).filter(id=>id!==null);\r\n      if(roots.length) out.scope={mode:"around",roots,depth:Number(scope.depth)===2?2:1};\r\n    }else if(scope&&scope.mode==="all") out.scope={mode:"all",roots:[],depth:1};\r\n    importKeys(view.scopePositions).forEach(key=>{\r\n      const scopeRef=importScopeKey(key);\r\n      if(scopeRef) out.scopePositions.push({scope:scopeRef,positions:importPositionMap(importOwn(view.scopePositions,key))});\r\n    });\r\n  }\r\n  return out;\r\n}\r\n\r\n// ─── 関連線の対応付け ───\r\n// 関連の印: 種類・参照元の項目（関連レコード一覧は表示部品、アクションは名前）・参照先。同じ印が複数あるときは出てくる順で区別する\r\nfunction relationImportSignature(rel){\r\n  if(!rel||typeof rel!=="object") return "";\r\n  const to=String(rel.toApp==null?"":rel.toApp);\r\n  if(rel.kind==="REF") return "R|"+String(rel.controlFieldPath||rel.controlField||rel.fromPath||rel.from||"")+"|"+to;\r\n  if(rel.kind==="ACTION") return "A|"+String(rel.fromLabel||"")+"|"+to;\r\n  return "L|"+String(rel.fromPath||rel.from||"")+"|"+to;\r\n}\r\nfunction relationSignatureList(relations){\r\n  const seen=new Map();\r\n  return (Array.isArray(relations)?relations:[]).map(rel=>{\r\n    const sig=relationImportSignature(rel);\r\n    const n=(seen.get(sig)||0)+1;\r\n    seen.set(sig,n);\r\n    return sig+"#"+n;\r\n  });\r\n}\r\n// 元の図のアプリのデータ（id → 関連の印の一覧）。手動で追加したアプリは入らない\r\nfunction relationSignatureIndex(apps){\r\n  const index=new Map();\r\n  (Array.isArray(apps)?apps:[]).forEach(app=>{\r\n    const id=app&&importAppId(app.id);\r\n    if(id!==null&&id>0&&!index.has(id)) index.set(id,relationSignatureList(app.relations));\r\n  });\r\n  return index;\r\n}\r\n/** 取り込むファイルの「アプリ appId の ri 番目の関連」が、今の図の元のデータの何番目か。対応が無ければ -1 */\r\nfunction mapImportedRelationIndex(oldIndex,currentIndex,appId,ri){\r\n  const oldSigs=oldIndex&&oldIndex.get(appId);\r\n  const curSigs=currentIndex&&currentIndex.get(appId);\r\n  if(!oldSigs||!curSigs||ri<0||ri>=oldSigs.length) return -1;\r\n  return curSigs.indexOf(oldSigs[ri]);\r\n}\r\n// 今の図の元のデータ（この画面に入っている const APPS。編集で変わる前の名前・種類）\r\nlet currentOriginalSignatureIndex=null;\r\nfunction currentRelationSignatureIndex(){\r\n  if(currentOriginalSignatureIndex) return currentOriginalSignatureIndex;\r\n  const main=document.getElementById("er-main");\r\n  const apps=main?readEditedHtmlApps(ER_IMPORT_MAIN_TAG+(main.textContent||"")):null;\r\n  currentOriginalSignatureIndex=relationSignatureIndex(apps||APPS.filter(a=>!a.isCustom));\r\n  return currentOriginalSignatureIndex;\r\n}\r\n\r\n// ─── 今の図へ当てはめる ───\r\nfunction importedCount(map,key,n){ map[key]=(map[key]||0)+(n===undefined?1:n); }\r\nfunction maxManualNumber(values,prefix){\r\n  let max=0;\r\n  values.forEach(v=>{ const s=String(v||""); if(s.indexOf(prefix)===0){ const n=Number(s.slice(prefix.length)); if(Number.isSafeInteger(n)&&n>max) max=n; } });\r\n  return max;\r\n}\r\n/**\r\n * 確かめた編集を今の図へ当てはめ、結果（取り込んだ件数・対象外・すでにあった件数）を返す。\r\n * 全体を 1 回の「元に戻す」で取り込む前に戻せる。\r\n */\r\nfunction applyImportedEditState(clean,fileApps){\r\n  const undo=[];\r\n  const done={}, skipped={}, existing={};\r\n  // 表示範囲・位置は最後に戻す（先に登録し、取り消しでは最後に動く）。手動のアプリの削除・削除の取り消しの後に、表示範囲を数え直す\r\n  const beforePositions=cy.nodes().map(n=>({id:n.id(),pos:Object.assign({},n.position())}));\r\n  const beforeScope={mode:viewScope.mode,roots:viewScope.roots.slice(),depth:viewScope.depth};\r\n  const beforeCache=new Map(scopePositionCache);\r\n  undo.push(()=>{\r\n    setScope(beforeScope,{keepPositions:true});\r\n    scopePositionCache.clear();\r\n    beforeCache.forEach((value,key)=>scopePositionCache.set(key,value));\r\n    beforePositions.forEach(item=>{ const n=cy.getElementById(item.id); if(n.length&&!n.locked()) n.position(item.pos); });\r\n  });\r\n  const missingApps=new Set();\r\n  const oldIndex=fileApps?relationSignatureIndex(fileApps):null;\r\n  const curIndex=currentRelationSignatureIndex();\r\n  const oldRelationCount=(appId)=>{\r\n    if(appId<0) return 0;\r\n    const sigs=oldIndex&&oldIndex.get(appId);\r\n    return sigs?sigs.length:-1;\r\n  };\r\n  // アプリIDの対応（手動で追加したアプリは、今の図で空いている番号に付け直す）\r\n  const appIdMap=new Map();\r\n  const mapApp=(id)=>{\r\n    if(appIdMap.has(id)) return appIdMap.get(id);\r\n    const app=id>0?findApp(id):null;\r\n    const mapped=app&&!app.isCustom?app.id:null;\r\n    appIdMap.set(id,mapped);\r\n    return mapped;\r\n  };\r\n  const noteMissing=(id)=>{ if(id>0) missingApps.add(id); };\r\n  const codeMap=new Map(); // 「元のアプリID::元のコード」→ 付け直したコード\r\n  const edgeMap=new Map(); // 「元のアプリID_元の順番」→ 今の線のID\r\n  const mapNode=(node)=>{\r\n    if(node.kind==="ghost") return cy.getElementById(node.id).length?node.id:null;\r\n    const id=mapApp(node.appId);\r\n    return id===null?null:"a"+id;\r\n  };\r\n\r\n  // 1. 手動で追加したアプリ（同じ名前の手動のアプリが今の図にあれば、それに対応させる）\r\n  clean.customApps.forEach(raw=>{\r\n    const same=APPS.find(a=>a.isCustom&&a.name===raw.name);\r\n    if(same){ appIdMap.set(raw.id,same.id); importedCount(existing,"apps"); return; }\r\n    customAppSeq=Math.max(customAppSeq,maxManualNumber(APPS.filter(a=>a.isCustom).map(a=>"m"+(-a.id)),"m"))+1;\r\n    const id=-customAppSeq;\r\n    const fields=raw.fields.map(f=>Object.assign({},f));\r\n    const app={id,name:raw.name,fields,totalFieldCount:fields.length,relations:[],ok:true,depth:0,isCustom:true,\r\n      requiredCount:fields.filter(f=>f.required).length,lookupCount:0,refCount:0};\r\n    registerManualApp(app);\r\n    appIdMap.set(raw.id,id);\r\n    const ext=cy.extent();\r\n    cy.add({group:"nodes",data:{id:"a"+id,label:buildNodeLabel(app),...nodeCardData(app),appId:id,isError:false,isStart:false,inSpace:false,isCustom:true,accent:"",fieldCount:fields.length,relCount:0,depth:0},\r\n      position:{x:(ext.x1+ext.x2)/2,y:(ext.y1+ext.y2)/2}});\r\n    const command={label:"アプリ: "+app.name+" (手動追加)",icon:"⬡",appId:id,action:()=>focusApp(id)};\r\n    commands.push(command);\r\n    importedCount(done,"apps");\r\n    undo.push(()=>{\r\n      const n=cy.getElementById("a"+id);\r\n      if(n.length) cy.remove(n);\r\n      const at=APPS.indexOf(app);\r\n      if(at>=0) APPS.splice(at,1);\r\n      appMap.delete(id);\r\n      if(scopeMembers) scopeMembers.delete("a"+id);\r\n      const c=commands.indexOf(command);\r\n      if(c>=0) commands.splice(c,1);\r\n      if(String(activeAppId)===String(id)) closeDetail();\r\n    });\r\n  });\r\n\r\n  // 2. 手動で追加した項目（同じ名前・種類の手動の項目があれば取り込まない。コードが重なるときは付け直す）\r\n  clean.customFields.forEach(item=>{\r\n    const appId=mapApp(item.appId);\r\n    const app=appId===null?null:findApp(appId);\r\n    if(!app){ importedCount(skipped,"fields"); noteMissing(item.appId); return; }\r\n    const list=Array.isArray(app.allFields)?app.allFields:(app.fields||[]);\r\n    const same=list.find(f=>f&&f.isCustom&&f.label===item.field.label&&f.type===item.field.type);\r\n    if(same){ codeMap.set(item.appId+"::"+item.field.code,same.code); importedCount(existing,"fields"); return; }\r\n    const field=Object.assign({},item.field);\r\n    if(list.some(f=>f&&(f.code===field.code||f.path===field.code))){\r\n      customFieldSeq=Math.max(customFieldSeq,maxManualNumber(list.map(f=>f&&f.code),"manual_"))+1;\r\n      field.code="manual_"+customFieldSeq;\r\n    }\r\n    codeMap.set(item.appId+"::"+item.field.code,field.code);\r\n    applyManualFieldData(app,field);\r\n    importedCount(done,"fields");\r\n    undo.push(()=>{\r\n      [app.fields,app.allFields].forEach(fields=>{ if(!Array.isArray(fields)) return; const at=fields.indexOf(field); if(at>=0) fields.splice(at,1); });\r\n      if(typeof app.totalFieldCount==="number") app.totalFieldCount=Math.max(0,app.totalFieldCount-1);\r\n      if(field.required) app.requiredCount=Math.max(0,(app.requiredCount||0)-1);\r\n    });\r\n  });\r\n  // 手動で追加した項目が、手動で追加したアプリの項目の中で重なったときのコードの対応も持つ\r\n  clean.customApps.forEach(raw=>{ raw.fields.forEach(f=>{ const key=raw.id+"::"+f.code; if(!codeMap.has(key)) codeMap.set(key,f.code); }); });\r\n\r\n  // 3. 手動で追加した関連線\r\n  const customRelationOrder=new Map(); // 元のアプリID → そのアプリの手動の関連線の数（順番の対応付けに使う）\r\n  clean.customRelations.forEach(item=>{\r\n    const k=customRelationOrder.get(item.fromAppId)||0;\r\n    customRelationOrder.set(item.fromAppId,k+1);\r\n    const fromId=mapApp(item.fromAppId), toId=mapApp(item.toApp);\r\n    const from=fromId===null?null:findApp(fromId), to=toId===null?null:findApp(toId);\r\n    const base=oldRelationCount(item.fromAppId);\r\n    const oldKey=base>=0?item.fromAppId+"_"+(base+k):"";\r\n    if(!from||!to){ importedCount(skipped,"relations"); if(!from) noteMissing(item.fromAppId); if(!to) noteMissing(item.toApp); return; }\r\n    const sameIndex=from.relations.findIndex(r=>r&&r.isCustom&&String(r.toApp)===String(to.id)&&r.kind===item.kind&&(r.fromLabel===item.label||r.fromDisplay===item.label));\r\n    if(sameIndex>=0){ if(oldKey) edgeMap.set(oldKey,"e_"+from.id+"_"+sameIndex); importedCount(existing,"relations"); return; }\r\n    customRelSeq=Math.max(customRelSeq,maxManualNumber(from.relations.map(r=>r&&r.from),"__MANUAL__"))+1;\r\n    const rel={from:"__MANUAL__"+customRelSeq,fromLabel:item.label,fromDisplay:item.label,toApp:to.id,toField:"",kind:item.kind,isCustom:true};\r\n    const relIndex=from.relations.length;\r\n    applyManualRelationData(from,rel);\r\n    const edgeId="e_"+from.id+"_"+relIndex;\r\n    cy.add({group:"edges",data:{id:edgeId,source:"a"+from.id,target:"a"+to.id,kind:item.kind,label:edgeDisplayLabel(item.label),fromLabel:item.label,fromDisplay:item.label,isCustom:true,bundleCount:1,bundleWidth:1.8}});\r\n    if(oldKey) edgeMap.set(oldKey,edgeId);\r\n    importedCount(done,"relations");\r\n    undo.push(()=>{\r\n      const at=from.relations.indexOf(rel);\r\n      if(at>=0) from.relations.splice(at,1);\r\n      if(rel.kind==="LOOKUP") from.lookupCount=Math.max(0,(from.lookupCount||0)-1);\r\n      if(rel.kind==="REF") from.refCount=Math.max(0,(from.refCount||0)-1);\r\n      const e=cy.getElementById(edgeId);\r\n      if(e.length) cy.remove(e);\r\n    });\r\n  });\r\n  // 元のファイルの線（アプリID と順番）→ 今の図の線のID\r\n  const mapEdge=(ref)=>{\r\n    const key=ref.appId+"_"+ref.ri;\r\n    if(edgeMap.has(key)) return edgeMap.get(key);\r\n    const appId=mapApp(ref.appId);\r\n    if(appId===null||ref.appId<0) return null;\r\n    const ri=mapImportedRelationIndex(oldIndex,curIndex,ref.appId,ref.ri);\r\n    if(ri<0) return null;\r\n    const edgeId="e_"+appId+"_"+ri;\r\n    return cy.getElementById(edgeId).length?edgeId:null;\r\n  };\r\n\r\n  // 4. アプリの名前・枠の色\r\n  clean.appOverrides.forEach(o=>{\r\n    const appId=mapApp(o.id);\r\n    const app=appId===null?null:findApp(appId);\r\n    if(!app){ importedCount(skipped,"appEdits"); noteMissing(o.id); return; }\r\n    const node=cy.getElementById("a"+app.id);\r\n    const before={name:app.name,entry:Object.prototype.hasOwnProperty.call(appOverrides,app.id)?Object.assign({},appOverrides[app.id]):undefined,accent:node.length?node.data("accent"):""};\r\n    const name=o.name!==undefined?o.name:app.name;\r\n    const color=o.color!==undefined?o.color:appAccentColor(app);\r\n    if(name===app.name&&color===appAccentColor(app)){ importedCount(existing,"appEdits"); return; }\r\n    applyAppOverride(app,name,color);\r\n    importedCount(done,"appEdits");\r\n    undo.push(()=>{\r\n      app.name=before.name;\r\n      if(before.entry===undefined) delete appOverrides[app.id]; else appOverrides[app.id]=before.entry;\r\n      const n=cy.getElementById("a"+app.id);\r\n      if(n.length){ n.data("accent",before.accent||""); refreshNodeDisplay(n,app); }\r\n      commands.forEach(c=>{ if(c.appId!==undefined&&String(c.appId)===String(app.id)) c.label="アプリ: "+before.name+(app.isCustom?" (手動追加)":" (ID:"+app.id+")"); });\r\n    });\r\n  });\r\n\r\n  // 5. 項目の編集（名前・種類・区分）\r\n  const mapFieldKey=(ref)=>{\r\n    const appId=mapApp(ref.appId);\r\n    if(appId===null) return null;\r\n    const code=codeMap.get(ref.appId+"::"+ref.path);\r\n    return {appId,key:appId+"::"+(code||ref.path)};\r\n  };\r\n  clean.fieldOverrides.forEach(o=>{\r\n    const ref=mapFieldKey(o);\r\n    const app=ref&&findApp(ref.appId);\r\n    const field=app&&findFieldByKey(app,ref.key);\r\n    if(!field){ importedCount(skipped,"fieldEdits"); if(!app) noteMissing(o.appId); return; }\r\n    const beforeField={}, keys=Object.keys(o.patch);\r\n    keys.forEach(k=>{ beforeField[k]=field[k]; });\r\n    const beforeEntry=Object.prototype.hasOwnProperty.call(fieldOverrides,ref.key)?Object.assign({},fieldOverrides[ref.key]):undefined;\r\n    if(keys.every(k=>field[k]===o.patch[k])){ importedCount(existing,"fieldEdits"); return; }\r\n    Object.assign(field,o.patch);\r\n    fieldOverrides[ref.key]=Object.assign({},fieldOverrides[ref.key],o.patch);\r\n    importedCount(done,"fieldEdits");\r\n    undo.push(()=>{\r\n      keys.forEach(k=>{ if(beforeField[k]===undefined) delete field[k]; else field[k]=beforeField[k]; });\r\n      if(beforeEntry===undefined) delete fieldOverrides[ref.key]; else fieldOverrides[ref.key]=beforeEntry;\r\n    });\r\n  });\r\n\r\n  // 6. 関連線の編集（名前・種類）\r\n  clean.relationOverrides.forEach(o=>{\r\n    const edgeId=mapEdge(o);\r\n    const ref=edgeId&&parseEdgeId(edgeId);\r\n    const app=ref&&findApp(ref.appId);\r\n    const rel=app&&(app.relations||[])[ref.ri];\r\n    if(!rel){ importedCount(skipped,"relationEdits"); if(mapApp(o.appId)===null) noteMissing(o.appId); return; }\r\n    const keys=Object.keys(o.patch);\r\n    if(keys.every(k=>rel[k]===o.patch[k])){ importedCount(existing,"relationEdits"); return; }\r\n    const beforeRel={}; keys.forEach(k=>{ beforeRel[k]=rel[k]; });\r\n    const beforeEntry=Object.prototype.hasOwnProperty.call(relationOverrides,edgeId)?Object.assign({},relationOverrides[edgeId]):undefined;\r\n    applyRelationOverride(app,edgeId,ref.ri,o.patch);\r\n    importedCount(done,"relationEdits");\r\n    undo.push(()=>{\r\n      keys.forEach(k=>{ if(beforeRel[k]===undefined) delete rel[k]; else rel[k]=beforeRel[k]; });\r\n      if(beforeEntry===undefined) delete relationOverrides[edgeId]; else relationOverrides[edgeId]=beforeEntry;\r\n      const e=cy.getElementById(edgeId);\r\n      if(e.length){ e.data("kind",rel.kind); e.data("label",edgeDisplayLabel(rel.fromDisplay||rel.fromLabel||"")); e.data("fromLabel",rel.fromLabel); e.data("fromDisplay",rel.fromDisplay||rel.fromLabel||""); }\r\n    });\r\n  });\r\n\r\n  // 7. 図からの削除（アプリと一緒に、そのアプリの線も隠す）・固定・隠した項目\r\n  const removeNodeIds=new Set();\r\n  clean.removedNodes.forEach(node=>{\r\n    const id=mapNode(node);\r\n    if(!id||!cy.getElementById(id).length){ importedCount(skipped,"removed"); if(node.kind==="app") noteMissing(node.appId); return; }\r\n    if(manuallyRemovedNodeIds.has(id)){ importedCount(existing,"removed"); return; }\r\n    removeNodeIds.add(id);\r\n  });\r\n  removeNodeIds.forEach(id=>{\r\n    const node=cy.getElementById(id);\r\n    const hiddenEdges=[];\r\n    manuallyRemovedNodeIds.add(id);\r\n    node.addClass("app-manual-hidden");\r\n    node.connectedEdges().forEach(edge=>{\r\n      if(nodeHiddenEdgeIds.has(edge.id())) return;\r\n      nodeHiddenEdgeIds.add(edge.id());\r\n      hiddenEdges.push({id:edge.id(),had:edge.hasClass("rel-manual-hidden")});\r\n      edge.addClass("rel-manual-hidden");\r\n    });\r\n    importedCount(done,"removedApps");\r\n    undo.push(()=>{\r\n      manuallyRemovedNodeIds.delete(id);\r\n      const n=cy.getElementById(id);\r\n      if(n.length) n.removeClass("app-manual-hidden");\r\n      hiddenEdges.forEach(h=>{ nodeHiddenEdgeIds.delete(h.id); const e=cy.getElementById(h.id); if(e.length&&!h.had&&!manuallyRemovedEdgeIds.has(h.id)) e.removeClass("rel-manual-hidden"); });\r\n    });\r\n  });\r\n  clean.removedEdges.forEach(ref=>{\r\n    const edgeId=mapEdge(ref);\r\n    if(!edgeId){ importedCount(skipped,"removed"); if(mapApp(ref.appId)===null) noteMissing(ref.appId); return; }\r\n    if(manuallyRemovedEdgeIds.has(edgeId)){ importedCount(existing,"removed"); return; }\r\n    const edge=cy.getElementById(edgeId);\r\n    const had=edge.hasClass("rel-manual-hidden");\r\n    manuallyRemovedEdgeIds.add(edgeId);\r\n    edge.addClass("rel-manual-hidden");\r\n    importedCount(done,"removedRelations");\r\n    undo.push(()=>{ manuallyRemovedEdgeIds.delete(edgeId); const e=cy.getElementById(edgeId); if(e.length&&!had&&!nodeHiddenEdgeIds.has(edgeId)) e.removeClass("rel-manual-hidden"); });\r\n  });\r\n  clean.pinnedNodes.forEach(node=>{\r\n    const id=mapNode(node);\r\n    const n=id&&cy.getElementById(id);\r\n    if(!n||!n.length){ importedCount(skipped,"pins"); if(node.kind==="app") noteMissing(node.appId); return; }\r\n    if(pinnedNodeIds.has(id)){ importedCount(existing,"pins"); return; }\r\n    // 位置を当てはめてから固定する（固定したアプリは動かせないため、ここでは印だけ付けておく）\r\n    importedCount(done,"pins");\r\n    undo.push(()=>{ const m=cy.getElementById(id); if(m.length) unpinNode(m,true); });\r\n  });\r\n  clean.hiddenFields.forEach(ref=>{\r\n    const mapped=mapFieldKey(ref);\r\n    const app=mapped&&findApp(mapped.appId);\r\n    if(!app||!findFieldByKey(app,mapped.key)){ importedCount(skipped,"hiddenFields"); if(!app) noteMissing(ref.appId); return; }\r\n    if(hiddenFieldKeys.has(mapped.key)){ importedCount(existing,"hiddenFields"); return; }\r\n    hiddenFieldKeys.add(mapped.key);\r\n    importedCount(done,"hiddenFields");\r\n    undo.push(()=>{ hiddenFieldKeys.delete(mapped.key); });\r\n  });\r\n\r\n  // 8. 表示範囲と位置（今の版: 保存したときの表示範囲。以前の版: 全体）。位置の無いアプリは、取り込んだ位置の下に並べる\r\n  const mapScope=(scope)=>{\r\n    if(!scope||scope.mode!=="around") return {mode:"all",roots:[],depth:1};\r\n    const roots=scope.roots.map(id=>id<0?(appIdMap.has(id)?appIdMap.get(id):null):mapApp(id)).filter(id=>id!==null).map(String);\r\n    return roots.length?{mode:"around",roots,depth:scope.depth}:{mode:"all",roots:[],depth:1};\r\n  };\r\n  const mapPositions=(list)=>{\r\n    const out=new Map();\r\n    list.forEach(item=>{ const id=mapNode(item.node); if(id) out.set(id,item.pos); });\r\n    return out;\r\n  };\r\n  const targetScope=mapScope(clean.version>=2?clean.scope:null);\r\n  // 表示範囲を切り替えてから（切り替えで今の位置を覚え直すため）、保存した表示範囲ごとの位置を入れる\r\n  setScope(targetScope,{keepPositions:true});\r\n  clean.scopePositions.forEach(entry=>{\r\n    const scope=mapScope(entry.scope);\r\n    if(entry.scope.mode==="around"&&scope.mode!=="around") return;\r\n    const positions={};\r\n    mapPositions(entry.positions).forEach((pos,id)=>{ positions[id]={x:pos.x,y:pos.y}; });\r\n    if(Object.keys(positions).length) scopePositionCache.set(scopeKeyOf(scope),positions);\r\n  });\r\n  const positions=mapPositions(clean.positions);\r\n  const placed=new Set();\r\n  positions.forEach((pos,id)=>{\r\n    const n=cy.getElementById(id);\r\n    if(!n.length||n.hasClass("note-node")||n.locked()) return;\r\n    n.position({x:pos.x,y:pos.y});\r\n    placed.add(id);\r\n  });\r\n  const visible=cy.nodes().filter(n=>!n.hasClass("note-node")&&!n.hasClass("scope-out")&&!n.hasClass("app-manual-hidden"));\r\n  const placedVisible=visible.filter(n=>placed.has(n.id()));\r\n  const rest=visible.filter(n=>!placed.has(n.id())&&!n.locked());\r\n  let arranged=0;\r\n  if(placedVisible.length&&rest.length){\r\n    const box=placedVisible.boundingBox();\r\n    const width=Math.max(box.w,1200);\r\n    let x=box.x1, y=box.y2+160, rowH=0;\r\n    rest.forEach(n=>{\r\n      const span=nodeSpan(n);\r\n      if(x>box.x1&&x+span.w>box.x1+width){ x=box.x1; y+=rowH+80; rowH=0; }\r\n      n.position({x:x+span.w/2,y:y+span.h/2});\r\n      x+=span.w+80;\r\n      rowH=Math.max(rowH,span.h);\r\n      arranged+=1;\r\n    });\r\n  }\r\n  if(placed.size) importedCount(done,"positions",placed.size);\r\n  const unplaced=clean.positions.length-positions.size;\r\n  if(unplaced>0) importedCount(skipped,"positions",unplaced);\r\n  clean.positions.forEach(item=>{ if(item.node.kind==="app"&&!mapNode(item.node)) noteMissing(item.node.appId); });\r\n  clean.pinnedNodes.forEach(node=>{ const id=mapNode(node); const n=id&&cy.getElementById(id); if(n&&n.length&&!pinnedNodeIds.has(id)) pinNode(n,true); });\r\n\r\n  // 9. メモ（同じ内容・同じ位置のメモがあれば取り込まない）\r\n  const notes=cy.nodes(".note-node");\r\n  clean.notes.forEach(note=>{\r\n    const same=notes.some(n=>n.data("label")===note.text&&Math.abs(n.position("x")-note.x)<1&&Math.abs(n.position("y")-note.y)<1);\r\n    if(same){ importedCount(existing,"notes"); return; }\r\n    noteSeq=Math.max(noteSeq,maxManualNumber(cy.nodes(".note-node").map(n=>n.id()),"note_"))+1;\r\n    const id="note_"+noteSeq;\r\n    addNoteElement({id,text:note.text,color:note.color,x:note.x,y:note.y});\r\n    importedCount(done,"notes");\r\n    undo.push(()=>{ const n=cy.getElementById(id); if(n.length) cy.remove(n); });\r\n  });\r\n\r\n  customFieldSeq=Math.max(customFieldSeq,maxManualNumber([].concat(...APPS.map(a=>(a.allFields||a.fields||[]).map(f=>f&&f.code))),"manual_"));\r\n  refreshAfterEditImport();\r\n  fit();\r\n  return {done,skipped,existing,missingApps:[...missingApps].sort((a,b)=>a-b),arranged,scope:targetScope,undo};\r\n}\r\n// 取り込み・取り込みの取り消しのあとに、カード・線・一覧・表を合わせる\r\nfunction refreshAfterEditImport(){\r\n  invalidateRelationCounts();\r\n  APPS.forEach(app=>{\r\n    const n=cy.getElementById("a"+app.id);\r\n    if(n.length){ n.data("relCount",(app.relations||[]).length); n.data("fieldCount",visibleFieldsForNode(app).length); }\r\n  });\r\n  refreshNodeLabels();\r\n  refreshNodeCards();\r\n  if(scopeMembers) applyScopeClasses();\r\n  applyRelationFilter();\r\n  applyRelationLabelVisibility();\r\n  if(semanticZoomActive) applySemanticZoom(cy.zoom(),true);\r\n  if(focusMode&&currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId),true);\r\n  recomputeErAnalysis();\r\n  afterGraphChange();\r\n  refreshSidebar();\r\n  refreshOpenDetail();\r\n}\r\n\r\n// ─── 結果の説明 ───\r\nconst ER_IMPORT_LABELS=[\r\n  ["apps","手動で追加したアプリ"],["fields","手動で追加した項目"],["relations","手動で追加した関連線"],\r\n  ["appEdits","アプリの名前・枠の色"],["fieldEdits","項目の編集"],["relationEdits","関連線の編集"],["notes","メモ"],\r\n  ["positions","位置"],["removedApps","図から削除したアプリ"],["removedRelations","図から削除した関連線"],["removed","図からの削除"],\r\n  ["pins","固定"],["hiddenFields","隠した項目"]\r\n];\r\nfunction sumImportCounts(map){ return Object.keys(map).reduce((s,k)=>s+map[k],0); }\r\nfunction describeEditImport(result,meta){\r\n  const lines=[];\r\n  lines.push("取り込んだファイル: "+(meta.fileName||"-")+"（"+(meta.version>=2?"今の版":"以前の版")+"の編集済みHTML）");\r\n  if(meta.savedAt) lines.push("保存した日時: "+new Date(meta.savedAt).toLocaleString("ja-JP"));\r\n  lines.push("");\r\n  const doneTotal=sumImportCounts(result.done);\r\n  lines.push(doneTotal?"取り込んだ編集":"取り込んだ編集はありません");\r\n  ER_IMPORT_LABELS.forEach(([key,label])=>{ if(result.done[key]) lines.push("- "+label+": "+result.done[key]+" 件"); });\r\n  if(result.arranged) lines.push("- ファイルに位置が無いアプリ "+result.arranged+" 件は、取り込んだ位置の下に並べました");\r\n  lines.push("表示範囲: "+(result.scope.mode==="all"?"全体":"保存したときの範囲（"+result.scope.roots.map(id=>{const a=findApp(id);return a?a.name:"App "+id;}).join("、")+" のまわり・深さ "+result.scope.depth+"）")\r\n    +(meta.version>=2?"":"（以前の版は全体の図だけを保存しています）"));\r\n  const skippedTotal=sumImportCounts(result.skipped);\r\n  if(skippedTotal){\r\n    lines.push("");\r\n    lines.push("対象外: "+skippedTotal+" 件（今の図に無いアプリ・項目・関連線の編集）");\r\n    ER_IMPORT_LABELS.forEach(([key,label])=>{ if(result.skipped[key]) lines.push("- "+label+": "+result.skipped[key]+" 件"); });\r\n    if(result.missingApps.length) lines.push("- 今の図に無いアプリ: "+result.missingApps.slice(0,10).map(id=>"App "+id).join("、")+(result.missingApps.length>10?" ほか "+(result.missingApps.length-10)+" 件":""));\r\n  }\r\n  const existingTotal=sumImportCounts(result.existing);\r\n  if(existingTotal) lines.push("同じ内容が今の図にあったため取り込まなかった編集: "+existingTotal+" 件");\r\n  if(meta.invalid) lines.push("形が正しくないため読まなかった値: "+meta.invalid+" 件");\r\n  if(!meta.hasApps) lines.push("ファイルに元の図のデータが無いため、kintone の関連線の編集・削除は対応付けられませんでした");\r\n  lines.push("");\r\n  lines.push("表示設定（配置・カードの項目・線の種類・線のまとめなど）は今の図のままです。「元に戻す」（Ctrl+Z）で取り込む前に戻せます。残すには「出力 → 編集済みHTMLを保存」。");\r\n  return {text:lines.join("\\n"),doneTotal,skippedTotal,existingTotal};\r\n}\r\n\r\n/** 編集済みHTMLの文字列から編集を取り込む。結果の説明を返す（失敗したときは error）。 */\r\nfunction importEditedHtmlText(text,fileName){\r\n  const read=readEditedHtmlText(text);\r\n  if(read.error) return {error:read.error};\r\n  const clean=sanitizeImportedEditState(read.state);\r\n  const result=applyImportedEditState(clean,read.apps);\r\n  const undo=result.undo;\r\n  if(sumImportCounts(result.done)){\r\n    pushUndo("編集済みHTMLの取り込み",()=>{\r\n      for(let i=undo.length-1;i>=0;i--){ try{ undo[i](); }catch(err){ console.error("[ER] 取り込みの取り消しに失敗",err); } }\r\n      refreshAfterEditImport();\r\n      fit();\r\n    });\r\n  }\r\n  return describeEditImport(result,{fileName,version:clean.version,savedAt:clean.savedAt,invalid:clean.invalid,hasApps:!!read.apps});\r\n}\r\nfunction openEditImport(){\r\n  closeAllMenus();\r\n  const input=document.getElementById("edit-import-file");\r\n  if(!input){ toast("この画面では取り込めません"); return; }\r\n  input.value="";\r\n  input.click();\r\n}\r\nasync function importEditedHtmlFile(file){\r\n  if(!file) return;\r\n  if(file.size>ER_IMPORT_MAX_BYTES){ toast("ファイルが大きすぎます（64MB まで）。編集済みHTMLか確認してください"); return; }\r\n  try{\r\n    const text=await file.text();\r\n    const result=importEditedHtmlText(text,file.name);\r\n    if(result.error){ toast(result.error); return; }\r\n    toast(result.doneTotal?("編集を取り込みました: "+result.doneTotal+" 件"+(result.skippedTotal?"（対象外 "+result.skippedTotal+" 件）":"")):"取り込める編集はありませんでした");\r\n    openModal("編集済みHTMLから取り込みました",result.text,exportFilename("ER図_取り込み結果","txt"));\r\n  }catch(err){\r\n    console.error("[ER] 編集済みHTMLの取り込みに失敗",err);\r\n    toast("取り込みに失敗しました: "+((err&&err.message)||err));\r\n  }\r\n}\r\n(function(){\r\n  const input=document.getElementById("edit-import-file");\r\n  // 同じファイルをもう一度選んでも取り込めるよう、読んだら選択を空に戻す\r\n  if(input) input.addEventListener("change",()=>{ const file=input.files&&input.files[0]; input.value=""; importEditedHtmlFile(file); });\r\n})();\r\n';
+  var viewer_import_default = '// ER図ビューアー: 以前に保存した編集済みHTML（以前の版・今の版）から、編集を今の図へ取り込む（「編集 → 編集済みHTMLから取り込む」）。\r\n// 取り込む編集: 手動で追加したアプリ・項目・関連線、アプリの名前と枠の色、項目と関連線の編集、メモ、位置（今の版は表示範囲も）、\r\n// 図からの削除、固定、隠した項目。表示設定（配置・カードの項目・線の種類の表示・線のまとめなど）は今の図のままにする。\r\n// 読み込んだファイルのスクリプトは実行しない。編集の状態の script 要素（id が er-edit-state。今の版は JSON、以前の版は代入のスクリプト）の中の文字列から JSON だけを取り出し、\r\n// 形と値を確かめて、知っている項目だけを使う。今の図に無いアプリ・項目・線の編集は「対象外」として件数を示す。\r\n// 関連線は「アプリID と、そのアプリの関連の順番」で名前が付いているため、ファイルに入っている元の図のデータ（const APPS）と\r\n// 今の図の元のデータを、関連の種類・項目・参照先で突き合わせて対応させる（設定の変更で関連の順番が変わっても対応できる）。\r\n\r\nconst ER_IMPORT_MAX_BYTES=64*1024*1024;\r\n// 1 種類あたりに読む件数の上限（壊れたファイル・巨大なファイルで固まらないようにする）\r\nconst ER_IMPORT_LIMIT=20000;\r\nconst ER_IMPORT_TEXT_MAX=2000;\r\nconst ER_IMPORT_NAME_MAX=200;\r\nconst ER_IMPORT_KINDS=["LOOKUP","REF","ACTION"];\r\n// この画面のスクリプト自身の文字列と取り違えないよう、目印は分けて書いてつなぐ\r\n// 編集の状態の置き方は 2 通り。今の版は実行しない JSON（type="application/json"）、以前の版は状態を window の変数へ代入するスクリプト\r\nconst ER_IMPORT_STATE_FORMS=[\r\n  {tag:"<script id=\\"er-"+"edit-state\\" type=\\"application/json\\">",prefix:""},\r\n  {tag:"<script id=\\"er-"+"edit-state\\">",prefix:"window.__ER_EDIT_"+"STATE__="}\r\n];\r\nconst ER_IMPORT_MAIN_TAG="<script id=\\"er-"+"main\\" type=\\"text/plain\\">";\r\nconst ER_IMPORT_APPS_PREFIX="const APPS = ";\r\nconst ER_IMPORT_SCRIPT_END="</"+"script>";\r\n\r\n// ─── ファイルの読み取り（文字列だけを扱う。DOM にもスクリプトにもしない） ───\r\nfunction readEditedHtmlText(text){\r\n  const source=String(text==null?"":text);\r\n  // 編集の状態は図の本体（er-main）の前に置かれる。本体の中の文字列に同じ並びがあっても、それは使わない\r\n  const mainAt=source.indexOf(ER_IMPORT_MAIN_TAG);\r\n  const found=ER_IMPORT_STATE_FORMS\r\n    .map(form=>({form,at:source.indexOf(form.tag)}))\r\n    .filter(item=>item.at>=0&&(mainAt<0||item.at<mainAt))\r\n    .sort((a,b)=>a.at-b.at)[0];\r\n  if(!found) return {error:"編集済みHTMLではありません（編集の内容が見つかりません）。図の画面の「出力 → 編集済みHTMLを保存」で保存したファイルを選んでください"};\r\n  const at=found.at, form=found.form;\r\n  const end=source.indexOf(ER_IMPORT_SCRIPT_END,at);\r\n  let body=source.slice(at+form.tag.length,end<0?source.length:end).trim();\r\n  if(form.prefix){\r\n    if(body.indexOf(form.prefix)!==0) return {error:"編集の内容を読み取れません（ファイルの形が違います）"};\r\n    body=body.slice(form.prefix.length).trim();\r\n    if(body.charAt(body.length-1)===";") body=body.slice(0,-1);\r\n  }\r\n  let state;\r\n  try{ state=JSON.parse(body); }catch(_){ return {error:"編集の内容を読み取れません（ファイルが壊れている可能性があります）"}; }\r\n  if(!state||typeof state!=="object"||Array.isArray(state)) return {error:"編集の内容を読み取れません（ファイルの形が違います）"};\r\n  return {state,apps:readEditedHtmlApps(source)};\r\n}\r\n// 編集済みHTMLに入っている、元の図のアプリのデータ（関連線の対応付けに使う）。読めなければ null\r\nfunction readEditedHtmlApps(source){\r\n  const at=source.indexOf(ER_IMPORT_MAIN_TAG);\r\n  if(at<0) return null;\r\n  let start=at+ER_IMPORT_MAIN_TAG.length;\r\n  while(source.charAt(start)==="\\n"||source.charAt(start)==="\\r") start+=1;\r\n  if(source.indexOf(ER_IMPORT_APPS_PREFIX,start)!==start) return null;\r\n  const lineEnd=source.indexOf("\\n",start);\r\n  let json=source.slice(start+ER_IMPORT_APPS_PREFIX.length,lineEnd<0?source.length:lineEnd).trim();\r\n  if(json.charAt(json.length-1)===";") json=json.slice(0,-1);\r\n  try{ const apps=JSON.parse(json); return Array.isArray(apps)?apps:null; }catch(_){ return null; }\r\n}\r\n\r\n// ─── 値の確かめ（知っている項目だけを、決まった形にして取り出す） ───\r\nfunction importText(value,max){\r\n  if(typeof value!=="string") return "";\r\n  return value.replace(/[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]/g,"").slice(0,max||ER_IMPORT_TEXT_MAX);\r\n}\r\nfunction importColor(value){\r\n  return typeof value==="string"&&/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(value)?value:"";\r\n}\r\n// アプリID（kintone のアプリは正、手動で追加したアプリは負）\r\nfunction importAppId(value){\r\n  if(typeof value!=="number"&&typeof value!=="string") return null;\r\n  const s=String(value).trim();\r\n  if(!/^-?\\d{1,16}$/.test(s)) return null;\r\n  const n=Number(s);\r\n  return Number.isSafeInteger(n)&&n!==0?n:null;\r\n}\r\nfunction importPoint(value){\r\n  if(!value||typeof value!=="object") return null;\r\n  const x=value.x, y=value.y;\r\n  return typeof x==="number"&&typeof y==="number"&&Number.isFinite(x)&&Number.isFinite(y)&&Math.abs(x)<1e7&&Math.abs(y)<1e7?{x,y}:null;\r\n}\r\nfunction importList(value){ return Array.isArray(value)?value.slice(0,ER_IMPORT_LIMIT):[]; }\r\nfunction importKeys(value){ return value&&typeof value==="object"&&!Array.isArray(value)?Object.keys(value).slice(0,ER_IMPORT_LIMIT):[]; }\r\nfunction importOwn(record,key){ return Object.prototype.hasOwnProperty.call(record,key)?record[key]:undefined; }\r\n// 図のノードID: アプリは「a + アプリID」、未取得の参照先は「g + 参照先」\r\nfunction importNodeId(value){\r\n  const s=String(value==null?"":value);\r\n  const m=/^a(-?\\d{1,16})$/.exec(s);\r\n  if(m){ const appId=importAppId(m[1]); return appId===null?null:{kind:"app",appId}; }\r\n  if(/^g[0-9A-Za-z_-]{1,40}$/.test(s)) return {kind:"ghost",id:s};\r\n  return null;\r\n}\r\n// 関連線のID: 「e_アプリID_関連の順番」\r\nfunction importEdgeRef(value){\r\n  const m=/^e_(-?\\d{1,16})_(\\d{1,6})$/.exec(String(value==null?"":value));\r\n  if(!m) return null;\r\n  const appId=importAppId(m[1]);\r\n  return appId===null?null:{appId,ri:Number(m[2])};\r\n}\r\n// 項目のキー: 「アプリID::項目のパス（またはコード）」\r\nfunction importFieldRef(value){\r\n  const s=String(value==null?"":value);\r\n  const i=s.indexOf("::");\r\n  if(i<=0) return null;\r\n  const appId=importAppId(s.slice(0,i));\r\n  const path=s.slice(i+2);\r\n  if(appId===null||!path||path.length>ER_IMPORT_TEXT_MAX) return null;\r\n  return {appId,path};\r\n}\r\nfunction importFieldType(value){ return typeof value==="string"&&/^[A-Z_]{1,40}$/.test(value)?value:""; }\r\nfunction importField(raw){\r\n  if(!raw||typeof raw!=="object") return null;\r\n  const code=importText(raw.code,ER_IMPORT_NAME_MAX).trim();\r\n  if(!code) return null;\r\n  return {code,label:importText(raw.label,ER_IMPORT_NAME_MAX).trim()||code,type:importFieldType(raw.type)||"SINGLE_LINE_TEXT",\r\n    required:raw.required===true,isPK:raw.isPK===true,unique:raw.unique===true,isLookup:raw.isLookup===true,isRef:raw.isRef===true,isCustom:true};\r\n}\r\nfunction importFieldPatch(raw){\r\n  const patch={};\r\n  if(!raw||typeof raw!=="object") return patch;\r\n  const label=importText(raw.label,ER_IMPORT_NAME_MAX).trim();\r\n  if(label) patch.label=label;\r\n  const type=importFieldType(raw.type);\r\n  if(type) patch.type=type;\r\n  ["isPK","unique","required","isLookup","isRef"].forEach(key=>{ if(typeof raw[key]==="boolean") patch[key]=raw[key]; });\r\n  return patch;\r\n}\r\nfunction importRelationPatch(raw){\r\n  const patch={};\r\n  if(!raw||typeof raw!=="object") return patch;\r\n  const fromLabel=importText(raw.fromLabel,ER_IMPORT_NAME_MAX).trim();\r\n  const fromDisplay=importText(raw.fromDisplay,ER_IMPORT_NAME_MAX).trim();\r\n  if(fromLabel) patch.fromLabel=fromLabel;\r\n  if(fromDisplay) patch.fromDisplay=fromDisplay;\r\n  if(ER_IMPORT_KINDS.indexOf(raw.kind)>=0) patch.kind=raw.kind;\r\n  return patch;\r\n}\r\nfunction importScopeKey(key){\r\n  if(key==="all") return {mode:"all",roots:[],depth:1};\r\n  const m=/^around:([-0-9,]{1,20000}):([12])$/.exec(String(key));\r\n  if(!m) return null;\r\n  const roots=m[1].split(",").map(importAppId);\r\n  if(!roots.length||roots.some(id=>id===null)) return null;\r\n  return {mode:"around",roots,depth:Number(m[2])};\r\n}\r\nfunction importPositionMap(raw){\r\n  const out=[];\r\n  importKeys(raw).forEach(key=>{\r\n    const node=importNodeId(key);\r\n    const pos=node&&importPoint(importOwn(raw,key));\r\n    if(pos) out.push({node,pos});\r\n  });\r\n  return out;\r\n}\r\n\r\n/**\r\n * 読み込んだ編集の状態（以前の版: stateVersion なし / 今の版: 2）を確かめ、決まった形にする。\r\n * 形の正しくない値は使わず、件数（invalid）だけを数える。\r\n */\r\nfunction sanitizeImportedEditState(raw){\r\n  const state=raw&&typeof raw==="object"&&!Array.isArray(raw)?raw:{};\r\n  const view=state.view&&typeof state.view==="object"&&!Array.isArray(state.view)?state.view:{};\r\n  const out={\r\n    version:Number(state.stateVersion)>=2?2:1,\r\n    savedAt:typeof state.savedAt==="string"&&!Number.isNaN(Date.parse(state.savedAt))?state.savedAt:"",\r\n    customApps:[],customFields:[],customRelations:[],\r\n    appOverrides:[],fieldOverrides:[],relationOverrides:[],notes:[],\r\n    positions:[],scope:null,scopePositions:[],\r\n    removedNodes:[],removedEdges:[],pinnedNodes:[],hiddenFields:[],\r\n    invalid:0\r\n  };\r\n  importList(state.customApps).forEach(app=>{\r\n    const id=importAppId(app&&app.id);\r\n    const name=importText(app&&app.name,ER_IMPORT_NAME_MAX).trim();\r\n    if(id===null||id>=0||!name){ out.invalid+=1; return; }\r\n    out.customApps.push({id,name,fields:importList(app.fields).slice(0,500).map(importField).filter(Boolean)});\r\n  });\r\n  importList(state.customFields).forEach(item=>{\r\n    const appId=importAppId(item&&item.appId);\r\n    const field=importField(item&&item.field);\r\n    if(appId===null||!field){ out.invalid+=1; return; }\r\n    out.customFields.push({appId,field});\r\n  });\r\n  importList(state.customRelations).forEach(item=>{\r\n    const rel=item&&item.rel;\r\n    const fromAppId=importAppId(item&&item.fromAppId);\r\n    const toApp=importAppId(rel&&rel.toApp);\r\n    const kind=rel&&ER_IMPORT_KINDS.indexOf(rel.kind)>=0?rel.kind:"";\r\n    if(fromAppId===null||toApp===null||!kind){ out.invalid+=1; return; }\r\n    const label=importText(rel.fromLabel,ER_IMPORT_NAME_MAX).trim()||importText(rel.fromDisplay,ER_IMPORT_NAME_MAX).trim()\r\n      ||(kind==="LOOKUP"?"ルックアップ":(kind==="REF"?"関連":"アクション"))+"(手動)";\r\n    out.customRelations.push({fromAppId,toApp,kind,label});\r\n  });\r\n  importKeys(state.appOverrides).forEach(key=>{\r\n    const id=importAppId(key);\r\n    const o=importOwn(state.appOverrides,key);\r\n    if(id===null||!o||typeof o!=="object"){ out.invalid+=1; return; }\r\n    const entry={id};\r\n    const name=importText(o.name,ER_IMPORT_NAME_MAX).trim();\r\n    if(name) entry.name=name;\r\n    if(typeof o.color==="string"){\r\n      const color=importColor(o.color);\r\n      if(color||o.color==="") entry.color=color;\r\n      else out.invalid+=1;\r\n    }\r\n    if(entry.name!==undefined||entry.color!==undefined) out.appOverrides.push(entry);\r\n  });\r\n  importKeys(state.fieldOverrides).forEach(key=>{\r\n    const ref=importFieldRef(key);\r\n    const patch=importFieldPatch(importOwn(state.fieldOverrides,key));\r\n    if(!ref||!Object.keys(patch).length){ out.invalid+=1; return; }\r\n    out.fieldOverrides.push({appId:ref.appId,path:ref.path,patch});\r\n  });\r\n  importKeys(state.relationOverrides).forEach(key=>{\r\n    const ref=importEdgeRef(key);\r\n    const patch=importRelationPatch(importOwn(state.relationOverrides,key));\r\n    if(!ref||!Object.keys(patch).length){ out.invalid+=1; return; }\r\n    out.relationOverrides.push({appId:ref.appId,ri:ref.ri,patch});\r\n  });\r\n  importList(state.notes).forEach(note=>{\r\n    const text=importText(note&&note.text,ER_IMPORT_TEXT_MAX).trim();\r\n    const pos=importPoint(note);\r\n    if(!text||!pos){ out.invalid+=1; return; }\r\n    out.notes.push({text,color:importColor(note.color)||"#fef08a",x:pos.x,y:pos.y});\r\n  });\r\n  out.positions=importPositionMap(view.positions);\r\n  const nodeList=(value)=>importList(value).map(importNodeId).filter(Boolean);\r\n  out.removedNodes=nodeList(view.removedNodeIds);\r\n  out.pinnedNodes=nodeList(view.pinnedNodeIds);\r\n  // アプリを削除したときに一緒に隠した線（nodeHiddenEdgeIds）は、削除したアプリから作り直すので読まない\r\n  out.removedEdges=importList(view.removedEdgeIds).map(importEdgeRef).filter(Boolean);\r\n  out.hiddenFields=importList(view.hiddenFieldKeys).map(importFieldRef).filter(Boolean);\r\n  if(out.version>=2){\r\n    // 今の版は表示範囲と、表示範囲ごとの位置を持つ（以前の版は全体の図だけ）\r\n    const scope=view.scope&&typeof view.scope==="object"?view.scope:null;\r\n    if(scope&&scope.mode==="around"){\r\n      const roots=importList(scope.roots).map(importAppId).filter(id=>id!==null);\r\n      if(roots.length) out.scope={mode:"around",roots,depth:Number(scope.depth)===2?2:1};\r\n    }else if(scope&&scope.mode==="all") out.scope={mode:"all",roots:[],depth:1};\r\n    importKeys(view.scopePositions).forEach(key=>{\r\n      const scopeRef=importScopeKey(key);\r\n      if(scopeRef) out.scopePositions.push({scope:scopeRef,positions:importPositionMap(importOwn(view.scopePositions,key))});\r\n    });\r\n  }\r\n  return out;\r\n}\r\n\r\n// ─── 関連線の対応付け ───\r\n// 関連の印: 種類・参照元の項目（関連レコード一覧は表示部品、アクションは名前）・参照先。同じ印が複数あるときは出てくる順で区別する\r\nfunction relationImportSignature(rel){\r\n  if(!rel||typeof rel!=="object") return "";\r\n  const to=String(rel.toApp==null?"":rel.toApp);\r\n  if(rel.kind==="REF") return "R|"+String(rel.controlFieldPath||rel.controlField||rel.fromPath||rel.from||"")+"|"+to;\r\n  if(rel.kind==="ACTION") return "A|"+String(rel.fromLabel||"")+"|"+to;\r\n  return "L|"+String(rel.fromPath||rel.from||"")+"|"+to;\r\n}\r\nfunction relationSignatureList(relations){\r\n  const seen=new Map();\r\n  return (Array.isArray(relations)?relations:[]).map(rel=>{\r\n    const sig=relationImportSignature(rel);\r\n    const n=(seen.get(sig)||0)+1;\r\n    seen.set(sig,n);\r\n    return sig+"#"+n;\r\n  });\r\n}\r\n// 元の図のアプリのデータ（id → 関連の印の一覧）。手動で追加したアプリは入らない\r\nfunction relationSignatureIndex(apps){\r\n  const index=new Map();\r\n  (Array.isArray(apps)?apps:[]).forEach(app=>{\r\n    const id=app&&importAppId(app.id);\r\n    if(id!==null&&id>0&&!index.has(id)) index.set(id,relationSignatureList(app.relations));\r\n  });\r\n  return index;\r\n}\r\n/** 取り込むファイルの「アプリ appId の ri 番目の関連」が、今の図の元のデータの何番目か。対応が無ければ -1 */\r\nfunction mapImportedRelationIndex(oldIndex,currentIndex,appId,ri){\r\n  const oldSigs=oldIndex&&oldIndex.get(appId);\r\n  const curSigs=currentIndex&&currentIndex.get(appId);\r\n  if(!oldSigs||!curSigs||ri<0||ri>=oldSigs.length) return -1;\r\n  return curSigs.indexOf(oldSigs[ri]);\r\n}\r\n// 今の図の元のデータ（この画面に入っている const APPS。編集で変わる前の名前・種類）\r\nlet currentOriginalSignatureIndex=null;\r\nfunction currentRelationSignatureIndex(){\r\n  if(currentOriginalSignatureIndex) return currentOriginalSignatureIndex;\r\n  const main=document.getElementById("er-main");\r\n  const apps=main?readEditedHtmlApps(ER_IMPORT_MAIN_TAG+(main.textContent||"")):null;\r\n  currentOriginalSignatureIndex=relationSignatureIndex(apps||APPS.filter(a=>!a.isCustom));\r\n  return currentOriginalSignatureIndex;\r\n}\r\n\r\n// ─── 今の図へ当てはめる ───\r\nfunction importedCount(map,key,n){ map[key]=(map[key]||0)+(n===undefined?1:n); }\r\nfunction maxManualNumber(values,prefix){\r\n  let max=0;\r\n  values.forEach(v=>{ const s=String(v||""); if(s.indexOf(prefix)===0){ const n=Number(s.slice(prefix.length)); if(Number.isSafeInteger(n)&&n>max) max=n; } });\r\n  return max;\r\n}\r\n/**\r\n * 確かめた編集を今の図へ当てはめ、結果（取り込んだ件数・対象外・すでにあった件数）を返す。\r\n * 全体を 1 回の「元に戻す」で取り込む前に戻せる。\r\n */\r\nfunction applyImportedEditState(clean,fileApps){\r\n  const undo=[];\r\n  const done={}, skipped={}, existing={};\r\n  // 表示範囲・位置は最後に戻す（先に登録し、取り消しでは最後に動く）。手動のアプリの削除・削除の取り消しの後に、表示範囲を数え直す\r\n  const beforePositions=cy.nodes().map(n=>({id:n.id(),pos:Object.assign({},n.position())}));\r\n  const beforeScope={mode:viewScope.mode,roots:viewScope.roots.slice(),depth:viewScope.depth};\r\n  const beforeCache=new Map(scopePositionCache);\r\n  undo.push(()=>{\r\n    setScope(beforeScope,{keepPositions:true});\r\n    scopePositionCache.clear();\r\n    beforeCache.forEach((value,key)=>scopePositionCache.set(key,value));\r\n    beforePositions.forEach(item=>{ const n=cy.getElementById(item.id); if(n.length&&!n.locked()) n.position(item.pos); });\r\n  });\r\n  const missingApps=new Set();\r\n  const oldIndex=fileApps?relationSignatureIndex(fileApps):null;\r\n  const curIndex=currentRelationSignatureIndex();\r\n  const oldRelationCount=(appId)=>{\r\n    if(appId<0) return 0;\r\n    const sigs=oldIndex&&oldIndex.get(appId);\r\n    return sigs?sigs.length:-1;\r\n  };\r\n  // アプリIDの対応（手動で追加したアプリは、今の図で空いている番号に付け直す）\r\n  const appIdMap=new Map();\r\n  const mapApp=(id)=>{\r\n    if(appIdMap.has(id)) return appIdMap.get(id);\r\n    const app=id>0?findApp(id):null;\r\n    const mapped=app&&!app.isCustom?app.id:null;\r\n    appIdMap.set(id,mapped);\r\n    return mapped;\r\n  };\r\n  const noteMissing=(id)=>{ if(id>0) missingApps.add(id); };\r\n  const codeMap=new Map(); // 「元のアプリID::元のコード」→ 付け直したコード\r\n  const edgeMap=new Map(); // 「元のアプリID_元の順番」→ 今の線のID\r\n  const mapNode=(node)=>{\r\n    if(node.kind==="ghost") return cy.getElementById(node.id).length?node.id:null;\r\n    const id=mapApp(node.appId);\r\n    return id===null?null:"a"+id;\r\n  };\r\n\r\n  // 1. 手動で追加したアプリ（同じ名前の手動のアプリが今の図にあれば、それに対応させる）\r\n  clean.customApps.forEach(raw=>{\r\n    const same=APPS.find(a=>a.isCustom&&a.name===raw.name);\r\n    if(same){ appIdMap.set(raw.id,same.id); importedCount(existing,"apps"); return; }\r\n    customAppSeq=Math.max(customAppSeq,maxManualNumber(APPS.filter(a=>a.isCustom).map(a=>"m"+(-a.id)),"m"))+1;\r\n    const id=-customAppSeq;\r\n    const fields=raw.fields.map(f=>Object.assign({},f));\r\n    const app={id,name:raw.name,fields,totalFieldCount:fields.length,relations:[],ok:true,depth:0,isCustom:true,\r\n      requiredCount:fields.filter(f=>f.required).length,lookupCount:0,refCount:0};\r\n    registerManualApp(app);\r\n    appIdMap.set(raw.id,id);\r\n    const ext=cy.extent();\r\n    cy.add({group:"nodes",data:{id:"a"+id,label:buildNodeLabel(app),...nodeCardData(app),appId:id,isError:false,isStart:false,inSpace:false,isCustom:true,accent:"",fieldCount:fields.length,relCount:0,depth:0},\r\n      position:{x:(ext.x1+ext.x2)/2,y:(ext.y1+ext.y2)/2}});\r\n    const command={label:"アプリ: "+app.name+" (手動追加)",icon:"⬡",appId:id,action:()=>focusApp(id)};\r\n    commands.push(command);\r\n    importedCount(done,"apps");\r\n    undo.push(()=>{\r\n      const n=cy.getElementById("a"+id);\r\n      if(n.length) cy.remove(n);\r\n      const at=APPS.indexOf(app);\r\n      if(at>=0) APPS.splice(at,1);\r\n      appMap.delete(id);\r\n      if(scopeMembers) scopeMembers.delete("a"+id);\r\n      const c=commands.indexOf(command);\r\n      if(c>=0) commands.splice(c,1);\r\n      if(String(activeAppId)===String(id)) closeDetail();\r\n    });\r\n  });\r\n\r\n  // 2. 手動で追加した項目（同じ名前・種類の手動の項目があれば取り込まない。コードが重なるときは付け直す）\r\n  clean.customFields.forEach(item=>{\r\n    const appId=mapApp(item.appId);\r\n    const app=appId===null?null:findApp(appId);\r\n    if(!app){ importedCount(skipped,"fields"); noteMissing(item.appId); return; }\r\n    const list=Array.isArray(app.allFields)?app.allFields:(app.fields||[]);\r\n    const same=list.find(f=>f&&f.isCustom&&f.label===item.field.label&&f.type===item.field.type);\r\n    if(same){ codeMap.set(item.appId+"::"+item.field.code,same.code); importedCount(existing,"fields"); return; }\r\n    const field=Object.assign({},item.field);\r\n    if(list.some(f=>f&&(f.code===field.code||f.path===field.code))){\r\n      customFieldSeq=Math.max(customFieldSeq,maxManualNumber(list.map(f=>f&&f.code),"manual_"))+1;\r\n      field.code="manual_"+customFieldSeq;\r\n    }\r\n    codeMap.set(item.appId+"::"+item.field.code,field.code);\r\n    applyManualFieldData(app,field);\r\n    importedCount(done,"fields");\r\n    undo.push(()=>{\r\n      [app.fields,app.allFields].forEach(fields=>{ if(!Array.isArray(fields)) return; const at=fields.indexOf(field); if(at>=0) fields.splice(at,1); });\r\n      if(typeof app.totalFieldCount==="number") app.totalFieldCount=Math.max(0,app.totalFieldCount-1);\r\n      if(field.required) app.requiredCount=Math.max(0,(app.requiredCount||0)-1);\r\n    });\r\n  });\r\n  // 手動で追加した項目が、手動で追加したアプリの項目の中で重なったときのコードの対応も持つ\r\n  clean.customApps.forEach(raw=>{ raw.fields.forEach(f=>{ const key=raw.id+"::"+f.code; if(!codeMap.has(key)) codeMap.set(key,f.code); }); });\r\n\r\n  // 3. 手動で追加した関連線\r\n  const customRelationOrder=new Map(); // 元のアプリID → そのアプリの手動の関連線の数（順番の対応付けに使う）\r\n  clean.customRelations.forEach(item=>{\r\n    const k=customRelationOrder.get(item.fromAppId)||0;\r\n    customRelationOrder.set(item.fromAppId,k+1);\r\n    const fromId=mapApp(item.fromAppId), toId=mapApp(item.toApp);\r\n    const from=fromId===null?null:findApp(fromId), to=toId===null?null:findApp(toId);\r\n    const base=oldRelationCount(item.fromAppId);\r\n    const oldKey=base>=0?item.fromAppId+"_"+(base+k):"";\r\n    if(!from||!to){ importedCount(skipped,"relations"); if(!from) noteMissing(item.fromAppId); if(!to) noteMissing(item.toApp); return; }\r\n    const sameIndex=from.relations.findIndex(r=>r&&r.isCustom&&String(r.toApp)===String(to.id)&&r.kind===item.kind&&(r.fromLabel===item.label||r.fromDisplay===item.label));\r\n    if(sameIndex>=0){ if(oldKey) edgeMap.set(oldKey,"e_"+from.id+"_"+sameIndex); importedCount(existing,"relations"); return; }\r\n    customRelSeq=Math.max(customRelSeq,maxManualNumber(from.relations.map(r=>r&&r.from),"__MANUAL__"))+1;\r\n    const rel={from:"__MANUAL__"+customRelSeq,fromLabel:item.label,fromDisplay:item.label,toApp:to.id,toField:"",kind:item.kind,isCustom:true};\r\n    const relIndex=from.relations.length;\r\n    applyManualRelationData(from,rel);\r\n    const edgeId="e_"+from.id+"_"+relIndex;\r\n    cy.add({group:"edges",data:{id:edgeId,source:"a"+from.id,target:"a"+to.id,kind:item.kind,label:edgeDisplayLabel(item.label),fromLabel:item.label,fromDisplay:item.label,isCustom:true,bundleCount:1,bundleWidth:1.8}});\r\n    if(oldKey) edgeMap.set(oldKey,edgeId);\r\n    importedCount(done,"relations");\r\n    undo.push(()=>{\r\n      const at=from.relations.indexOf(rel);\r\n      if(at>=0) from.relations.splice(at,1);\r\n      if(rel.kind==="LOOKUP") from.lookupCount=Math.max(0,(from.lookupCount||0)-1);\r\n      if(rel.kind==="REF") from.refCount=Math.max(0,(from.refCount||0)-1);\r\n      const e=cy.getElementById(edgeId);\r\n      if(e.length) cy.remove(e);\r\n    });\r\n  });\r\n  // 元のファイルの線（アプリID と順番）→ 今の図の線のID\r\n  const mapEdge=(ref)=>{\r\n    const key=ref.appId+"_"+ref.ri;\r\n    if(edgeMap.has(key)) return edgeMap.get(key);\r\n    const appId=mapApp(ref.appId);\r\n    if(appId===null||ref.appId<0) return null;\r\n    const ri=mapImportedRelationIndex(oldIndex,curIndex,ref.appId,ref.ri);\r\n    if(ri<0) return null;\r\n    const edgeId="e_"+appId+"_"+ri;\r\n    return cy.getElementById(edgeId).length?edgeId:null;\r\n  };\r\n\r\n  // 4. アプリの名前・枠の色\r\n  clean.appOverrides.forEach(o=>{\r\n    const appId=mapApp(o.id);\r\n    const app=appId===null?null:findApp(appId);\r\n    if(!app){ importedCount(skipped,"appEdits"); noteMissing(o.id); return; }\r\n    const node=cy.getElementById("a"+app.id);\r\n    const before={name:app.name,entry:Object.prototype.hasOwnProperty.call(appOverrides,app.id)?Object.assign({},appOverrides[app.id]):undefined,accent:node.length?node.data("accent"):""};\r\n    const name=o.name!==undefined?o.name:app.name;\r\n    const color=o.color!==undefined?o.color:appAccentColor(app);\r\n    if(name===app.name&&color===appAccentColor(app)){ importedCount(existing,"appEdits"); return; }\r\n    applyAppOverride(app,name,color);\r\n    importedCount(done,"appEdits");\r\n    undo.push(()=>{\r\n      app.name=before.name;\r\n      if(before.entry===undefined) delete appOverrides[app.id]; else appOverrides[app.id]=before.entry;\r\n      const n=cy.getElementById("a"+app.id);\r\n      if(n.length){ n.data("accent",before.accent||""); refreshNodeDisplay(n,app); }\r\n      commands.forEach(c=>{ if(c.appId!==undefined&&String(c.appId)===String(app.id)) c.label="アプリ: "+before.name+(app.isCustom?" (手動追加)":" (ID:"+app.id+")"); });\r\n    });\r\n  });\r\n\r\n  // 5. 項目の編集（名前・種類・区分）\r\n  const mapFieldKey=(ref)=>{\r\n    const appId=mapApp(ref.appId);\r\n    if(appId===null) return null;\r\n    const code=codeMap.get(ref.appId+"::"+ref.path);\r\n    return {appId,key:appId+"::"+(code||ref.path)};\r\n  };\r\n  clean.fieldOverrides.forEach(o=>{\r\n    const ref=mapFieldKey(o);\r\n    const app=ref&&findApp(ref.appId);\r\n    const field=app&&findFieldByKey(app,ref.key);\r\n    if(!field){ importedCount(skipped,"fieldEdits"); if(!app) noteMissing(o.appId); return; }\r\n    const beforeField={}, keys=Object.keys(o.patch);\r\n    keys.forEach(k=>{ beforeField[k]=field[k]; });\r\n    const beforeEntry=Object.prototype.hasOwnProperty.call(fieldOverrides,ref.key)?Object.assign({},fieldOverrides[ref.key]):undefined;\r\n    if(keys.every(k=>field[k]===o.patch[k])){ importedCount(existing,"fieldEdits"); return; }\r\n    Object.assign(field,o.patch);\r\n    fieldOverrides[ref.key]=Object.assign({},fieldOverrides[ref.key],o.patch);\r\n    importedCount(done,"fieldEdits");\r\n    undo.push(()=>{\r\n      keys.forEach(k=>{ if(beforeField[k]===undefined) delete field[k]; else field[k]=beforeField[k]; });\r\n      if(beforeEntry===undefined) delete fieldOverrides[ref.key]; else fieldOverrides[ref.key]=beforeEntry;\r\n    });\r\n  });\r\n\r\n  // 6. 関連線の編集（名前・種類）\r\n  clean.relationOverrides.forEach(o=>{\r\n    const edgeId=mapEdge(o);\r\n    const ref=edgeId&&parseEdgeId(edgeId);\r\n    const app=ref&&findApp(ref.appId);\r\n    const rel=app&&(app.relations||[])[ref.ri];\r\n    if(!rel){ importedCount(skipped,"relationEdits"); if(mapApp(o.appId)===null) noteMissing(o.appId); return; }\r\n    const keys=Object.keys(o.patch);\r\n    if(keys.every(k=>rel[k]===o.patch[k])){ importedCount(existing,"relationEdits"); return; }\r\n    const beforeRel={}; keys.forEach(k=>{ beforeRel[k]=rel[k]; });\r\n    const beforeEntry=Object.prototype.hasOwnProperty.call(relationOverrides,edgeId)?Object.assign({},relationOverrides[edgeId]):undefined;\r\n    applyRelationOverride(app,edgeId,ref.ri,o.patch);\r\n    importedCount(done,"relationEdits");\r\n    undo.push(()=>{\r\n      keys.forEach(k=>{ if(beforeRel[k]===undefined) delete rel[k]; else rel[k]=beforeRel[k]; });\r\n      if(beforeEntry===undefined) delete relationOverrides[edgeId]; else relationOverrides[edgeId]=beforeEntry;\r\n      const e=cy.getElementById(edgeId);\r\n      if(e.length){ e.data("kind",rel.kind); e.data("label",edgeDisplayLabel(rel.fromDisplay||rel.fromLabel||"")); e.data("fromLabel",rel.fromLabel); e.data("fromDisplay",rel.fromDisplay||rel.fromLabel||""); }\r\n    });\r\n  });\r\n\r\n  // 7. 図からの削除（アプリと一緒に、そのアプリの線も隠す）・固定・隠した項目\r\n  const removeNodeIds=new Set();\r\n  clean.removedNodes.forEach(node=>{\r\n    const id=mapNode(node);\r\n    if(!id||!cy.getElementById(id).length){ importedCount(skipped,"removed"); if(node.kind==="app") noteMissing(node.appId); return; }\r\n    if(manuallyRemovedNodeIds.has(id)){ importedCount(existing,"removed"); return; }\r\n    removeNodeIds.add(id);\r\n  });\r\n  removeNodeIds.forEach(id=>{\r\n    const node=cy.getElementById(id);\r\n    const hiddenEdges=[];\r\n    manuallyRemovedNodeIds.add(id);\r\n    node.addClass("app-manual-hidden");\r\n    node.connectedEdges().forEach(edge=>{\r\n      if(nodeHiddenEdgeIds.has(edge.id())) return;\r\n      nodeHiddenEdgeIds.add(edge.id());\r\n      hiddenEdges.push({id:edge.id(),had:edge.hasClass("rel-manual-hidden")});\r\n      edge.addClass("rel-manual-hidden");\r\n    });\r\n    importedCount(done,"removedApps");\r\n    undo.push(()=>{\r\n      manuallyRemovedNodeIds.delete(id);\r\n      const n=cy.getElementById(id);\r\n      if(n.length) n.removeClass("app-manual-hidden");\r\n      hiddenEdges.forEach(h=>{ nodeHiddenEdgeIds.delete(h.id); const e=cy.getElementById(h.id); if(e.length&&!h.had&&!manuallyRemovedEdgeIds.has(h.id)) e.removeClass("rel-manual-hidden"); });\r\n    });\r\n  });\r\n  clean.removedEdges.forEach(ref=>{\r\n    const edgeId=mapEdge(ref);\r\n    if(!edgeId){ importedCount(skipped,"removed"); if(mapApp(ref.appId)===null) noteMissing(ref.appId); return; }\r\n    if(manuallyRemovedEdgeIds.has(edgeId)){ importedCount(existing,"removed"); return; }\r\n    const edge=cy.getElementById(edgeId);\r\n    const had=edge.hasClass("rel-manual-hidden");\r\n    manuallyRemovedEdgeIds.add(edgeId);\r\n    edge.addClass("rel-manual-hidden");\r\n    importedCount(done,"removedRelations");\r\n    undo.push(()=>{ manuallyRemovedEdgeIds.delete(edgeId); const e=cy.getElementById(edgeId); if(e.length&&!had&&!nodeHiddenEdgeIds.has(edgeId)) e.removeClass("rel-manual-hidden"); });\r\n  });\r\n  clean.pinnedNodes.forEach(node=>{\r\n    const id=mapNode(node);\r\n    const n=id&&cy.getElementById(id);\r\n    if(!n||!n.length){ importedCount(skipped,"pins"); if(node.kind==="app") noteMissing(node.appId); return; }\r\n    if(pinnedNodeIds.has(id)){ importedCount(existing,"pins"); return; }\r\n    // 位置を当てはめてから固定する（固定したアプリは動かせないため、ここでは印だけ付けておく）\r\n    importedCount(done,"pins");\r\n    undo.push(()=>{ const m=cy.getElementById(id); if(m.length) unpinNode(m,true); });\r\n  });\r\n  clean.hiddenFields.forEach(ref=>{\r\n    const mapped=mapFieldKey(ref);\r\n    const app=mapped&&findApp(mapped.appId);\r\n    if(!app||!findFieldByKey(app,mapped.key)){ importedCount(skipped,"hiddenFields"); if(!app) noteMissing(ref.appId); return; }\r\n    if(hiddenFieldKeys.has(mapped.key)){ importedCount(existing,"hiddenFields"); return; }\r\n    hiddenFieldKeys.add(mapped.key);\r\n    importedCount(done,"hiddenFields");\r\n    undo.push(()=>{ hiddenFieldKeys.delete(mapped.key); });\r\n  });\r\n\r\n  // 8. 表示範囲と位置（今の版: 保存したときの表示範囲。以前の版: 全体）。位置の無いアプリは、取り込んだ位置の下に並べる\r\n  const mapScope=(scope)=>{\r\n    if(!scope||scope.mode!=="around") return {mode:"all",roots:[],depth:1};\r\n    const roots=scope.roots.map(id=>id<0?(appIdMap.has(id)?appIdMap.get(id):null):mapApp(id)).filter(id=>id!==null).map(String);\r\n    return roots.length?{mode:"around",roots,depth:scope.depth}:{mode:"all",roots:[],depth:1};\r\n  };\r\n  const mapPositions=(list)=>{\r\n    const out=new Map();\r\n    list.forEach(item=>{ const id=mapNode(item.node); if(id) out.set(id,item.pos); });\r\n    return out;\r\n  };\r\n  const targetScope=mapScope(clean.version>=2?clean.scope:null);\r\n  // 表示範囲を切り替えてから（切り替えで今の位置を覚え直すため）、保存した表示範囲ごとの位置を入れる\r\n  setScope(targetScope,{keepPositions:true});\r\n  clean.scopePositions.forEach(entry=>{\r\n    const scope=mapScope(entry.scope);\r\n    if(entry.scope.mode==="around"&&scope.mode!=="around") return;\r\n    const positions={};\r\n    mapPositions(entry.positions).forEach((pos,id)=>{ positions[id]={x:pos.x,y:pos.y}; });\r\n    if(Object.keys(positions).length) scopePositionCache.set(scopeKeyOf(scope),positions);\r\n  });\r\n  const positions=mapPositions(clean.positions);\r\n  const placed=new Set();\r\n  positions.forEach((pos,id)=>{\r\n    const n=cy.getElementById(id);\r\n    if(!n.length||n.hasClass("note-node")||n.locked()) return;\r\n    n.position({x:pos.x,y:pos.y});\r\n    placed.add(id);\r\n  });\r\n  const visible=cy.nodes().filter(n=>!n.hasClass("note-node")&&!n.hasClass("scope-out")&&!n.hasClass("app-manual-hidden"));\r\n  const placedVisible=visible.filter(n=>placed.has(n.id()));\r\n  const rest=visible.filter(n=>!placed.has(n.id())&&!n.locked());\r\n  let arranged=0;\r\n  if(placedVisible.length&&rest.length){\r\n    const box=placedVisible.boundingBox();\r\n    const width=Math.max(box.w,1200);\r\n    let x=box.x1, y=box.y2+160, rowH=0;\r\n    rest.forEach(n=>{\r\n      const span=nodeSpan(n);\r\n      if(x>box.x1&&x+span.w>box.x1+width){ x=box.x1; y+=rowH+80; rowH=0; }\r\n      n.position({x:x+span.w/2,y:y+span.h/2});\r\n      x+=span.w+80;\r\n      rowH=Math.max(rowH,span.h);\r\n      arranged+=1;\r\n    });\r\n  }\r\n  if(placed.size) importedCount(done,"positions",placed.size);\r\n  const unplaced=clean.positions.length-positions.size;\r\n  if(unplaced>0) importedCount(skipped,"positions",unplaced);\r\n  clean.positions.forEach(item=>{ if(item.node.kind==="app"&&!mapNode(item.node)) noteMissing(item.node.appId); });\r\n  clean.pinnedNodes.forEach(node=>{ const id=mapNode(node); const n=id&&cy.getElementById(id); if(n&&n.length&&!pinnedNodeIds.has(id)) pinNode(n,true); });\r\n\r\n  // 9. メモ（同じ内容・同じ位置のメモがあれば取り込まない）\r\n  const notes=cy.nodes(".note-node");\r\n  clean.notes.forEach(note=>{\r\n    const same=notes.some(n=>n.data("label")===note.text&&Math.abs(n.position("x")-note.x)<1&&Math.abs(n.position("y")-note.y)<1);\r\n    if(same){ importedCount(existing,"notes"); return; }\r\n    noteSeq=Math.max(noteSeq,maxManualNumber(cy.nodes(".note-node").map(n=>n.id()),"note_"))+1;\r\n    const id="note_"+noteSeq;\r\n    addNoteElement({id,text:note.text,color:note.color,x:note.x,y:note.y});\r\n    importedCount(done,"notes");\r\n    undo.push(()=>{ const n=cy.getElementById(id); if(n.length) cy.remove(n); });\r\n  });\r\n\r\n  customFieldSeq=Math.max(customFieldSeq,maxManualNumber([].concat(...APPS.map(a=>(a.allFields||a.fields||[]).map(f=>f&&f.code))),"manual_"));\r\n  refreshAfterEditImport();\r\n  fit();\r\n  return {done,skipped,existing,missingApps:[...missingApps].sort((a,b)=>a-b),arranged,scope:targetScope,undo};\r\n}\r\n// 取り込み・取り込みの取り消しのあとに、カード・線・一覧・表を合わせる\r\nfunction refreshAfterEditImport(){\r\n  invalidateRelationCounts();\r\n  APPS.forEach(app=>{\r\n    const n=cy.getElementById("a"+app.id);\r\n    if(n.length){ n.data("relCount",(app.relations||[]).length); n.data("fieldCount",visibleFieldsForNode(app).length); }\r\n  });\r\n  refreshNodeLabels();\r\n  refreshNodeCards();\r\n  if(scopeMembers) applyScopeClasses();\r\n  applyRelationFilter();\r\n  applyRelationLabelVisibility();\r\n  if(semanticZoomActive) applySemanticZoom(cy.zoom(),true);\r\n  if(focusMode&&currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId),true);\r\n  recomputeErAnalysis();\r\n  afterGraphChange();\r\n  refreshSidebar();\r\n  refreshOpenDetail();\r\n}\r\n\r\n// ─── 結果の説明 ───\r\nconst ER_IMPORT_LABELS=[\r\n  ["apps","手動で追加したアプリ"],["fields","手動で追加した項目"],["relations","手動で追加した関連線"],\r\n  ["appEdits","アプリの名前・枠の色"],["fieldEdits","項目の編集"],["relationEdits","関連線の編集"],["notes","メモ"],\r\n  ["positions","位置"],["removedApps","図から削除したアプリ"],["removedRelations","図から削除した関連線"],["removed","図からの削除"],\r\n  ["pins","固定"],["hiddenFields","隠した項目"]\r\n];\r\nfunction sumImportCounts(map){ return Object.keys(map).reduce((s,k)=>s+map[k],0); }\r\nfunction describeEditImport(result,meta){\r\n  const lines=[];\r\n  lines.push("取り込んだファイル: "+(meta.fileName||"-")+"（"+(meta.version>=2?"今の版":"以前の版")+"の編集済みHTML）");\r\n  if(meta.savedAt) lines.push("保存した日時: "+new Date(meta.savedAt).toLocaleString("ja-JP"));\r\n  lines.push("");\r\n  const doneTotal=sumImportCounts(result.done);\r\n  lines.push(doneTotal?"取り込んだ編集":"取り込んだ編集はありません");\r\n  ER_IMPORT_LABELS.forEach(([key,label])=>{ if(result.done[key]) lines.push("- "+label+": "+result.done[key]+" 件"); });\r\n  if(result.arranged) lines.push("- ファイルに位置が無いアプリ "+result.arranged+" 件は、取り込んだ位置の下に並べました");\r\n  lines.push("表示範囲: "+(result.scope.mode==="all"?"全体":"保存したときの範囲（"+result.scope.roots.map(id=>{const a=findApp(id);return a?a.name:"App "+id;}).join("、")+" のまわり・深さ "+result.scope.depth+"）")\r\n    +(meta.version>=2?"":"（以前の版は全体の図だけを保存しています）"));\r\n  const skippedTotal=sumImportCounts(result.skipped);\r\n  if(skippedTotal){\r\n    lines.push("");\r\n    lines.push("対象外: "+skippedTotal+" 件（今の図に無いアプリ・項目・関連線の編集）");\r\n    ER_IMPORT_LABELS.forEach(([key,label])=>{ if(result.skipped[key]) lines.push("- "+label+": "+result.skipped[key]+" 件"); });\r\n    if(result.missingApps.length) lines.push("- 今の図に無いアプリ: "+result.missingApps.slice(0,10).map(id=>"App "+id).join("、")+(result.missingApps.length>10?" ほか "+(result.missingApps.length-10)+" 件":""));\r\n  }\r\n  const existingTotal=sumImportCounts(result.existing);\r\n  if(existingTotal) lines.push("同じ内容が今の図にあったため取り込まなかった編集: "+existingTotal+" 件");\r\n  if(meta.invalid) lines.push("形が正しくないため読まなかった値: "+meta.invalid+" 件");\r\n  if(!meta.hasApps) lines.push("ファイルに元の図のデータが無いため、kintone の関連線の編集・削除は対応付けられませんでした");\r\n  lines.push("");\r\n  lines.push("表示設定（配置・カードの項目・線の種類・線のまとめなど）は今の図のままです。「元に戻す」（Ctrl+Z）で取り込む前に戻せます。残すには「出力 → 編集済みHTMLを保存」。");\r\n  return {text:lines.join("\\n"),doneTotal,skippedTotal,existingTotal};\r\n}\r\n\r\n/** 編集済みHTMLの文字列から編集を取り込む。結果の説明を返す（失敗したときは error）。 */\r\nfunction importEditedHtmlText(text,fileName){\r\n  const read=readEditedHtmlText(text);\r\n  if(read.error) return {error:read.error};\r\n  const clean=sanitizeImportedEditState(read.state);\r\n  const result=applyImportedEditState(clean,read.apps);\r\n  const undo=result.undo;\r\n  if(sumImportCounts(result.done)){\r\n    pushUndo("編集済みHTMLの取り込み",()=>{\r\n      for(let i=undo.length-1;i>=0;i--){ try{ undo[i](); }catch(err){ console.error("[ER] 取り込みの取り消しに失敗",err); } }\r\n      refreshAfterEditImport();\r\n      fit();\r\n    });\r\n  }\r\n  return describeEditImport(result,{fileName,version:clean.version,savedAt:clean.savedAt,invalid:clean.invalid,hasApps:!!read.apps});\r\n}\r\nfunction openEditImport(){\r\n  closeAllMenus();\r\n  const input=document.getElementById("edit-import-file");\r\n  if(!input){ toast("この画面では取り込めません"); return; }\r\n  input.value="";\r\n  input.click();\r\n}\r\nasync function importEditedHtmlFile(file){\r\n  if(!file) return;\r\n  if(file.size>ER_IMPORT_MAX_BYTES){ toast("ファイルが大きすぎます（64MB まで）。編集済みHTMLか確認してください"); return; }\r\n  try{\r\n    const text=await file.text();\r\n    const result=importEditedHtmlText(text,file.name);\r\n    if(result.error){ toast(result.error); return; }\r\n    toast(result.doneTotal?("編集を取り込みました: "+result.doneTotal+" 件"+(result.skippedTotal?"（対象外 "+result.skippedTotal+" 件）":"")):"取り込める編集はありませんでした");\r\n    openModal("編集済みHTMLから取り込みました",result.text,exportFilename("ER図_取り込み結果","txt"));\r\n  }catch(err){\r\n    console.error("[ER] 編集済みHTMLの取り込みに失敗",err);\r\n    toast("取り込みに失敗しました: "+((err&&err.message)||err));\r\n  }\r\n}\r\n(function(){\r\n  const input=document.getElementById("edit-import-file");\r\n  // 同じファイルをもう一度選んでも取り込めるよう、読んだら選択を空に戻す\r\n  if(input) input.addEventListener("change",()=>{ const file=input.files&&input.files[0]; input.value=""; importEditedHtmlFile(file); });\r\n})();\r\n';
+
+  // raw-text:src/tabs/er-viewer/viewer-actions.js
+  var viewer_actions_default = `// ER図ビューアー: 画面の操作の受け口。\r
+// CSP の script-src は埋め込んだスクリプトのハッシュだけを許可し、'unsafe-inline' を使わない。そのため onclick などのイベント属性は使えない\r
+// （どこかで文字の逃がしが漏れても、差し込まれたイベント属性や、javascript スキームの URL は動かない）。\r
+// ボタンなどには操作の名前を data-action（押す）・data-change（選ぶ）・data-input（入力する）・data-keydown（キーを押す）に書き、\r
+// document で受けて、下の表にある操作だけを呼ぶ（表に無い名前は何もしない。関数の名前をそのまま呼ぶことはしない）。\r
+// 受けるのは捕捉の段階（capture）。イベント属性と同じく、要素や上の要素に付けた処理より先に動く。\r
+// 動的に作る HTML（詳細パネル・表・構造チェック・表示範囲の帯・色の見本）も同じ書き方にする。保存し直した HTML でもそのまま動く。\r
+\r
+// 押したときの操作。el は data-action を持つ要素、event は click\r
+const ER_CLICK_ACTIONS={\r
+  // 操作バー\r
+  "sidebar-toggle":el=>toggleSidebar(undefined,el),\r
+  "overview-toggle":()=>toggleOverview(),\r
+  "view":el=>setView(el.dataset.view),\r
+  "mobile-menu":()=>toggleMobileMenu(),\r
+  "menu":el=>toggleMenu(el.dataset.menu),\r
+  "theme":()=>toggleTheme(),\r
+  "help":()=>openHelp(),\r
+  // 表示設定\r
+  "scope-start":()=>showStartScope(),\r
+  "scope-all":()=>showAllScope(),\r
+  "scope-depth":el=>setScopeDepth(Number(el.dataset.depth)),\r
+  "layout":el=>setLayout(el.dataset.layoutBtn),\r
+  "separate-nolink":()=>toggleSeparateNoLink(),\r
+  "simple-mode":()=>toggleSimpleMode(),\r
+  "relation-kind":el=>toggleRelationKind(el.dataset.kind),\r
+  "bundle":()=>toggleEdgeBundling(),\r
+  "relation-labels":()=>toggleRelationLabels(),\r
+  "focus-mode":()=>toggleFocusMode(),\r
+  "clear-focus":()=>{clearFocus();closeAllMenus();},\r
+  "path-finder":()=>togglePathFinder(),\r
+  "minimap":()=>toggleMinimap(),\r
+  "fullscreen":()=>toggleFullscreen(),\r
+  // 編集\r
+  "undo":()=>undoLast(),\r
+  "add-app":()=>openAddApp(),\r
+  "add-field":()=>openAddField(),\r
+  "add-relation":()=>openAddRelation(),\r
+  "add-note":()=>openAddNote(),\r
+  "edit-app":el=>openEditApp(el.dataset.app),\r
+  "toggle-pin":()=>togglePinFromSelection(),\r
+  "remove-relations":()=>removeSelectedRelations(),\r
+  "remove-apps":()=>removeSelectedApps(),\r
+  "align":el=>alignSelected(el.dataset.axis),\r
+  "distribute":el=>distributeSelected(el.dataset.axis),\r
+  "color-by-depth":()=>autoColorByDepth(),\r
+  "clear-colors":()=>clearNodeColors(),\r
+  "restore-relations":()=>restoreRemovedRelations(),\r
+  "restore-apps":()=>restoreRemovedApps(),\r
+  "restore-all-fields":()=>restoreAllHiddenFields(),\r
+  "clear-pins":()=>clearPins(),\r
+  "edit-import":()=>openEditImport(),\r
+  // 出力\r
+  "print":()=>printDiagram(),\r
+  "save-html":()=>exportEditedHtml(),\r
+  "png":()=>exportPNG(),\r
+  "markdown":()=>showMarkdown(),\r
+  "csv-apps":()=>showCSVApps(),\r
+  "csv-fields":()=>showCSVFields(),\r
+  "csv-relations":()=>showCSVRelations(),\r
+  "json":()=>showJSON(),\r
+  "mermaid":()=>showMermaid(),\r
+  "drawio":()=>showDrawio(),\r
+  "plantuml":()=>showPlantUML(),\r
+  "sql":()=>showSQL(),\r
+  "share-url":()=>copyShareUrl(),\r
+  // アプリ一覧（左）・構造チェック・凡例\r
+  "sidebar-close":()=>closeSidebar(),\r
+  "analysis-toggle":()=>toggleAnalysisPanel(),\r
+  "analysis-open":()=>{toggleAnalysisPanel(true);showDiagramView();},\r
+  "analysis-close":()=>toggleAnalysisPanel(false),\r
+  "analysis-focus":el=>focusAnalysisApps(el.dataset.analysisIds),\r
+  "legend-toggle":()=>toggleLegend(),\r
+  // 表示倍率・経路探索\r
+  "zoom-in":()=>zoomIn(),\r
+  "zoom-out":()=>zoomOut(),\r
+  "zoom-reset":()=>zoomReset(),\r
+  "zoom-fit":()=>fit(),\r
+  "zoom-presets":()=>toggleZoomPresets(),\r
+  "zoom-percent":el=>setZoomPercent(Number(el.dataset.zoom)),\r
+  "find-path":()=>findPath(),\r
+  "clear-path":()=>clearPath(),\r
+  // 詳細パネル・表\r
+  "detail-close":()=>closeDetail(),\r
+  "focus-app":el=>focusApp(el.dataset.app),\r
+  "show-around":el=>showAroundApp(el.dataset.app),\r
+  "restore-fields":el=>restoreHiddenFields(el.dataset.app),\r
+  "edit-relation-row":el=>openEditRelationRow(el),\r
+  "toggle-relation-row":el=>toggleRelationEdgeFromRow(el),\r
+  "edit-field-row":el=>openEditFieldRow(el),\r
+  "hide-field-row":el=>hideFieldFromRow(el),\r
+  "go-edge":el=>goToRelationEdge(el.dataset.edge),\r
+  "sort":el=>sortTable(el.dataset.table,el.dataset.sort),\r
+  "apps-check":el=>setAppsCheck(el.dataset.check),\r
+  "relation-table-kind":el=>toggleRelationTableKind(el.dataset.kind),\r
+  // 取得・関連サマリー\r
+  "overview-close":()=>hideOverview(),\r
+  "overview-analysis":()=>{hideOverview();toggleAnalysisPanel(true);},\r
+  "overview-relations":el=>{hideOverview();showRelationsTable(el.dataset.state||"");},\r
+  // ダイアログ\r
+  "backdrop":(el,event)=>{ if(event.target===el) closeErDialog(el.dataset.dialog); },\r
+  "modal-copy":()=>copyModal(),\r
+  "modal-download":()=>downloadModal(),\r
+  "modal-close":()=>closeModal(),\r
+  "editor-delete":()=>deleteFromEditor(),\r
+  "editor-submit":()=>submitEditor(),\r
+  "editor-close":()=>closeEditor(),\r
+  "swatch":el=>selectSwatch(el),\r
+  "help-close":()=>closeHelp(),\r
+  "help-cmd":()=>{closeHelp();openCmd();}\r
+};\r
+// 行の中のボタン（✎・✕）は、押した後にイベントが伝わるのを止める（以前の onclick の event.stopPropagation() と同じ）\r
+const ER_STOP_ACTIONS=new Set(["edit-relation-row","toggle-relation-row","edit-field-row","hide-field-row"]);\r
+// 選んだときの操作（select の change）\r
+const ER_CHANGE_ACTIONS={\r
+  "density":el=>setDensity(el.value),\r
+  "focus-options":()=>updateFocusOptions(),\r
+  "app-list-filter":()=>refreshAppList(),\r
+  "apps-status":el=>setAppsStatus(el.value),\r
+  "relations-state":el=>setRelationsState(el.value)\r
+};\r
+// 入力したときの操作（input）\r
+const ER_INPUT_ACTIONS={\r
+  "search":el=>searchGraph(el.value),\r
+  "cmd-filter":el=>filterCmd(el.value),\r
+  "detail-filter":el=>filterDetailFields(el.value)\r
+};\r
+// キーを押したときの操作（keydown）\r
+const ER_KEYDOWN_ACTIONS={\r
+  "search":(el,event)=>{ if(event.key==="Enter"){ event.preventDefault(); focusNextSearchMatch(); } },\r
+  "view-tab":(el,event)=>onViewTabKey(event)\r
+};\r
+// 背景を押して閉じるダイアログ\r
+function closeErDialog(name){\r
+  if(name==="cmd") closeCmd();\r
+  else if(name==="modal") closeModal();\r
+  else if(name==="editor") closeEditor();\r
+  else if(name==="help") closeHelp();\r
+}\r
+function erActionListener(table,attribute){\r
+  return function(event){\r
+    const start=event.target;\r
+    if(!start||typeof start.closest!=="function") return;\r
+    const el=start.closest("["+attribute+"]");\r
+    if(!el) return;\r
+    const name=el.getAttribute(attribute);\r
+    if(!Object.prototype.hasOwnProperty.call(table,name)) return;\r
+    if(attribute==="data-action"&&ER_STOP_ACTIONS.has(name)) event.stopPropagation();\r
+    table[name](el,event);\r
+  };\r
+}\r
+document.addEventListener("click",erActionListener(ER_CLICK_ACTIONS,"data-action"),true);\r
+document.addEventListener("change",erActionListener(ER_CHANGE_ACTIONS,"data-change"),true);\r
+document.addEventListener("input",erActionListener(ER_INPUT_ACTIONS,"data-input"),true);\r
+document.addEventListener("keydown",erActionListener(ER_KEYDOWN_ACTIONS,"data-keydown"),true);\r
+`;
 
   // raw-text:src/tabs/er-viewer/viewer-boot.js
   var viewer_boot_default = '// ER図ビューアー: 起動。すべての関数と状態を定義した後に、画面の状態を決めて最初の配置をする。\r\n// 保存した HTML（編集済みHTML）は開いた時点の画面の部品を複製しているため、ここで開閉や表示を初期の状態に戻す。\r\napplyTheme();\r\nsyncLayoutButtons(ER_OPTIONS.layoutName || "dagre");\r\nsyncDensityControl();\r\nsyncSeparateNoLinkButton();\r\nsyncFocusButton();\r\nsyncRelationKindButtons();\r\nsyncBundleButton();\r\nsyncSimpleModeButton();\r\nsyncRelationLabelButton();\r\nsetView("diagram");\r\nhideOverview();\r\ncloseDetail();\r\nsyncSidebarMode();\r\nsyncLegendToggle();\r\nconst restoredScope = applySavedViewState();\r\napplyRelationFilter();\r\napplyRelationLabelVisibility();\r\nupdateFocusOptions();\r\nupdateSearchMeta("", 0);\r\nrenderAnalysisPanel();\r\nrefreshSidebar();\r\nif(hasSavedLayout){\r\n  // 保存した位置をそのまま使い、配置し直さない\r\n  setScope(restoredScope || { mode: "all" }, { initial: true, keepPositions: true });\r\n  if(ER_EDIT_STATE.view && typeof ER_EDIT_STATE.view.zoom === "number" && ER_EDIT_STATE.view.pan){\r\n    cy.viewport({zoom:ER_EDIT_STATE.view.zoom, pan:ER_EDIT_STATE.view.pan});\r\n  }else{\r\n    setTimeout(fit,100);\r\n  }\r\n}else{\r\n  setScope(defaultScope(), { initial: true });\r\n}\r\nsetTimeout(updateZoomLabel, 300);\r\nsetTimeout(applyStateFromHash, 350);\r\n';
 
   // src/tabs/er-viewer/page.ts
   var lf = (text) => String(text).replace(/\r\n?/g, "\n");
-  var ER_VIEWER_SCRIPT = [viewer_core_default, viewer_edit_default, viewer_ui_default, viewer_export_default, viewer_import_default, viewer_boot_default].map(lf).join("\n");
+  var ER_VIEWER_SCRIPT = [viewer_core_default, viewer_edit_default, viewer_ui_default, viewer_export_default, viewer_import_default, viewer_actions_default, viewer_boot_default].map(lf).join("\n");
   var ER_VIEWER_CSS = lf(viewer_default);
+  function scriptHashSource(text) {
+    return `'sha256-${sha256Base64(text)}'`;
+  }
+  var libraryHashCache = /* @__PURE__ */ new WeakMap();
+  function libraryHashSource(lib) {
+    let source = libraryHashCache.get(lib);
+    if (!source) {
+      source = scriptHashSource(lib.text);
+      libraryHashCache.set(lib, source);
+    }
+    return source;
+  }
+  function erViewerCsp(scriptHashSources) {
+    return [
+      "default-src 'none'",
+      `script-src ${scriptHashSources.join(" ")}`,
+      "script-src-attr 'none'",
+      "style-src 'self' 'unsafe-inline'",
+      "font-src 'self' data:",
+      "img-src data: blob:",
+      "connect-src 'none'",
+      "object-src 'none'",
+      "base-uri 'none'",
+      "form-action 'none'",
+      "frame-src 'none'"
+    ].join("; ");
+  }
   var LAYOUT_BUTTONS = [
     ["dagre", "階層", "関連の向きに沿って左から右へ並べます（おすすめ）"],
     ["cose", "自動", "つながりの強さで自動に並べます"],
@@ -9620,16 +9964,28 @@ function copyShareUrl(){\r
   function renderErViewerPage(ctx) {
     const a = ctx.analysis;
     const attention = a.counts.retrievalPartial + a.counts.retrievalFailed;
+    const mainText = lf(`
+${ctx.mainScript}
+`);
+    const loaderText = lf(`
+${erLoaderScript(ctx.fallbackRowsJson)}
+`);
+    const csp = erViewerCsp([
+      ...ctx.libraryScripts.map(libraryHashSource),
+      scriptHashSource(loaderText),
+      // 図の本体は text/plain で置き、起動スクリプトが描画ライブラリを確かめてから同じ中身の script 要素を作って動かす
+      scriptHashSource(mainText)
+    ]);
     return (
       /*html*/
       `<!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="${csp}">
 <meta name="color-scheme" content="light dark">
 <title>${esc(ctx.pageTitle)}</title>
-${ctx.libraryScripts}
+${ctx.libraryScripts.map((lib) => `<script id="${esc(lib.id)}">${lib.text}<\/script>`).join("\n")}
 <style>
 ${ER_VIEWER_CSS}
 </style>
@@ -9637,150 +9993,150 @@ ${ER_VIEWER_CSS}
 <body>
 
 <header id="topbar">
-  <button type="button" class="tb tb-icon" id="sidebar-toggle-btn" onclick="toggleSidebar(undefined,this)" title="アプリ一覧を開閉 (Ctrl+B)" aria-label="アプリ一覧を開閉" aria-controls="sidebar" aria-expanded="true">☰</button>
+  <button type="button" class="tb tb-icon" id="sidebar-toggle-btn" data-action="sidebar-toggle" title="アプリ一覧を開閉 (Ctrl+B)" aria-label="アプリ一覧を開閉" aria-controls="sidebar" aria-expanded="true">☰</button>
   <div class="brand">
     <h1 id="er-title" title="${esc(ctx.targetTitle)}">kintone ER図<small>${esc(ctx.targetText)}</small></h1>
     <div class="brand-sub">
-      <button type="button" class="meta-pill meta-pill--btn" id="overview-pill" onclick="toggleOverview()" title="取得・関連サマリーを開く" aria-controls="overview" aria-expanded="false">${ctx.appCount}アプリ · ${ctx.relationCount}関連 · 循環${a.cycles} · 孤立${a.isolated} · 未取得${a.unresolved}<span aria-hidden="true"> ▾</span></button>
+      <button type="button" class="meta-pill meta-pill--btn" id="overview-pill" data-action="overview-toggle" title="取得・関連サマリーを開く" aria-controls="overview" aria-expanded="false">${ctx.appCount}アプリ · ${ctx.relationCount}関連 · 循環${a.cycles} · 孤立${a.isolated} · 未取得${a.unresolved}<span aria-hidden="true"> ▾</span></button>
       <span class="brand-meta" title="${ctx.sourceText ? esc(`${ctx.sourceText} · ${ctx.connectionText}`) : "取得日時と接続先"}">${ctx.sourceText ? esc(ctx.sourceText) : `${esc(ctx.generatedText)} 取得`} · ${esc(ctx.connectionText)}</span>
     </div>
   </div>
   <div class="search-wrap" role="search">
-    <input id="search-box" type="search" placeholder="アプリ・項目を検索 (Ctrl+F)" aria-label="アプリ・項目を検索（図・アプリ一覧・表に効きます）" autocomplete="off" oninput="searchGraph(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();focusNextSearchMatch();}">
+    <input id="search-box" type="search" placeholder="アプリ・項目を検索 (Ctrl+F)" aria-label="アプリ・項目を検索（図・アプリ一覧・表に効きます）" autocomplete="off" data-input="search" data-keydown="search">
     <span class="meta-pill" id="search-meta" hidden aria-live="polite"><b>検索</b> すべて</span>
   </div>
   <div class="view-tabs" role="tablist" aria-label="表示の切り替え">
-    <button type="button" role="tab" class="view-tab" id="tab-diagram" aria-selected="true" aria-controls="view-diagram" onclick="setView('diagram')" onkeydown="onViewTabKey(event)" title="図 (Alt+1)">図</button>
-    <button type="button" role="tab" class="view-tab" id="tab-apps" aria-selected="false" aria-controls="view-apps" tabindex="-1" onclick="setView('apps')" onkeydown="onViewTabKey(event)" title="アプリ一覧 (Alt+2)">アプリ<span class="tab-long">一覧</span><span class="tab-count">${ctx.appCount}</span></button>
-    <button type="button" role="tab" class="view-tab" id="tab-relations" aria-selected="false" aria-controls="view-relations" tabindex="-1" onclick="setView('relations')" onkeydown="onViewTabKey(event)" title="関連一覧 (Alt+3)">関連<span class="tab-long">一覧</span><span class="tab-count">${ctx.relationCount}</span></button>
+    <button type="button" role="tab" class="view-tab" id="tab-diagram" aria-selected="true" aria-controls="view-diagram" data-action="view" data-view="diagram" data-keydown="view-tab" title="図 (Alt+1)">図</button>
+    <button type="button" role="tab" class="view-tab" id="tab-apps" aria-selected="false" aria-controls="view-apps" tabindex="-1" data-action="view" data-view="apps" data-keydown="view-tab" title="アプリ一覧 (Alt+2)">アプリ<span class="tab-long">一覧</span><span class="tab-count">${ctx.appCount}</span></button>
+    <button type="button" role="tab" class="view-tab" id="tab-relations" aria-selected="false" aria-controls="view-relations" tabindex="-1" data-action="view" data-view="relations" data-keydown="view-tab" title="関連一覧 (Alt+3)">関連<span class="tab-long">一覧</span><span class="tab-count">${ctx.relationCount}</span></button>
   </div>
-  <button type="button" class="tb tb-icon" id="mobile-menu-btn" onclick="toggleMobileMenu()" title="ほかの操作" aria-label="ほかの操作" aria-expanded="false">⋯</button>
+  <button type="button" class="tb tb-icon" id="mobile-menu-btn" data-action="mobile-menu" title="ほかの操作" aria-label="ほかの操作" aria-expanded="false">⋯</button>
   <div class="tb-actions">
     <div class="tb-menu" id="settings-menu">
-      <button type="button" class="tb tb-menu-btn" id="settings-btn" onclick="toggleMenu('settings-menu')" aria-haspopup="true" aria-expanded="false" title="表示範囲・配置・カードの項目・線・強調">表示設定</button>
+      <button type="button" class="tb tb-menu-btn" id="settings-btn" data-action="menu" data-menu="settings-menu" aria-haspopup="true" aria-expanded="false" title="表示範囲・配置・カードの項目・線・強調">表示設定</button>
       <div class="tb-menu-panel settings-panel" role="group" aria-label="表示設定">
         <div class="settings-group">
           <div class="menu-heading">表示範囲</div>
           <div class="seg" role="group" aria-label="表示範囲">
-            <button type="button" class="tb" data-scope-btn="start" aria-pressed="false" onclick="showStartScope()" title="起点とその関連先だけを表示します">起点まわり</button>
-            <button type="button" class="tb" data-scope-btn="all" aria-pressed="false" onclick="showAllScope()" title="すべてのアプリを表示します">全体</button>
+            <button type="button" class="tb" data-scope-btn="start" aria-pressed="false" data-action="scope-start" title="起点とその関連先だけを表示します">起点まわり</button>
+            <button type="button" class="tb" data-scope-btn="all" aria-pressed="false" data-action="scope-all" title="すべてのアプリを表示します">全体</button>
           </div>
           <div class="menu-note">アプリをダブルクリックすると、そのアプリのまわりを表示します。</div>
           <div class="menu-heading">配置</div>
           <div class="seg" role="group" aria-label="アプリの並べ方">
-            ${LAYOUT_BUTTONS.map(([name, label, title]) => `<button type="button" class="tb" data-layout-btn="${name}" aria-pressed="false" onclick="setLayout('${name}')" title="${esc(title)}">${esc(label)}</button>`).join("\n            ")}
+            ${LAYOUT_BUTTONS.map(([name, label, title]) => `<button type="button" class="tb" data-layout-btn="${name}" aria-pressed="false" data-action="layout" title="${esc(title)}">${esc(label)}</button>`).join("\n            ")}
           </div>
-          <button type="button" class="tb tb-check active" id="separate-nolink-btn" aria-pressed="true" onclick="toggleSeparateNoLink()" title="関連線のないアプリを、図の下にまとめて置きます">関連のないアプリを下にまとめる</button>
+          <button type="button" class="tb tb-check active" id="separate-nolink-btn" aria-pressed="true" data-action="separate-nolink" title="関連線のないアプリを、図の下にまとめて置きます">関連のないアプリを下にまとめる</button>
           <div class="menu-heading">カードの項目</div>
           <div class="settings-row">
-            <select id="density-select" class="tb-select" onchange="setDensity(this.value)" aria-label="カードに出す項目の量" title="カードに出す項目の量">
+            <select id="density-select" class="tb-select" data-change="density" aria-label="カードに出す項目の量" title="カードに出す項目の量">
               <option value="none">結合のみ（アプリ名だけ）</option>
               <option value="compact">コンパクト（結合に使う項目）</option>
               <option value="standard">標準（結合と必須の項目）</option>
               <option value="full">詳細（すべての項目）</option>
             </select>
           </div>
-          <button type="button" class="tb tb-check" id="simple-mode-btn" aria-pressed="false" onclick="toggleSimpleMode()" title="項目を隠して、アプリのつながりだけを表示します">シンプル（項目を隠す）</button>
+          <button type="button" class="tb tb-check" id="simple-mode-btn" aria-pressed="false" data-action="simple-mode" title="項目を隠して、アプリのつながりだけを表示します">シンプル（項目を隠す）</button>
         </div>
         <div class="settings-group">
           <div class="menu-heading">関連線</div>
-          <button type="button" class="tb tb-check active" id="rel-lookup-btn" aria-pressed="true" onclick="toggleRelationKind('LOOKUP')">ルックアップ（実線）</button>
-          <button type="button" class="tb tb-check active" id="rel-ref-btn" aria-pressed="true" onclick="toggleRelationKind('REF')">関連レコード一覧（破線）</button>
-          <button type="button" class="tb tb-check active" id="rel-action-btn" aria-pressed="true" onclick="toggleRelationKind('ACTION')">アプリアクション（点線）</button>
-          <button type="button" class="tb tb-check active" id="bundle-btn" aria-pressed="true" onclick="toggleEdgeBundling()" title="同じアプリの組・同じ種類の線を 1 本にまとめ、本数を太さと吹き出しで示します">同じアプリ間の線をまとめる</button>
-          <button type="button" class="tb tb-check" id="rel-label-btn" aria-pressed="false" onclick="toggleRelationLabels()" title="オフのときは、選んだ線・マウスを乗せた線・選んだアプリの線にだけラベルを出します">線のラベルを常に表示</button>
+          <button type="button" class="tb tb-check active" id="rel-lookup-btn" aria-pressed="true" data-action="relation-kind" data-kind="LOOKUP">ルックアップ（実線）</button>
+          <button type="button" class="tb tb-check active" id="rel-ref-btn" aria-pressed="true" data-action="relation-kind" data-kind="REF">関連レコード一覧（破線）</button>
+          <button type="button" class="tb tb-check active" id="rel-action-btn" aria-pressed="true" data-action="relation-kind" data-kind="ACTION">アプリアクション（点線）</button>
+          <button type="button" class="tb tb-check active" id="bundle-btn" aria-pressed="true" data-action="bundle" title="同じアプリの組・同じ種類の線を 1 本にまとめ、本数を太さと吹き出しで示します">同じアプリ間の線をまとめる</button>
+          <button type="button" class="tb tb-check" id="rel-label-btn" aria-pressed="false" data-action="relation-labels" title="オフのときは、選んだ線・マウスを乗せた線・選んだアプリの線にだけラベルを出します">線のラベルを常に表示</button>
           <div class="menu-heading">選んだアプリの強調</div>
-          <button type="button" class="tb tb-check active" id="focus-toggle-btn" aria-pressed="true" onclick="toggleFocusMode()" title="アプリを選ぶと、つながるアプリと線を強調します (Shift+F)">関連を強調する</button>
+          <button type="button" class="tb tb-check active" id="focus-toggle-btn" aria-pressed="true" data-action="focus-mode" title="アプリを選ぶと、つながるアプリと線を強調します (Shift+F)">関連を強調する</button>
           <div class="settings-row">
-            <select id="focus-depth" class="tb-select" onchange="updateFocusOptions()" aria-label="強調する深さ">
+            <select id="focus-depth" class="tb-select" data-change="focus-options" aria-label="強調する深さ">
               <option value="1">深さ 1</option>
               <option value="2">深さ 2</option>
               <option value="3">深さ 3</option>
             </select>
-            <select id="focus-direction" class="tb-select" onchange="updateFocusOptions()" aria-label="強調する向き">
+            <select id="focus-direction" class="tb-select" data-change="focus-options" aria-label="強調する向き">
               <option value="both">両方向</option>
               <option value="out">参照している側</option>
               <option value="in">参照されている側</option>
             </select>
           </div>
-          <button type="button" class="tb" onclick="clearFocus();closeAllMenus()">強調を解除</button>
+          <button type="button" class="tb" data-action="clear-focus">強調を解除</button>
           <div class="menu-heading">補助</div>
-          <button type="button" class="tb tb-check" id="pathfinder-btn" aria-pressed="false" onclick="togglePathFinder()" title="2 つのアプリをつなぐ関連の道筋を探します">経路探索</button>
-          <button type="button" class="tb tb-check" id="minimap-btn" aria-pressed="false" onclick="toggleMinimap()">ミニマップ</button>
-          <button type="button" class="tb tb-check" id="fs-btn" aria-pressed="false" onclick="toggleFullscreen()">フルスクリーン (F11)</button>
+          <button type="button" class="tb tb-check" id="pathfinder-btn" aria-pressed="false" data-action="path-finder" title="2 つのアプリをつなぐ関連の道筋を探します">経路探索</button>
+          <button type="button" class="tb tb-check" id="minimap-btn" aria-pressed="false" data-action="minimap">ミニマップ</button>
+          <button type="button" class="tb tb-check" id="fs-btn" aria-pressed="false" data-action="fullscreen">フルスクリーン (F11)</button>
         </div>
         <div class="settings-pills"><span class="meta-pill" id="layout-pill"><b>配置</b> ${esc(ctx.layoutLabel)}</span><span class="meta-pill" id="density-pill"><b>密度</b> ${esc(ctx.densityLabel)}</span></div>
       </div>
     </div>
     <div class="tb-menu" id="edit-menu">
-      <button type="button" class="tb tb-menu-btn" onclick="toggleMenu('edit-menu')" aria-haspopup="true" aria-expanded="false" title="図にだけ追加・編集します（kintone は変わりません）">編集</button>
+      <button type="button" class="tb tb-menu-btn" data-action="menu" data-menu="edit-menu" aria-haspopup="true" aria-expanded="false" title="図にだけ追加・編集します（kintone は変わりません）">編集</button>
       <div class="tb-menu-panel" role="group" aria-label="編集">
         <div class="menu-note">図にだけ反映します。kintone のアプリや設定は変わりません。残すには「出力 → 編集済みHTMLを保存」。</div>
-        <button type="button" class="tb" onclick="undoLast()">元に戻す (Ctrl+Z)</button>
+        <button type="button" class="tb" data-action="undo">元に戻す (Ctrl+Z)</button>
         <div class="menu-heading">追加</div>
-        <button type="button" class="tb" onclick="openAddApp()">アプリを追加</button>
-        <button type="button" class="tb" onclick="openAddField()">アプリに項目を追加</button>
-        <button type="button" class="tb" onclick="openAddRelation()">関連線を追加</button>
-        <button type="button" class="tb" onclick="openAddNote()">メモ（付箋）を追加</button>
+        <button type="button" class="tb" data-action="add-app">アプリを追加</button>
+        <button type="button" class="tb" data-action="add-field">アプリに項目を追加</button>
+        <button type="button" class="tb" data-action="add-relation">関連線を追加</button>
+        <button type="button" class="tb" data-action="add-note">メモ（付箋）を追加</button>
         <div class="menu-heading">選んだアプリ・線</div>
-        <button type="button" class="tb" onclick="openEditApp()">アプリを編集（名前・枠の色）</button>
-        <button type="button" class="tb" onclick="togglePinFromSelection()">固定 / 固定を解除 (Shift+P)</button>
-        <button type="button" class="tb" onclick="removeSelectedRelations()">選んだ関連線を図から削除 (Delete)</button>
-        <button type="button" class="tb" onclick="removeSelectedApps()">選んだアプリを図から削除 (Delete)</button>
+        <button type="button" class="tb" data-action="edit-app">アプリを編集（名前・枠の色）</button>
+        <button type="button" class="tb" data-action="toggle-pin">固定 / 固定を解除 (Shift+P)</button>
+        <button type="button" class="tb" data-action="remove-relations">選んだ関連線を図から削除 (Delete)</button>
+        <button type="button" class="tb" data-action="remove-apps">選んだアプリを図から削除 (Delete)</button>
         <div class="menu-heading">そろえる・色分け</div>
-        <button type="button" class="tb" onclick="alignSelected('x')">左にそろえる</button>
-        <button type="button" class="tb" onclick="alignSelected('y')">上にそろえる</button>
-        <button type="button" class="tb" onclick="distributeSelected('x')">横に等間隔で並べる</button>
-        <button type="button" class="tb" onclick="distributeSelected('y')">縦に等間隔で並べる</button>
-        <button type="button" class="tb" onclick="autoColorByDepth()">探索の深さごとに枠を色分け</button>
-        <button type="button" class="tb" onclick="clearNodeColors()">枠の色分けを解除</button>
+        <button type="button" class="tb" data-action="align" data-axis="x">左にそろえる</button>
+        <button type="button" class="tb" data-action="align" data-axis="y">上にそろえる</button>
+        <button type="button" class="tb" data-action="distribute" data-axis="x">横に等間隔で並べる</button>
+        <button type="button" class="tb" data-action="distribute" data-axis="y">縦に等間隔で並べる</button>
+        <button type="button" class="tb" data-action="color-by-depth">探索の深さごとに枠を色分け</button>
+        <button type="button" class="tb" data-action="clear-colors">枠の色分けを解除</button>
         <div class="menu-heading">戻す</div>
-        <button type="button" class="tb" onclick="restoreRemovedRelations()">削除した関連線を戻す</button>
-        <button type="button" class="tb" onclick="restoreRemovedApps()">削除したアプリを戻す</button>
-        <button type="button" class="tb" onclick="restoreAllHiddenFields()">隠した項目をすべて戻す</button>
-        <button type="button" class="tb" onclick="clearPins()">固定をすべて解除</button>
+        <button type="button" class="tb" data-action="restore-relations">削除した関連線を戻す</button>
+        <button type="button" class="tb" data-action="restore-apps">削除したアプリを戻す</button>
+        <button type="button" class="tb" data-action="restore-all-fields">隠した項目をすべて戻す</button>
+        <button type="button" class="tb" data-action="clear-pins">固定をすべて解除</button>
         <div class="menu-heading">取り込む</div>
-        <button type="button" class="tb" onclick="openEditImport()" title="以前に保存した編集済みHTMLの、手動の追加・名前と色・位置・メモ・削除をこの図へ取り込みます">編集済みHTMLから取り込む</button>
+        <button type="button" class="tb" data-action="edit-import" title="以前に保存した編集済みHTMLの、手動の追加・名前と色・位置・メモ・削除をこの図へ取り込みます">編集済みHTMLから取り込む</button>
         <input type="file" id="edit-import-file" accept=".html,.htm,text/html" hidden aria-label="取り込む編集済みHTML">
       </div>
     </div>
     <div class="tb-menu" id="export-menu">
-      <button type="button" class="tb tb-menu-btn" onclick="toggleMenu('export-menu')" aria-haspopup="true" aria-expanded="false">出力</button>
+      <button type="button" class="tb tb-menu-btn" data-action="menu" data-menu="export-menu" aria-haspopup="true" aria-expanded="false">出力</button>
       <div class="tb-menu-panel" role="group" aria-label="出力">
-        <button type="button" class="tb" onclick="printDiagram()">印刷（見出し・図・一覧の資料）</button>
-        <button type="button" class="tb" onclick="exportEditedHtml()">編集済みHTMLを保存</button>
-        <button type="button" class="tb" onclick="exportPNG()">PNG 画像（白背景・表示中の範囲）</button>
+        <button type="button" class="tb" data-action="print">印刷（見出し・図・一覧の資料）</button>
+        <button type="button" class="tb" data-action="save-html">編集済みHTMLを保存</button>
+        <button type="button" class="tb" data-action="png">PNG 画像（白背景・表示中の範囲）</button>
         <div class="menu-heading">表・仕様書</div>
-        <button type="button" class="tb" onclick="showMarkdown()">Markdown 仕様書</button>
-        <button type="button" class="tb" onclick="showCSVApps()">CSV（アプリ一覧）</button>
-        <button type="button" class="tb" onclick="showCSVFields()">CSV（フィールド）</button>
-        <button type="button" class="tb" onclick="showCSVRelations()">CSV（関連）</button>
-        <button type="button" class="tb" onclick="showJSON()">ERモデル JSON</button>
+        <button type="button" class="tb" data-action="markdown">Markdown 仕様書</button>
+        <button type="button" class="tb" data-action="csv-apps">CSV（アプリ一覧）</button>
+        <button type="button" class="tb" data-action="csv-fields">CSV（フィールド）</button>
+        <button type="button" class="tb" data-action="csv-relations">CSV（関連）</button>
+        <button type="button" class="tb" data-action="json">ERモデル JSON</button>
         <div class="menu-heading">ほかの作図ツール</div>
-        <button type="button" class="tb" onclick="showMermaid()">Mermaid</button>
-        <button type="button" class="tb" onclick="showDrawio()">draw.io XML</button>
-        <button type="button" class="tb" onclick="showPlantUML()">PlantUML</button>
-        <button type="button" class="tb" onclick="showSQL()">SQL DDL</button>
+        <button type="button" class="tb" data-action="mermaid">Mermaid</button>
+        <button type="button" class="tb" data-action="drawio">draw.io XML</button>
+        <button type="button" class="tb" data-action="plantuml">PlantUML</button>
+        <button type="button" class="tb" data-action="sql">SQL DDL</button>
         <hr>
-        <button type="button" class="tb" onclick="copyShareUrl()">表示状態のURLをコピー</button>
+        <button type="button" class="tb" data-action="share-url">表示状態のURLをコピー</button>
       </div>
     </div>
-    <button type="button" class="tb tb-icon" id="theme-btn" onclick="toggleTheme()" title="配色を切り替える（保存しません）" aria-label="暗い配色に切り替える" aria-pressed="false">◐</button>
-    <button type="button" class="tb tb-icon" id="help-btn" onclick="openHelp()" title="使い方とショートカット (?)" aria-label="ヘルプを開く">?</button>
+    <button type="button" class="tb tb-icon" id="theme-btn" data-action="theme" title="配色を切り替える（保存しません）" aria-label="暗い配色に切り替える" aria-pressed="false">◐</button>
+    <button type="button" class="tb tb-icon" id="help-btn" data-action="help" title="使い方とショートカット (?)" aria-label="ヘルプを開く">?</button>
   </div>
 </header>
 
 <div id="app-shell">
   <aside id="sidebar" aria-label="アプリ一覧">
-    <div class="sidebar-head"><h2>アプリ<span class="count" id="sidebar-count">${ctx.appCount}</span></h2><button type="button" class="tb tb-icon tb-quiet" id="sidebar-close" onclick="closeSidebar()" aria-label="アプリ一覧を閉じる">✕</button></div>
+    <div class="sidebar-head"><h2>アプリ<span class="count" id="sidebar-count">${ctx.appCount}</span></h2><button type="button" class="tb tb-icon tb-quiet" id="sidebar-close" data-action="sidebar-close" aria-label="アプリ一覧を閉じる">✕</button></div>
     <div class="sidebar-scroll">
       <section class="sidebar-checks" aria-label="構造チェック">
         <strong>構造チェック</strong>
         <div class="check-facts" id="sidebar-check-facts"></div>
-        <button type="button" class="tb" id="analysis-toggle-btn" onclick="toggleAnalysisPanel()" aria-controls="analysis-panel" aria-expanded="false" title="取得状態・循環候補・自己参照・関連のないアプリ・未取得の参照先">構造チェックを開く</button>
+        <button type="button" class="tb" id="analysis-toggle-btn" data-action="analysis-toggle" aria-controls="analysis-panel" aria-expanded="false" title="取得状態・循環候補・自己参照・関連のないアプリ・未取得の参照先">構造チェックを開く</button>
       </section>
       <div class="sidebar-filter-row">
-        <select id="app-list-filter" class="tb-select" onchange="refreshAppList()" aria-label="アプリ一覧の絞り込み">
+        <select id="app-list-filter" class="tb-select" data-change="app-list-filter" aria-label="アプリ一覧の絞り込み">
           <option value="">すべてのアプリ</option>
           <option value="scope">図に表示中のアプリ</option>
           <option value="start">起点のアプリ</option>
@@ -9793,18 +10149,18 @@ ${ER_VIEWER_CSS}
       <details class="sidebar-more"><summary>項目の種類で強調</summary><div id="type-filters"></div></details>
     </div>
   </aside>
-  <div class="backdrop" id="sidebar-backdrop" onclick="closeSidebar()"></div>
+  <div class="backdrop" id="sidebar-backdrop" data-action="sidebar-close"></div>
 
   <main id="main">
     <section id="view-diagram" class="view-panel" role="tabpanel" aria-labelledby="tab-diagram">
       <div id="cy" role="img" aria-label="アプリ間の関連図。アプリ一覧・関連一覧のタブで同じ内容を表で読めます"></div>
       <div id="scope-bar" role="group" aria-label="図の表示範囲"></div>
       <div id="legend" aria-label="凡例">
-        <button type="button" class="legend-toggle-btn" id="legend-toggle-btn" onclick="toggleLegend()" aria-expanded="false" aria-controls="legend-items">凡例</button>
+        <button type="button" class="legend-toggle-btn" id="legend-toggle-btn" data-action="legend-toggle" aria-expanded="false" aria-controls="legend-items">凡例</button>
         <div class="legend-items" id="legend-items">
-          <button type="button" class="legend-toggle" id="legend-lookup-edge" aria-pressed="true" onclick="toggleRelationKind('LOOKUP')" title="ルックアップの線を表示 / 非表示"><i class="legend-line" style="border-top-style:solid;border-top-color:var(--lookup)"></i>ルックアップ</button>
-          <button type="button" class="legend-toggle" id="legend-ref-edge" aria-pressed="true" onclick="toggleRelationKind('REF')" title="関連レコード一覧の線を表示 / 非表示"><i class="legend-line" style="border-top-style:dashed;border-top-color:var(--ref)"></i>関連レコード一覧</button>
-          <button type="button" class="legend-toggle" id="legend-action-edge" aria-pressed="true" onclick="toggleRelationKind('ACTION')" title="アプリアクションの線を表示 / 非表示"><i class="legend-line" style="border-top-style:dotted;border-top-width:3px;border-top-color:var(--action)"></i>アクション</button>
+          <button type="button" class="legend-toggle" id="legend-lookup-edge" aria-pressed="true" data-action="relation-kind" data-kind="LOOKUP" title="ルックアップの線を表示 / 非表示"><i class="legend-line" style="border-top-style:solid;border-top-color:var(--lookup)"></i>ルックアップ</button>
+          <button type="button" class="legend-toggle" id="legend-ref-edge" aria-pressed="true" data-action="relation-kind" data-kind="REF" title="関連レコード一覧の線を表示 / 非表示"><i class="legend-line" style="border-top-style:dashed;border-top-color:var(--ref)"></i>関連レコード一覧</button>
+          <button type="button" class="legend-toggle" id="legend-action-edge" aria-pressed="true" data-action="relation-kind" data-kind="ACTION" title="アプリアクションの線を表示 / 非表示"><i class="legend-line" style="border-top-style:dotted;border-top-width:3px;border-top-color:var(--action)"></i>アクション</button>
           <span class="legend-sep" aria-hidden="true"></span>
           <span title="レコード番号"><b style="color:var(--pk)">PK</b></span>
           <span title="ルックアップ項目"><b style="color:var(--lookup)">FK</b></span>
@@ -9817,13 +10173,13 @@ ${ER_VIEWER_CSS}
         </div>
       </div>
       <div id="zoom-ctrl" role="group" aria-label="表示倍率">
-        <button type="button" onclick="zoomIn()" title="拡大 (+)" aria-label="拡大">＋</button>
-        <button type="button" id="zoom-level" onclick="toggleZoomPresets()" title="倍率を選ぶ" aria-label="現在の表示倍率。倍率プリセットを開く" aria-haspopup="true" aria-expanded="false"><span id="zoom-value" aria-live="polite">100%</span><span id="zoom-mode"></span></button>
-        <button type="button" onclick="zoomOut()" title="縮小 (-)" aria-label="縮小">－</button>
-        <button type="button" onclick="zoomReset()" title="100%にリセット (0)" aria-label="表示倍率を100%にリセット">◎</button>
-        <button type="button" onclick="fit()" title="画面に合わせる (Ctrl+0)" aria-label="図を画面に合わせる">⤢</button>
+        <button type="button" data-action="zoom-in" title="拡大 (+)" aria-label="拡大">＋</button>
+        <button type="button" id="zoom-level" data-action="zoom-presets" title="倍率を選ぶ" aria-label="現在の表示倍率。倍率プリセットを開く" aria-haspopup="true" aria-expanded="false"><span id="zoom-value" aria-live="polite">100%</span><span id="zoom-mode"></span></button>
+        <button type="button" data-action="zoom-out" title="縮小 (-)" aria-label="縮小">－</button>
+        <button type="button" data-action="zoom-reset" title="100%にリセット (0)" aria-label="表示倍率を100%にリセット">◎</button>
+        <button type="button" data-action="zoom-fit" title="画面に合わせる (Ctrl+0)" aria-label="図を画面に合わせる">⤢</button>
         <div id="zoom-presets" role="group" aria-label="倍率プリセット">
-          ${[50, 75, 100, 125, 150, 200].map((p) => `<button type="button" class="zoom-preset" data-zoom="${p}" aria-pressed="${p === 100}" onclick="setZoomPercent(${p})">${p}%</button>`).join("\n          ")}
+          ${[50, 75, 100, 125, 150, 200].map((p) => `<button type="button" class="zoom-preset" data-zoom="${p}" aria-pressed="${p === 100}" data-action="zoom-percent">${p}%</button>`).join("\n          ")}
         </div>
       </div>
       <div id="minimap" aria-hidden="true"><canvas id="minimap-canvas"></canvas></div>
@@ -9832,9 +10188,9 @@ ${ER_VIEWER_CSS}
         <select id="pf-from" class="tb-select" aria-label="経路の起点アプリ"></select>
         <span aria-hidden="true">→</span>
         <select id="pf-to" class="tb-select" aria-label="経路の終点アプリ"></select>
-        <button type="button" class="tb tb-primary" onclick="findPath()">探す</button>
-        <button type="button" class="tb" onclick="clearPath()">消す</button>
-        <button type="button" class="tb tb-icon tb-quiet" onclick="togglePathFinder()" aria-label="経路探索を閉じる">✕</button>
+        <button type="button" class="tb tb-primary" data-action="find-path">探す</button>
+        <button type="button" class="tb" data-action="clear-path">消す</button>
+        <button type="button" class="tb tb-icon tb-quiet" data-action="path-finder" aria-label="経路探索を閉じる">✕</button>
         <span id="path-result" aria-live="polite"></span>
       </div>
     </section>
@@ -9846,7 +10202,7 @@ ${ER_VIEWER_CSS}
       <div class="check-chips" id="apps-checks" role="group" aria-label="構造チェックで絞り込む"></div>
       <div class="table-toolbar">
         <label class="sr-only" for="apps-status">表示するアプリ</label>
-        <select id="apps-status" class="tb-select" onchange="setAppsStatus(this.value)">
+        <select id="apps-status" class="tb-select" data-change="apps-status">
           <option value="">すべてのアプリ</option>
           <option value="scope">図に表示中のアプリ</option>
           <option value="start">起点のアプリ</option>
@@ -9865,7 +10221,7 @@ ${ER_VIEWER_CSS}
       <div class="check-chips" id="relations-kinds" role="group" aria-label="関連の種類で絞り込む"></div>
       <div class="table-toolbar">
         <label class="sr-only" for="relations-state">表示する関連</label>
-        <select id="relations-state" class="tb-select" onchange="setRelationsState(this.value)">
+        <select id="relations-state" class="tb-select" data-change="relations-state">
           <option value="">すべての関連</option>
           <option value="unresolved">参照先が未取得の関連</option>
           <option value="self">自己参照</option>
@@ -9880,7 +10236,7 @@ ${ER_VIEWER_CSS}
   </main>
 
   <aside id="detail" class="side-panel" aria-label="選んだアプリ・関連の詳細">
-    <button type="button" class="close-btn" onclick="closeDetail()" aria-label="詳細を閉じる">✕</button>
+    <button type="button" class="close-btn" data-action="detail-close" aria-label="詳細を閉じる">✕</button>
     <h2 id="detail-title"></h2>
     <div id="detail-meta"></div>
     <div id="detail-relations"></div>
@@ -9888,7 +10244,7 @@ ${ER_VIEWER_CSS}
   </aside>
 
   <aside id="analysis-panel" class="side-panel" aria-label="構造チェック">
-    <button type="button" class="close-btn" onclick="toggleAnalysisPanel(false)" aria-label="構造チェックを閉じる">✕</button>
+    <button type="button" class="close-btn" data-action="analysis-close" aria-label="構造チェックを閉じる">✕</button>
     <div class="analysis-head">
       <h2>🩺 構造チェック</h2>
       <p>取得状態、循環候補、自己参照、関連のないアプリなどの事実を示します。項目を押すと図のそのアプリへ移ります。</p>
@@ -9908,15 +10264,15 @@ ${ER_VIEWER_CSS}
         <div class="ov-title">取得・関連サマリー</div>
         <div class="ov-sub">取得できた設定と関連の事実です。良否は判定しません。数を押すと該当箇所を確認できます。</div>
       </div>
-      <button type="button" class="ov-close" onclick="hideOverview()" title="サマリーを閉じる" aria-label="サマリーを閉じる">✕</button>
+      <button type="button" class="ov-close" data-action="overview-close" title="サマリーを閉じる" aria-label="サマリーを閉じる">✕</button>
     </div>
     <div class="ov-grid">
-      <button type="button" class="ov-card ov-card--action${attention ? " ov-card--warn" : ""}" onclick="hideOverview();toggleAnalysisPanel(true)"><span class="ov-kpi">${attention}</span><span class="ov-label">取得に注意が必要</span></button>
-      <button type="button" class="ov-card ov-card--action${a.cycles ? " ov-card--risk" : ""}" onclick="hideOverview();toggleAnalysisPanel(true)"><span class="ov-kpi">${a.cycles}</span><span class="ov-label">循環グループ</span></button>
-      <button type="button" class="ov-card ov-card--action${a.isolated ? " ov-card--warn" : ""}" onclick="hideOverview();toggleAnalysisPanel(true)"><span class="ov-kpi">${a.isolated}</span><span class="ov-label">孤立アプリ</span></button>
-      <button type="button" class="ov-card ov-card--action" onclick="hideOverview();toggleAnalysisPanel(true)"><span class="ov-kpi">${a.selfReferences}</span><span class="ov-label">自己参照</span></button>
-      <button type="button" class="ov-card ov-card--action${a.unresolved ? " ov-card--warn" : ""}" onclick="hideOverview();showRelationsTable('unresolved')"><span class="ov-kpi">${a.unresolved}</span><span class="ov-label">未取得の参照先</span></button>
-      <button type="button" class="ov-card ov-card--action" onclick="hideOverview();showRelationsTable('')"><span class="ov-kpi">${ctx.summary.relations}</span><span class="ov-label">総関連</span></button>
+      <button type="button" class="ov-card ov-card--action${attention ? " ov-card--warn" : ""}" data-action="overview-analysis"><span class="ov-kpi">${attention}</span><span class="ov-label">取得に注意が必要</span></button>
+      <button type="button" class="ov-card ov-card--action${a.cycles ? " ov-card--risk" : ""}" data-action="overview-analysis"><span class="ov-kpi">${a.cycles}</span><span class="ov-label">循環グループ</span></button>
+      <button type="button" class="ov-card ov-card--action${a.isolated ? " ov-card--warn" : ""}" data-action="overview-analysis"><span class="ov-kpi">${a.isolated}</span><span class="ov-label">孤立アプリ</span></button>
+      <button type="button" class="ov-card ov-card--action" data-action="overview-analysis"><span class="ov-kpi">${a.selfReferences}</span><span class="ov-label">自己参照</span></button>
+      <button type="button" class="ov-card ov-card--action${a.unresolved ? " ov-card--warn" : ""}" data-action="overview-relations" data-state="unresolved"><span class="ov-kpi">${a.unresolved}</span><span class="ov-label">未取得の参照先</span></button>
+      <button type="button" class="ov-card ov-card--action" data-action="overview-relations" data-state=""><span class="ov-kpi">${ctx.summary.relations}</span><span class="ov-label">総関連</span></button>
     </div>
     <dl class="ov-conditions">
       ${ctx.conditions.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("\n      ")}
@@ -9926,40 +10282,40 @@ ${ER_VIEWER_CSS}
 </div>
 
 <!-- Command Palette -->
-<div id="cmd-overlay" class="overlay" onclick="if(event.target===this)closeCmd()">
+<div id="cmd-overlay" class="overlay" data-action="backdrop" data-dialog="cmd">
   <div id="cmd-box" role="dialog" aria-modal="true" aria-label="コマンドパレット">
-    <input id="cmd-input" placeholder="操作やアプリの名前を入力（表示・配置・出力・アプリ名…）" aria-label="操作やアプリを探す" oninput="filterCmd(this.value)">
+    <input id="cmd-input" placeholder="操作やアプリの名前を入力（表示・配置・出力・アプリ名…）" aria-label="操作やアプリを探す" data-input="cmd-filter">
     <div id="cmd-results"></div>
   </div>
 </div>
 
 <!-- Modal -->
-<div id="modal-overlay" class="overlay" onclick="if(event.target===this)closeModal()">
+<div id="modal-overlay" class="overlay" data-action="backdrop" data-dialog="modal">
   <div id="modal" class="dialog" role="dialog" aria-modal="true" aria-labelledby="modal-title"><h2 id="modal-title"></h2><pre id="modal-content"></pre>
     <div class="actions">
-      <button type="button" class="primary" onclick="copyModal()">コピー</button>
-      <button type="button" onclick="downloadModal()">ファイルに保存</button>
-      <button type="button" onclick="closeModal()">閉じる</button>
+      <button type="button" class="primary" data-action="modal-copy">コピー</button>
+      <button type="button" data-action="modal-download">ファイルに保存</button>
+      <button type="button" data-action="modal-close">閉じる</button>
     </div>
   </div>
 </div>
 
 <!-- Manual add editor -->
-<div id="editor-overlay" class="overlay" onclick="if(event.target===this)closeEditor()">
+<div id="editor-overlay" class="overlay" data-action="backdrop" data-dialog="editor">
   <div id="editor" class="dialog" role="dialog" aria-modal="true" aria-labelledby="editor-title">
     <h2 id="editor-title"></h2>
     <div id="editor-sub"></div>
     <div id="editor-body"></div>
     <div class="actions">
-      <button type="button" class="danger" id="editor-delete" style="display:none" onclick="deleteFromEditor()">削除</button>
-      <button type="button" class="primary" id="editor-submit" onclick="submitEditor()">追加</button>
-      <button type="button" onclick="closeEditor()">キャンセル</button>
+      <button type="button" class="danger" id="editor-delete" style="display:none" data-action="editor-delete">削除</button>
+      <button type="button" class="primary" id="editor-submit" data-action="editor-submit">追加</button>
+      <button type="button" data-action="editor-close">キャンセル</button>
     </div>
   </div>
 </div>
 
 <!-- Help / Shortcut modal -->
-<div id="help-overlay" class="overlay" onclick="if(event.target===this)closeHelp()">
+<div id="help-overlay" class="overlay" data-action="backdrop" data-dialog="help">
   <div id="help-box" class="dialog" role="dialog" aria-modal="true" aria-labelledby="help-title">
     <h2 id="help-title">使い方とショートカット</h2>
     <div class="help-sub">上の「図・アプリ一覧・関連一覧」で表示を切り替えます。アプリが多い図は、起点とその関連先だけを表示して開きます（「全体を表示」でいつでも全体へ）。アプリを押すと右に詳細、線を押すと関連の詳細が出ます。kintone には何も書き込みません。</div>
@@ -9993,18 +10349,21 @@ ${ER_VIEWER_CSS}
         <div class="help-row"><span>線を図から削除</span><kbd>線を右クリック</kbd></div>
       </div>
     </div>
-    <div class="close-row actions"><button type="button" onclick="closeHelp()">閉じる</button><button type="button" onclick="closeHelp();openCmd()">コマンドパレットを開く</button></div>
+    <div class="close-row actions"><button type="button" data-action="help-close">閉じる</button><button type="button" data-action="help-cmd">コマンドパレットを開く</button></div>
   </div>
 </div>
 
 <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 <div id="print-doc"></div>
 
-<script id="er-main" type="text/plain">
-${ctx.mainScript}
-<\/script>
-<script>
-(function(){
+<script id="er-main" type="text/plain">${mainText}<\/script>
+<script>${loaderText}<\/script>
+</body>
+</html>`
+    );
+  }
+  function erLoaderScript(fallbackRowsJson) {
+    return `(function(){
   const source=document.getElementById("er-main");
   // 描画ライブラリは head にインラインで同梱している。ブラウザの制限などで初期化できなかったときだけ、取得済みのアプリ一覧を表で示す。
   if(typeof window.cytoscape==="function"){
@@ -10019,12 +10378,8 @@ ${ctx.mainScript}
   document.body.appendChild(host);
   Array.prototype.forEach.call(document.body.children,function(el){ if(el!==host&&el.tagName!=="SCRIPT") el.style.display="none"; });
   host.style.cssText="position:fixed;inset:0;overflow:auto;padding:32px;background:#f8fafc;color:#0f172a;font:14px/1.65 sans-serif";
-  host.innerHTML='<style>#cy table{width:100%;border-collapse:collapse}#cy th,#cy td{padding:6px 10px;text-align:left;vertical-align:top;border-bottom:1px solid #cbd5e1}#cy th,#cy td:not(:nth-child(2)){white-space:nowrap}#cy td:nth-child(2){overflow-wrap:anywhere}</style><main style="max-width:960px;margin:auto"><h1 style="font-size:22px;margin-bottom:8px">ER図を描画できませんでした</h1><p>描画ライブラリを初期化できませんでした。ブラウザを再読み込みするか、別のブラウザで開いてください。取得済みのアプリ一覧は下表で確認できます。</p><table style="margin-top:20px"><thead><tr><th>アプリID</th><th>アプリ名</th><th>項目数</th><th>関連数</th><th>取得状態</th></tr></thead><tbody>'+${ctx.fallbackRowsJson}+'</tbody></table></main>';
-})();
-<\/script>
-</body>
-</html>`
-    );
+  host.innerHTML='<style>#cy table{width:100%;border-collapse:collapse}#cy th,#cy td{padding:6px 10px;text-align:left;vertical-align:top;border-bottom:1px solid #cbd5e1}#cy th,#cy td:not(:nth-child(2)){white-space:nowrap}#cy td:nth-child(2){overflow-wrap:anywhere}</style><main style="max-width:960px;margin:auto"><h1 style="font-size:22px;margin-bottom:8px">ER図を描画できませんでした</h1><p>描画ライブラリを初期化できませんでした。ブラウザを再読み込みするか、別のブラウザで開いてください。取得済みのアプリ一覧は下表で確認できます。</p><table style="margin-top:20px"><thead><tr><th>アプリID</th><th>アプリ名</th><th>項目数</th><th>関連数</th><th>取得状態</th></tr></thead><tbody>'+${fallbackRowsJson}+'</tbody></table></main>';
+})();`;
   }
 
   // src/settingsBundleImport.ts
@@ -10237,7 +10592,7 @@ ${ctx.mainScript}
       <div style="background:#333;height:8px;border-radius:4px;overflow:hidden;">
         <div id="_eb" style="width:0%;height:100%;background:linear-gradient(90deg,#00d4ff,#7b61ff);transition:width .3s;border-radius:4px;"></div>
       </div>
-      <div id="_em" style="font-size:12px;margin-top:8px;color:#aaa;">準備中...</div>`;
+      <div id="_em" style="font-size:12.5px;margin-top:8px;color:#aaa;">準備中...</div>`;
         (doc.body || doc.documentElement).appendChild(el);
         bar = el.querySelector("#_eb");
         msg = el.querySelector("#_em");
@@ -10602,7 +10957,7 @@ ${ctx.mainScript}
       generatedText: formatErGeneratedAt(generatedAt),
       ...sourceLabel ? { sourceText: sourceLabel } : {},
       connectionText,
-      libraryScripts: buildErLibraryScripts(),
+      libraryScripts: erLibraryInlineScripts(),
       appCount: safeApps.length,
       relationCount: summary.relations,
       summary,
@@ -10949,7 +11304,7 @@ ${ctx.mainScript}
 .kus-as__name{color:var(--c-text);word-break:break-all}
 .kus-as__meta{margin-top:3px;color:var(--c-text-2);font-size:12.5px;line-height:1.5}
 .kus-as__assign{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
-.kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:12px}
+.kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:12.5px}
 .kus-as__assign .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
 .kus-as__bulk{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--c-border);background:var(--c-surface)}
 .kus-as__bulk .kus-lp__btn{padding:4px 10px;font-size:12.5px}

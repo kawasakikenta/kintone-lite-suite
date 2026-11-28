@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const { rawTextPlugin } = require('./rawTextPlugin.js');
+const { bundledPackages, thirdPartyNoticeComment } = require('./thirdPartyNotices.js');
 
 const watch = process.argv.includes('--watch');
 
@@ -44,7 +45,7 @@ const cssPlugin = {
 // 配布物は UMD で、CommonJS として取り込むと ./cpexcel.js（約 470KB の文字コード表）まで巻き込み、
 // window.XLSX の書き換えも行う。module・exports・require・define・window を隠した関数で包み、
 // CDN から読み込んでいたとき（<script> のグローバル版）と同じ動作・同じ大きさにする。
-// ライセンス（Apache-2.0）の表記は同梱物の先頭に残す。
+// 取り込んだ箇所に短い表記を残し、ライセンス（Apache-2.0）の全文は thirdPartyNotices.js が配布物の先頭へ入れる。
 const xlsxStyleBrowserPlugin = {
   name: 'xlsx-js-style-browser',
   setup(build) {
@@ -170,7 +171,8 @@ async function buildStandaloneBundles(entries) {
   const lite = entries.filter((e) => e.bundleEntry);
   for (const item of lite) {
     const outAbs = path.resolve(toolsDir, item.file);
-    await esbuild.build({
+    const banner = buildBanner(item);
+    const result = await esbuild.build({
       absWorkingDir: path.resolve(__dirname),
       entryPoints: [path.resolve(__dirname, 'src', 'entries', item.bundleEntry)],
       bundle: true,
@@ -179,10 +181,19 @@ async function buildStandaloneBundles(entries) {
       charset: 'utf8',
       target: ['es2020'],
       minify: false,
+      metafile: true,
       plugins: [jsToTsResolver, cssPlugin, rawTextPlugin, xlsxStyleBrowserPlugin],
-      banner: { js: buildBanner(item) },
+      banner: { js: banner },
       logLevel: 'info'
     });
+    // 同梱した npm パッケージ（設計書作成.js の xlsx-js-style など）のライセンスの全文を、バナーの直後へ入れる。
+    // ER図の HTML へ `?raw` で埋め込む描画ライブラリは、src/tabs/er-libraries.ts が表記を付ける（ここでは数えない）。
+    const notice = thirdPartyNoticeComment(bundledPackages(result.metafile), __dirname);
+    if (notice) {
+      const output = await fs.promises.readFile(outAbs, 'utf8');
+      if (!output.startsWith(banner)) throw new Error(`[build] ${item.file}: banner not found at the top of the bundle`);
+      await fs.promises.writeFile(outAbs, `${banner}\n${notice}${output.slice(banner.length).replace(/^\n/, '')}`, 'utf8');
+    }
     const st = fs.statSync(outAbs);
     console.log(`Built standalone bundle: ${item.file} (${(st.size / 1024).toFixed(1)} KB)`);
   }

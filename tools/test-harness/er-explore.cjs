@@ -18,9 +18,13 @@
 //     関連の並びが違う図でも対応させる、ファイルのスクリプトは実行しない、元に戻す）。
 //   - 出力（PNG・Mermaid・draw.io・PlantUML・SQL DDL・JSON・Markdown・CSV 3 種）の中身。
 //   - 320〜1440px のはみ出し（スマホ幅の表・メニュー・引き出し）、キーボード操作。
+//   - CSP: script-src が埋め込んだスクリプトのハッシュだけであること。すべてのメニュー・ボタン・ダイアログ・表・キーボード操作をして
+//     securitypolicyviolation が 0 件で、イベント属性が DOM に現れないこと。保存した編集済みHTML・共有 URL で開いても同じ。
+//     差し込んだイベント属性・javascript の URL・script は動かないこと。どの検査でも、CSP の違反はページのエラーとして数える。
 //
 // 画面と出力は .iter-shots/er-explore/ に保存する。失敗した検査は最後に一覧し、1 件でもあれば失敗にする。
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const zlib = require('node:zlib');
 const path = require('node:path');
@@ -266,11 +270,51 @@ async function generateHtml(browser, fixture, spec) {
 // ---------------------------------------------------------------------------
 // 生成した図を開く（file:// 以外の通信をすべて遮断）
 // ---------------------------------------------------------------------------
+// CSP の違反（ハッシュで許可していないスクリプト・イベント属性・javascript の URL など）を securitypolicyviolation で記録する。
+// 違反は console.error にも出し、collectErrors がページのエラーとして数える（どの検査でも違反 0 件であること）。
+// あわせて、イベント属性（on…）や javascript の URL を持つ要素が DOM に一度でも現れたかと、押した data-action などの操作の名前を記録する。
+function recordCspViolations() {
+  const violations = [];
+  const inlineAttributes = [];
+  const exercised = { click: new Set(), change: new Set(), input: new Set(), keydown: new Set() };
+  window.__ER_CSP__ = { violations, inlineAttributes, exercised };
+  document.addEventListener('securitypolicyviolation', (event) => {
+    const item = { directive: event.effectiveDirective || event.violatedDirective, blocked: event.blockedURI, sample: event.sample, line: event.lineNumber };
+    violations.push(item);
+    console.error(`[CSP] ${item.directive} ${item.blocked} ${item.sample || ''}`);
+  }, true);
+  const inspect = (el) => {
+    if (!el || el.nodeType !== 1) return;
+    for (const attr of Array.from(el.attributes)) {
+      if (/^on/i.test(attr.name) || /^\s*javascript:/i.test(attr.value)) inlineAttributes.push(`${el.tagName.toLowerCase()} ${attr.name}`);
+    }
+  };
+  new MutationObserver((records) => {
+    for (const record of records) {
+      if (record.type === 'attributes') inspect(record.target);
+      record.addedNodes.forEach((node) => { if (node.nodeType === 1) { inspect(node); node.querySelectorAll('*').forEach(inspect); } });
+    }
+  }).observe(document, { subtree: true, childList: true, attributes: true });
+  // ビューアーの受け口（document の捕捉の段階）より先に登録されるので、押した操作の名前を先に記録できる
+  for (const [type, attribute] of [['click', 'data-action'], ['change', 'data-change'], ['input', 'data-input'], ['keydown', 'data-keydown']]) {
+    document.addEventListener(type, (event) => {
+      const el = event.target && typeof event.target.closest === 'function' ? event.target.closest(`[${attribute}]`) : null;
+      if (el) exercised[type].add(el.getAttribute(attribute));
+    }, true);
+  }
+}
+const cspState = (page) => page.evaluate(() => ({
+  violations: window.__ER_CSP__.violations.slice(),
+  inlineAttributes: window.__ER_CSP__.inlineAttributes.slice(),
+  exercised: Object.fromEntries(Object.entries(window.__ER_CSP__.exercised).map(([k, v]) => [k, [...v]]))
+}));
+
 async function openViewer(browser, file, { width = 1440, height = 900, hash = '', colorScheme = 'light' } = {}) {
   const context = await browser.newContext({ viewport: { width, height }, acceptDownloads: true, colorScheme });
   const page = await context.newPage();
   const errors = [];
   const blocked = [];
+  await page.addInitScript(recordCspViolations);
   collectErrors(page, path.basename(file), errors);
   await page.route('**/*', async (route) => {
     const url = route.request().url();
@@ -284,16 +328,27 @@ async function openViewer(browser, file, { width = 1440, height = 900, hash = ''
   return { context, page, errors, blocked };
 }
 
-// 生成した HTML に、編集済みHTMLと同じ形で編集状態（window.__ER_EDIT_STATE__）を差し込んだ複製を作る。
-// 以前の版で保存した編集状態（er-edit-state-v1.json）を、新しい版の図で開き直すときに使う
-function withEditState(htmlFile, state, outFile) {
+// 生成した HTML に、編集済みHTMLと同じ形で編集状態を差し込んだ複製を作る。
+// 以前の版で保存した編集状態（er-edit-state-v1.json）を、新しい版の図で開き直すときに使う。
+// 今の版は実行しない JSON（type="application/json"）として置く。legacy: true は以前の版の置き方（window.__ER_EDIT_STATE__ への代入の
+// スクリプト）で、「編集済みHTMLから取り込む」の読み込み元にだけ使う（今の版の CSP では、この置き方のスクリプトは動かない）。
+function withEditState(htmlFile, state, outFile, { legacy = false } = {}) {
   const html = fs.readFileSync(htmlFile, 'utf8');
   const json = JSON.stringify(state).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026');
   const marker = '<script id="er-main" type="text/plain">';
   assert.ok(html.includes(marker), '図の本体スクリプトが見つかりません');
-  fs.writeFileSync(outFile, html.replace(marker, () => `<script id="er-edit-state">window.__ER_EDIT_STATE__=${json};</script>${marker}`), 'utf8');
+  const block = legacy
+    ? `<script id="er-edit-state">window.__ER_EDIT_STATE__=${json};</script>`
+    : `<script id="er-edit-state" type="application/json">${json}</script>`;
+  fs.writeFileSync(outFile, html.replace(marker, () => `${block}${marker}`), 'utf8');
   return outFile;
 }
+/** 保存した編集済みHTMLの編集状態（実行しない JSON）。 */
+const savedEditStateJson = (html) => {
+  const match = html.match(/<script id="er-edit-state" type="application\/json">([\s\S]*?)<\/script>/);
+  assert.ok(match, '編集の状態が実行しない JSON として保存されていません');
+  return match[1];
+};
 
 // WCAG のコントラスト比（文字色と、透明でない一番近い背景色）
 const measureContrast = (page, selectors) => page.evaluate((list) => {
@@ -985,7 +1040,8 @@ async function main() {
           assert.deepEqual(after.scope, before.scope, '表示範囲が戻りません');
           assert.deepEqual(after.pos, before.pos, '位置が戻りません');
           assert.match(html, /"stateVersion":2/);
-          assert.ok(!/"theme":/.test(html.match(/window\.__ER_EDIT_STATE__=(.*?);<\/script>/)[1]), '配色を保存しています');
+          assert.ok(!/"theme":/.test(savedEditStateJson(html)), '配色を保存しています');
+          assert.ok(!html.includes('window.__ER_EDIT_STATE__='), '編集の状態を実行するスクリプトとして保存しています');
           assert.ok(!/<html[^>]*data-theme=/.test(html), '開いたときの配色を HTML に残しています');
           assert.equal(after.tables, 0, '表のビューの中身を保存しています');
           assert.equal(after.theme, 'light');
@@ -996,7 +1052,10 @@ async function main() {
     console.log('編集済みHTMLから編集を取り込む');
     if (shouldRun('import')) {
       const legacyState = JSON.parse(fs.readFileSync(path.join(__dirname, 'er-edit-state-v1.json'), 'utf8'));
-      const v1File = withEditState(generated.business.file, legacyState, path.join(OUT, 'import-source-v1.html'));
+      // 以前の版の編集済みHTML（編集の状態を代入するスクリプトで持つ）。取り込みの読み込み元にする
+      const v1File = withEditState(generated.business.file, legacyState, path.join(OUT, 'import-source-v1.html'), { legacy: true });
+      // 同じ編集を今の版の置き方で持つ図。開いて保存し直し、今の版の編集済みHTMLを作る
+      const v1Open = withEditState(generated.business.file, legacyState, path.join(OUT, 'import-source-v1-open.html'));
       const importState = (page) => page.evaluate(() => {
         const app113 = findApp(113);
         const custom = APPS.find((a) => a.isCustom && a.name === '外部会計システム');
@@ -1045,7 +1104,7 @@ async function main() {
       const v2File = path.join(OUT, 'import-source-v2.html');
       let v2Saved = null;
       {
-        const viewer = await openViewer(browser, v1File);
+        const viewer = await openViewer(browser, v1Open);
         await viewer.page.evaluate(() => showAroundApp(101));
         await settleLayout(viewer.page);
         v2Saved = await viewer.page.evaluate(() => ({ scope: JSON.parse(JSON.stringify(viewScope)), pos101: cy.getElementById('a101').position() }));
@@ -1101,7 +1160,8 @@ async function main() {
       // このリポジトリの以前の版（er-edit-state-v1-lite.json。9691a4a の tools/ER図.js で保存）の編集済みHTMLも、同じように取り込める
       await check('import: lite-suite の以前の版で保存した編集済みHTMLの編集も、新しく作った図へ取り込む', async () => {
         const liteState = JSON.parse(fs.readFileSync(path.join(__dirname, 'er-edit-state-v1-lite.json'), 'utf8'));
-        const liteFile = withEditState(generated.business.file, liteState, path.join(OUT, 'import-source-v1-lite.html'));
+        // 以前の版は編集の状態を window.__ER_EDIT_STATE__ への代入のスクリプトとして保存していた。その置き方のまま読み込み元にする
+        const liteFile = withEditState(generated.business.file, liteState, path.join(OUT, 'import-source-v1-lite.html'), { legacy: true });
         const viewer = await openViewer(browser, generated.business.file);
         const { page } = viewer;
         const result = await importFile(page, liteFile);
@@ -1456,6 +1516,387 @@ async function main() {
         const problems = [...viewer.errors, ...viewer.blocked];
         await viewer.context.close();
         assert.deepEqual(problems, []);
+      });
+    }
+
+    console.log('CSP（埋め込んだスクリプトだけをハッシュで許可し、イベント属性を使わない）');
+    if (shouldRun('csp')) {
+      const cspOf = (html) => (html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]*)">/) || [])[1] || '';
+      const directivesOf = (html) => Object.fromEntries(cspOf(html).split(';').map((part) => part.trim().split(/\s+/)).map(([name, ...values]) => [name, values]));
+      const hashSource = (text) => `'sha256-${crypto.createHash('sha256').update(text, 'utf8').digest('base64')}'`;
+      const scriptsOf = (html) => [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)].map((m) => ({ attrs: m[1].trim(), text: m[2] }));
+      const expectHashOnlyCsp = (html, label) => {
+        const directives = directivesOf(html);
+        const scripts = scriptsOf(html);
+        const executable = scripts.filter((s) => !/\btype=/.test(s.attrs));
+        const main = scripts.find((s) => s.attrs === 'id="er-main" type="text/plain"');
+        assert.ok(main, `${label}: 図の本体がありません`);
+        // 実行する script 要素（ライブラリ 3 つ・起動）と、起動スクリプトが er-main と同じ中身で作る図の本体。それ以外は許可しない
+        assert.deepEqual(directives['script-src'], [...executable.map((s) => s.text), main.text].map(hashSource), `${label}: script-src が埋め込んだスクリプトのハッシュと合いません`);
+        assert.deepEqual(directives['script-src-attr'], ["'none'"], `${label}: イベント属性を許可しています`);
+        const markup = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
+        assert.ok(!/<[^>]+\son[a-z]+\s*=/i.test(markup), `${label}: イベント属性があります`);
+        assert.ok(!/javascript:/i.test(markup), `${label}: javascript の URL があります`);
+        return directives['script-src'].length;
+      };
+      let savedEdited = null;
+      let savedState = null;
+
+      await check('csp: script-src は埋め込んだスクリプトのハッシュだけで、unsafe-inline・unsafe-eval・イベント属性を許可しない', async () => {
+        const counts = Object.entries(generated).map(([name, g]) => `${name} ${expectHashOnlyCsp(g.html, name)}`);
+        return `ハッシュの数: ${counts.join(' / ')}`;
+      });
+
+      await check('csp: すべてのメニュー・ボタン・ダイアログ・表・キーボード操作で CSP の違反が 0 件', async () => {
+        const viewer = await openViewer(browser, generated.business.file);
+        const { page } = viewer;
+        // 共有 URL のコピーに失敗したときの prompt などは閉じる
+        page.on('dialog', (dialog) => dialog.dismiss().catch(() => {}));
+        const downloads = [];
+        page.on('download', (download) => downloads.push(download));
+        // メニューの中の部品は、メニューが閉じていたら開いてから操作する。メニューの外の部品は、開いたメニューに隠れないよう閉じてから操作する
+        const openMenuOf = async (locator) => {
+          const menu = await locator.evaluate((el) => {
+            const m = el.closest('.tb-menu');
+            if (!m) { if (!el.closest('#topbar')) closeAllMenus(); return ''; }
+            return m.classList.contains('open') || el.matches('.tb-menu-btn') ? '' : m.id;
+          });
+          if (menu) await page.locator(`#${menu} > .tb-menu-btn`).click();
+        };
+        // 押す。画面に出ていない部品（狭い画面だけのボタンなど）は要素の click() で押す（受け口は同じ）
+        const press = async (selector, { wait = 120 } = {}) => {
+          const locator = page.locator(selector).first();
+          await locator.waitFor({ state: 'attached', timeout: 5000 });
+          await openMenuOf(locator);
+          if (await locator.isVisible() && await locator.isEnabled()) await locator.click({ timeout: 5000 });
+          else await locator.evaluate((el) => el.click());
+          await page.waitForTimeout(wait);
+        };
+        const choose = async (selector, value) => {
+          const locator = page.locator(selector).first();
+          await openMenuOf(locator);
+          await locator.selectOption(value);
+          await page.waitForTimeout(150);
+        };
+        const pressAll = async (selectors) => { for (const selector of selectors) await press(selector); };
+        const menuItem = async (menu, selector) => {
+          await page.evaluate(() => closeAllMenus());
+          await press(`#${menu} > .tb-menu-btn`);
+          await press(`#${menu} .tb-menu-panel ${selector}`);
+        };
+        const isOpen = (id) => page.evaluate((target) => document.getElementById(target).classList.contains('open'), id);
+        // ダイアログの外側（背景）を押して閉じる
+        const pressBackdrop = async (id) => {
+          assert.equal(await isOpen(id), true, `${id} が開いていません`);
+          await page.mouse.click(4, 4);
+          await page.waitForTimeout(150);
+          assert.equal(await isOpen(id), false, `${id} が背景を押しても閉じません`);
+        };
+        const saveDownload = async (fn, name) => {
+          const downloadPromise = page.waitForEvent('download', { timeout: 60000 });
+          await fn();
+          const download = await downloadPromise;
+          const file = path.join(OUT, name);
+          await download.saveAs(file);
+          return file;
+        };
+
+        // 取得・関連サマリーと構造チェック
+        await press('#overview-pill');
+        await press('#overview [data-action="overview-analysis"]');
+        await press('#analysis-content [data-action="analysis-focus"]');
+        await settleLayout(page);
+        await press('#analysis-panel [data-action="analysis-close"]');
+        await press('#overview-pill');
+        await press('#overview [data-action="overview-relations"][data-state="unresolved"]');
+        await press('#tab-diagram');
+        await press('#overview-pill');
+        await press('#overview [data-action="overview-relations"][data-state=""]');
+        await press('#tab-diagram');
+        await press('#overview-pill');
+        await press('#overview [data-action="overview-close"]');
+        await press('#analysis-toggle-btn');
+        await press('#analysis-toggle-btn');
+
+        // 表示設定
+        await press('#settings-btn');
+        await press('#settings-menu [data-action="scope-all"]');
+        await settleLayout(page);
+        await press('#settings-menu [data-action="scope-start"]');
+        await settleLayout(page);
+        for (const name of ['cose', 'breadthfirst', 'concentric', 'grid', 'circle', 'dagre']) {
+          await press(`#settings-menu [data-action="layout"][data-layout-btn="${name}"]`);
+          await settleLayout(page);
+        }
+        for (const action of ['separate-nolink', 'simple-mode', 'bundle', 'relation-labels', 'focus-mode', 'minimap']) {
+          await press(`#settings-menu [data-action="${action}"]`);
+          await press(`#settings-menu [data-action="${action}"]`);
+        }
+        for (const kind of ['LOOKUP', 'REF', 'ACTION']) {
+          await press(`#settings-menu [data-action="relation-kind"][data-kind="${kind}"]`);
+          await press(`#settings-menu [data-action="relation-kind"][data-kind="${kind}"]`);
+        }
+        for (const value of ['none', 'compact', 'full', 'standard']) { await choose('#density-select', value); await page.waitForTimeout(250); }
+        await choose('#focus-depth', '2');
+        await choose('#focus-direction', 'out');
+        await choose('#focus-direction', 'both');
+        await choose('#focus-depth', '1');
+        await press('#settings-menu [data-action="fullscreen"]', { wait: 400 });
+        await press('#settings-menu [data-action="fullscreen"]', { wait: 400 });
+        await press('#settings-menu [data-action="path-finder"]');
+        await press('#settings-menu [data-action="clear-focus"]');
+        // 経路探索
+        await choose('#pf-from', { index: 0 });
+        await choose('#pf-to', { index: 1 });
+        await press('#pathfinder [data-action="find-path"]');
+        await settleLayout(page);
+        await press('#pathfinder [data-action="clear-path"]');
+        await press('#pathfinder [data-action="path-finder"]');
+
+        // 凡例・表示倍率・狭い画面だけの部品
+        await pressAll(['#legend-toggle-btn', '#legend-toggle-btn']);
+        for (const kind of ['LOOKUP', 'REF', 'ACTION']) await pressAll([`#legend [data-kind="${kind}"]`, `#legend [data-kind="${kind}"]`]);
+        await pressAll(['#zoom-ctrl [data-action="zoom-in"]', '#zoom-ctrl [data-action="zoom-out"]', '#zoom-ctrl [data-action="zoom-reset"]', '#zoom-level', '#zoom-presets [data-zoom="150"]', '#zoom-ctrl [data-action="zoom-fit"]']);
+        await pressAll(['#mobile-menu-btn', '#mobile-menu-btn', '#theme-btn', '#theme-btn']);
+
+        // アプリ一覧（左）と詳細パネル
+        await pressAll(['#sidebar-toggle-btn', '#sidebar-toggle-btn']);
+        for (const value of ['scope', 'start', 'attention', 'nolink', '']) await choose('#app-list-filter', value);
+        // 詳細パネルの項目の絞り込みは、項目が多いときだけ出る。カードの項目を「詳細」にしてから開く
+        await choose('#density-select', 'full');
+        await page.waitForTimeout(300);
+        await press('#app-list [data-action="focus-app"][data-app="113"]');
+        await settleLayout(page);
+        await press('#detail [data-action="edit-app"]');
+        await press('#editor .ed-swatch[data-action="swatch"]:nth-child(3)');
+        await press('#editor [data-action="editor-submit"]');
+        await press('#detail [data-action="edit-field-row"]');
+        await press('#editor [data-action="editor-close"]');
+        await press('#detail [data-action="hide-field-row"]');
+        await press('#detail [data-action="restore-fields"]');
+        await press('#detail [data-action="edit-relation-row"]');
+        await press('#editor [data-action="editor-close"]');
+        await press('#detail [data-action="toggle-relation-row"]');
+        await press('#detail [data-action="toggle-relation-row"]');
+        await page.locator('#detail .detail-filter').fill('顧客');
+        await page.locator('#detail .detail-filter').fill('');
+        await choose('#density-select', 'standard');
+        await page.waitForTimeout(300);
+        await press('#detail .link-btn[data-action="focus-app"]');
+        await settleLayout(page);
+        await press('#app-list [data-action="focus-app"][data-app="113"]');
+        await settleLayout(page);
+        await press('#detail [data-action="show-around"]');
+        await settleLayout(page);
+        // 表示範囲の帯（アプリのまわり）
+        await press('#scope-bar [data-action="scope-depth"][data-depth="2"]');
+        await settleLayout(page);
+        await press('#scope-bar [data-action="scope-depth"][data-depth="1"]');
+        await settleLayout(page);
+        await press('#scope-bar [data-action="scope-all"]');
+        await settleLayout(page);
+        await press('#scope-bar [data-action="scope-start"]');
+        await settleLayout(page);
+        // 関連線の詳細
+        await page.evaluate(() => renderEdgeDetail(cy.edges().filter((e) => e.visible())[0]));
+        await press('#detail .detail-actions [data-action="focus-app"]');
+        await press('#detail [data-action="detail-close"]');
+        await pressAll(['#sidebar [data-action="sidebar-close"]', '#sidebar-toggle-btn', '#sidebar-backdrop', '#sidebar-toggle-btn']);
+
+        // 編集メニュー（選んだアプリ 113 を対象にする）
+        await page.evaluate(() => { focusApp(113); });
+        await settleLayout(page);
+        for (const action of ['undo', 'toggle-pin', 'toggle-pin', 'color-by-depth', 'clear-colors', 'clear-pins', 'restore-all-fields', 'remove-relations', 'restore-relations']) await menuItem('edit-menu', `[data-action="${action}"]`);
+        for (const action of ['align', 'distribute']) for (const axis of ['x', 'y']) await menuItem('edit-menu', `[data-action="${action}"][data-axis="${axis}"]`);
+        await page.evaluate(() => { cy.getElementById('a110').select(); });
+        await menuItem('edit-menu', '[data-action="remove-apps"]');
+        await menuItem('edit-menu', '[data-action="restore-apps"]');
+        await menuItem('edit-menu', '[data-action="add-app"]');
+        await page.locator('#editor-body input').first().fill('CSP 検査のアプリ');
+        await press('#editor [data-action="editor-submit"]');
+        await menuItem('edit-menu', '[data-action="add-field"]');
+        await press('#editor [data-action="editor-close"]');
+        await menuItem('edit-menu', '[data-action="add-relation"]');
+        await pressBackdrop('editor-overlay');
+        await menuItem('edit-menu', '[data-action="add-note"]');
+        await page.locator('#ed-note-text').fill('CSP 検査のメモ');
+        await press('#editor .ed-swatch[data-action="swatch"]:nth-child(2)');
+        await press('#editor [data-action="editor-submit"]');
+        await menuItem('edit-menu', '[data-action="add-note"]');
+        await page.locator('#ed-note-text').fill('消すメモ');
+        await press('#editor [data-action="editor-submit"]');
+        await page.evaluate(() => openEditNote(cy.nodes('.note-node').last().id()));
+        await press('#editor [data-action="editor-delete"]');
+        await menuItem('edit-menu', '[data-action="edit-app"]');
+        await press('#editor [data-action="editor-close"]');
+        {
+          const chooser = page.waitForEvent('filechooser', { timeout: 10000 });
+          await menuItem('edit-menu', '[data-action="edit-import"]');
+          await (await chooser).setFiles(generated.depth1.file);
+          await page.waitForTimeout(400);
+        }
+
+        // 出力メニュー
+        for (const action of ['markdown', 'csv-apps', 'csv-fields', 'csv-relations', 'json', 'mermaid', 'drawio', 'plantuml', 'sql']) {
+          await menuItem('export-menu', `[data-action="${action}"]`);
+          assert.equal(await isOpen('modal-overlay'), true, `${action}: 出力の画面が開きません`);
+          if (action === 'markdown') {
+            await press('#modal [data-action="modal-copy"]');
+            await saveDownload(() => press('#modal [data-action="modal-download"]'), 'csp-modal-download.md');
+          }
+          if (action === 'sql') await pressBackdrop('modal-overlay');
+          else await press('#modal [data-action="modal-close"]');
+        }
+        await menuItem('export-menu', '[data-action="share-url"]');
+        const pngFile = await saveDownload(() => menuItem('export-menu', '[data-action="png"]'), 'csp-export.png');
+        await menuItem('export-menu', '[data-action="print"]');
+        await page.waitForTimeout(1500);
+        await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+        savedEdited = await saveDownload(() => menuItem('export-menu', '[data-action="save-html"]'), 'csp-edited.html');
+        savedState = await page.evaluate(() => ({ customApps: APPS.filter((a) => a.isCustom).map((a) => a.name), notes: cy.nodes('.note-node').map((n) => n.data('label')), accent: cy.getElementById('a113').data('accent') }));
+
+        // ヘルプ・コマンドパレット
+        await press('#help-btn');
+        await press('#help-box [data-action="help-close"]');
+        await press('#help-btn');
+        await pressBackdrop('help-overlay');
+        await press('#help-btn');
+        await press('#help-box [data-action="help-cmd"]');
+        assert.equal(await isOpen('cmd-overlay'), true, 'ヘルプからコマンドパレットを開けません');
+        await page.locator('#cmd-input').fill('画面に合わせる');
+        await page.keyboard.press('Enter');
+        await page.waitForTimeout(300);
+        await page.keyboard.press('Control+k');
+        await pressBackdrop('cmd-overlay');
+
+        // 表のビュー
+        await press('#tab-apps');
+        for (const key of ['id', 'name', 'name']) await press(`#apps-table [data-action="sort"][data-sort="${key}"]`);
+        await press('#apps-checks [data-action="apps-check"]');
+        await press('#apps-checks [data-action="apps-check"]');
+        for (const value of ['scope', 'start', 'custom', 'removed', '']) await choose('#apps-status', value);
+        await press('#apps-checks [data-action="analysis-open"]');
+        await press('#analysis-panel [data-action="analysis-close"]');
+        await press('#tab-apps');
+        await press('#apps-table .row-link[data-action="focus-app"]');
+        await settleLayout(page);
+        await press('#tab-apps');
+        await press('#apps-table .row-go[data-action="focus-app"]');
+        await settleLayout(page);
+        await press('#tab-relations');
+        await press('#relations-kinds [data-action="relation-table-kind"]');
+        await press('#relations-kinds [data-action="relation-table-kind"]');
+        for (const value of ['unresolved', 'self', 'filtered', 'custom', 'removed', '']) await choose('#relations-state', value);
+        await press('#relations-table [data-action="sort"][data-sort="kind"]');
+        await press('#relations-table [data-action="go-edge"]');
+        await settleLayout(page);
+
+        // キーボード
+        await page.locator('#tab-diagram').focus();
+        for (const key of ['ArrowRight', 'ArrowRight', 'ArrowLeft', 'End', 'Home']) { await page.keyboard.press(key); await page.waitForTimeout(120); }
+        await page.locator('#search-box').fill('顧客');
+        await page.keyboard.press('Enter');
+        await page.keyboard.press('Enter');
+        await settleLayout(page);
+        await page.locator('#search-box').fill('');
+        await page.evaluate(() => document.activeElement && document.activeElement.blur());
+        for (const key of ['Control+f', 'Escape', 'Control+b', 'Control+b', 'Alt+2', 'Alt+3', 'Alt+1', 'Shift+F', 'Shift+F', '+', '-', '0', 'Control+0', 'Control+z', '?', 'Escape', 'Control+k', 'Escape']) {
+          if (key !== 'Control+f') await page.evaluate(() => document.activeElement && document.activeElement !== document.body && document.activeElement.blur());
+          await page.keyboard.press(key);
+          await page.waitForTimeout(150);
+        }
+        await page.evaluate(() => { cy.elements().unselect(); cy.getElementById('a110').select(); });
+        await page.keyboard.press('Delete');
+        await page.keyboard.press('Control+z');
+        await page.keyboard.press('Control+p');
+        await page.waitForTimeout(1500);
+        await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+
+        const state = await cspState(page);
+        const tables = await page.evaluate(() => ({ click: Object.keys(ER_CLICK_ACTIONS), change: Object.keys(ER_CHANGE_ACTIONS), input: Object.keys(ER_INPUT_ACTIONS), keydown: Object.keys(ER_KEYDOWN_ACTIONS) }));
+        const missing = Object.fromEntries(Object.entries(tables).map(([type, names]) => [type, names.filter((name) => !state.exercised[type].includes(name))]).filter(([, names]) => names.length));
+        await page.screenshot({ path: path.join(OUT, 'csp-after-all-actions.png'), animations: 'disabled' });
+        const problems = [...viewer.errors, ...viewer.blocked];
+        await viewer.context.close();
+        assert.deepEqual(state.violations, [], 'CSP の違反があります');
+        assert.deepEqual(state.inlineAttributes, [], 'イベント属性・javascript の URL を持つ要素が現れました');
+        assert.deepEqual(missing, {}, '押していない操作があります');
+        assert.deepEqual(problems, []);
+        assert.equal(fs.readFileSync(pngFile).subarray(1, 4).toString('ascii'), 'PNG');
+        const total = Object.values(state.exercised).reduce((sum, names) => sum + names.length, 0);
+        return `操作 ${total} 種類（押す ${state.exercised.click.length}・選ぶ ${state.exercised.change.length}・入力 ${state.exercised.input.length}・キー ${state.exercised.keydown.length}）・ダウンロード ${downloads.length} 件・違反 0 件`;
+      });
+
+      await check('csp: 保存した編集済みHTMLは同じ CSP のまま開き直せ、編集の状態は実行しない JSON として入る（保存し直しても同じ）', async () => {
+        assert.ok(savedEdited, '前の検査で編集済みHTMLを保存できていません');
+        const html = fs.readFileSync(savedEdited, 'utf8');
+        assert.equal(cspOf(html), cspOf(generated.business.html), '保存した HTML の CSP が元の図と違います');
+        expectHashOnlyCsp(html, '編集済みHTML');
+        assert.ok(!html.includes('window.__ER_EDIT_STATE__='), '編集の状態を実行するスクリプトとして保存しています');
+        const state = JSON.parse(savedEditStateJson(html));
+        assert.equal(state.stateVersion, 2);
+        assert.ok(html.indexOf('<script id="er-edit-state"') < html.indexOf('<script id="er-main"'), '編集の状態が図の本体の後ろにあります');
+        const reopened = await openViewer(browser, savedEdited);
+        const restored = await reopened.page.evaluate(() => ({ customApps: APPS.filter((a) => a.isCustom).map((a) => a.name), notes: cy.nodes('.note-node').map((n) => n.data('label')), accent: cy.getElementById('a113').data('accent') }));
+        await reopened.page.evaluate(() => { cy.elements().unselect(); cy.getElementById('a113').select(); });
+        const again = path.join(OUT, 'csp-edited-again.html');
+        const downloadPromise = reopened.page.waitForEvent('download', { timeout: 60000 });
+        await reopened.page.evaluate(() => window.exportEditedHtml());
+        await (await downloadPromise).saveAs(again);
+        const firstCsp = await cspState(reopened.page);
+        const problems = [...reopened.errors, ...reopened.blocked];
+        await reopened.context.close();
+        const againHtml = fs.readFileSync(again, 'utf8');
+        assert.equal(cspOf(againHtml), cspOf(generated.business.html));
+        assert.equal((againHtml.match(/<script id="er-edit-state"/g) || []).length, 1, '保存し直すと編集の状態が重なります');
+        const third = await openViewer(browser, again);
+        const restoredAgain = await third.page.evaluate(() => ({ customApps: APPS.filter((a) => a.isCustom).map((a) => a.name), notes: cy.nodes('.note-node').map((n) => n.data('label')), accent: cy.getElementById('a113').data('accent') }));
+        const thirdCsp = await cspState(third.page);
+        const thirdProblems = [...third.errors, ...third.blocked];
+        await third.context.close();
+        assert.deepEqual(restored, savedState, '開き直すと編集が戻りません');
+        assert.deepEqual(restoredAgain, savedState, '保存し直して開くと編集が戻りません');
+        assert.deepEqual([...firstCsp.violations, ...thirdCsp.violations], [], 'CSP の違反があります');
+        assert.deepEqual([...problems, ...thirdProblems], []);
+        return `手動のアプリ ${restored.customApps.length}・メモ ${restored.notes.length}・違反 0 件`;
+      });
+
+      await check('csp: 共有 URL（表示状態のハッシュ）で開いても、違反なしに表示状態が戻る', async () => {
+        const viewer = await openViewer(browser, generated.business.file);
+        const hash = await viewer.page.evaluate(async () => {
+          setLayout('grid');
+          toggleRelationKind('REF');
+          await showAroundApp(101);
+          return '#' + encodeState();
+        });
+        await viewer.context.close();
+        const shared = await openViewer(browser, generated.business.file, { hash });
+        await shared.page.waitForTimeout(800);
+        const state = await shared.page.evaluate(() => ({ layout: ER_OPTIONS.layoutName, ref: relationKindState.REF, scope: viewScope.mode, roots: viewScope.roots.slice() }));
+        const csp = await cspState(shared.page);
+        const problems = [...shared.errors, ...shared.blocked];
+        await shared.context.close();
+        assert.deepEqual(state, { layout: 'grid', ref: false, scope: 'around', roots: ['101'] });
+        assert.deepEqual(csp.violations, []);
+        assert.deepEqual(problems, []);
+      });
+
+      await check('csp: 差し込まれたイベント属性・javascript の URL・script は動かず、違反として記録される', async () => {
+        const viewer = await openViewer(browser, generated.business.file);
+        const { page } = viewer;
+        await page.evaluate(() => {
+          document.body.insertAdjacentHTML('beforeend', '<img id="csp-probe-img" src="data:," onerror="window.__ER_PWNED__=1"><a id="csp-probe-link" href="javascript:window.__ER_PWNED__=2">x</a>');
+          const script = document.createElement('script');
+          script.textContent = 'window.__ER_PWNED__=3';
+          document.body.appendChild(script);
+        });
+        await page.locator('#csp-probe-link').click();
+        await page.waitForTimeout(500);
+        const state = await page.evaluate(() => ({ pwned: window.__ER_PWNED__, directives: window.__ER_CSP__.violations.map((v) => v.directive) }));
+        await viewer.context.close();
+        assert.equal(state.pwned, undefined, '差し込んだスクリプトが動きました');
+        for (const directive of ['script-src-attr', 'script-src-elem']) assert.ok(state.directives.includes(directive), `${directive} の違反が記録されていません: ${state.directives.join(', ')}`);
+        return state.directives.join(', ');
       });
     }
 

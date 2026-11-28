@@ -245,6 +245,8 @@ describe('設計書 HTML', () => {
     // 内部の通信情報の行（[API] GET …）は、見出しの注意とセクションの警告には出さない
     expect(html).toMatch(/<li><a href="#sec-viewSettings">ビュー設定<\/a>（取得失敗）: 権限がありません。一覧の設定を取得できません。<\/li>/);
     expect(html).toContain('<div class="notice notice--err" role="note">⚠ 取得できませんでした: 権限がありません。一覧の設定を取得できません。</div>');
+    // 取得状態の表の詳細にも出さない（生データの折りたたみにだけ残す。Markdown と同じ）
+    expect(text).not.toContain('[API]');
     expect(text).toContain('（部分取得: ');
     // 目次: 本文のあるセクションへのリンク。取得失敗は目次にも示す
     expect(html).toMatch(/<a href="#sec-viewSettings"><span class="toc-label">ビュー設定<\/span><span class="badge badge--err" data-status="fetch-error">取得失敗<\/span><\/a>/);
