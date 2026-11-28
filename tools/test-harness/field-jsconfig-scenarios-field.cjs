@@ -163,6 +163,43 @@ module.exports = function (scenario, c) {
     ok('一括整備（プレフィックス付与）で既存フィールドのコードを変更できる');
   });
 
+  scenario('フィールド追加: 一括整備で書き換えるフィールドが無いときは JSON を変えず、出力形式に合った案内を出す', async () => {
+    await reset('field');
+    await toSetup();
+    await label('反映先アプリID').fill('206');
+    const typed = '{"properties":{"memo":{"type":"MULTI_LINE_TEXT","code":"memo","label":"メモ"}}}';
+    await fieldBox().fill(typed);
+    await openAdvanced();
+    // 除去: 「dev_」で始まるコードが無い → 入力済みの JSON を空の結果で置き換えない
+    await page.getByPlaceholder('例: dev_', { exact: true }).fill('dev_');
+    await page.getByRole('checkbox', { name: '付与ではなく除去する', exact: true }).check();
+    await button('リネーム結果を JSON にセット').click();
+    await idle();
+    assert.equal(await fieldBox().inputValue(), typed, '書き換えるフィールドが無いときは、入力済みの JSON を変えない');
+    assert.equal(await statusTone(), 'warn');
+    assert.match(await statusText(), /書き換えるフィールドがありません[\s\S]*「dev_」で始まるフィールドコードがありません/);
+    // 新規追加用: 既存フィールドの上書きではなく、新しいコードのフィールドとして追加する案内
+    await page.getByRole('checkbox', { name: '付与ではなく除去する', exact: true }).uncheck();
+    await page.getByRole('combobox', { name: 'リネーム出力形式', exact: true }).selectOption('new-keys');
+    await button('リネーム結果を JSON にセット').click();
+    await idle();
+    const json = JSON.parse(await fieldBox().inputValue());
+    assert.ok(json.properties.dev_amount && json.properties.dev_amount.code === 'dev_amount', '新規追加用はキーも code も新しいコード');
+    assert.equal(await statusTone(), 'ok');
+    assert.match(await statusText(), /新しいコードのフィールドとして追加/);
+    assert.doesNotMatch(await statusText(), /上書き更新/, '新規追加用では上書き更新を案内しない');
+    assert.equal(await page.getByRole('checkbox', { name: '既存フィールドを上書き更新', exact: true }).isChecked(), false, '新規追加用では上書き更新をオンにしない');
+    // コード変更用: 上書き更新を自動でオンにしたことを示す
+    await page.getByRole('combobox', { name: 'リネーム出力形式', exact: true }).selectOption('put-rename');
+    await button('リネーム結果を JSON にセット').click();
+    await idle();
+    assert.equal(await page.getByRole('checkbox', { name: '既存フィールドを上書き更新', exact: true }).isChecked(), true);
+    assert.match(await statusText(), /「既存フィールドを上書き更新」をオンにしました/);
+    await closeAdvanced();
+    await assertNoViolations('フィールド 一括整備（書き換えなし・出力形式）', { allowedWrites: [] });
+    ok('一括整備: 書き換えるフィールドが無いときは JSON を変えずに理由を示し、新規追加用・コード変更用で案内を分ける');
+  });
+
   scenario('フィールド追加: 既存フィールドの上書き更新と、種類の違い・コード重複', async () => {
     await reset('field');
     await toSetup();
