@@ -610,6 +610,9 @@
   function safeJsonForScript(v) {
     return JSON.stringify(v).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
   }
+  function safeJsLiteralForScript(v) {
+    return safeJsonForScript(v).replace(/([{,])"__proto__":/g, '$1["__proto__"]:');
+  }
   function deepClone(v) {
     return v == null ? v : JSON.parse(JSON.stringify(v));
   }
@@ -7076,13 +7079,13 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const tgtLayoutRows = includesComparedContent ? targetBundle?.sections?.layoutSettings?.layout || [] : [];
     const logicScript = `
 (() => {
-  const REPORT_ROWS = ${safeJsonForScript(reportRows)};
+  const REPORT_ROWS = ${safeJsLiteralForScript(reportRows)};
   const ROW_SEARCH_TEXT_CACHE = new WeakMap();
   const REPORT_SEARCH_DEBOUNCE_MS = 150;
-  const SECTION_LABEL_MAP = ${safeJsonForScript(sectionLabelMap)};
-  const ENTITY_KIND_LABEL_MAP = ${safeJsonForScript(entityKindLabelMap)};
-  const REPORT_META = ${safeJsonForScript(reportMeta)};
-  const REPORT_EMPTY_STATE = ${safeJsonForScript({ title: emptyFactTitle, note: emptyFactNote })};
+  const SECTION_LABEL_MAP = ${safeJsLiteralForScript(sectionLabelMap)};
+  const ENTITY_KIND_LABEL_MAP = ${safeJsLiteralForScript(entityKindLabelMap)};
+  const REPORT_META = ${safeJsLiteralForScript(reportMeta)};
+  const REPORT_EMPTY_STATE = ${safeJsLiteralForScript({ title: emptyFactTitle, note: emptyFactNote })};
   const REVIEW_STATE_KIND = String(REPORT_META.reviewState.kind || '');
   const REVIEW_STATE_VERSION = Number(REPORT_META.reviewState.version || 0);
   const REVIEW_STATE_MAX_BYTES = Number(REPORT_META.reviewState.maxBytes || ${DIFF_HTML_REVIEW_STATE_MAX_BYTES});
@@ -7090,9 +7093,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   const HAS_COMPARED_CONTENT = ${includesComparedContent ? "true" : "false"};
   const CAN_BUILD_REFLECT_JSON = !!REPORT_META.reflectJsonAvailable;
   const REFLECT_JSON_BLOCK_REASON = String(REPORT_META.reflectJsonBlockedReason || '反映JSONを作成できません');
-  const DIFF_NAV_RANGE_NOTE = ${safeJsonForScript(diffNavRangeNote)};
-  const TARGET_PREVIEW_API_PREFIX = ${safeJsonForScript(targetPreviewApiPrefix)};
-  const NORMALIZATION_PRESETS = ${safeJsonForScript(clientNormalizationPresets)};
+  const DIFF_NAV_RANGE_NOTE = ${safeJsLiteralForScript(diffNavRangeNote)};
+  const TARGET_PREVIEW_API_PREFIX = ${safeJsLiteralForScript(targetPreviewApiPrefix)};
+  const NORMALIZATION_PRESETS = ${safeJsLiteralForScript(clientNormalizationPresets)};
   const THEME_KEY = '${TOOL_ID}:diffReportTheme';
   const ACTIVE_TAB_KEY = '${TOOL_ID}:diffReportActiveTab';
   const LINE_DIFF_MAX_CELLS = ${LINE_DIFF_MAX_CELLS};
@@ -7112,12 +7115,12 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   const expandedVals = new Set();
   const sameOpen = new Set();
   const KUC_SEMVER = '${KUC_REPORT_VERSION}';
-  const FIELD_PROPS_SRC = ${safeJsonForScript(srcFieldProps)};
-  const FIELD_PROPS_TGT = ${safeJsonForScript(tgtFieldProps)};
-  const SOURCE_SECTIONS = ${safeJsonForScript(srcSectionsForReport)};
-  const TARGET_SECTIONS = ${safeJsonForScript(tgtSectionsForReport)};
-  const LAYOUT_ROWS_SRC = ${safeJsonForScript(srcLayoutRows)};
-  const LAYOUT_ROWS_TGT = ${safeJsonForScript(tgtLayoutRows)};
+  const FIELD_PROPS_SRC = ${safeJsLiteralForScript(srcFieldProps)};
+  const FIELD_PROPS_TGT = ${safeJsLiteralForScript(tgtFieldProps)};
+  const SOURCE_SECTIONS = ${safeJsLiteralForScript(srcSectionsForReport)};
+  const TARGET_SECTIONS = ${safeJsLiteralForScript(tgtSectionsForReport)};
+  const LAYOUT_ROWS_SRC = ${safeJsLiteralForScript(srcLayoutRows)};
+  const LAYOUT_ROWS_TGT = ${safeJsLiteralForScript(tgtLayoutRows)};
   const FLAT_FIELD_PROPS_SRC = collectFlatFieldMap(FIELD_PROPS_SRC);
   const FLAT_FIELD_PROPS_TGT = collectFlatFieldMap(FIELD_PROPS_TGT);
   let activeFieldCode = '';
@@ -8203,13 +8206,17 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
 
   // ---- 「JSONで比較」: フィールド単位に区切った WinMerge 風の左右比較 ----
 
+  // 設定の名前（フィールドコードなど）で引く表は、自身のプロパティだけを見る（constructor などを Object.prototype から拾わない）。
+  function ownValue(map, key) {
+    return map && Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined;
+  }
+
   function stripInternalFieldKeys(def) {
     if (!def || typeof def !== 'object' || Array.isArray(def)) return def;
-    const out = {};
-    Object.keys(def).forEach((k) => {
-      if (k === '__parentTableCode' || k === '__parentTableLabel') return;
-      out[k] = def[k];
-    });
+    // 代入ではなくスプレッドで写し、__proto__ という名前のキーも普通のプロパティとして残す。
+    const out = { ...def };
+    delete out.__parentTableCode;
+    delete out.__parentTableLabel;
     return out;
   }
 
@@ -8227,8 +8234,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     });
     const groups = [];
     map.forEach((bucket, code) => {
-      let src = stripInternalFieldKeys(FIELD_PROPS_SRC[code] || null);
-      let tgt = stripInternalFieldKeys(FIELD_PROPS_TGT[code] || null);
+      let src = stripInternalFieldKeys(ownValue(FIELD_PROPS_SRC, code) || null);
+      let tgt = stripInternalFieldKeys(ownValue(FIELD_PROPS_TGT, code) || null);
       if (!src && !tgt) {
         const rootRow = bucket.find((row) => {
           const info = extractFieldPathInfo(row.path);
@@ -8687,7 +8694,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
 
   function groupBySection(rows) {
     const order = {};
-    const defs = ${safeJsonForScript(SECTION_DEFS.map((d, i) => ({ key: d.key, label: d.label, order: i })))};
+    const defs = ${safeJsLiteralForScript(SECTION_DEFS.map((d, i) => ({ key: d.key, label: d.label, order: i })))};
     defs.forEach((d) => { order[d.key] = d.order; });
     const map = new Map();
     for (const row of rows) {
@@ -8951,7 +8958,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const entries = Object.values(fields);
     if (!entries.length) return '<div class="sl-empty">（項目なし）</div>';
     const cp = (counterpart && typeof counterpart === 'object' && !Array.isArray(counterpart)) ? counterpart : null;
-    const cpByCode = {};
+    const cpByCode = Object.create(null);
     if (cp) {
       Object.entries(cp).forEach(([key, child]) => {
         const code = String((child && child.code) || key);
@@ -9614,7 +9621,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   }
 
   function collectFlatFieldMap(properties, out) {
-    const dest = out || ({});
+    // プロトタイプの無い表にする（__proto__・constructor という名前のフィールドも、自身のプロパティとして持ち・引く）
+    const dest = out || Object.create(null);
     function walk(props, parentMeta) {
       Object.entries(props || ({})).forEach(([code, field]) => {
         if (!field || typeof field !== 'object' || Array.isArray(field)) return;

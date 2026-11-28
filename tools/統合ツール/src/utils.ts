@@ -90,6 +90,17 @@ export function safeJsonForScript(v: unknown): string {
     .replace(/\u2029/g, '\\u2029');
 }
 
+/**
+ * `<script>` の中へ JavaScript のリテラル（`const X = …;` の右辺）として埋め込む。
+ * JSON の `"__proto__": …` は、オブジェクトリテラルではプロトタイプの指定になり、そのキーが消える
+ * （フィールドコード・一覧名・選択肢名が `__proto__` のとき、その設定がレポートのデータから落ちる）。
+ * 計算されたプロパティ名 `["__proto__"]: …` に変えて、普通のプロパティとして残す。
+ * JSON.stringify の出力では、文字列の中の `"` は必ず `\"` になるため、`{"` `,"` で始まるのはキーだけ。
+ */
+export function safeJsLiteralForScript(v: unknown): string {
+  return safeJsonForScript(v).replace(/([{,])"__proto__":/g, '$1["__proto__"]:');
+}
+
 /** 確認画面・確認ダイアログの一覧に載せる件数の既定値。全アプリを対象にしても一覧が長くなりすぎないようにする。 */
 export const SUMMARY_LIST_LIMIT = 20;
 
