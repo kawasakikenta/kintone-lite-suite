@@ -25187,7 +25187,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     cardResult.body.appendChild(resultBox);
     panel.body.insertBefore(cardResult.card, panel.status);
     const cardOut = makeCard({ title: "出力", soft: true });
-    cardOut.body.appendChild(makeNote("HTML は人が確認するレビュー用で、1対1・1対多の比較が終わると自動保存されます。Excel は一覧・共有用で、全件または画面で絞り込んだ範囲を保存できます（長い原文も省略せず収録します）。", "help"));
+    cardOut.body.appendChild(makeNote("HTML は人が確認するレビュー用で、1対1・1対多の比較が終わると自動保存されます。Excel は一覧・共有用で、全件または画面で絞り込んだ範囲を保存できます（長い値もセルの上限 32,767 文字まで収録します）。", "help"));
     cardOut.body.appendChild(makeNote("AI向け Markdown は、比較方向・条件・取得の完全性・変更前後の値と型を含み、差分の事実をAIへ渡す用途で使います。", "help"));
     cardOut.body.appendChild(makeNote("「レビュー用（変更箇所のみ）」の HTML にも比較元・比較先の値は含まれます。「社内用」の HTML はフィールド詳細や反映 JSON も収録するため、取り扱いに注意してください。", "help"));
     const htmlContentMode = makeSelect([
@@ -25214,7 +25214,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
     const grid = document.createElement("div");
     grid.className = "kus-lp__btn-grid";
     const bXlsx = makeButton("Excel を保存 (.xlsx)", "primary", { icon: "↓" });
-    const bHtml = makeButton("レビュー用 HTML を再出力", "sub", { icon: "↓" });
+    const bHtml = makeButton("HTML を再出力", "sub", { icon: "↓" });
     const bMd = makeButton("AI向け Markdown を保存 (.md)", "sub", { icon: "↓" });
     bXlsx.dataset.kusDlExport = "xlsx";
     bHtml.dataset.kusDlExport = "html";
