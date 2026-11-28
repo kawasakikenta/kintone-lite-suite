@@ -2,7 +2,7 @@
 
 import { installWorkflowNavigation } from './liteWorkflow.js';
 
-import { DEFAULT_APP_ID, DEFAULT_GUEST_ID, DIFF_NORMALIZATION_PRESETS, SECTION_DEFS } from '../constants.js';
+import { DEFAULT_APP_ID, DEFAULT_GUEST_ID, DIFF_NORMALIZATION_PRESETS, SECTION_DEFS, reprintSectionKeys } from '../constants.js';
 import {
   buildDiffComparisonProfile,
   parseDiffComparisonProfile,
@@ -1570,9 +1570,10 @@ export function renderLiteDiffOverviewHtml(cache: DiffCache, options: { announce
     matchingNoticesHtml = `<div class="kus-dl-alert" role="note"><strong>対応付けの注意 ${totalNoticeCount}件</strong>${noticeLines}${omittedLine}</div>`;
   }
 
-  // 旧フォーム設定は、フィールド設定・レイアウト設定の再掲。件数には含めるが、Excel の変更一覧には含めない。
+  // 旧フォーム設定は、フィールド設定・レイアウト設定と一緒に比較したときは再掲。件数には含めるが、Excel の変更一覧には含めない
+  // （再掲の判定は Excel・差分の上限の別枠と同じ。どちらかを比較していなければ再掲ではなく、Excel も変更一覧に載せる）。
   const formReprintCount = (sections.find((section) => section.key === 'formSettings')?.rows || []).filter((row) => !row._displayOnly && row.type !== 'same').length;
-  const comparedWithOrigin = (cache.scopes || []).some((key) => key === 'fieldSettings' || key === 'layoutSettings');
+  const comparedWithOrigin = reprintSectionKeys(cache.scopes || []).has('formSettings');
   const formReprintNote = formReprintCount > 0 && comparedWithOrigin
     ? `<span>フォーム設定の ${formReprintCount} 件は、フィールド設定・レイアウト設定の変更の再掲です（Excelの変更一覧には含めません）。</span>`
     : '';

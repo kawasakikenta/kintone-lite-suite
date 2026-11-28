@@ -23793,7 +23793,7 @@ button.kus-dl-metric:hover{background:#f1f5f9;border-color:#e2e8f0}
       matchingNoticesHtml = `<div class="kus-dl-alert" role="note"><strong>対応付けの注意 ${totalNoticeCount}件</strong>${noticeLines}${omittedLine}</div>`;
     }
     const formReprintCount = (sections.find((section) => section.key === "formSettings")?.rows || []).filter((row) => !row._displayOnly && row.type !== "same").length;
-    const comparedWithOrigin = (cache.scopes || []).some((key) => key === "fieldSettings" || key === "layoutSettings");
+    const comparedWithOrigin = reprintSectionKeys(cache.scopes || []).has("formSettings");
     const formReprintNote = formReprintCount > 0 && comparedWithOrigin ? `<span>フォーム設定の ${formReprintCount} 件は、フィールド設定・レイアウト設定の変更の再掲です（Excelの変更一覧には含めません）。</span>` : "";
     const announceAttrs = options.announce === false ? "" : ' role="status"';
     const alertAttrs = options.announce === false ? "" : ' role="alert"';
