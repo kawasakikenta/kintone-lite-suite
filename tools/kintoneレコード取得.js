@@ -1181,7 +1181,15 @@
     let finished = false;
     try {
       while (true) {
-        const resp = await apiGet(prefix, "/records/cursor.json", { id: cursorId }, { timeoutMs: 0 });
+        let resp;
+        try {
+          resp = await apiGet(prefix, "/records/cursor.json", { id: cursorId }, { timeoutMs: 0, retries: 1 });
+        } catch (error) {
+          if (isRunCancelledError(error)) throw error;
+          const message = error?.message || String(error);
+          throw new Error(`レコードの取得（cursor）が途中で失敗しました。取りこぼしを防ぐため自動では送り直しません。もう一度実行してください。
+${message}`);
+        }
         if (!Array.isArray(resp?.records)) {
           throw new Error("cursor 取得の応答形式が不正です（records がありません）");
         }
