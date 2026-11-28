@@ -75,7 +75,11 @@ describe('ER diagram HTML', () => {
     expect(script).toContain('return cy.png({bg:"#ffffff",full:true,scale:Math.min(2,maxSide/Math.max(box.w,box.h,1))/(window.devicePixelRatio||1)});');
     expect(script).toContain('const url=URL.createObjectURL(dataUrlToBlob(data));');
     expect(script).toContain('await waitForCardImages();');
-    expect(script).toContain('buildExportImage(6000).then(data=>{');
+    // 印刷は画面のスクリーンショットではなく、見出し・図・一覧の資料にする（図は印刷するときだけ作る）
+    expect(script).toContain('return buildExportImage(5000,{bare:true}).then(setPrintFigure)');
+    expect(script).toContain('function buildPrintDocHtml(){');
+    expect(script).toContain('window.addEventListener("beforeprint",');
+    expect(script).not.toContain('window.open(');
   });
 
   it('draws app cards as valid SVG even when names contain markup characters', () => {
@@ -91,9 +95,11 @@ describe('ER diagram HTML', () => {
 
   it('keeps relation colors while focusing and exports without on-screen emphasis', () => {
     const script = extractViewerScript(buildHTML(baseApps, { startAppId: '1', startAppIds: ['1'], layoutName: 'dagre', fieldDensity: 'standard' }));
-    expect(script).toContain('{selector:"edge.focus-edge",style:{"width":2.6,"z-index":998}}');
+    expect(script).toContain('{selector:"edge.focus-edge",style:{"width":2.8,"z-index":998}}');
     expect(script).toContain('cy.elements().removeClass(EXPORT_CLEARED_CLASSES.join(" "));');
     expect(script).toContain('emphasis.forEach(([name,elements])=>elements.addClass(name));');
+    // 選んだ線（ラベルが出る）も出力には残さない
+    expect(script).toContain('const selected=cy.elements(":selected");\n  selected.unselect();');
   });
 
   it('embeds the Mermaid diagram into the Markdown spec within the size limit', () => {
@@ -102,9 +108,22 @@ describe('ER diagram HTML', () => {
     expect(script).toContain('if(mermaidText.length<=ER_MD_MERMAID_MAX_CHARS) lines.push(fence+"mermaid",mermaidText.trimEnd(),fence);');
   });
 
-  it('omits the start marker when every app is a start app', () => {
+  it('marks start apps only while they are fewer than half of the apps, without a star', () => {
     const script = extractViewerScript(buildHTML(baseApps, { startAppId: '1', startAppIds: ['1'], layoutName: 'dagre', fieldDensity: 'standard' }));
-    expect(script).toContain('return ids.includes(String(app.id))&&new Set(ids).size<APPS.length;');
+    const pick = (name: string) => script.match(new RegExp(`function ${name}\\([^)]*\\)\\{[\\s\\S]*?\\r?\\n\\}`))![0];
+    const run = (apps: any[], starts: string[]) => {
+      const context = createContext({ APPS: apps, startAppIdSet: new Set(starts) });
+      runInContext(`${pick('startMarksEnabled')}\n${pick('isMarkedStartApp')}\nglobalThis.marked = APPS.filter(isMarkedStartApp).map(a => a.id);`, context);
+      return (context as any).marked;
+    };
+    const apps = Array.from({ length: 10 }, (_, i) => ({ id: i + 1, name: `A${i + 1}` }));
+    expect(run(apps, ['1', '2'])).toEqual([1, 2]);
+    // 全アプリ（または半分を超えるアプリ）が起点の図では、全カードに付いて区別の役に立たないため付けない
+    expect(run(apps, apps.map((a) => String(a.id)))).toEqual([]);
+    expect(run(apps, ['1', '2', '3', '4', '5', '6'])).toEqual([]);
+    // 手動で追加したアプリは起点にしない
+    expect(run([{ id: -1, name: 'M', isCustom: true }, ...apps], ['-1'])).toEqual([]);
+    expect(script).not.toContain('★');
   });
 
   it('wraps oversized hierarchy ranks only for the dagre layout', () => {
@@ -114,6 +133,8 @@ describe('ER diagram HTML', () => {
     expect(script).toContain('function wrapWideRanks(nodes){');
     expect(script).toContain('wrapTargets.length > 1 && wrapRanks(wrapTargets, !initial);');
     expect(script).toContain('name === "dagre" && ER_DAGRE_READY');
+    // 「〇〇のまわり」では、中心のアプリを真ん中に置く配置にする（階層の配置のとき）
+    expect(script).toContain('if(name === "dagre" && viewScope.mode === "around"){');
   });
 
   it('shows the key facts while the summary card is collapsed', () => {
@@ -211,7 +232,7 @@ describe('ER diagram HTML', () => {
       ];
       const context: any = {
         document: {
-          body: { children: [...bodyChildren, host] },
+          body: { children: [...bodyChildren, host], appendChild: (el: unknown) => { if (el !== host) throw new Error('図の領域だけを body の直下へ移す'); } },
           getElementById: (id: string) => {
             if (id === 'er-main') return { textContent: 'VIEWER_SOURCE', after: (el: any) => runtime.push(el.textContent) };
             if (id === 'cy') return host;
@@ -327,11 +348,17 @@ describe('ER diagram HTML', () => {
     });
     const script = extractViewerScript(html);
 
-    expect(html).toContain('<div id="overview" class="collapsed">');
+    expect(html).toContain('<div id="overview" class="collapsed"');
     expect(html).toContain('>一部取得</span>');
     expect(html).toContain('id="legend-lookup-edge" aria-pressed="true"');
-    expect(html).toContain('#fab-mobile{display:flex;bottom:calc(var(--bottom-safe) + var(--pathfinder-lift) + 50px);}');
-    expect(script).toContain('"△ 一部取得 "');
+    // 図の上には、表示範囲の帯だけを置く（凡例とズーム操作は下の隅）
+    expect(html).toContain('<div id="scope-bar" role="group" aria-label="図の表示範囲"></div>');
+    expect(html).toMatch(/#legend\{position:absolute;left:12px;bottom:12px;/);
+    expect(html).toMatch(/#zoom-ctrl\{position:absolute;right:12px;bottom:12px;/);
+    // 取得失敗・一部取得・未取得の参照先は、色だけでなく文字でも示す
+    expect(script).toContain('badges.push({text:"△ 一部取得",color:palette.action})');
+    expect(script).toContain('badges.push({text:"⚠ 取得失敗",color:palette.req})');
+    expect(script).toContain('badges.push({text:"？ 未取得",color:palette.dim})');
     expect(script).toContain('このアプリを参照している関連');
     expect(script).toContain('function renderGhostDetail(node)');
     expect(script).toContain('!isInteractiveShortcutTarget(e.target)');
@@ -353,53 +380,100 @@ describe('ER diagram HTML', () => {
     expect(script).toContain('"min-zoomed-font-size":6.5');
     expect(script).toContain('"min-zoomed-font-size":7');
     expect(script).toContain('function setZoomPercent(percent)');
-    expect(script).toContain('Math.min(MAX_FIT_ZOOM,availW/Math.max(box.w,1),availH/Math.max(box.h,1))');
-    expect(script).toContain('cy.viewport({zoom,pan:');
+    expect(script).toContain('Math.min(maxZoom,availW/Math.max(box.w,1),availH/Math.max(box.h,1))');
+    expect(script).toContain('cy.viewport(fitViewportFor(eles,MAX_FIT_ZOOM))');
+    expect(html).toContain('aria-label="図を画面に合わせる"');
     expect(script).toContain('cy.on("zoom", updateZoomLabel)');
     expect(script).toContain('function buildSemanticNodeLabel(app)');
-    expect(script).toContain('const low=Number(zoom)<0.6;');
+    expect(script).toContain('const SEMANTIC_ZOOM_THRESHOLD=0.65;');
+    expect(script).toContain('const low=Number(zoom)<SEMANTIC_ZOOM_THRESHOLD;');
+    // 縮小時のカードは詳細カードと同じ枠に、アプリ名を大きく描く（縮小しても名前が読め、倍率を変えても重ならない）
+    expect(script).toContain('const w=Math.max(LOW_CARD_MIN_W,size.w), h=Math.max(LOW_CARD_MIN_H,size.h);');
+    expect(script).toContain('function overviewNameLayout(name,inner,nameArea){');
     expect(script).toContain('node.addClass("semantic-low")');
     expect(script).toContain('node.data("label",semanticZoomLabelBackup.get(node.id()))');
     expect(script).toContain('applySemanticZoom(cy.zoom());');
     expect(script).toContain('selector:"node.semantic-low"');
     expect(script).toContain('"font-size":"18px"');
     expect(script).toContain('selector:"edge.semantic-low"');
-    expect(script).toContain('mode.textContent=cy.zoom()<0.35?"構造":(cy.zoom()<0.6?"概要":"")');
+    expect(script).toContain('mode.textContent=cy.zoom()<0.35?"構造":(cy.zoom()<SEMANTIC_ZOOM_THRESHOLD?"概要":"")');
     expect(script).toContain('"現在の表示倍率 "+percent+"%。倍率プリセットを開く"');
   });
 
-  it('keeps responsive overlays dismissible and stacks bottom controls without collisions', () => {
+  it('keeps the header short, the side lists as drawers on narrow screens and the tables readable on phones', () => {
     const html = buildHTML(baseApps, {
       startAppId: '1', startAppIds: ['1'], layoutName: 'dagre', fieldDensity: 'standard', source: {}
     });
     const script = extractViewerScript(html);
 
-    expect(html).toContain('flex-wrap:wrap;overflow:visible;white-space:normal;');
-    expect(html).toContain('id="sidebar-close" onclick="closeSidebar()"');
-    expect(html).toContain('aria-controls="sidebar" aria-expanded="false"');
-    expect(html).toContain('id="sidebar-fab-btn" onclick="toggleSidebar(undefined,this)"');
-    expect(html).toContain('id="sidebar" role="region" aria-label="統計・フィルター" aria-hidden="true" inert');
-    expect(html).toMatch(/@media \(max-width: 900px\)\{[\s\S]*?#mobile-menu-btn\{display:inline-flex;\}[\s\S]*?#topbar > \.tb-menu\[data-mobile="hide"\]/);
-    expect(html).toMatch(/@media \(max-width: 900px\)\{[\s\S]*?\.tb-menu-panel\{position:fixed;/);
-    expect(html).toContain('#overview{top:calc(var(--topbar-h,52px) + 42px);}');
-    expect(html).toContain('--pathfinder-lift:0px;');
-    expect(html).toContain('bottom:calc(var(--bottom-safe) + var(--pathfinder-lift) + var(--legend-stack-height))');
-    expect(html).toContain('.tb-menu-panel{position:fixed;left:8px;right:8px;');
+    // 上部はタイトル・検索・表示の切り替え・表示設定・編集・出力・配色・ヘルプだけ
+    const topbar = html.match(/<header id="topbar">([\s\S]*?)<\/header>/)![1];
+    const topLevelButtons = [...topbar.replace(/<div class="tb-menu-panel[\s\S]*?\n {6}<\/div>\n {4}<\/div>/g, '').matchAll(/<button\b[^>]*>/g)];
+    expect(topLevelButtons.length).toBeLessThanOrEqual(12);
+    expect(topbar).toContain('role="tablist" aria-label="表示の切り替え"');
+    for (const id of ['tab-diagram', 'tab-apps', 'tab-relations', 'settings-btn', 'search-box', 'theme-btn', 'help-btn']) expect(topbar).toContain(`id="${id}"`);
+    expect(topbar).not.toContain('★');
+    // 配置・密度・線・強調・補助は「表示設定」、追加・編集は「編集」にまとめる
+    const settings = html.match(/<div class="tb-menu-panel settings-panel"[\s\S]*?<\/div>\n {4}<\/div>/)![0];
+    for (const id of ['density-select', 'separate-nolink-btn', 'rel-lookup-btn', 'rel-ref-btn', 'rel-action-btn', 'bundle-btn', 'rel-label-btn', 'focus-toggle-btn', 'focus-depth', 'focus-direction', 'minimap-btn', 'pathfinder-btn', 'fs-btn', 'simple-mode-btn']) {
+      expect(settings, id).toContain(`id="${id}"`);
+    }
+    expect(settings.match(/data-layout-btn="/g)).toHaveLength(6);
+    // 狭い画面: アプリ一覧は引き出し、詳細は全画面、表は 1 行を 1 枚のカードにする
+    expect(html).toMatch(/@media \(max-width:1023px\)\{[\s\S]*?#sidebar\{position:fixed;[^}]*visibility:hidden;/);
+    expect(html).toMatch(/@media \(max-width:900px\)\{[\s\S]*?#mobile-menu-btn\{display:inline-flex;\}[\s\S]*?#topbar\.mobile-open \.tb-actions\{display:flex;\}/);
+    expect(html).toMatch(/@media \(max-width:640px\)\{[\s\S]*?\.side-panel\{position:fixed;inset:0;/);
+    expect(html).toMatch(/@media \(max-width:640px\)\{[\s\S]*?\.data-table td::before\{content:attr\(data-label\);/);
+    expect(html).toMatch(/@media \(max-width:640px\)\{[\s\S]*?#legend \.legend-items\{display:none;\}/);
     expect(html).toContain('@media (max-width:420px){');
-    expect(html).toContain('#modal .actions,#editor .actions{flex-wrap:wrap;}');
     expect(html).toContain('.help-grid{grid-template-columns:minmax(0,1fr);}');
     expect(html).toContain('#zoom-ctrl > button,#zoom-level{width:42px;min-height:40px;}');
+    // 表のビューは図の上に重ね、図の部品（表示範囲の帯・凡例・ズーム）を隠す
+    expect(html).toContain('#view-diagram{z-index:0;}');
+    expect(html).toContain('.table-view{z-index:5;}');
+    expect(script).toContain('if(diagram){ diagram.inert=next!=="diagram"; diagram.setAttribute("aria-hidden",String(next!=="diagram")); }');
+    // 引き出しは閉じると操作の対象から外し、開いた操作の位置へフォーカスを戻す
+    expect(html).toContain('id="sidebar-close" onclick="closeSidebar()"');
+    expect(html).toContain('aria-controls="sidebar" aria-expanded="true"');
     expect(script).toContain('function closeSidebar(){toggleSidebar(false);}');
-    expect(script).toContain('["sidebar-toggle-btn","sidebar-fab-btn"].forEach');
-    expect(script).toContain('document.getElementById("sidebar-close")?.focus();');
-    expect(script).toContain('if(restore&&document.contains(restore)) restore.focus();');
+    expect(script).toContain('sidebar.inert=!open;');
     expect(script).toContain('sidebar.setAttribute("aria-hidden",String(!open));');
+    expect(script).toContain('document.getElementById("sidebar-close")?.focus();');
+    expect(script).toContain('if(restore&&document.contains(restore)&&restore.getClientRects().length) restore.focus();');
     expect(script).toContain('function closeMobileMenu()');
     expect(script).toContain('setAttribute("aria-expanded",String(open))');
-    expect(script).toContain('closeZoomPresets();closeSidebar();toggleAnalysisPanel(false)');
-    expect(script).toContain('function syncBottomUiOffsets()');
-    expect(script).toContain('const shouldStackPath=!!pathfinder?.classList.contains("open");');
-    expect(script).toContain('requestAnimationFrame(syncBottomUiOffsets)');
+    // Esc は開いているダイアログ・メニューから順に閉じる
+    expect(script).toContain('if(hadDialog||hadMenu) return;');
+    expect(script).toContain('closeDetail();toggleAnalysisPanel(false);clearFocus(true);clearAnalysisHighlight();');
+  });
+
+  it('prints a document (heading, figure, app and relation lists) instead of a screenshot of the screen', () => {
+    const html = buildHTML(baseApps, {
+      startAppId: '1', startAppIds: ['1'], layoutName: 'dagre', fieldDensity: 'standard', source: {}
+    });
+    const script = extractViewerScript(html);
+    expect(html).toMatch(/@media print\{[\s\S]*?body > \*:not\(#print-doc\)\{display:none !important;\}[\s\S]*?#print-doc\{display:block !important;\}/);
+    expect(html).toContain('<div id="print-doc"></div>');
+    for (const heading of ['対象（起点）', '取得日時', '接続先', '取得状態', '図の表示範囲']) expect(script).toContain(`["${heading}",`);
+    expect(script).toContain("'<h2>アプリ一覧（'+apps.length+' 件）</h2>");
+    expect(script).toContain("'<h2>関連一覧（'+rels.length+' 件）</h2>");
+    // 開いた時点では画像の要素を置かない（印刷するときだけ作る）
+    expect(html).not.toMatch(/<img\b/);
+    expect(script).toContain('window.addEventListener("afterprint",()=>{ setTimeout(clearPrintDoc,0); });');
+  });
+
+  it('follows the OS colour scheme on open, starts light and does not save the theme', () => {
+    const html = buildHTML(baseApps, {
+      startAppId: '1', startAppIds: ['1'], layoutName: 'dagre', fieldDensity: 'standard', source: {}
+    });
+    const script = extractViewerScript(html);
+    expect(html).toMatch(/:root\{\n {2}color-scheme:light;\n {2}--bg:#f1f5f9;/);
+    expect(html).toContain('[data-theme="dark"]{');
+    expect(script).toContain('let isDark = !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);');
+    // カードの画像は CSS の変数から作るため、図を作る前に配色を決める
+    expect(script.indexOf('// カードの画像と図の色は CSS の変数から作るため、図を作る前に配色を決めておく\napplyTheme();')).toBeLessThan(script.indexOf('const cy=cytoscape({'));
+    expect(script).not.toContain('theme:isDark');
+    expect(script).not.toMatch(/\bt: isDark/);
   });
 
   it('searches every acquired field, not only the ones the current density draws on the card', () => {
@@ -410,7 +484,11 @@ describe('ER diagram HTML', () => {
 
     expect(script).toContain('allFieldsForApp(app).some(f=>!isFieldHidden(app,f)&&fieldMatches(f))');
     expect(script).toContain('searchHiddenOnlyIds.add(n.id())');
-    expect(script).toContain('updateSearchMeta(q, matched.length, searchHiddenOnlyIds.size);');
+    expect(script).toContain('updateSearchMeta(q, matched.length, searchHiddenOnlyIds.size, outside);');
+    // 検索は図・左のアプリ一覧・表のビューに共通で効く
+    expect(script).toContain('if(low&&!appMatchesQuery(row.a,low)) return false;');
+    expect(script).toContain('if(low&&!appMatchesQuery(r.app,low)) return false;');
+    expect(script).toContain('return relationRowMatches(r,low);');
     expect(script).toContain('うち" + hiddenOnly + "件は、現在の表示密度では図に出ていない項目で一致したアプリです');
     expect(script).toContain('pill.innerHTML = "<b>検索</b> " + matched + "件";');
     expect(script).toContain('（一致した項目は現在の表示密度では図に出ていません）');
