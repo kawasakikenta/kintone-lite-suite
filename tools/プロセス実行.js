@@ -845,8 +845,10 @@
   }
 
   // src/api.ts
+  var GUEST_SPACE_ID_PATTERN = /^\d+$/;
   function buildApiPrefix(guestId, preview) {
     const g = String(guestId || "").trim();
+    if (g && !GUEST_SPACE_ID_PATTERN.test(g)) throw new Error(`ゲストスペースIDは半角数字で指定してください（${g.slice(0, 40)}）。`);
     if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
     return `/k/v1${preview ? "/preview" : ""}`;
   }

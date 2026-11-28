@@ -822,10 +822,20 @@
   }
 
   // src/api.ts
+  var GUEST_SPACE_ID_PATTERN = /^\d+$/;
   function buildApiPrefix(guestId, preview) {
     const g = String(guestId || "").trim();
+    if (g && !GUEST_SPACE_ID_PATTERN.test(g)) throw new Error(`ゲストスペースIDは半角数字で指定してください（${g.slice(0, 40)}）。`);
     if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
     return `/k/v1${preview ? "/preview" : ""}`;
+  }
+  var MUTATING_PREFIX_PATTERN = /^\/k(?:\/guest\/\d+)?\/v1(?:\/preview)?$/;
+  var MUTATING_PATH_PATTERN = /^(?:\/[A-Za-z0-9_-]+)+\.json$/;
+  var ERR_BAD_WRITE_TARGET = "kintone REST API の書き込み先の URL が不正なため、書き込みを中止しました。";
+  function assertMutatingRestTarget(prefix, path) {
+    if (!MUTATING_PREFIX_PATTERN.test(String(prefix ?? "")) || !MUTATING_PATH_PATTERN.test(String(path ?? ""))) {
+      throw new Error(`${ERR_BAD_WRITE_TARGET}（${String(prefix ?? "").slice(0, 80)}${String(path ?? "").slice(0, 80)}）`);
+    }
   }
   var DEPLOY_PATH_SNIPPET = "app/deploy.json";
   var ERR_NO_PROD_WRITE = "本番APIへの追加・更新・削除は無効です。プレビューAPIへの書き込みのみ可能です。本番への反映はkintone管理画面から手動でデプロイしてください。";
@@ -874,21 +884,22 @@
     if (m !== "POST" && m !== "PUT" && m !== "DELETE" && m !== "PATCH") return;
     const rel = String(path || "").replace(/\\/g, "/");
     if (rel.includes(DEPLOY_PATH_SNIPPET)) {
-      if (options.allowAppDeploy === true && path === APP_DEPLOY_PATH && m === "POST" && isPreviewRestPrefix(prefix)) return;
+      if (options.allowAppDeploy === true && path === APP_DEPLOY_PATH && m === "POST" && isPreviewRestPrefix(prefix)) return assertMutatingRestTarget(prefix, path);
       throw new Error(ERR_NO_DEPLOY_API);
     }
     if (normalizeApiResourcePath(rel) === RECORD_CURSOR_PATH && (m === "POST" || m === "DELETE")) {
       if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
-      return;
+      return assertMutatingRestTarget(prefix, path);
     }
     if (isRecordDataMutationPath(rel)) {
       if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
-      return;
+      return assertMutatingRestTarget(prefix, path);
     }
-    if (path === FILE_UPLOAD_PATH && m === "POST" && !isPreviewRestPrefix(prefix)) return;
+    if (path === FILE_UPLOAD_PATH && m === "POST" && !isPreviewRestPrefix(prefix)) return assertMutatingRestTarget(prefix, path);
     if (!isPreviewRestPrefix(prefix)) {
       throw new Error(ERR_NO_PROD_WRITE);
     }
+    assertMutatingRestTarget(prefix, path);
   }
   function normalizeApiGetOptions(optionsOrRetries) {
     if (typeof optionsOrRetries === "number") return { retries: optionsOrRetries };
