@@ -7,7 +7,8 @@
 //   - 生成: パネルの「ER図をHTMLで保存」で 3 つの図（案件管理から辿る・全アプリを起点・深さ 1）を作る。所要時間と状態表示を記録。
 //   - 生成した HTML は、file:// 以外の通信をすべて遮断したブラウザで開く（描画ライブラリは同梱済み）。
 //   - 全レイアウト（Dagre・ツリー・フォース・同心円・グリッド・円形）× 全表示密度で、アプリのカードが重ならないこと
-//     （縮小表示と詳細表示の両方）、画面からはみ出さないこと、スクリーンショット。
+//     （縮小表示と詳細表示の両方。フォースは配置し直すたびに結果が変わるため 5 回）、画面からはみ出さないこと、スクリーンショット。
+//     配置が終わる（runLayout の Promise の解決とカードの動きの停止）のを待ってから測る。--cpu-throttle で混んだ PC を再現できる。
 //   - 検索・強調・シンプル表示・詳細パネル・関連の詳細（コピーするフィールド・表示フィールド・絞り込み条件）。
 //   - 表示範囲（起点まわりで開く・全体／深さ 2／アプリのまわりへの切り替え）、同じアプリ間の線のまとめと線の名前。
 //   - 表のビュー（アプリ一覧・関連一覧）、印刷の資料、配色（OS の設定・切り替え・コントラスト）。
@@ -48,6 +49,7 @@ Options:
   --browser <name>     chrome または chromium（既定: chrome）
   --executable <path>  ブラウザの実行ファイル（環境変数 KUS_PLAYWRIGHT_EXECUTABLE でも指定できます）
   --only <text>        名前に <text> を含む検査だけ実行します（例: --only layout）
+  --cpu-throttle <n>   図のページの CPU を n 分の 1 の速さにします（混んだ PC の再現。例: --only layout --cpu-throttle 4）
   --help               このヘルプを表示
 
 日本語のダウンロード名を扱うため、ロケールが C/POSIX の環境では LANG=C.UTF-8 LC_ALL=C.UTF-8 を付けて実行してください。
@@ -57,6 +59,7 @@ Options:
 
 const results = [];
 const only = argValue('--only');
+const cpuThrottle = Math.max(1, Number(argValue('--cpu-throttle', '1')) || 1);
 // 検査の名前、またはその検査を含むグループの名前（layout・search など）で絞り込む
 const shouldRun = (name) => !only || name.includes(only) || only.startsWith(name);
 
@@ -325,7 +328,27 @@ async function openViewer(browser, file, { width = 1440, height = 900, hash = ''
   await page.goto(`file://${file}${hash}`, { waitUntil: 'load' });
   await page.waitForSelector('#cy canvas', { state: 'attached', timeout: 30000 });
   await page.waitForTimeout(1500);
+  if (cpuThrottle > 1) {
+    const cdp = await context.newCDPSession(page);
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: cpuThrottle });
+  }
+  await trackLayouts(page);
   return { context, page, errors, blocked };
+}
+
+// 配置（runLayout）が終わったかを、図のページで数える（settleLayout が使う）。runLayout は配置を終えて全体表示に合わせ直したら
+// 解決する Promise を返す。図の本体は通常の script なので、window.runLayout を差し替えると図の中からの呼び出しも数えられる
+async function trackLayouts(page) {
+  await page.evaluate(() => {
+    if (typeof window.runLayout !== 'function' || window.__erLayoutSettled) return;
+    const run = window.runLayout;
+    let running = 0;
+    window.runLayout = function trackedRunLayout(...args) {
+      running += 1;
+      return Promise.resolve(run.apply(this, args)).finally(() => { running -= 1; });
+    };
+    window.__erLayoutSettled = () => running === 0 && !cy.animated() && !cy.nodes().some((node) => node.animated());
+  });
 }
 
 // 生成した HTML に、編集済みHTMLと同じ形で編集状態を差し込んだ複製を作る。
@@ -381,8 +404,11 @@ const measureOverlaps = (page) => page.evaluate(() => {
 });
 
 async function settleLayout(page) {
-  // レイアウトの動き（0.55 秒）と全体表示の合わせ直し（0.45 秒）が終わるまで待つ
+  // レイアウトの動き（0.55 秒）と全体表示の合わせ直し（0.45 秒）が終わるまで待つ。
+  // 「自動（cose）」は 20 回の計算ごとに描き直しながら動くため、PC が混んでいると 1.6 秒では終わらない。終わる前に測ると、
+  // 押し広げる前の重なりを数えてしまう。そのため、配置が終わり（runLayout の Promise の解決）、カードの動きが止まるまで待つ
   await page.waitForTimeout(1600);
+  await page.waitForFunction(() => typeof window.__erLayoutSettled !== 'function' || window.__erLayoutSettled(), null, { polling: 100, timeout: 60000 });
 }
 
 // ---------------------------------------------------------------------------
@@ -476,19 +502,26 @@ async function main() {
         await page.evaluate((value) => window.setDensity(value), density);
         await page.waitForTimeout(700);
         for (const layout of layouts) {
-          await check(`layout: ${layout} / 密度 ${density} でカードが重ならない`, async () => {
-            await page.evaluate((name) => window.setLayout(name), layout);
-            await settleLayout(page);
-            const overview = await measureOverlaps(page);
-            await page.evaluate(() => { cy.zoom({ level: 1, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } }); });
-            await page.waitForTimeout(300);
-            const detail = await measureOverlaps(page);
-            await page.evaluate(() => window.fit());
-            await page.waitForTimeout(300);
-            if (density === 'standard') await page.screenshot({ path: path.join(OUT, `layout-${layout}.png`), animations: 'disabled' });
-            assert.deepEqual({ overview: overview.overlaps, detail: detail.overlaps }, { overview: 0, detail: 0 },
-              `重なり ${JSON.stringify([overview.sample, detail.sample])}`);
-            return `縮小 ${overview.zoom}%`;
+          // 「自動（cose）」は今の位置から計算するため、配置し直すたびに結果が変わる。5 回配置し直して、毎回重ならないことを確かめる
+          const runs = layout === 'cose' ? 5 : 1;
+          await check(`layout: ${layout} / 密度 ${density} でカードが重ならない${runs > 1 ? `（${runs} 回配置し直す）` : ''}`, async () => {
+            const found = [];
+            let zoom = 0;
+            for (let run = 1; run <= runs; run += 1) {
+              await page.evaluate((name) => window.setLayout(name), layout);
+              await settleLayout(page);
+              const overview = await measureOverlaps(page);
+              await page.evaluate(() => { cy.zoom({ level: 1, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } }); });
+              await page.waitForTimeout(300);
+              const detail = await measureOverlaps(page);
+              await page.evaluate(() => window.fit());
+              await page.waitForTimeout(300);
+              if (run === 1 && density === 'standard') await page.screenshot({ path: path.join(OUT, `layout-${layout}.png`), animations: 'disabled' });
+              if (overview.overlaps || detail.overlaps) found.push({ run, overview: overview.overlaps, detail: detail.overlaps, sample: [overview.sample, detail.sample] });
+              zoom = overview.zoom;
+            }
+            assert.deepEqual(found, [], `重なり ${JSON.stringify(found)}`);
+            return `縮小 ${zoom}%`;
           });
         }
       }
