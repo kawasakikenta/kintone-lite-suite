@@ -265,10 +265,73 @@ function tokenHasWildcard(token) {
   return token.includes('*');
 }
 
-function compileWildcardRegex(token) {
-  // `*` だけメタ文字として扱い、それ以外は通常のリテラル比較。
-  const escaped = token.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
-  return new RegExp(`^${escaped}$`);
+export interface WildcardMatcher {
+  test(value: string): boolean;
+}
+
+/** 改行類。`*` はこれらの文字に一致しない（正規表現の `.` と同じ。以前の照合と結果を変えない）。 */
+function isWildcardLineTerminator(code: number): boolean {
+  return code === 0x0a || code === 0x0d || code === 0x2028 || code === 0x2029;
+}
+
+/** パターン側に改行類があるときだけ使う、表による照合（最悪 O(パターン長 × 値の長さ)）。 */
+function matchWildcardByTable(pattern: string, value: string): boolean {
+  let previous = new Uint8Array(value.length + 1);
+  previous[0] = 1;
+  for (let p = 0; p < pattern.length; p += 1) {
+    const current = new Uint8Array(value.length + 1);
+    if (pattern[p] === '*') {
+      current[0] = previous[0];
+      for (let v = 1; v <= value.length; v += 1) {
+        current[v] = previous[v] || (current[v - 1] && !isWildcardLineTerminator(value.charCodeAt(v - 1))) ? 1 : 0;
+      }
+    } else {
+      for (let v = 1; v <= value.length; v += 1) {
+        current[v] = previous[v - 1] && pattern[p] === value[v - 1] ? 1 : 0;
+      }
+    }
+    previous = current;
+  }
+  return previous[value.length] === 1;
+}
+
+/**
+ * `*` だけを「改行以外の任意の文字列」とみなす全体一致。
+ * 正規表現（`.*` の連続）にすると、`*` の多いルールと長いパスで後戻りが爆発して画面が固まるため、
+ * 最後の `*` の位置だけを覚えて進める（最悪でも O(パターン長 × 値の長さ)）。
+ */
+export function matchWildcard(pattern: string, value: string): boolean {
+  for (let i = 0; i < pattern.length; i += 1) {
+    if (isWildcardLineTerminator(pattern.charCodeAt(i))) return matchWildcardByTable(pattern, value);
+  }
+  let p = 0;
+  let v = 0;
+  let starAt = -1;
+  let starValueAt = 0;
+  while (v < value.length) {
+    if (p < pattern.length && pattern[p] === '*') {
+      starAt = p;
+      starValueAt = v;
+      p += 1;
+    } else if (p < pattern.length && pattern[p] === value[v]) {
+      p += 1;
+      v += 1;
+    } else if (starAt >= 0 && !isWildcardLineTerminator(value.charCodeAt(starValueAt))) {
+      // 直前の `*` に 1 文字多く含めてやり直す（パターンに改行類が無いので、改行は `*` でしか越えられない）
+      starValueAt += 1;
+      v = starValueAt;
+      p = starAt + 1;
+    } else {
+      return false;
+    }
+  }
+  while (p < pattern.length && pattern[p] === '*') p += 1;
+  return p === pattern.length;
+}
+
+function compileWildcardMatcher(token: string): WildcardMatcher {
+  // `*` だけをワイルドカードとして扱い、それ以外の文字はそのまま比べる。
+  return { test: (value: string) => matchWildcard(token, String(value)) };
 }
 
 export function parseIgnoreRules(text) {
@@ -277,8 +340,8 @@ export function parseIgnoreRules(text) {
   const userKeySet = new Set<string>();
   const pathSet = new Set<string>();
   const exactPathSet = new Set<string>();
-  const keyPatterns: RegExp[] = [];
-  const pathPatterns: RegExp[] = [];
+  const keyPatterns: WildcardMatcher[] = [];
+  const pathPatterns: WildcardMatcher[] = [];
   String(text || '')
     // 空白はビュー名・カテゴリ名など正規のパス構成要素になり得る。
     // 区切りはUIで案内している改行・カンマ・セミコロンに限定する。
@@ -295,11 +358,9 @@ export function parseIgnoreRules(text) {
       const isPath = tokenLooksLikePath(token);
       const cleaned = token;
       if (tokenHasWildcard(cleaned)) {
-        try {
-          const re = compileWildcardRegex(cleaned);
-          if (isPath) pathPatterns.push(re);
-          else keyPatterns.push(re);
-        } catch { /* 不正なパターンは無視 */ }
+        const matcher = compileWildcardMatcher(cleaned);
+        if (isPath) pathPatterns.push(matcher);
+        else keyPatterns.push(matcher);
         return;
       }
       if (isPath) pathSet.add(cleaned);
