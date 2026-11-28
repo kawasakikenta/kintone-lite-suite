@@ -3,7 +3,7 @@
 import { TOOL_ID, SECTION_DEFS } from '../constants.js';
 import { buildDesignSnapshot } from '../design/snapshot.js';
 import { getToolDocument } from '../ui/dialog.js';
-import { showToast, stripHtmlToText, extractAppNameFromBundle, flattenCategories } from '../utils.js';
+import { showToast, stripHtmlToText, extractAppNameFromBundle, flattenCategories, UNSAFE_FILENAME_CHARS } from '../utils.js';
 import { isCancelRequested, isRunCancelledError, raceWithCancel, requestCancel, RUN_CANCELLED_MESSAGE, sleepUnlessCancelled, throwIfCancelled } from '../runControl.js';
 import { API_GET_TIMEOUT_MS, isRetriableApiError } from '../api.js';
 import { loadJSZipLite } from '../jszipLoader.js';
@@ -2737,7 +2737,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     }
 
     UI.update(returnWorkbook ? '生成完了' : 'ダウンロード中...', 12);
-    const safeAppName = String(appSettings?.name || '').replace(/[\\/:*?"<>|]/g, '_').replace(/[\u0000-\u001f]/g, ' ').trim();
+    const safeAppName = String(appSettings?.name || '').replace(/[\\/:*?"<>|]/g, '_').replace(UNSAFE_FILENAME_CHARS, ' ').trim();
     const appLabel = safeAppName ? `${safeAppName}(app${APP_ID})` : `app${APP_ID}`;
     const filename = `設計書_${appLabel}_${nowStampZip()}.xlsx`;
 
@@ -2792,7 +2792,7 @@ function nowStampZip(d = new Date()): string {
   return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}_${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
 }
 function sanitizeFilename(name: string): string {
-  return String(name || '').replace(/[\\/:*?"<>|]/g, '_').replace(/[\u0000-\u001f]/g, '').trim() || 'untitled';
+  return String(name || '').replace(/[\\/:*?"<>|]/g, '_').replace(UNSAFE_FILENAME_CHARS, '').trim() || 'untitled';
 }
 
 /**

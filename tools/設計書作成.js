@@ -11874,9 +11874,10 @@
     const p = (n) => String(n).padStart(2, "0");
     return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
   }
+  var UNSAFE_FILENAME_CHARS = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u206f]/g;
   function sanitizeFilenamePart(value, fallback = "不明") {
     const text = String(value || "").trim();
-    const cleaned = text.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
+    const cleaned = text.replace(/[\\/:*?"<>|]/g, " ").replace(UNSAFE_FILENAME_CHARS, " ").replace(/\s+/g, " ").trim();
     return cleaned || fallback;
   }
   function extractAppNameFromBundle(bundle) {
@@ -19690,7 +19691,7 @@ ${fence}`;
         }
       }
       UI.update(returnWorkbook ? "生成完了" : "ダウンロード中...", 12);
-      const safeAppName = String(appSettings?.name || "").replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f]/g, " ").trim();
+      const safeAppName = String(appSettings?.name || "").replace(/[\\/:*?"<>|]/g, "_").replace(UNSAFE_FILENAME_CHARS, " ").trim();
       const appLabel = safeAppName ? `${safeAppName}(app${APP_ID})` : `app${APP_ID}`;
       const filename = `設計書_${appLabel}_${nowStampZip()}.xlsx`;
       if (returnWorkbook) {
@@ -19743,7 +19744,7 @@ ${fence}`;
     return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}_${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
   }
   function sanitizeFilename(name) {
-    return String(name || "").replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f]/g, "").trim() || "untitled";
+    return String(name || "").replace(/[\\/:*?"<>|]/g, "_").replace(UNSAFE_FILENAME_CHARS, "").trim() || "untitled";
   }
   function toManifestTargets(targets) {
     return targets.map((t) => ({ appId: t.appId, guestId: t.guestId, source: t.bundle ? "settings-json" : "api" }));
@@ -20297,7 +20298,7 @@ ${lines.join("\n")}`), { partialSuccess: true });
     setStatus(`設計書ZIP出力完了（${apps.length}件）`);
   }
   function uniqueMdZipEntryName(used, baseName) {
-    const cleaned = String(baseName || "").replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f]/g, "").trim() || "design.md";
+    const cleaned = String(baseName || "").replace(/[\\/:*?"<>|]/g, "_").replace(UNSAFE_FILENAME_CHARS, "").trim() || "design.md";
     let candidate = cleaned;
     let n = 2;
     while (used.has(candidate.toLowerCase())) {

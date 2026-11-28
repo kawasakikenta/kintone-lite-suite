@@ -693,9 +693,10 @@
     const p = (n) => String(n).padStart(2, "0");
     return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
   }
+  var UNSAFE_FILENAME_CHARS = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u206f]/g;
   function sanitizeFilenamePart(value, fallback = "不明") {
     const text2 = String(value || "").trim();
-    const cleaned = text2.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
+    const cleaned = text2.replace(/[\\/:*?"<>|]/g, " ").replace(UNSAFE_FILENAME_CHARS, " ").replace(/\s+/g, " ").trim();
     return cleaned || fallback;
   }
   function extractAppNameFromBundle(bundle) {
@@ -20204,7 +20205,7 @@ ${item.target}` : item.target;
     return String(value || "").trim() || `比較 ${index + 1}`;
   }
   function normalizeFilenameText(value) {
-    return String(value || "").replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").replace(/\s+/g, " ").trim().replace(/^[._ ]+/g, "").replace(/[. ]+$/g, "");
+    return String(value || "").replace(/[\\/:*?"<>|]/g, "_").replace(UNSAFE_FILENAME_CHARS, "_").replace(/\s+/g, " ").trim().replace(/^[._ ]+/g, "").replace(/[. ]+$/g, "");
   }
   function truncateCodePoints(value, maxCodePoints) {
     const points = Array.from(value);
@@ -21179,7 +21180,7 @@ ${fence}`;
 ` };
   }
   function cleanMarkdownEntryToken(value, maxLength = 40) {
-    const cleaned = String(value ?? "").replace(/[\\/:*?"<>|`]/g, "_").replace(/[\u0000-\u001F\u007F-\u009F]/g, " ").replace(/\s+/g, "_").replace(/_+/g, "_").replace(/^[._]+|[._]+$/g, "");
+    const cleaned = String(value ?? "").replace(/[\\/:*?"<>|`]/g, "_").replace(UNSAFE_FILENAME_CHARS, " ").replace(/\s+/g, "_").replace(/_+/g, "_").replace(/^[._]+|[._]+$/g, "");
     if (!cleaned) return "";
     const chars = Array.from(cleaned);
     return chars.length <= maxLength ? cleaned : chars.slice(0, maxLength).join("");

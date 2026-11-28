@@ -2,7 +2,7 @@
 
 import { CUSTOMIZE_BODY_SENSITIVE_NOTE, PLUGIN_CONFIG_INCLUDED_NOTE, SECTION_DEFS } from '../constants.js';
 import { state } from '../state.js';
-import { downloadText, downloadBlob, buildExportFilename, appLabelFromBundle, copyTextToClipboard, extractAppNameFromBundle, sanitizeFilenamePart } from '../utils.js';
+import { downloadText, downloadBlob, buildExportFilename, appLabelFromBundle, copyTextToClipboard, extractAppNameFromBundle, sanitizeFilenamePart, UNSAFE_FILENAME_CHARS } from '../utils.js';
 import { apiGet, buildApiPrefix, fetchBundle } from '../api.js';
 import { loadJSZipLite } from '../jszipLoader.js';
 import { pickSettingsBundle } from '../settingsBundleImport.js';
@@ -509,7 +509,7 @@ export interface BatchDesignMdZipResult {
 }
 
 function uniqueMdZipEntryName(used: Set<string>, baseName: string): string {
-  const cleaned = String(baseName || '').replace(/[\\/:*?"<>|]/g, '_').replace(/[\u0000-\u001f]/g, '').trim() || 'design.md';
+  const cleaned = String(baseName || '').replace(/[\\/:*?"<>|]/g, '_').replace(UNSAFE_FILENAME_CHARS, '').trim() || 'design.md';
   let candidate = cleaned;
   let n = 2;
   while (used.has(candidate.toLowerCase())) {

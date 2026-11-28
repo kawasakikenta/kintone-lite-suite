@@ -666,9 +666,10 @@
     const p = (n) => String(n).padStart(2, "0");
     return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
   }
+  var UNSAFE_FILENAME_CHARS = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u206f]/g;
   function sanitizeFilenamePart(value, fallback = "不明") {
     const text = String(value || "").trim();
-    const cleaned = text.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
+    const cleaned = text.replace(/[\\/:*?"<>|]/g, " ").replace(UNSAFE_FILENAME_CHARS, " ").replace(/\s+/g, " ").trim();
     return cleaned || fallback;
   }
   function buildAppFilenameLabel(appId, appName) {
@@ -3666,7 +3667,7 @@ ${selected.summary().map(([key, value]) => `${key}: ${value}`).join("\n")}`;
     return "\uFEFF" + lines.join(lineEnding);
   }
   function sanitizeZipSegment(value, fallback = "item") {
-    const cleaned = String(value == null ? "" : value).replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "").trim();
+    const cleaned = String(value == null ? "" : value).replace(/[\\/:*?"<>|]/g, "_").replace(UNSAFE_FILENAME_CHARS, "").trim();
     return !cleaned || /^\.+$/.test(cleaned) ? fallback : cleaned;
   }
   function uniqueZipName(used, raw, fileKey, idx) {
@@ -4543,7 +4544,7 @@ ZIP ${downloads.length}個のダウンロードを依頼しました。ブラウ
     for (const table of csv.tables) zip.file(`${prefix}${table.fileName}`, table.csvText);
   }
   function recordExportFilename(filename, extension, fallback) {
-    const stem = String(filename || "").trim().replace(/\.(csv|zip)$/i, "").replace(/[\u0000-\u001f\u007f]/g, "").trim();
+    const stem = String(filename || "").trim().replace(/\.(csv|zip)$/i, "").replace(UNSAFE_FILENAME_CHARS, "").trim();
     const safe = stem ? sanitizeFilenamePart(stem, "").replace(/^[. ]+|[. ]+$/g, "") : "";
     return safe ? `${safe}.${extension}` : fallback;
   }

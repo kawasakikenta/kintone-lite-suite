@@ -6,7 +6,7 @@ import {
   CLASSIC_ZIP_MAX_BYTES,
   type StoredZipEntry
 } from '../archive/stored-zip.js';
-import { extractAppNameFromBundle } from '../utils.js';
+import { extractAppNameFromBundle, UNSAFE_FILENAME_CHARS } from '../utils.js';
 import { hasIncompleteActualDiffTruncation } from './engine.js';
 import {
   buildXlsxBlob,
@@ -191,7 +191,8 @@ function safeLabel(value: unknown, index: number): string {
 
 function normalizeFilenameText(value: unknown): string {
   return String(value || '')
-    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_')
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(UNSAFE_FILENAME_CHARS, '_')
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/^[._ ]+/g, '')

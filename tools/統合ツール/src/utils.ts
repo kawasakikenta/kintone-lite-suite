@@ -293,10 +293,17 @@ export function nowStamp(): string {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
+/**
+ * ファイル名（保存するファイル・ZIP 内の名前）に残さない文字。制御文字（C0・C1。NUL があると ZIP を作れない）と、
+ * 表示上の名前や拡張子を入れ替えて見せられる双方向制御（RLO など）。アプリ名・添付ファイル名は利用者が自由に付けられるため取り除く。
+ */
+export const UNSAFE_FILENAME_CHARS = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u206f]/g;
+
 export function sanitizeFilenamePart(value: unknown, fallback: string = '不明'): string {
   const text = String(value || '').trim();
   const cleaned = text
     .replace(/[\\/:*?"<>|]/g, ' ')
+    .replace(UNSAFE_FILENAME_CHARS, ' ')
     .replace(/\s+/g, ' ')
     .trim();
   return cleaned || fallback;

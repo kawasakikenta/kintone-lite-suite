@@ -1,6 +1,7 @@
 'use strict';
 
 import { hasKintoneOrderByClause, hasKintonePagingClause } from '../kintone-query.js';
+import { UNSAFE_FILENAME_CHARS } from '../utils.js';
 
 /**
  * レコード一括取得・CSV・ZIP 命名の純粋ヘルパー。
@@ -122,7 +123,7 @@ export function buildRecordsCsvText(records: any[], propKeys: string[], options?
 export function sanitizeZipSegment(value: unknown, fallback = 'item'): string {
   const cleaned = String(value == null ? '' : value)
     .replace(/[\\/:*?"<>|]/g, '_')
-    .replace(/[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '')
+    .replace(UNSAFE_FILENAME_CHARS, '')
     .trim();
   return !cleaned || /^\.+$/.test(cleaned) ? fallback : cleaned;
 }
