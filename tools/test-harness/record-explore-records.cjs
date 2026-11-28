@@ -323,6 +323,29 @@ function register(scenario, ctx) {
     ok('応答が届かなかった登録は再送せず、書き込まれた可能性を示して件数の確認を促す（二重登録なし）。確かめる行を示す');
   });
 
+  scenario('import: 中継装置の JSON のエラー（要求ID だけ）でも、書き込まれていないと言い切らない', async () => {
+    await reset({ currentApp: 105 });
+    await appInput().fill('105');
+    await pickAction('CSVからレコードを追加');
+    const lines = [header];
+    for (let i = 1; i <= 3; i += 1) lines.push(validRow(i));
+    await importFile('gateway.csv', lines.join('\n'));
+    // サーバー側では確定したが、応答は kintone のエラーコードの無い JSON（{ id, message }）になった
+    await page.evaluate(() => { window.__k.failNext.push({ kind: 'gateway-json-after-commit', match: '/records.json' }); });
+    await confirmAndRun('CSVからレコードを追加');
+    const created = await recordsOf(105);
+    const posts = importWrites(await state()).filter(w => !w.injectedFailure);
+    assert.equal(created.length, 3, '確定済みの 3 件を二重登録しない');
+    assert.equal(posts.length, 1, '確定した 1 回だけ。応答が届かなかったあとに再送しない');
+    const text = `${await statusText()}\n${await logText()}`;
+    if (!/kintone に書き込まれたかどうか確認できません/.test(text)) {
+      finding('import-gateway-json-as-rejected', 'high', '要求ID だけの中継装置の JSON のエラーを kintone の拒否と取り違え、確定済みの塊を「確定済み 0件・未処理」とだけ示した（再実行で二重登録）', { text: text.slice(0, 400) });
+    }
+    assert.match(text, /kintone に書き込まれたかどうか確認できません。再実行する前に、kintone 画面で対象アプリのレコード件数を確認してください/, '再実行する前に kintone で確認するよう案内');
+    assert.match(await statusText(), /書き込まれたか未確認/);
+    ok('要求ID だけの JSON のエラーは kintone の拒否と見なさず、書き込まれた可能性を示して件数の確認を促す（二重登録なし）');
+  });
+
   // ---------------------------------------------------------------------------
   // ステータス更新
   // ---------------------------------------------------------------------------
