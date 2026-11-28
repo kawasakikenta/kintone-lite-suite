@@ -272,7 +272,7 @@ export function mountDesignLitePanel() {
   panel.body.insertBefore(cardOut.card, panel.status);
 
   bMd.addEventListener('click', () => { if (!requireFirstApp()) return; liteRun(panel, '設計書 Markdown 生成中…', async () => {
-    await runDesignExportStandalone('md', source(), (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
+    await runDesignExportStandalone('md', { ...source(), appNameLookup: appNameLookup() }, (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
   }); });
   bAiMd.addEventListener('click', () => { if (!requireFirstApp()) return; liteRun(panel, 'AI向けMarkdown 生成中…', async () => {
     await runDesignExportStandalone('ai-md', { ...source(), rawSettings: true }, (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
@@ -281,7 +281,7 @@ export function mountDesignLitePanel() {
     await runDesignExportStandalone('json', source(), (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
   }); });
   bCopy.addEventListener('click', () => { if (!requireFirstApp()) return; liteRun(panel, 'Markdown コピー中…', async () => {
-    await runDesignCopyMdStandalone(source(), (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
+    await runDesignCopyMdStandalone({ ...source(), appNameLookup: appNameLookup() }, (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
   }); });
   bAiCopy.addEventListener('click', () => { if (!requireFirstApp()) return; liteRun(panel, 'AI向けMarkdown コピー中…', async () => {
     await runDesignCopyAiMdStandalone({ ...source(), rawSettings: true }, (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
@@ -317,7 +317,7 @@ export function mountDesignLitePanel() {
       if (targetError) { panel.setStatus(targetError, 'warn'); return; }
       liteRun(panel, `${label}を生成中…`, async () => {
         await runBatchDesignExportMdZipStandalone(
-          { apps, format, preview: prev.checkbox.checked },
+          { apps, format, preview: prev.checkbox.checked, appNameLookup: appNameLookup() },
           (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
         );
       });

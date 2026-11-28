@@ -13289,12 +13289,21 @@ ${body}`;
     ].filter((r) => r[1] !== "");
     return mdTable(["項目", "値"], rows);
   }
-  function mdFieldNotes(f) {
+  function mdAppRef(ref, ctx = {}) {
+    const id = ref?.app != null && ref.app !== "" ? String(ref.app) : "";
+    if (!id) return ref?.code ? `コード ${ref.code}` : "参照先不明";
+    const names = ctx.appNames || {};
+    const guest = String(ctx.guestId || "");
+    const own = (key) => Object.prototype.hasOwnProperty.call(names, key) ? String(names[key] || "").replace(/\s*[\r\n]+\s*/g, " ").trim() : "";
+    const name = guest && own(`${id}::${guest}`) || own(id);
+    return name ? `${name}（App ${id}）` : `App ${id}`;
+  }
+  function mdFieldNotes(f, ctx = {}) {
     if (!f || typeof f !== "object") return "";
     const notes = [];
     const lookup = f.lookup;
     if (lookup && typeof lookup === "object") {
-      const app = lookup.relatedApp?.app ? `App ${lookup.relatedApp.app}` : lookup.relatedApp?.code ? `コード ${lookup.relatedApp.code}` : "参照先不明";
+      const app = mdAppRef(lookup.relatedApp, ctx);
       const key = lookup.relatedKeyField ? ` キー \`${lookup.relatedKeyField}\`` : "";
       const mappingList = Array.isArray(lookup.fieldMappings) ? lookup.fieldMappings : [];
       const copies = mappingList.map((m) => `\`${m?.field ?? ""}\` ← \`${m?.relatedField ?? ""}\``).join("、");
@@ -13302,7 +13311,7 @@ ${body}`;
     }
     const ref = f.referenceTable;
     if (ref && typeof ref === "object") {
-      const app = ref.relatedApp?.app ? `App ${ref.relatedApp.app}` : ref.relatedApp?.code ? `コード ${ref.relatedApp.code}` : "参照先不明";
+      const app = mdAppRef(ref.relatedApp, ctx);
       const cond = ref.condition?.field && ref.condition?.relatedField ? ` 条件 \`${ref.condition.field}\` = \`${ref.condition.relatedField}\`` : "";
       const shownList = Array.isArray(ref.displayFields) ? ref.displayFields : [];
       notes.push(`関連レコード: ${app}${cond}${shownList.length ? ` / 表示 ${shownList.length}項目（${shownList.map((code) => `\`${code}\``).join("、")}）` : ""}${ref.size ? ` / ${ref.size}件表示` : ""}`);
@@ -13323,7 +13332,7 @@ ${body}`;
     if (f.thumbnailSize) notes.push(`サムネイル ${f.thumbnailSize}px`);
     return notes.join(" / ");
   }
-  function mdRenderFieldSettings(sec) {
+  function mdRenderFieldSettings(sec, _sections, ctx = {}) {
     const props = sec?.properties || {};
     const rows = [];
     const subtables = [];
@@ -13337,7 +13346,7 @@ ${body}`;
         f.unique ? "○" : "",
         mdFormatDefaultValue(f.defaultValue),
         mdFieldOptions(f.options) || (f.expression ? `式: ${f.expression}` : ""),
-        mdFieldNotes(f)
+        mdFieldNotes(f, ctx)
       ]);
       if (f.type === "SUBTABLE" && f.fields) {
         subtables.push(f);
@@ -13363,7 +13372,7 @@ ${body}`;
         f.required ? "○" : "",
         mdFormatDefaultValue(f.defaultValue),
         mdFieldOptions(f.options) || (f.expression ? `式: ${f.expression}` : ""),
-        mdFieldNotes(f)
+        mdFieldNotes(f, ctx)
       ]);
       subRows.sort((a, b) => String(a[0]).localeCompare(String(b[0])));
       parts.push(mdTable(["コード", "フィールド名", "種別", "必須", "初期値", "選択肢/式", "参照先/制約"], subRows));
@@ -13525,13 +13534,13 @@ ${body}`;
     });
     return parts.join("\n").trimEnd();
   }
-  function mdRenderActionSettings(sec) {
+  function mdRenderActionSettings(sec, _sections, ctx = {}) {
     const actions = sec?.actions || [];
     const list = Array.isArray(actions) ? actions : Object.values(actions);
     const rows = list.map((a) => [
       a.name || "",
       a.index ?? "",
-      a.destApp ? a.destApp.code || a.destApp.app || "" : "",
+      a.destApp ? a.destApp.app != null && a.destApp.app !== "" ? mdAppRef(a.destApp, ctx) : a.destApp.code || "" : "",
       Array.isArray(a.entities) && a.entities.length ? mdEntityList(a.entities) : "すべてのユーザー",
       String((a.mappings || []).length),
       // コピー元 → コピー先（レコードの URL は srcType が RECORD_URL でコピー元のフィールドが無い）
@@ -13770,6 +13779,7 @@ ${body}`;
   function bundleToMarkdown(bundle, options = {}) {
     const includeRawJson = options.rawJson !== false;
     const sections = bundle?.sections || {};
+    const renderContext = { appNames: options.appNames || {}, guestId: String(bundle?.guestId ?? "") };
     const designSnapshot = buildDesignSnapshot(bundle);
     const snapshotByKey = new Map(designSnapshot.sections.map((row) => [row.key, row]));
     const appName = decodeHtmlEntities(sections.appSettings?.name || "");
@@ -13857,7 +13867,7 @@ ${body}`;
         lines.push(`（部分取得: ${snapshotSection.detail}）`);
         if (renderer) {
           try {
-            rendered = renderer(sec, sections) || "";
+            rendered = renderer(sec, sections, renderContext) || "";
           } catch {
             rendered = "";
           }
@@ -13871,7 +13881,7 @@ ${body}`;
         if (!includeRawJson) lines.push("", "（原文JSONは rawJson:false のため省略されています）");
       } else {
         try {
-          rendered = renderer(sec, sections) || "";
+          rendered = renderer(sec, sections, renderContext) || "";
         } catch {
           rendered = "";
         }
@@ -19995,8 +20005,78 @@ ${detail}`);
   function designMarkdownOf(bundle, options) {
     return bundleToMarkdown(stripSensitiveSupplements(bundle).bundle, options);
   }
-  function designBundleExportMarkdown(kind, bundle) {
-    return kind === "ai-md" ? buildDesignAiMarkdown(bundle) : designMarkdownOf(bundle);
+  function collectReferencedAppIds(bundle) {
+    const ids = /* @__PURE__ */ new Set();
+    const add = (ref) => {
+      const id = String(ref?.app ?? "").trim();
+      if (/^\d+$/.test(id)) ids.add(id);
+    };
+    const visit = (field) => {
+      if (!field || typeof field !== "object") return;
+      add(field.lookup?.relatedApp);
+      add(field.referenceTable?.relatedApp);
+    };
+    const properties = bundle?.sections?.fieldSettings?.properties;
+    if (properties && typeof properties === "object") {
+      for (const field of Object.values(properties)) {
+        visit(field);
+        if (field?.type === "SUBTABLE" && field.fields && typeof field.fields === "object") {
+          for (const child of Object.values(field.fields)) visit(child);
+        }
+      }
+    }
+    const actions = bundle?.sections?.actionSettings?.actions;
+    const list = Array.isArray(actions) ? actions : actions && typeof actions === "object" ? Object.values(actions) : [];
+    for (const action of list) add(action?.destApp);
+    return [...ids];
+  }
+  var REFERENCED_APP_NAME_CONCURRENCY = 4;
+  async function resolveReferencedAppNames(bundle, opts) {
+    const guestId = String(opts.guestId ?? bundle?.guestId ?? "").trim();
+    const known = opts.known || {};
+    const own = (key) => Object.prototype.hasOwnProperty.call(known, key) ? String(known[key] || "").trim() : "";
+    const names = {};
+    const put = (id, name) => {
+      if (!name) return;
+      if (guestId) names[`${id}::${guestId}`] = name;
+      names[id] = name;
+    };
+    const selfId = String(bundle?.appId ?? "").trim();
+    const selfName = extractAppNameFromBundle(bundle);
+    const missing = [];
+    for (const id of collectReferencedAppIds(bundle)) {
+      const name = guestId && own(`${id}::${guestId}`) || own(id) || (id === selfId ? selfName : "");
+      if (name) {
+        put(id, name);
+        continue;
+      }
+      const cacheKey = `${id}::${guestId}`;
+      if (opts.cache?.has(cacheKey)) {
+        put(id, opts.cache.get(cacheKey) || "");
+        continue;
+      }
+      missing.push(id);
+    }
+    if (!opts.live || !missing.length) return names;
+    const prefix = buildApiPrefix(guestId, false);
+    for (let start = 0; start < missing.length; start += REFERENCED_APP_NAME_CONCURRENCY) {
+      await Promise.all(missing.slice(start, start + REFERENCED_APP_NAME_CONCURRENCY).map(async (id) => {
+        let name = "";
+        try {
+          const info = await apiGet(prefix, "/app.json", { id });
+          name = String(info?.name || "").trim();
+        } catch (error) {
+          if (isRunCancelledError(error)) throw error;
+        }
+        opts.cache?.set(`${id}::${guestId}`, name || null);
+        put(id, name);
+      }));
+    }
+    return names;
+  }
+  async function designMarkdownWithReferenceNames(bundle, source) {
+    const appNames = await resolveReferencedAppNames(bundle, { known: source?.appNameLookup, live: !source?.importedBundle, guestId: String(source?.guestId || "") });
+    return designMarkdownOf(bundle, { appNames });
   }
   var DESIGN_JSON_SENSITIVE_NOTICE = `${PLUGIN_CONFIG_INCLUDED_NOTE}。${CUSTOMIZE_BODY_SENSITIVE_NOTE}。共有する前に内容を確認してください`;
   function designJsonSensitiveNotice(bundle) {
@@ -20014,7 +20094,8 @@ ${detail}`);
       downloadText(buildExportFilename("設計書", "json", { appLabel }), JSON.stringify(bundle, null, 2), "application/json");
     } else {
       const baseLabel = kind === "ai-md" ? "設計書_AI向けMarkdown" : "設計書";
-      downloadText(buildExportFilename(baseLabel, "md", { appLabel }), designBundleExportMarkdown(kind, bundle), "text/markdown");
+      const markdown = kind === "ai-md" ? buildDesignAiMarkdown(bundle) : await designMarkdownWithReferenceNames(bundle, source);
+      downloadText(buildExportFilename(baseLabel, "md", { appLabel }), markdown, "text/markdown");
     }
     const note = failedSectionNote(failedSectionLabels(bundle));
     const completionNote = designBundleCompletionNote(bundle);
@@ -20023,7 +20104,7 @@ ${detail}`);
   async function runDesignCopyMdStandalone(source, setStatus) {
     const bundle = await resolveDesignBundle(source, "source", setStatus, "", false, false);
     state.lastSourceBundle = bundle;
-    const md = designMarkdownOf(bundle);
+    const md = await designMarkdownWithReferenceNames(bundle, source);
     if (!await copyTextToClipboard(md)) {
       throw new Error("クリップボードへのコピーに失敗しました。ブラウザのクリップボード権限を確認するか、Markdown 保存を使ってください");
     }
@@ -20244,6 +20325,14 @@ ${lines.join("\n")}`), { partialSuccess: true });
     for (const t of targets) {
       appIdCounts.set(t.appId, (appIdCounts.get(t.appId) || 0) + 1);
     }
+    const knownAppNames = { ...source.appNameLookup || {} };
+    for (const t of targets) {
+      const name = t.bundle ? extractAppNameFromBundle(t.bundle) : "";
+      if (!name) continue;
+      if (t.guestId) knownAppNames[`${t.appId}::${t.guestId}`] = name;
+      if (!knownAppNames[t.appId]) knownAppNames[t.appId] = name;
+    }
+    const referencedAppNameCache = /* @__PURE__ */ new Map();
     const importedCount = targets.filter((t) => t.bundle).length;
     setStatus(`設計書Markdown ZIP出力を開始（${targets.length}件${importedCount ? ` / うち設定JSON ${importedCount}件` : ""}）...`);
     const JSZipCtor = await loadJSZipLite();
@@ -20331,7 +20420,8 @@ ${lines.join("\n")}`), { partialSuccess: true });
         let aiMdFile;
         if (format === "md" || format === "both") {
           mdFile = uniqueMdZipEntryName(usedFilenames, `${guestPrefix}設計書_${appLabel}.md`);
-          zip.file(mdFile, designMarkdownOf(mdBundle));
+          const appNames = await resolveReferencedAppNames(mdBundle, { known: knownAppNames, live: !target.bundle, guestId: target.guestId, cache: referencedAppNameCache });
+          zip.file(mdFile, designMarkdownOf(mdBundle, { appNames }));
           files.push(mdFile);
         }
         if (format === "ai-md" || format === "both") {
@@ -21421,7 +21511,7 @@ ${detail}`);
     bMd.addEventListener("click", () => {
       if (!requireFirstApp()) return;
       liteRun(panel, "設計書 Markdown 生成中…", async () => {
-        await runDesignExportStandalone("md", source(), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
+        await runDesignExportStandalone("md", { ...source(), appNameLookup: appNameLookup() }, (m, e) => panel.setStatus(m, e ? "err" : "busy"));
       });
     });
     bAiMd.addEventListener("click", () => {
@@ -21439,7 +21529,7 @@ ${detail}`);
     bCopy.addEventListener("click", () => {
       if (!requireFirstApp()) return;
       liteRun(panel, "Markdown コピー中…", async () => {
-        await runDesignCopyMdStandalone(source(), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
+        await runDesignCopyMdStandalone({ ...source(), appNameLookup: appNameLookup() }, (m, e) => panel.setStatus(m, e ? "err" : "busy"));
       });
     });
     bAiCopy.addEventListener("click", () => {
@@ -21486,7 +21576,7 @@ ${detail}`);
         }
         liteRun(panel, `${label}を生成中…`, async () => {
           await runBatchDesignExportMdZipStandalone(
-            { apps, format, preview: prev.checkbox.checked },
+            { apps, format, preview: prev.checkbox.checked, appNameLookup: appNameLookup() },
             (m, e) => panel.setStatus(m, e ? "err" : "busy")
           );
         });

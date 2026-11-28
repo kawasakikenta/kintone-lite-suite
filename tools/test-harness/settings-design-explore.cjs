@@ -328,7 +328,11 @@ async function main() {
   assert.match(mdText, /#### テーブル: `tasks`\n/, 'Markdown: 名前の無いテーブル見出しに「 — 」を付けない');
   assert.match(mdText, /転記 2項目（`customer_name` ← `customer_name`、`cust_rank` ← `rank`）/, 'Markdown: ルックアップのコピー項目');
   assert.match(mdText, /`customer_code` → `customer_code`<br>`deal_title` → `quote_subject`<br>レコードのURL → `deal_url`/, 'Markdown: アクションのコピー項目');
-  ok('設計書 Markdown: 件数が取得状態・Excel と一致、プラグイン有効状態、ANY、グラフの期間と件数、カレンダー、グループ名、コピー項目');
+  assert.match(mdText, /ルックアップ: 顧客マスタ（App \d+） キー `customer_code`/, 'Markdown: ルックアップの参照先アプリ名（Excel と同じ名前）');
+  assert.match(mdText, /関連レコード: 見積管理（App 402）/, 'Markdown: 関連レコード一覧の参照先アプリ名');
+  assert.match(mdText, /ルックアップ: 商品マスタ（App \d+）/, 'Markdown: テーブル内のルックアップの参照先アプリ名');
+  assert.match(mdText, /\| 見積管理（App 402） \|/, 'Markdown: アクションの連携先アプリ名');
+  ok('設計書 Markdown: 件数が取得状態・Excel と一致、プラグイン有効状態、ANY、グラフの期間と件数、カレンダー、グループ名、コピー項目、参照先アプリ名');
   const sheets = readXlsx(xlsxFile.buffer);
   const defRows = sheets['項目定義'];
   assert.equal(defRows.find(row => row[3] === 'grp_basic')[2], '案件情報', '項目定義: グループの名前（コードでなく表示名）');
