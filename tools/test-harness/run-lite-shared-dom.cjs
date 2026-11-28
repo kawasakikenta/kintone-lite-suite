@@ -435,10 +435,17 @@ async function main() {
     await page.evaluate(() => window.cancelPanel.setCollapsed(true));
     const dragHero = page.locator('#cancel-test .kus-lp__title');
     const heroBox = await dragHero.boundingBox();
+    // ドラッグを終えたときに、開いたときの表示アニメーション（フェードイン）をやり直さない（パネルが一瞬消えてずれて見える）
+    await page.evaluate(() => {
+      window.panelAnimations = [];
+      document.querySelector('#cancel-test').addEventListener('animationstart', event => { if (event.target.id === 'cancel-test') window.panelAnimations.push(event.animationName); });
+    });
     await page.mouse.move(heroBox.x + 4, heroBox.y + 4);
     await page.mouse.down();
     await page.mouse.move(heroBox.x - 200, heroBox.y + 160, { steps: 5 });
     await page.mouse.up();
+    await page.waitForTimeout(250);
+    assert.deepEqual(await page.evaluate(() => window.panelAnimations), [], 'ドラッグを終えてもパネルの表示アニメーションをやり直さない');
     const placed = await page.evaluate(() => { const style = document.querySelector('#cancel-test').style; return { left: style.left, top: style.top }; });
     assert.ok(placed.left && placed.top, 'ドラッグで位置を指定する');
     await page.evaluate(() => { window.cancelPanel = Shared.createLitePanel({ id: 'cancel-test', title: '中止テスト', accent: 'settings' }); });

@@ -85,8 +85,8 @@ const THEME_CSS = `
   color:var(--c-text);
   animation:kus-lp-fade-in .18s ease-out;
 }
-/* ドラッグ移動中は文字選択とアニメーションを止める */
-.kus-lp--dragging{user-select:none;animation:none;transition:none}
+/* ドラッグ移動中は文字選択と遷移を止める。animation は触らない（none から戻すと、開いたときのフェードインがドラッグのたびにやり直される） */
+.kus-lp--dragging{user-select:none;transition:none}
 .kus-lp--dragging .kus-lp__hero{cursor:grabbing}
 /* 最小化: ヒーローだけ残して本文を畳む（kintone 画面を確認しやすくする） */
 .kus-lp--collapsed .kus-lp__body{display:none!important}
