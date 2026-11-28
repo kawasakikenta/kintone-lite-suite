@@ -16,7 +16,7 @@ interface QualityContext {
   targetSummary: () => [string, string];
   applyViewQuery: (target: HTMLInputElement) => void;
   resultHost: HTMLElement;
-  /** 比較オプション（空白・大小文字の無視）を置く場所。詳細設定やオプションのポップアップ内を渡す。 */
+  /** 比較オプション（空白・大小文字・全角半角の無視）を置く場所。詳細設定やオプションのポップアップ内を渡す。 */
   optionsHost: HTMLElement;
   /** 実行ボタンの直前に置く行（オプションのポップアップを開くボタンなど）。 */
   optionsRow?: HTMLElement;
@@ -50,8 +50,10 @@ export function buildRecordQualityTab(root: HTMLElement, context: QualityContext
   const note = makeNote('先頭の対象アプリからフィールドを読み込み、1〜5項目を選んでください。');
   const trim = makeCheck({ label: '文字列・リンクの前後の空白を無視', checked: false });
   const ignoreCase = makeCheck({ label: '文字列・リンクの英字の大小を無視', checked: false });
+  // 全角と半角が混ざった値（「ＡＢＣ商事」と「ABC商事」、半角カタカナ）を同じ値として数える。既定は従来どおり区別する
+  const ignoreWidth = makeCheck({ label: '文字列・リンクの全角・半角の違いを無視（英数字・記号・カタカナ・スペース）', checked: false });
   root.append(makeRow(load), pickWrap, note);
-  optionsHost.appendChild(makeRow([trim.label, ignoreCase.label]));
+  optionsHost.appendChild(makeRow([trim.label, ignoreCase.label, ignoreWidth.label]));
   root.appendChild(makeNote('選んだ項目がすべて一致するレコードを、アプリごとに重複として検出します（項目の順序は問いません）。空の項目があるレコードは、未入力として別に集計します。', 'help'));
   root.appendChild(makeNote('テーブル内・添付・計算・システム項目と、アプリ間の重複は対象外です。取得できたレコードだけを検査し、取得不可の項目は未入力と区別します。', 'help'));
   let fields: QualityField[] = [], selected = new Set<string>(), version = 0, fieldsVersion = 0;
@@ -83,7 +85,7 @@ export function buildRecordQualityTab(root: HTMLElement, context: QualityContext
     fieldBox.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach(box => { box.checked = false; });
     resetResults(); refreshNote();
   });
-  for (const input of [query, trim.checkbox, ignoreCase.checkbox]) {
+  for (const input of [query, trim.checkbox, ignoreCase.checkbox, ignoreWidth.checkbox]) {
     input.addEventListener('input', resetResults); input.addEventListener('change', resetResults);
   }
   function renderFields() {
@@ -115,7 +117,7 @@ export function buildRecordQualityTab(root: HTMLElement, context: QualityContext
     const problem = validate();
     if (problem) { panel.setStatus(problem, 'warn'); return; }
     resetResults(); const current = version;
-    const guestId = tgtGuest.value.trim(), options = { trimText: trim.checkbox.checked, ignoreCase: ignoreCase.checkbox.checked };
+    const guestId = tgtGuest.value.trim(), options = { trimText: trim.checkbox.checked, ignoreCase: ignoreCase.checkbox.checked, ignoreWidth: ignoreWidth.checkbox.checked };
     const queryText = query.value.trim();
     const inspected = await runRecordQualityStandalone({ appIdsText: tgtApp.value, guestId, codes: [...selected], query: queryText, ...options }, (message, tone) => panel.setStatus(message, toPanelTone(tone)));
     if (current !== version) { panel.setStatus('対象や条件が変わりました。もう一度検査してください。', 'warn'); return; }
@@ -192,7 +194,7 @@ export function buildRecordQualityTab(root: HTMLElement, context: QualityContext
   context.resultHost.append(output, makeRow(save));
   return { id: 'quality', label: '重複・未入力を検査', description: '選んだ項目の重複と未入力を検査し、該当レコードを一覧で表示します。', button: run,
     validate,
-    summary: () => [targetSummary(), ['条件', query.value.trim() || '全件'], ['検査項目', [...selected].join('、')], ['比較', `前後空白 ${trim.checkbox.checked ? '無視' : '区別'} / 大小文字 ${ignoreCase.checkbox.checked ? '無視' : '区別'}`]] };
+    summary: () => [targetSummary(), ['条件', query.value.trim() || '全件'], ['検査項目', [...selected].join('、')], ['比較', `前後空白 ${trim.checkbox.checked ? '無視' : '区別'} / 大小文字 ${ignoreCase.checkbox.checked ? '無視' : '区別'} / 全角半角 ${ignoreWidth.checkbox.checked ? '無視' : '区別'}`]] };
 }
 
 export function buildCsvTemplateTab(root: HTMLElement, context: QualityContext): LiteWorkflowAction {

@@ -36,6 +36,25 @@ describe('record quality checks', () => {
     expect(normalized.duplicateGroups).toBe(1);
     expect(normalized.findings[0].values).toEqual([' AbC ']);
   });
+  // 日本語の業務データでは、同じ会社名・電話番号が全角と半角で混ざる（「ＡＢＣ商事」と「ABC商事」、「ｶﾌﾞｼｷｶﾞｲｼｬ」と「カブシキガイシャ」）。
+  it('optionally ignores full-width / half-width differences in text (off by default)', () => {
+    const records = [record(1, 'ＡＢＣ商事　０３－１２３４'), record(2, 'ABC商事 03-1234'), record(3, 'ｶﾌﾞｼｷｶﾞｲｼｬ'), record(4, 'カブシキガイシャ')];
+    expect(inspect(records).duplicateGroups).toBe(0);
+    const normalized = inspect(records, ['title'], { trimText: false, ignoreCase: false, ignoreWidth: true });
+    expect(normalized).toMatchObject({ duplicateGroups: 2, duplicateRecords: 4 });
+    expect(normalized.findings.map(item => item.values[0])).toEqual(['ＡＢＣ商事　０３－１２３４', 'ABC商事 03-1234', 'ｶﾌﾞｼｷｶﾞｲｼｬ', 'カブシキガイシャ']);
+    // 大小文字の無視・前後空白の無視と組み合わせられる。数値・選択肢は対象外
+    expect(inspect([record(1, ' ａｂｃ'), record(2, 'ABC')], ['title'], { trimText: true, ignoreCase: true, ignoreWidth: true }).duplicateGroups).toBe(1);
+    expect(inspect([record(1, 'A', '１'), record(2, 'A', '1')], ['amount'], { trimText: false, ignoreCase: false, ignoreWidth: true }).duplicateGroups).toBe(0);
+    // 全角スペースだけの値は、前後空白の無視と組み合わせると未入力
+    expect(inspect([record(1, '　')], ['title'], { trimText: true, ignoreCase: false, ignoreWidth: true }).emptyRecords).toBe(1);
+  });
+  it('records whether width differences were ignored in the CSV summary', () => {
+    const report = inspect([record(1, 'A')]);
+    const csv = qualityReportCsv([{ appId: '7', report }], '', 'https://example.cybozu.com', { trimText: false, ignoreCase: false, ignoreWidth: true }, '');
+    expect(csv).toContain('全角半角を無視: true');
+    expect(qualityReportCsv([{ appId: '7', report }], '', 'https://example.cybozu.com', options, '')).toContain('全角半角を無視: false');
+  });
   it('treats empty strings/null as empty and absent/type-mismatched values as unavailable', () => {
     const records: any[] = [record(1, ''), record(2, null), { $id: cell('__ID__', '3') }, { $id: cell('__ID__', '4'), title: cell('NUMBER', '1') }, { $id: cell('__ID__', '5'), title: cell('SINGLE_LINE_TEXT', undefined) }];
     expect(inspect(records)).toMatchObject({ duplicateGroups: 0, emptyRecords: 2, unavailableRecords: 3 });
