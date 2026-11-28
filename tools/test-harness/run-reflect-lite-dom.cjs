@@ -262,6 +262,10 @@ async function main() {
     await tab('反映結果').click();
     assert.match(await page.locator('#kus-rl-stage-result').innerText(), /まだ反映していません/);
     await tab('対象を選ぶ').click();
+    // 補足の文字も 12.5px 以上（反映元・反映先の見出し、段階の説明、影響範囲のバッジ）
+    const smallLabels = await page.evaluate(() => [...document.querySelectorAll('.kus-rl-endpoint__eyebrow, .kus-rl-nav__copy, .kus-lp__badge')].filter(el => el.getClientRects().length)
+      .map(el => ({ text: el.textContent.trim(), size: parseFloat(getComputedStyle(el).fontSize) })).filter(item => item.size < 12.5));
+    assert.deepEqual(smallLabels, [], '反映元・反映先の見出しと段階の説明の文字は 12.5px 以上');
     const sourceInput = page.getByRole('textbox', { name: '反映元アプリID', exact: true });
     await sourceInput.fill('https://example.cybozu.com/k/guest/7/101/?view=20');
     await sourceInput.press('Tab');

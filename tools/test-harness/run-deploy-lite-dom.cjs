@@ -321,6 +321,10 @@ async function main() {
     assert.equal(await page.getByRole('radio', { name: '本番へ反映（アプリを更新）', exact: true }).isChecked(), true, '既定は本番へ反映');
     assert.match(await page.locator('.kus-dp-choice', { hasText: '変更を中止' }).innerText(), /プレビューの未公開の変更を破棄します/);
     assert.match(await page.locator('.kus-dp-detail-summary').innerText(), /^詳細設定: 1アプリずつ反映 \/ 失敗したら残りを実行しない$/, '詳細設定の現在値を 1 行で示す');
+    // 補足の文字も 12.5px 以上（段階の説明・影響範囲のバッジ）
+    const smallLabels = await page.evaluate(() => [...document.querySelectorAll('.kus-dp-nav__copy, .kus-lp__badge')].filter(el => el.getClientRects().length)
+      .map(el => ({ text: el.textContent.trim(), size: parseFloat(getComputedStyle(el).fontSize) })).filter(item => item.size < 12.5));
+    assert.deepEqual(smallLabels, [], '段階の説明とバッジの文字は 12.5px 以上');
     ok('initial state and blockers');
 
     // 対象の入力: 非数字、URL 貼り付け、カンマ区切り、現在のアプリ

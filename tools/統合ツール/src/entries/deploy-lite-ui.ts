@@ -153,7 +153,7 @@ ${P} .kus-dp-nav__btn[aria-selected="true"]{background:#fff1f2;color:#881337;bor
 ${P} .kus-dp-nav__btn:disabled{opacity:.45;cursor:not-allowed}
 ${P} .kus-dp-nav__num{display:inline-flex;width:19px;height:19px;align-items:center;justify-content:center;border-radius:50%;background:#e2e8f0;color:#475569;font-size:11.5px}
 ${P} .kus-dp-nav__btn[aria-selected="true"] .kus-dp-nav__num{background:#ffe4e6;color:#881337}
-${P} .kus-dp-nav__copy{display:block;font-size:11px;font-weight:500;color:#94a3b8;margin-top:2px}
+${P} .kus-dp-nav__copy{display:block;font-size:12.5px;font-weight:500;color:#94a3b8;margin-top:2px}
 ${P} .kus-dp-nav__btn[aria-selected="true"] .kus-dp-nav__copy{color:#64748b}
 ${P} .kus-dp-stage[hidden]{display:none}
 ${P} .kus-dp-stage-head{margin:0 2px 16px}

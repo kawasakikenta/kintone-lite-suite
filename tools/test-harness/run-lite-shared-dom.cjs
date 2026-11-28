@@ -74,6 +74,11 @@ async function main() {
     assert.equal(await rows.count(), 101, '重複を除き101件目を表示する');
     assert.deepEqual(await page.evaluate(() => window.apiCalls.map(call => call.params.offset)), [0, 100, 100]);
     assert.equal(await more.isVisible(), false);
+    // 補足の文字も 12.5px 以上（候補のコード・スペース・更新日時、対象アプリ表のアプリ名）
+    await page.evaluate(() => window.table.putApp('202', '7', { appName: '顧客マスタ' }));
+    const smallMeta = await page.evaluate(() => [...document.querySelectorAll('.kus-as__meta, .kus-lp__apptable-name:not(.kus-lp__apptable-name--empty)')].slice(0, 5)
+      .map(el => ({ cls: el.className, size: parseFloat(getComputedStyle(el).fontSize) })).filter(item => item.size < 12.5));
+    assert.deepEqual(smallMeta, [], '候補の補足と対象アプリ表のアプリ名の文字は 12.5px 以上');
     results.push('検索: 100件超・ページ再試行・重複除去・二重実行防止・IME');
 
     await keyword.fill('古い条件');
@@ -478,6 +483,10 @@ async function main() {
     });
     const popupPanel = page.locator('#popup-test');
     assert.equal(await page.getByRole('radio').filter({ visible: true }).count(), 3, '表面に出す操作は3つまで');
+    // 補足の文字も 12.5px 以上（操作の説明・影響範囲のバッジ）
+    const smallText = await page.evaluate(() => [...document.querySelectorAll('#popup-test .kus-wf-action small, #popup-test .kus-lp__badge')]
+      .map(el => ({ text: el.textContent.trim(), size: parseFloat(getComputedStyle(el).fontSize) })).filter(item => item.size < 12.5));
+    assert.deepEqual(smallText, [], '操作の説明とバッジの文字は 12.5px 以上');
     const moreButton = page.getByRole('button', { name: /ほかの操作…/ });
     await moreButton.click();
     assert.equal(await page.locator('#popup-test-more-actions').evaluate(dialog => dialog.open), true, 'ほかの操作のポップアップが開く');
