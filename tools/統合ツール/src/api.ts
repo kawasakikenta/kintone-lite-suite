@@ -165,7 +165,7 @@ export interface ApiGetOptions {
   retries?: number;
   baseDelayMs?: number;
   maxDelayMs?: number;
-  /** 応答待ちの上限（ms）。0 なら上限なし（cursor の読み取りなど、再送で結果が変わる GET に使う）。既定は API_GET_TIMEOUT_MS。 */
+  /** 応答待ちの上限（ms）。0 なら上限なし（cursor の読み取りなど、再送で結果が変わる GET に使う。その場合は retries: 1 も指定する）。既定は API_GET_TIMEOUT_MS。 */
   timeoutMs?: number;
 }
 
@@ -548,8 +548,16 @@ export async function fetchRecordsByQuery(
   let finished = false;
   try {
     while (true) {
-      // cursor の GET は読むたびに位置が進むため、タイムアウト後の再送でページが抜ける。中止だけを受け付け、応答待ちの上限は設けない。
-      const resp = await apiGet(prefix, '/records/cursor.json', { id: cursorId }, { timeoutMs: 0 });
+      // cursor の GET は読むたびに位置が進む。応答が届かなくても kintone 側では進んでいることがあり、送り直すと
+      // 届かなかったページを黙って取りこぼす。そのため応答待ちの上限を設けず（中止だけを受け付ける）、失敗しても送り直さない。
+      let resp: any;
+      try {
+        resp = await apiGet(prefix, '/records/cursor.json', { id: cursorId }, { timeoutMs: 0, retries: 1 });
+      } catch (error) {
+        if (isRunCancelledError(error)) throw error;
+        const message = (error as any)?.message || String(error);
+        throw new Error(`レコードの取得（cursor）が途中で失敗しました。取りこぼしを防ぐため自動では送り直しません。もう一度実行してください。\n${message}`);
+      }
       if (!Array.isArray(resp?.records)) {
         throw new Error('cursor 取得の応答形式が不正です（records がありません）');
       }
